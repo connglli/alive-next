@@ -262,6 +262,9 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
   target_link_libraries(quick-fuzz PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
   target_link_libraries(alive-exec PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
   install(TARGETS alive-tv quick-fuzz alive-exec)
+
+  # alive-next pilot — see tv-next/README.md and PLAN.md.
+  add_subdirectory(tv-next)
 endif()
 
 target_link_libraries(alive PRIVATE ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES})

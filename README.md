@@ -1,7 +1,23 @@
-Alive2
-======
+Alive2 (alive-next fork)
+========================
 
 ![Alive2 logo](imgs/alive2.png)
+
+> **alive-next addition (WIP, design phase).** This tree is alive2 plus an
+> in-development extension that adds **compositional translation validation**:
+> a new tool **`alive-tv-next`** that verifies a refinement query by cutting the
+> function into small chunks and dispatching each chunk to alive2's existing
+> per-pair refinement checker. The decomposition handles whole-function queries
+> that hit alive2's SMT scaling cliff.
+>
+> Status: design done, implementation not yet started. See
+> [`IDEA.md`](IDEA.md) for the rationale, [`PLAN.md`](PLAN.md) for the staged
+> plan + 7-example test set, and [`tests/alive-tv-next/`](tests/alive-tv-next/) for the
+> reference tests. The new source lives under `tv-next/` (created in M1.1);
+> everything else in this tree is upstream alive2, unmodified.
+>
+> See the [Alive-next quick start](#alive-next-quick-start) section below for
+> alive-tv-next-specific build and usage notes.
 
 Alive2 consists of several libraries and tools for analysis and verification
 of LLVM code and transformations.
@@ -19,6 +35,7 @@ Included tools:
 * Clang drop-in replacement with translation validation (`alivecc` and
   `alive++`)
 * An LLVM IR interpreter that is UB precise (`alive-exec`)
+* **(alive-next, WIP)** Compositional translation validation tool: `alive-tv-next`
 
 For a technical introduction to Alive2, please see [our paper from
 PLDI 2021](https://web.ist.utl.pt/nuno.lopes/pubs/alive2-pldi21.pdf).
@@ -407,3 +424,99 @@ LLVM Bugs Found by Alive2
 -------------------------
 
 [BugList.md](BugList.md) shows the list of LLVM bugs found by Alive2.
+
+
+Alive-next quick start
+----------------------
+
+> *This section is from the alive-next fork, not upstream alive2.*
+
+The fork adds a `alive-tv-next` binary that performs **compositional translation
+validation**: structural diff + per-cut dispatch into alive2's existing
+refinement checker. For context-dependent rewrites, `alive-tv-next` derives the
+needed assume itself — hand-coded proposers in Phase 3 cover the test set's
+patterns (range-from-mask, no-overflow-from-sext); an LLM-driven generic
+proposer is a follow-on. The decomposition handles whole-function queries
+that hit alive2's SMT scaling cliff.
+
+### Status
+
+WIP. The design and reference test set are done; the implementation is queued
+behind milestone M1.1 in [`PLAN.md`](PLAN.md).
+
+| Path | Status | Description |
+|------|--------|-------------|
+| [`IDEA.md`](IDEA.md) | done | Design rationale: compositional frame, the four sub-cases, LLM-as-oracle. |
+| [`PLAN.md`](PLAN.md) | done | Phased plan + 7-example test set. |
+| [`tests/alive-tv-next/`](tests/alive-tv-next/) | done | The 7 reference tests in `.srctgt.ll` form. |
+| `tv-next/` | not yet | Pilot source directory; created in M1.1. |
+
+### Building `alive-tv-next`
+
+The same alive2 build steps above apply. Once the pilot source directory
+`tv-next/` exists (created in M1.1), it is registered with one extra line in
+the top-level `CMakeLists.txt`:
+
+```cmake
+add_subdirectory(tv-next)
+```
+
+After that, `ninja` produces `build/alive-tv-next` alongside the upstream
+`build/alive-tv`, `build/alive`, etc.
+
+### Running
+
+```
+# Two-file form, or @src/@tgt single-file form. The slice is the only input;
+# assumes (when needed for Phase 3+ rewrites) are derived internally by
+# alive-tv-next and injected into per-cut alive2 queries as `llvm.assume`.
+~/alive-next/build/alive-tv-next pre.ll post.ll
+~/alive-next/build/alive-tv-next combined.srctgt.ll
+
+# With LLM fallback (later phases):
+~/alive-next/build/alive-tv-next combined.srctgt.ll --model gpt-4o
+```
+
+`alive-tv-next` inherits all of `alive-tv`'s flags (`--smt-to`,
+`--disable-undef-input`, `--src-fn`, `--tgt-fn`, …) by including
+alive-tv's `cmd_args_list.h`. The catalog of pre-verified rewrite
+templates is bundled with the binary at a compiled-in path; there is no
+user-facing catalog flag.
+
+Output is alive2-compatible (`Transformation seems to be correct!` on
+success). Existing lit infrastructure handles the test files as-is.
+
+### Environment variables
+
+Phase 1–4 uses **hand-coded assume proposers** inside `alive-tv-next`; no LLM
+is needed. An LLM-driven proposer is a later-phase fallback for what hand-coded
+proposers don't cover, opt-in via `--model`. Auth and endpoint live in env vars
+so they don't end up on the command line:
+
+| Variable | Used for | Required? |
+|----------|----------|-----------|
+| `ALIVE_NEXT_LLM_API_KEY` | Auth token for the LLM provider | Yes, when `--model` is set |
+| `ALIVE_NEXT_LLM_BASE_URL` | API endpoint (default: provider's public endpoint) | Optional; for self-hosted / proxy / region-local instances |
+
+(The model name itself is a CLI flag — `--model` — not an env var, since it's
+a per-invocation choice users will A/B-test, distinct from deployment-fixed
+secrets and endpoints.)
+
+None of these affect the Phase 1–4 path. An `alive-tv-next` invocation without
+`--model` reads them lazily and never errors out.
+
+### Reference test set
+
+Seven cases under [`tests/alive-tv-next/`](tests/alive-tv-next/), each documenting which
+example from `IDEA.md` / `PLAN.md` it implements and which mechanism the pilot
+must use:
+
+| File | Phase | Mechanism |
+|------|-------|-----------|
+| `e1.srctgt.ll`, `e1alt.srctgt.ll` | 1 | single-instr catalog dispatch |
+| `e2.srctgt.ll`, `varB.srctgt.ll` | 2 | multi-instr catalog dispatch |
+| `varA.srctgt.ll`, `e4.srctgt.ll` | 3 | scalar assume-needed |
+| `e3.srctgt.ll` | 4 | vectorization + per-lane lifting + assume |
+
+All seven currently time out on upstream `alive-tv` even at 60 s — direct
+empirical motivation for the pilot.
