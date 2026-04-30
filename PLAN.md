@@ -8,7 +8,7 @@ A staged plan to build a working pilot of the **compositional verification** mec
 
 ## Goal
 
-**Verify all six worked examples from `alive-next.md`.** Each example exercises a distinct sub-case of the compositional frame; success on all six demonstrates the pilot covers the full structural progression.
+**Verify all seven worked examples from `alive-next.md`.** Each example exercises a distinct sub-case of the compositional frame; success on all seven demonstrates the pilot covers the full structural progression.
 
 The exit criterion for the pilot is binary: every example verifies. Performance targets and corpus-wide recovery rates come *after* the pilot proves itself on the curated set.
 
@@ -286,11 +286,52 @@ The pilot's input remains a raw slice (`pre.ll` / `post.ll` or `combined.srctgt.
 | M4.4 | Catalog entry for the SLP vectorization template | ⏳ pending |
 | M4.5 | **Example 3 verifies end-to-end** | ⏳ pending |
 
-**Phase 4 exits when all six examples verify.** That's the pilot's goal.
+**Phase 4 exits when all seven examples verify.** That's the pilot's goal.
 
 ---
 
-## File layout (target end of Phase 4)
+## Phase 5 — LLM-driven proposers (corpus-scale reach extension)
+
+**Targets:** alive-tv-timeout slices from the existing extracted corpus that Phases 1–4's hand-coded mechanisms don't reach.
+
+Phases 1–4 establish the *infrastructure* for compositional verification with hand-coded heuristics covering the seven curated examples. Phase 5 turns on the actual reach extension that motivates Alive-Next: the LLM as a proposer for cuts and assumes that fall outside the hand-coded catalog, with alive2 still doing every soundness-critical decision.
+
+The per-example test set is replaced here by a corpus-scale evaluation: take alive-tv-timeout slices, run `alive-tv-next` with and without `--model`, measure the recovery delta.
+
+### What it adds
+
+- **LLM client (M5.1).** A small HTTP wrapper around the OpenAI-compatible chat-completion API. Auth via the `ALIVE_NEXT_LLM_API_KEY` env var, endpoint via `ALIVE_NEXT_LLM_BASE_URL`, model via `--model`. No streaming for the first version; synchronous request/response is enough.
+- **LLM cut proposer (M5.2).** When alive2 times out on a group cut, prompt the LLM with the lifted IR and ask for a finer split (or a known-equivalence hint that decomposes the joint rewrite into smaller pieces). Each proposed sub-cut is verified via alive2 — proposals that don't verify are discarded silently. Upper bound on retry budget per slice.
+- **LLM assume proposer (M5.3).** When no hand-coded proposer fires for a precondition-needing rewrite, prompt the LLM with the local IR and ask for a candidate `cond` (in `llvm.assume`-compatible form: an `i1`-valued LLVM expression over the slice's local SSA values). Verify the assume standalone via alive2; on success, inject as `llvm.assume` and verify the rewrite under the assume.
+- **Corpus harness (M5.4).** Test bench that runs `alive-tv-next` on every alive-tv-timeout slice in the corpus (the existing 28K-slice corpus from `extract.cpp` filtered by alive-tv `timeout` outcome). Records per-slice verdict, time, and which mechanism (catalog / hand-coded / LLM-cut-proposer / LLM-assume-proposer / fall-through) succeeded.
+- **Reproducibility scaffolding.** LLM proposals + their alive2 verdicts are logged so a run can be replayed deterministically without the LLM by reading the log.
+
+### Out of scope for Phase 5
+
+The minimum-viable LLM integration only. Defer to follow-on phases:
+
+- Structured prompt engineering / multi-shot examples / chain-of-thought.
+- Model evaluations (which model best, latency-vs-recovery curves).
+- Fine-tuning, RAG over the catalog, or multi-turn agent behavior.
+- LLM contribution to catalog discovery (mining slices for new rule shapes — a separate "rule discoverer" mode).
+
+### Deliverables
+
+| ID | Deliverable | Status |
+|----|-------------|--------|
+| M5.1 | LLM HTTP client + `--model` wiring; lazy init (no errors when unused) | ⏳ pending |
+| M5.2 | LLM cut proposer: prompt + response parsing + per-proposal alive2 verification | ⏳ pending |
+| M5.3 | LLM assume proposer: prompt + `cond` parsing + standalone-assume verification + injection | ⏳ pending |
+| M5.4 | Corpus harness: alive-tv-timeout slices → recovery-rate measurement (with and without `--model`) | ⏳ pending |
+| M5.5 | **Recovery rate ≥ 30 % on the alive-tv-timeout corpus with `--model`** | ⏳ pending |
+
+The 30 % floor is a placeholder — adjust once Phase 5 evaluation produces real numbers. The qualitative test is whether `--model` measurably extends reach beyond what hand-coded heuristics alone deliver.
+
+**Phase 5 exits** when M5.5's measurement is done and the recovery delta is positive and stable across the corpus.
+
+---
+
+## File layout
 
 The pilot's code, catalog, and tests all live under one new subdirectory inside the cloned alive2 tree. Existing alive2 files are not modified except for one line in the top-level `CMakeLists.txt` to register the new subdirectory.
 
