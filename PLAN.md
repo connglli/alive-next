@@ -14,6 +14,35 @@ The exit criterion for the pilot is binary: every example verifies. Performance 
 
 ---
 
+## Current status (updated as work lands)
+
+| Test | Phase | Mechanism | Verdict |
+|------|-------|-----------|---------|
+| `e1.srctgt.ll` | 1 | single-instr catalog dispatch | ✅ PASS |
+| `e1alt.srctgt.ll` | 1 | + add-comm catalog entry, ptrtoint identity | ✅ PASS |
+| `e2.srctgt.ll` | 2 | multi-instr group lift | ✅ PASS |
+| `varB.srctgt.ll` | 2 | multi-instr group lift | ✅ PASS |
+| `varA.srctgt.ll` | 3 | scalar assume-needed | ❌ UNSOUND (expected — no assume yet) |
+| `e4.srctgt.ll` | 3 | scalar assume-needed | ❌ length-mismatch (expected — needs assume) |
+| `e3.srctgt.ll` | 4 | vectorization + per-lane lifting | ❌ length-mismatch (expected — needs Phase 4) |
+
+**Phases 1 and 2 complete.** All four examples that fall in those phases verify end-to-end via the canonical CLI:
+
+```bash
+./alive-tv-next --disable-undef-input --smt-to=60000 path/to/foo.srctgt.ll
+```
+
+The remaining three failures are precisely the test cases targeted by Phases 3 and 4 — not regressions.
+
+Notes on the implementation as it landed:
+
+- **No catalog yet.** M2.2/M2.3 (catalog format + pattern matcher) were not strictly necessary for the test set. The pilot dispatches every cut directly to alive2's `TransformVerify::verify`. Catalog caching is a performance optimization for later.
+- **Commutativity-splitting heuristic** in `diff.cpp` replaces the catalog-aware grouping originally planned for M2.3. When walking diff positions, a position whose src/tgt have the same opcode + same operand multiset + same result name (i.e., commutativity-shaped) is split into its own group. This keeps the joint SMT formula small for `e2` (where `mul-comm` would otherwise over-group with the joint zext+sub ↔ sext+add rewrite into a SMT-hard `{3,4,5}` cut).
+- **`--dump-cuts DIR`** developer flag implemented; writes each generated cut to `<DIR>/<sanitized-name>.srctgt.ll`. Found load-bearing while diagnosing the e2 timeout.
+- **`--disable-undef-input` is required** for the test set's nsw-arithmetic cuts to verify in reasonable time. This matches alive-tv's standard usage convention.
+
+---
+
 ## The test set
 
 | # | Example | In `alive-next.md`? | Source | Mechanism(s) needed |
@@ -143,23 +172,25 @@ The **catalog** is internal infrastructure: bundled with the build, located at a
 
 ### What it needs
 
-- A new CMake target `alive-tv-next` inside `alive-next/tv-next/` that links alive2's `ir`, `smt`, `llvm_util`, and `tools` libraries.
-- `main.cpp` scaffolding modeled on `tools/alive-tv.cpp` (LLVM init, `smt_initializer`, `.ll` parsing).
-- `ir_load`: parse a `.ll` file (single file with `@src`+`@tgt`, or two `.ll` files), call `llvm_util::llvm2alive` on each function to get `IR::Function`s.
-- `diff`: pair-walk pre and post, tag each position as identical or differing. Phase 1 requires equal instruction count.
-- `cut` (single-instr): for each diff position, build a small `tools::Transform` whose `src` and `tgt` each contain one instruction with its operands lifted to function parameters and the result returned.
-- `verify`: call `TransformVerify::verify()` per cut; on `Errors::isUnsound() == false`, the cut passes.
-- `compose`: identity-compare unchanged positions (textual match modulo metadata + SSA renaming); ensure operand-dependency chain is consistent across cuts. `ptrtoint` and other casts that appear identically on both sides hit the identity path, no cut needed.
+- A `tv-next` static library at `alive-next/tv-next/` (alive2-style: parallel to `ir/`, `smt/`, `llvm_util/`, etc.) holding the diff / cut / verify / compose primitives.
+- An entry point at `tools/alive-tv-next.cpp` (parallel to `tools/alive-tv.cpp`), driving load → diff → cut → verify → compose.
+- The executable `alive-tv-next` is registered in the top-level `CMakeLists.txt` and linked against `tv-next` plus `ALIVE_LIBS_LLVM`, Z3, hiredis, and the LLVM libs (same set `alive-tv` uses).
+- `main()` scaffolding modeled on `tools/alive-tv.cpp` (LLVM init, `smt_initializer`, `.ll` parsing); inherits alive-tv's flag surface via `llvm_util/cmd_args_list.h`.
+- `tv-next/ir_load.{h,cpp}`: parse a `.ll` file (single file with `@src`+`@tgt`, or two `.ll` files), call `llvm_util::llvm2alive` on each function to get `IR::Function`s.
+- `tv-next/diff.{h,cpp}`: pair-walk pre and post, tag each position as identical or differing. Phase 1 requires equal instruction count.
+- `tv-next/cut.{h,cpp}` (single-instr): for each diff position, build a small `tools::Transform` whose `src` and `tgt` each contain one instruction with its operands lifted to function parameters and the result returned.
+- `tv-next/verify.{h,cpp}`: call `TransformVerify::verify()` per cut; on `Errors::isUnsound() == false`, the cut passes.
+- `tv-next/compose.{h,cpp}`: identity-compare unchanged positions (textual match modulo metadata + SSA renaming); ensure operand-dependency chain is consistent across cuts. `ptrtoint` and other casts that appear identically on both sides hit the identity path, no cut needed.
 
 ### Deliverables
 
-| ID | Deliverable | Effort |
+| ID | Deliverable | Status |
 |----|-------------|--------|
-| M1.1 | CMake target + `main.cpp` scaffolding + `ir_load`; loads a paired `.ll` test file end-to-end | ~1 day |
-| M1.2 | `diff` + single-instr `cut` + `verify` (per-cut `TransformVerify::verify`) | ~2 days |
-| M1.3 | `compose` (identity comparison + dependency-chain check); end-to-end CLI returns a verdict | ~1 day |
-| M1.4 | **Example 1 verifies end-to-end** | day-of validation |
-| M1.5 | **Example 1' verifies end-to-end** (same mechanism, exercises `add` commutativity and `ptrtoint` identity path) | day-of validation |
+| M1.1 | CMake targets (`tv-next` library + `alive-tv-next` executable) + `main()` scaffolding + `ir_load`; loads a paired `.ll` test file end-to-end | ✅ done |
+| M1.2 | `diff` + single-instr `cut` + `verify` (per-cut `TransformVerify::verify`) | ✅ done |
+| M1.3 | `compose` (identity comparison + dependency-chain check); end-to-end CLI returns a verdict | ✅ done |
+| M1.4 | **Example 1 verifies end-to-end** | ✅ done |
+| M1.5 | **Example 1' verifies end-to-end** (same mechanism, exercises `add` commutativity and `ptrtoint` identity path) | ✅ done |
 
 **Phase 1 exits when Examples 1 and 1' both verify.** No more, no less.
 
@@ -186,14 +217,15 @@ Source-level integration cuts the engineering load — there's no IR re-parsing 
 
 ### Deliverables
 
-| ID | Deliverable | Effort |
+| ID | Deliverable | Status |
 |----|-------------|--------|
-| M2.1 | Multi-line diff grouping logic + multi-line cut builder | ~3 days |
-| M2.2 | Catalog format + verifier; populate with the entries above | ~2 days |
-| M2.3 | Pattern matcher (single + multi-line) | ~3 days |
-| M2.4 | **Example 2 and Variant B verify end-to-end** | day-of validation |
+| M2.1 | Multi-line diff grouping logic + multi-line cut builder | ✅ done — runs of consecutive diffs become one group; `buildGroupCut` lifts a group as one Transform |
+| M2.1b | Commutativity-splitting heuristic (added during e2 diagnosis) | ✅ done — same-opcode + same-operand-multiset + same-result-name diffs get isolated groups |
+| M2.2 | Catalog format + verifier; populate with the entries above | ⏸ deferred — not needed for Phase 2 examples; the per-cut alive2 path handles them once cuts are correctly sized |
+| M2.3 | Pattern matcher (single + multi-line) | ⏸ deferred — same reason |
+| M2.4 | **Example 2 and Variant B verify end-to-end** | ✅ done |
 
-**Phase 2 exits when Examples 1, 2, and Variant B all verify.**
+**Phase 2 exits when Examples 1, 2, and Variant B all verify.** ✅ Done (e1, e1alt, e2, varB all PASS). Catalog (M2.2/M2.3) deferred — Phase 2 examples don't strictly need a catalog; the per-cut alive2 path handles them after the commutativity-splitting heuristic. Catalog will revisit as a perf optimization (caching) and as proof-template plumbing once Phase 3 lands.
 
 ---
 
@@ -220,12 +252,12 @@ The pilot's input remains a raw slice (`pre.ll` / `post.ll` or `combined.srctgt.
 
 ### Deliverables
 
-| ID | Deliverable | Effort |
+| ID | Deliverable | Status |
 |----|-------------|--------|
-| M3.1 | Catalog entries with preconditions: `freeze-drop-on-non-poison`, `add-nsw-on-no-overflow` | ~2 days |
-| M3.2 | Hand-coded assume proposers: range-from-mask, no-overflow-from-sext | ~3 days |
-| M3.3 | Assume verifier (per-assume alive2 query) + injection of `llvm.assume` into cut builders | ~2 days |
-| M3.4 | **Variant A and Example 4 verify end-to-end** | day-of validation |
+| M3.1 | Catalog entries with preconditions: `freeze-drop-on-non-poison`, `add-nsw-on-no-overflow` | ⏳ pending |
+| M3.2 | Hand-coded assume proposers: range-from-mask, no-overflow-from-sext | ⏳ pending |
+| M3.3 | Assume verifier (per-assume alive2 query) + injection of `llvm.assume` into cut builders | ⏳ pending |
+| M3.4 | **Variant A and Example 4 verify end-to-end** | ⏳ pending |
 
 **Phase 3 exits when Examples 1, 2, 4, and Variants A and B all verify.**
 
@@ -246,13 +278,13 @@ The pilot's input remains a raw slice (`pre.ll` / `post.ll` or `combined.srctgt.
 
 ### Deliverables
 
-| ID | Deliverable | Effort |
+| ID | Deliverable | Status |
 |----|-------------|--------|
-| M4.1 | Multi-side diff detection + region tagging | ~2 days |
-| M4.2 | Per-lane lifting infrastructure: walk insert/extract chains, produce per-lane scalar problems | ~4 days |
-| M4.3 | Vector-op decomposition axioms (`L_vec`) for the opcodes used in Example 3 (`sub`, `sdiv exact`) | ~1 day |
-| M4.4 | Catalog entry for the SLP vectorization template | ~2 days |
-| M4.5 | **Example 3 verifies end-to-end** | day-of validation |
+| M4.1 | Multi-side diff detection + region tagging | ⏳ pending |
+| M4.2 | Per-lane lifting infrastructure: walk insert/extract chains, produce per-lane scalar problems | ⏳ pending |
+| M4.3 | Vector-op decomposition axioms (`L_vec`) for the opcodes used in Example 3 (`sub`, `sdiv exact`) | ⏳ pending |
+| M4.4 | Catalog entry for the SLP vectorization template | ⏳ pending |
+| M4.5 | **Example 3 verifies end-to-end** | ⏳ pending |
 
 **Phase 4 exits when all six examples verify.** That's the pilot's goal.
 
@@ -266,14 +298,21 @@ The pilot's code, catalog, and tests all live under one new subdirectory inside 
 buildbench/
   extract.cpp                # existing
   optimize.sh                # existing
-  alive-next/                # cloned alive2 source (existing, untouched
-                             #   except for CMakeLists.txt one-line addition)
-    CMakeLists.txt           # add_subdirectory(tv-next) added here
+  alive-next/                # cloned alive2 source (existing, mostly untouched
+                             #   except for the CMakeLists.txt additions for
+                             #   the alive-tv-next executable + tv-next library)
+    CMakeLists.txt           # registers alive-tv-next exe + add_subdirectory(tv-next)
     ir/, smt/, llvm_util/,
-    tools/, tv/, ...         # existing alive2 sources
-    tv-next/                 # NEW — pilot's everything (flat layout, alive2 style)
-      CMakeLists.txt
-      main.cpp               # CLI entry point
+    util/, tv/, ...          # existing alive2 source libraries
+    tools/                   # existing alive2 entry points + alive-tv-next.cpp
+      alive-tv.cpp           # upstream
+      alive-tv-next.cpp      # NEW — alive-next entry point, parallel to alive-tv.cpp;
+                             #   wires load → diff → cut → verify → compose; inherits
+                             #   alive-tv's flag surface via cmd_args_list.h
+      ...                    # other upstream tool sources
+    tv-next/                 # NEW library (parallel to ir/, smt/, llvm_util/, …);
+                             #   flat layout, alive2 style.
+      CMakeLists.txt         # builds the static library `tv-next`
       ir_load.{h,cpp}        # LLVM .ll loading + llvm2alive invocation
       diff.{h,cpp}           # pairing + diff (per-line, multi-line, multi-side)
       cut.{h,cpp}            # cut lifting → small IR::Function pairs
@@ -386,8 +425,8 @@ That pulls in `--smt-to`, `--disable-undef-input`, `--disable-poison-input`, `--
 | `tools::Transform` | src/tgt pair + optional precondition | `cut.cpp`, `assume.cpp` |
 | `tools::TransformVerify::verify()` | run a refinement check, return `util::Errors` | `verify.cpp`, `assume.cpp` |
 | `IR::Predicate` | first-class precondition object | `assume.cpp` |
-| `smt::smt_initializer` | SMT context lifecycle | `main.cpp` |
-| `llvm_util::Verifier` | high-level reference path used by `alive-tv.cpp` | `main.cpp` (model only) |
+| `smt::smt_initializer` | SMT context lifecycle | `tools/alive-tv-next.cpp` |
+| `llvm_util::Verifier` | high-level reference path used by `alive-tv.cpp` | `tools/alive-tv-next.cpp` (model only) |
 
 `tools/alive-tv.cpp` is the closest reference — `alive-tv-next` follows the same `main()` scaffolding (LLVM init, `smt_initializer`, parse `.ll`, iterate functions) but invokes the diff / cut / verify pipeline instead of a single whole-function `compareFunctions`.
 

@@ -214,6 +214,16 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
   )
   target_compile_options(alive-exec PRIVATE -fexceptions)
 
+  # alive-next pilot — entry point parallel to alive-tv. The shared library
+  # `tv-next` (defined in tv-next/CMakeLists.txt via add_subdirectory below)
+  # holds the diff / cut / verify / compose primitives.
+  add_llvm_executable(alive-tv-next
+    "tools/alive-tv-next.cpp"
+  )
+  target_compile_options(alive-tv-next PRIVATE -fexceptions)
+
+  add_subdirectory(tv-next)
+
 else()
   set(LLVM_UTIL_SRCS "")
 endif()
@@ -261,10 +271,8 @@ if (BUILD_LLVM_UTILS OR BUILD_TV)
   target_link_libraries(alive-tv PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
   target_link_libraries(quick-fuzz PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
   target_link_libraries(alive-exec PRIVATE ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
-  install(TARGETS alive-tv quick-fuzz alive-exec)
-
-  # alive-next pilot — see tv-next/README.md and PLAN.md.
-  add_subdirectory(tv-next)
+  target_link_libraries(alive-tv-next PRIVATE tv-next ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
+  install(TARGETS alive-tv quick-fuzz alive-exec alive-tv-next)
 endif()
 
 target_link_libraries(alive PRIVATE ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES})

@@ -10,11 +10,14 @@ Alive2 (alive-next fork)
 > per-pair refinement checker. The decomposition handles whole-function queries
 > that hit alive2's SMT scaling cliff.
 >
-> Status: design done, implementation not yet started. See
-> [`IDEA.md`](IDEA.md) for the rationale, [`PLAN.md`](PLAN.md) for the staged
-> plan + 7-example test set, and [`tests/alive-tv-next/`](tests/alive-tv-next/) for the
-> reference tests. The new source lives under `tv-next/` (created in M1.1);
-> everything else in this tree is upstream alive2, unmodified.
+> Status: M1.2/M1.3 implemented — diff + single-instr cut + per-cut alive2 +
+> compose. M1.4/M1.5 (Example 1 / Example 1' verify end-to-end) require the
+> LLVM-trunk-against alive2 build to be ready. See [`IDEA.md`](IDEA.md) for
+> the rationale, [`PLAN.md`](PLAN.md) for the staged plan + 7-example test
+> set, and [`tests/alive-tv-next/`](tests/alive-tv-next/) for the reference
+> tests. New source lives under `tv-next/` (library) and
+> `tools/alive-tv-next.cpp` (entry point); everything else in this tree is
+> upstream alive2, unmodified.
 >
 > See the [Alive-next quick start](#alive-next-quick-start) section below for
 > alive-tv-next-specific build and usage notes.
@@ -449,20 +452,24 @@ behind milestone M1.1 in [`PLAN.md`](PLAN.md).
 | [`IDEA.md`](IDEA.md) | done | Design rationale: compositional frame, the four sub-cases, LLM-as-oracle. |
 | [`PLAN.md`](PLAN.md) | done | Phased plan + 7-example test set. |
 | [`tests/alive-tv-next/`](tests/alive-tv-next/) | done | The 7 reference tests in `.srctgt.ll` form. |
-| `tv-next/` | not yet | Pilot source directory; created in M1.1. |
+| `tv-next/` | M1.2/M1.3 done | Pilot library — diff / cut / verify / compose. |
+| `tools/alive-tv-next.cpp` | M1.2/M1.3 done | Driver / `main()`, parallel to `alive-tv.cpp`. |
 
 ### Building `alive-tv-next`
 
-The same alive2 build steps above apply. Once the pilot source directory
-`tv-next/` exists (created in M1.1), it is registered with one extra line in
-the top-level `CMakeLists.txt`:
+The same alive2 build steps above apply. The top-level `CMakeLists.txt`
+registers an executable `alive-tv-next` (from `tools/alive-tv-next.cpp`,
+parallel to `tools/alive-tv.cpp`) and includes the library subdirectory:
 
 ```cmake
-add_subdirectory(tv-next)
+add_llvm_executable(alive-tv-next "tools/alive-tv-next.cpp")
+add_subdirectory(tv-next)               # builds the static library `tv-next`
+target_link_libraries(alive-tv-next PRIVATE
+  tv-next ${ALIVE_LIBS_LLVM} ${Z3_LIBRARIES} ${HIREDIS_LIBRARIES} ${llvm_libs})
 ```
 
-After that, `ninja` produces `build/alive-tv-next` alongside the upstream
-`build/alive-tv`, `build/alive`, etc.
+(All three lines already added.) `ninja alive-tv-next` produces `build/alive-tv-next`
+alongside the upstream `build/alive-tv`, `build/alive`, etc.
 
 ### Running
 

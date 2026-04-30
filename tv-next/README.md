@@ -1,34 +1,34 @@
 # tv-next
 
-Alive-next's compositional translation validator. Pilot source lives here.
+Alive-next's compositional translation validator — **library**, parallel to alive2's `ir/`, `smt/`, `llvm_util/`, etc. Holds the diff / cut / verify / compose primitives consumed by the `alive-tv-next` driver (whose `main()` lives in `tools/alive-tv-next.cpp`, parallel to `tools/alive-tv.cpp`).
 
-**Status:** M1.1 stub — CMake target wired, links against alive2's libraries, prints a usage message. The actual verification pipeline (diff / cut / per-cut alive2 / compose) lands in M1.2 onward.
+**Status:** M1.2/M1.3 — diff + single-instr cut + per-cut alive2 + compose are implemented. M1.4/M1.5 (Example 1 + Example 1' verify end-to-end) require the LLVM-trunk-against alive2 build to be ready.
 
 See [`../PLAN.md`](../PLAN.md) for the staged plan and [`../IDEA.md`](../IDEA.md) for the design rationale.
 
 ## Layout
 
-Flat, matching alive2's per-directory style (cf. `tools/`, `ir/`, `smt/`,
-`llvm_util/`, `tv/` — each a flat directory with `.cpp` / `.h` files
-directly inside).
+Flat, matching alive2's per-library-directory style:
 
 ```
 tv-next/
-  CMakeLists.txt    # registered via add_subdirectory(tv-next) in the
-                    #   top-level CMakeLists.txt; see comments inside for
-                    #   what alive2-side variables it expects.
-  main.cpp          # CLI entry point. Currently a stub; future
-                    #   milestones add ir_load.{h,cpp}, diff.{h,cpp},
-                    #   cut.{h,cpp}, match.{h,cpp}, assume.{h,cpp},
-                    #   verify.{h,cpp}, compose.{h,cpp} alongside it.
+  CMakeLists.txt    # builds static library `tv-next`; registered via
+                    #   add_subdirectory(tv-next) in the top-level CMakeLists.
+  ir_load.{h,cpp}   # parse .ll → llvm::Module + @src/@tgt llvm::Functions
+  diff.{h,cpp}      # per-line structural diff over single-BB equal-length functions
+  cut.{h,cpp}       # single-instr cut builder (lift to small @src/@tgt pair)
+  verify.{h,cpp}    # per-cut alive2 dispatch via TransformVerify::verify
+  compose.{h,cpp}   # aggregate per-cut verdicts into slice-level verdict
   README.md         # this file
 ```
 
+The driver / `main()` lives at [`../tools/alive-tv-next.cpp`](../tools/alive-tv-next.cpp), one level up. That file is registered as the executable target `alive-tv-next` in the top-level `CMakeLists.txt`, linked against this library plus alive2's `ALIVE_LIBS_LLVM`, Z3, hiredis, and the LLVM libs.
+
+Header includes follow alive2's convention: `#include "tv-next/ir_load.h"` from any consumer (project root is on the include path).
+
 ## Building
 
-This subdirectory is built as part of the standard alive2 build, gated on
-`BUILD_LLVM_UTILS` (or `BUILD_TV`). Once the parent `CMakeLists.txt` has
-`add_subdirectory(tv-next)`:
+Built as part of the standard alive2 build, gated on `BUILD_LLVM_UTILS` (or `BUILD_TV`). The library `tv-next` and the executable `alive-tv-next` are both registered automatically:
 
 ```bash
 cd alive-next
@@ -41,27 +41,18 @@ ninja alive-tv-next
 
 ## Running
 
-The stub accepts the target CLI shape but does no verification yet:
-
 ```bash
 ./alive-tv-next pre.ll post.ll
 ./alive-tv-next combined.srctgt.ll
 ./alive-tv-next combined.srctgt.ll --model gpt-4o      # later phases (LLM)
+./alive-tv-next combined.srctgt.ll --verbose           # per-cut verdicts
 ```
 
-Input is a raw slice. Assumes (when needed for Phase 3+ rewrites) are
-derived internally — `alive-tv-next` walks the slice, the hand-coded
-proposer (or LLM, when `--model` is set) emits a candidate `cond`, alive2
-verifies it standalone, and `alive-tv-next` injects `llvm.assume(cond)`
-into the per-cut Transform.
+Input is a raw slice. Assumes (when needed for Phase 3+ rewrites) are derived internally — `alive-tv-next` walks the slice, the hand-coded proposer (or LLM, when `--model` is set) emits a candidate `cond`, alive2 verifies it standalone, and `alive-tv-next` injects `llvm.assume(cond)` into the per-cut Transform.
 
-The catalog of pre-verified rewrite templates is bundled with the binary
-(installed under `${install_prefix}/share/alive-tv-next/catalog/`) — no
-user-facing catalog flag. All of `alive-tv`'s flags (`--smt-to`,
-`--disable-undef-input`, `--src-fn`, `--tgt-fn`, …) are inherited.
+The catalog of pre-verified rewrite templates is bundled with the binary (installed under `${install_prefix}/share/alive-tv-next/catalog/`) — no user-facing catalog flag. All of `alive-tv`'s flags (`--smt-to`, `--disable-undef-input`, `--src-fn`, `--tgt-fn`, …) are inherited.
 
-Returns 0 (clean exit) regardless of input — the return code does **not**
-indicate a verification verdict at this stage.
+On success, prints `Transformation seems to be correct!` and returns 0; on failure prints a per-cut error summary and returns 1.
 
 ## Reference tests
 
@@ -71,7 +62,6 @@ Seven `.srctgt.ll` test files live under [`../tests/alive-tv-next/`](../tests/al
 
 Per [`../PLAN.md`](../PLAN.md):
 
-- **M1.2** — IR loading (`ir_load`) + per-line diff (`diff`) + single-instr cut builder (`cut`) + per-cut `TransformVerify::verify` dispatch.
-- **M1.3** — Composition checker (identity comparison + dependency-chain check).
-- **M1.4** — Example 1 verifies end-to-end.
-- **M1.5** — Example 1' verifies end-to-end.
+- **M1.4** — Example 1 verifies end-to-end. (Pending LLVM-trunk-against alive2 build.)
+- **M1.5** — Example 1' verifies end-to-end (same mechanism, exercises `add` commutativity + `ptrtoint` identity path).
+- **Phase 2 onward** — adds `match.{h,cpp}` (catalog), and later `assume.{h,cpp}` and `lift_lane.{h,cpp}` here.
