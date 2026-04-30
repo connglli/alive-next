@@ -104,46 +104,102 @@ std::optional<DiffResult> computeDiff(llvm::Function &src,
     if (!I.isTerminator())
       tgt_insts.push_back(&I);
 
-  if (src_insts.size() != tgt_insts.size()) {
-    llvm::errs() << "alive-tv-next: Phase 1 requires equal instruction count; "
-                 << "@" << src.getName() << " has " << src_insts.size() << ", "
-                 << "@" << tgt.getName() << " has " << tgt_insts.size() << "\n";
-    return std::nullopt;
-  }
-
   DiffResult result;
-  DiffGroup current;
 
-  auto flush_group = [&]() {
-    if (!current.positions.empty()) {
-      result.groups.push_back(std::move(current));
-      current = DiffGroup{};
-    }
-  };
+  if (src_insts.size() == tgt_insts.size()) {
+    // ── Equal-count path (Phase 1/2): position-by-position pairing ──────────
+    DiffGroup current;
+    auto flush_group = [&]() {
+      if (!current.positions.empty()) {
+        result.groups.push_back(std::move(current));
+        current = DiffGroup{};
+      }
+    };
 
-  for (size_t i = 0; i < src_insts.size(); ++i) {
-    if (instAsText(*src_insts[i]) == instAsText(*tgt_insts[i])) {
-      ++result.identical_count;
-      flush_group();
-      continue;
-    }
+    for (size_t i = 0; i < src_insts.size(); ++i) {
+      if (instAsText(*src_insts[i]) == instAsText(*tgt_insts[i])) {
+        ++result.identical_count;
+        flush_group();
+        continue;
+      }
 
-    // Commutativity-shaped diffs get their own group: they don't depend
-    // on neighboring rewrites' value-changes (the result is the same value
-    // by commutativity), so isolating them keeps the joint cut's SMT
-    // query small.
-    if (isLikelyCommutativity(src_insts[i], tgt_insts[i])) {
-      flush_group();
+      // Commutativity-shaped diffs get their own group: they don't depend
+      // on neighboring rewrites' value-changes (the result is the same value
+      // by commutativity), so isolating them keeps the joint cut's SMT
+      // query small.
+      if (isLikelyCommutativity(src_insts[i], tgt_insts[i])) {
+        flush_group();
+        current.positions.push_back(
+            DiffPosition{i, src_insts[i], tgt_insts[i]});
+        flush_group();
+        continue;
+      }
+
       current.positions.push_back(
           DiffPosition{i, src_insts[i], tgt_insts[i]});
-      flush_group();
-      continue;
     }
+    flush_group();
 
-    current.positions.push_back(
-        DiffPosition{i, src_insts[i], tgt_insts[i]});
+  } else {
+    // ── Multi-side path (Phase 4): unequal instruction counts ───────────────
+    //
+    // Walk src and tgt in lockstep while pairs are structurally aligned:
+    //   (a) Textually identical → counted as an identical position.
+    //   (b) Both named with the same SSA name → treat as a paired diff at
+    //       the same semantic position; emit as a standard DiffGroup with
+    //       commutativity-splitting applied as usual.
+    // The first pair that breaks both conditions starts the multi-side
+    // region: all remaining instructions on each side are gathered into one
+    // multi-side DiffGroup.
+    DiffGroup paired_current;
+    auto flush_paired = [&]() {
+      if (!paired_current.positions.empty()) {
+        result.groups.push_back(std::move(paired_current));
+        paired_current = DiffGroup{};
+      }
+    };
+
+    size_t si = 0, ti = 0;
+    for (; si < src_insts.size() && ti < tgt_insts.size(); ++si, ++ti) {
+      llvm::Instruction *s = src_insts[si];
+      llvm::Instruction *t = tgt_insts[ti];
+
+      if (instAsText(*s) == instAsText(*t)) {
+        ++result.identical_count;
+        flush_paired();
+        continue;
+      }
+
+      // Same non-empty SSA result name → semantically paired diff position.
+      if (s->hasName() && t->hasName() && s->getName() == t->getName()) {
+        if (isLikelyCommutativity(s, t)) {
+          flush_paired();
+          paired_current.positions.push_back(DiffPosition{si, s, t});
+          flush_paired();
+        } else {
+          paired_current.positions.push_back(DiffPosition{si, s, t});
+        }
+        continue;
+      }
+
+      // Structural divergence: start multi-side region from here.
+      break;
+    }
+    flush_paired();
+
+    // Remaining src[si..] and tgt[ti..] form the multi-side region.
+    if (si < src_insts.size() || ti < tgt_insts.size()) {
+      DiffGroup ms;
+      ms.is_multi_side = true;
+      ms.src_start_idx = si;
+      ms.tgt_start_idx = ti;
+      for (size_t i = si; i < src_insts.size(); ++i)
+        ms.src_region.push_back(src_insts[i]);
+      for (size_t i = ti; i < tgt_insts.size(); ++i)
+        ms.tgt_region.push_back(tgt_insts[i]);
+      result.groups.push_back(std::move(ms));
+    }
   }
-  flush_group();
 
   // Terminators must match. We don't cut over them, but a disagreement
   // would be a soundness issue worth surfacing.

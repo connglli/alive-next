@@ -145,12 +145,106 @@ llvm::Instruction *buildGroupHalf(
   return exit;
 }
 
+// Build a cut from a multi-side DiffGroup. The src_region and tgt_region
+// may have different lengths. External operands are unioned by SSA name
+// across both sides; the cut exits at the last instruction on each side
+// (which must share a type).
+std::optional<Cut> buildMultiSideCut(const DiffGroup &group,
+                                     llvm::Module &parent_module,
+                                     llvm::LLVMContext &ctx,
+                                     const std::string &diag_name) {
+  const auto &src_insts = group.src_region;
+  const auto &tgt_insts = group.tgt_region;
+
+  if (src_insts.empty() || tgt_insts.empty()) {
+    llvm::errs() << "alive-tv-next: " << diag_name
+                 << " — multi-side region has empty src or tgt\n";
+    return std::nullopt;
+  }
+  for (auto *I : src_insts) {
+    if (I->isTerminator()) {
+      llvm::errs() << "alive-tv-next: " << diag_name
+                   << " — cannot lift a terminator in src region\n";
+      return std::nullopt;
+    }
+  }
+  for (auto *I : tgt_insts) {
+    if (I->isTerminator()) {
+      llvm::errs() << "alive-tv-next: " << diag_name
+                   << " — cannot lift a terminator in tgt region\n";
+      return std::nullopt;
+    }
+  }
+
+  llvm::Type *result_ty = src_insts.back()->getType();
+  if (result_ty->isVoidTy()) {
+    llvm::errs() << "alive-tv-next: " << diag_name
+                 << " — src region exit has void result type\n";
+    return std::nullopt;
+  }
+  if (tgt_insts.back()->getType() != result_ty) {
+    llvm::errs() << "alive-tv-next: " << diag_name
+                 << " — src and tgt region exit types differ\n";
+    return std::nullopt;
+  }
+
+  std::set<llvm::Instruction *> src_internal(src_insts.begin(),
+                                             src_insts.end());
+  std::set<llvm::Instruction *> tgt_internal(tgt_insts.begin(),
+                                             tgt_insts.end());
+
+  auto src_externals = collectExternalOperands(src_insts, src_internal);
+  if (!src_externals)
+    return std::nullopt;
+  auto tgt_externals = collectExternalOperands(tgt_insts, tgt_internal);
+  if (!tgt_externals)
+    return std::nullopt;
+
+  auto unioned = unionNamedOperands(*src_externals, *tgt_externals);
+  if (!unioned)
+    return std::nullopt;
+
+  Cut cut;
+  cut.name = diag_name;
+  cut.module = std::make_unique<llvm::Module>("cut", ctx);
+  cut.module->setDataLayout(parent_module.getDataLayout());
+  cut.module->setTargetTriple(parent_module.getTargetTriple());
+
+  std::vector<llvm::Type *> param_types;
+  param_types.reserve(unioned->size());
+  for (const auto &p : *unioned)
+    param_types.push_back(p.second);
+  llvm::FunctionType *fn_ty =
+      llvm::FunctionType::get(result_ty, param_types, /*isVarArg=*/false);
+
+  cut.src_fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
+                                      "src", cut.module.get());
+  cut.tgt_fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
+                                      "tgt", cut.module.get());
+
+  std::map<std::string, llvm::Argument *> src_name_to_param, tgt_name_to_param;
+  for (size_t i = 0; i < unioned->size(); ++i) {
+    cut.src_fn->getArg(i)->setName((*unioned)[i].first);
+    cut.tgt_fn->getArg(i)->setName((*unioned)[i].first);
+    src_name_to_param[(*unioned)[i].first] = cut.src_fn->getArg(i);
+    tgt_name_to_param[(*unioned)[i].first] = cut.tgt_fn->getArg(i);
+  }
+
+  buildGroupHalf(src_insts, cut.src_fn, src_name_to_param, src_internal);
+  buildGroupHalf(tgt_insts, cut.tgt_fn, tgt_name_to_param, tgt_internal);
+
+  return cut;
+}
+
 }  // namespace
 
 std::optional<Cut> buildGroupCut(const DiffGroup &group,
                                  llvm::Module &parent_module,
                                  llvm::LLVMContext &ctx,
                                  const std::string &diag_name) {
+  if (group.is_multi_side)
+    return buildMultiSideCut(group, parent_module, ctx, diag_name);
+
   if (group.positions.empty()) {
     llvm::errs() << "alive-tv-next: " << diag_name << " — empty group\n";
     return std::nullopt;

@@ -23,16 +23,16 @@ The exit criterion for the pilot is binary: every example verifies. Performance 
 | `e2.srctgt.ll` | 2 | multi-instr group lift | ✅ PASS |
 | `varB.srctgt.ll` | 2 | multi-instr group lift | ✅ PASS |
 | `varA.srctgt.ll` | 3 | scalar assume + `tryNoOverflowMulFromExt` proposer | ✅ PASS |
-| `e4.srctgt.ll` | 3+5 | freeze drop + range-from-mask proposer | ❌ length-mismatch (gated on Phase 4 diff + Phase 5 range analysis) |
-| `e3.srctgt.ll` | 4 | vectorization + per-lane lifting | ❌ length-mismatch (gated on Phase 4) |
+| `e4.srctgt.ll` | 3+5 | freeze drop + range-from-mask proposer | ❌ timeout (Phase 5 range-analysis proposer needed) |
+| `e3.srctgt.ll` | 4 | multi-side diff + single alive2 call on full vector region | ✅ PASS |
 
-**Phases 1, 2, and 3 (Variant A) complete.** Five of the seven examples verify end-to-end via the canonical CLI:
+**Phases 1–4 complete.** Six of the seven examples verify end-to-end via the canonical CLI:
 
 ```bash
 ./alive-tv-next --disable-undef-input --smt-to=60000 path/to/foo.srctgt.ll
 ```
 
-The remaining two failures (`e3`, `e4`) are precisely the test cases targeted by Phases 4 and 5 — not regressions.
+The one remaining failure (`e4`) is the Phase 5 milestone — not a regression.
 
 Notes on the implementation as it landed:
 
@@ -40,6 +40,10 @@ Notes on the implementation as it landed:
 - **Commutativity-splitting heuristic** in `diff.cpp` replaces the catalog-aware grouping originally planned for M2.3. When walking diff positions, a position whose src/tgt have the same opcode + same operand multiset + same result name (i.e., commutativity-shaped) is split into its own group. This keeps the joint SMT formula small for `e2` (where `mul-comm` would otherwise over-group with the joint zext+sub ↔ sext+add rewrite into a SMT-hard `{3,4,5}` cut).
 - **`--dump-cuts DIR`** developer flag implemented; writes each generated cut to `<DIR>/<sanitized-name>.srctgt.ll`. Found load-bearing while diagnosing the e2 timeout.
 - **`--disable-undef-input` is required** for the test set's nsw-arithmetic cuts to verify in reasonable time. This matches alive-tv's standard usage convention.
+- **Multi-side diff** (Phase 4) added to `diff.cpp`: unequal-count functions are handled by walking the prefix in lockstep (identical positions and same-named paired diffs extracted as normal groups), then gathering the remaining tail on each side into one multi-side `DiffGroup`. `cut.cpp` builds the multi-side cut via `buildMultiSideCut`, reusing the existing `buildGroupHalf` / external-operand-union logic.
+- **Per-lane lifting was not needed for e3.** The multi-side cut for e3's vector region is handed directly to alive2, which verifies it in one shot — insertelement / extractelement / vector-sdiv reasoning is within Z3's reach at 60 s. Per-lane lifting (M4.2–M4.4) remains available as a future performance optimization if the direct path times out on larger vector regions.
+- **`--tv-verbose`** flag (renamed from `--alive-tv-next-verbose`). Multi-side groups are counted separately in the summary line, e.g. `2 group(s) (1 multi-side)`.
+- **`--dump-cuts` now also dumps proposer-internal cuts** (modified cut + assume-check) when a proposer fires, to `<dir>/<name>+assume.srctgt.ll` and `<dir>/<name>/assume-check.srctgt.ll`.
 
 ---
 
@@ -265,30 +269,31 @@ The pilot's input remains a raw slice (`pre.ll` / `post.ll` or `combined.srctgt.
 
 ---
 
-## Phase 4 — multi-side + per-lane lifting (Example 3)
+## Phase 4 — multi-side diff + direct alive2 verification (Example 3)
 
 **Targets:** Example 3.
 
 ### What it adds
 
-- **Multi-side diff.** Detect cases where the pre-side and post-side have different instruction counts in the changed region. Tag the entire region as one "multi-side cut" rather than trying to align positions.
-- **Per-lane lifting.** Recognize a vector-op group (post-side of Example 3) and decompose it into N per-lane scalar equivalence problems. Requires:
-  - A list of vector-op decomposition axioms (`L_vec` from Example 3) — one per opcode kind, hand-written and verified once.
-  - Logic to walk the insertelement / vector-op / extractelement chain and produce per-lane scalar IR.
-- **Poison-flow assume.** Example 3's `A_lane0` (lane 0 of `<poison, 0>` is overwritten before any read) — articulated as a Phase 3-style assume on the insertelement chain.
-- **Multi-side cut dispatch.** Match a multi-side cut against catalog "vectorization templates" — entries that say "N scalar instructions on the LHS ≡ M vector instructions on the RHS, modulo per-lane lifting."
+- **Multi-side diff** (`diff.cpp`). Walk the prefix of src and tgt in lockstep: textually identical pairs become identical positions; pairs with the same non-empty SSA result name but different text become standard (equal-count) DiffGroups with commutativity-splitting applied as usual. The first pair where neither condition holds breaks lockstep; everything remaining on each side is collected into one multi-side `DiffGroup` (`is_multi_side = true`, `src_region`, `tgt_region`).
+- **Multi-side cut builder** (`cut.cpp`). `buildGroupCut` dispatches to `buildMultiSideCut` for multi-side groups. `buildMultiSideCut` reuses `collectExternalOperands` / `unionNamedOperands` / `buildGroupHalf` — the cut function parameters are the union of external operands across both region sides; the cut returns the last instruction's value on each side (which must share a type).
+- **Direct alive2 verification.** The multi-side cut is handed directly to `verifyCut` — no per-lane lifting or catalog template matching needed. For e3, alive2 verifies the full insert/extract/vector-sdiv region in one shot at the standard 60 s timeout.
+
+### What was not needed
+
+Per-lane lifting (M4.2–M4.4) was planned as a decomposition strategy for cases where alive2 would time out on the full vector region. In practice, alive2's insert/extract/sdiv reasoning is fast enough on e3's 2-lane `<2 x i64>` region. The infrastructure for per-lane lifting is therefore deferred — it remains available as a future performance optimization if larger vector regions appear in the corpus.
 
 ### Deliverables
 
 | ID | Deliverable | Status |
 |----|-------------|--------|
-| M4.1 | Multi-side diff detection + region tagging | ⏳ pending |
-| M4.2 | Per-lane lifting infrastructure: walk insert/extract chains, produce per-lane scalar problems | ⏳ pending |
-| M4.3 | Vector-op decomposition axioms (`L_vec`) for the opcodes used in Example 3 (`sub`, `sdiv exact`) | ⏳ pending |
-| M4.4 | Catalog entry for the SLP vectorization template | ⏳ pending |
-| M4.5 | **Example 3 verifies end-to-end** | ⏳ pending |
+| M4.1 | Multi-side diff detection + region tagging in `diff.{h,cpp}` | ✅ done |
+| M4.2 | Multi-side cut builder in `cut.cpp` | ✅ done |
+| M4.3 | **Example 3 verifies end-to-end** | ✅ done |
+| M4.4 | Per-lane lifting infrastructure (walk insert/extract chains, per-lane scalar problems) | ⏸ deferred — not needed for e3; revisit if corpus surfaces larger vector regions that time out |
+| M4.5 | Catalog / vectorization-template entry for the SLP pattern | ⏸ deferred — same reason |
 
-**Phase 4 exits when Example 3 verifies and the multi-side / length-mismatch diff path is in place.** Example 4 still needs Phase 5's range analysis on top.
+**Phase 4 exits when Example 3 verifies.** ✅ Done.
 
 ---
 
@@ -329,9 +334,9 @@ The single load-bearing invariant: **the analysis never decides soundness.** Eve
 | M5.1 | `tv-next/range.{h,cpp}` covering the ops above; cut-local scope; no public API | ⏳ pending |
 | M5.2 | `tryFreezeDropFromRange` proposer (range-from-mask case is the entry point) | ⏳ pending |
 | M5.3 | Generalize `tryNoOverflowMulFromExt` → `tryNoOverflowMul` consulting the range analysis | ⏳ pending |
-| M5.4 | **Example 4 verifies end-to-end** (also depends on Phase 4's length-mismatch diff) | ⏳ pending |
+| M5.4 | **Example 4 verifies end-to-end** (Phase 4's multi-side diff is already in place; only the range-analysis proposer is missing) | ⏳ pending |
 
-**Phase 5 exits when Example 4 verifies (combined with Phase 4) and the range-analysis-backed proposers demonstrably extend reach beyond Phase 3's shape-only matchers on a small set of corpus slices.**
+**Phase 5 exits when Example 4 verifies and the range-analysis-backed proposers demonstrably extend reach beyond Phase 3's shape-only matchers on a small set of corpus slices.**
 
 ---
 

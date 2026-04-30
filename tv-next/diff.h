@@ -40,10 +40,31 @@ struct DiffPosition {
 
 // A run of consecutive diff positions, sorted ascending by inst_idx.
 // Positions in the same group are lifted together into one cut and
-// verified jointly. The group's "exit" instruction is `positions.back()`
-// — its value type is the cut's return type.
+// verified jointly.
+//
+// Two shapes:
+//
+//   Equal-count group (is_multi_side == false):
+//     `positions` is non-empty; src and tgt have the same number of
+//     differing instructions in the run. The group's exit instruction is
+//     `positions.back()`; its value type is the cut's return type.
+//
+//   Multi-side group (is_multi_side == true):
+//     `positions` is empty. `src_region` and `tgt_region` hold the full
+//     instruction lists for each side of the changed region (possibly
+//     different lengths). The cut exits at `src_region.back()` /
+//     `tgt_region.back()` — the last instruction on each side (must share
+//     a type). `src_start_idx` / `tgt_start_idx` are 0-based indices into
+//     the parent function's non-terminator instruction list, for
+//     diagnostics only.
 struct DiffGroup {
   std::vector<DiffPosition> positions;
+
+  bool is_multi_side = false;
+  std::vector<llvm::Instruction *> src_region;
+  std::vector<llvm::Instruction *> tgt_region;
+  size_t src_start_idx = 0;
+  size_t tgt_start_idx = 0;
 };
 
 struct DiffResult {

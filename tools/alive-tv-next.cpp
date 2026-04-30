@@ -179,12 +179,18 @@ ALIVE_NEXT_LLM_API_KEY env var, endpoint via ALIVE_NEXT_LLM_BASE_URL.
     return 1;
   }
   if (opt_alive_tv_next_verbose) {
-    size_t total_diffs = 0;
-    for (const auto &g : diff->groups) total_diffs += g.positions.size();
+    size_t total_diffs = 0, multi_side_groups = 0;
+    for (const auto &g : diff->groups) {
+      if (g.is_multi_side) ++multi_side_groups;
+      else total_diffs += g.positions.size();
+    }
     *out << "alive-tv-next: " << diff->identical_count
          << " identical position(s), " << total_diffs
          << " diff position(s) across " << diff->groups.size()
-         << " group(s)\n";
+         << " group(s)";
+    if (multi_side_groups)
+      *out << " (" << multi_side_groups << " multi-side)";
+    *out << "\n";
   }
 
   // Build and verify each group as a single Transform.
@@ -192,10 +198,18 @@ ALIVE_NEXT_LLM_API_KEY env var, endpoint via ALIVE_NEXT_LLM_BASE_URL.
   verdicts.reserve(diff->groups.size());
 
   for (const alive_tv_next::DiffGroup &group : diff->groups) {
-    // Diagnostic name: cut@iN for a single-position group, cut@iN..iM for
-    // a multi-position one.
+    // Diagnostic name.
     std::string diag_name;
-    if (group.positions.size() == 1) {
+    if (group.is_multi_side) {
+      diag_name = "cut@src-i" + std::to_string(group.src_start_idx);
+      if (!group.src_region.empty())
+        diag_name += "..i" + std::to_string(group.src_start_idx +
+                                             group.src_region.size() - 1);
+      diag_name += "/tgt-i" + std::to_string(group.tgt_start_idx);
+      if (!group.tgt_region.empty())
+        diag_name += "..i" + std::to_string(group.tgt_start_idx +
+                                             group.tgt_region.size() - 1);
+    } else if (group.positions.size() == 1) {
       diag_name = "cut@i" + std::to_string(group.positions.front().inst_idx);
       if (group.positions.front().src_inst->hasName())
         diag_name +=
