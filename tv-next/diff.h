@@ -9,8 +9,8 @@
 // Phase 2 (M2.1):
 //   - Diff positions are grouped into runs of *consecutive* diffs. An
 //     identical position breaks a run. A 1-position region recovers Phase
-//     1's single-instr-cut behaviour; multi-position regions are lifted
-//     jointly into one TvUnit (see cut.h, buildTvUnit).
+//     1's single-instr-unit behaviour; multi-position regions are lifted
+//     jointly into one TvUnit (see unit.h, buildTvUnit).
 //
 // Multi-BB and asymmetric (different src/tgt instruction counts) cases land
 // in later phases.
@@ -33,7 +33,7 @@ struct DiffPosition {
   size_t inst_idx;
 
   // The differing instructions. Pointers into the loaded modules; valid
-  // for the lifetime of the LoadedSlice that produced them.
+  // for the lifetime of the LoadedSrcTgt that produced them.
   llvm::Instruction *src_inst;
   llvm::Instruction *tgt_inst;
 };

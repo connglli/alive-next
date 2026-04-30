@@ -154,8 +154,8 @@ ALIVE_NEXT_LLM_API_KEY env var, endpoint via ALIVE_NEXT_LLM_BASE_URL.
   llvm::cl::ParseCommandLineOptions(argc, argv, usage);
 
   // Load the slice.
-  auto loaded = alive_tv_next::loadSlice(opt_file1, opt_file2, opt_src_fn,
-                                         opt_tgt_fn, Context);
+  auto loaded = alive_tv_next::loadSrcTgt(opt_file1, opt_file2, opt_src_fn,
+                                          opt_tgt_fn, Context);
   if (!loaded) {
     return 1;
   }
@@ -198,7 +198,7 @@ ALIVE_NEXT_LLM_API_KEY env var, endpoint via ALIVE_NEXT_LLM_BASE_URL.
   }
 
   // Build and verify each region as a single TvUnit.
-  std::vector<alive_tv_next::CutVerdict> verdicts;
+  std::vector<alive_tv_next::UnitVerdict> verdicts;
   verdicts.reserve(diff->regions.size());
 
   for (const alive_tv_next::DiffRegion &region : diff->regions) {
@@ -227,10 +227,10 @@ ALIVE_NEXT_LLM_API_KEY env var, endpoint via ALIVE_NEXT_LLM_BASE_URL.
                                            diag_name);
     if (!unit) {
       // Build failure: surface as a failed verdict so the slice fails cleanly.
-      alive_tv_next::CutVerdict v;
+      alive_tv_next::UnitVerdict v;
       v.name = diag_name;
       v.passed = false;
-      v.status = alive_tv_next::CutVerdict::Status::Error;
+      v.status = alive_tv_next::UnitVerdict::Status::Error;
       v.error_message = "could not lift region into a TvUnit";
       verdicts.push_back(std::move(v));
       continue;
@@ -266,8 +266,8 @@ ALIVE_NEXT_LLM_API_KEY env var, endpoint via ALIVE_NEXT_LLM_BASE_URL.
   }
 
   // Aggregate.
-  auto result =
-      alive_tv_next::composeCuts(std::move(verdicts), diff->identical_count);
+  auto result = alive_tv_next::composeVerdicts(std::move(verdicts),
+                                               diff->identical_count);
 
   if (result.passed) {
     *out << "Transformation seems to be correct!\n";

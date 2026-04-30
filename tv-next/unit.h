@@ -10,7 +10,7 @@
 //     name across src and tgt and become parameters of the TvUnit functions.
 // The TvUnit returns the value of the *last* region instruction on each side.
 //
-// A 1-position region recovers Phase 1's single-instr cut behaviour.
+// A 1-position region recovers Phase 1's single-instr unit behaviour.
 
 #pragma once
 

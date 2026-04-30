@@ -17,17 +17,17 @@ namespace alive_tv_next {
 
 namespace {
 
-// Walk the group's instructions on one side, collecting (ssa_name, type)
+// Walk the unit's instructions on one side, collecting (ssa_name, type)
 // pairs for non-constant operands that are *external* (not defined by an
-// earlier instruction in the same group). Preserves first-seen order.
+// earlier instruction in the same unit). Preserves first-seen order.
 // Returns std::nullopt if any non-constant external operand lacks a name.
 std::optional<std::vector<std::pair<std::string, llvm::Type *>>>
-collectExternalOperands(const std::vector<llvm::Instruction *> &group_insts,
+collectExternalOperands(const std::vector<llvm::Instruction *> &insts,
                         const std::set<llvm::Instruction *> &internal) {
   std::vector<std::pair<std::string, llvm::Type *>> out;
   std::set<std::string> seen;
 
-  for (const llvm::Instruction *I : group_insts) {
+  for (const llvm::Instruction *I : insts) {
     for (const llvm::Use &U : I->operands()) {
       llvm::Value *V = U.get();
       if (llvm::isa<llvm::Constant>(V))
@@ -38,7 +38,7 @@ collectExternalOperands(const std::vector<llvm::Instruction *> &group_insts,
       }
       if (!V->hasName()) {
         llvm::errs()
-            << "alive-tv-next: cut lift requires named external operands; "
+            << "alive-tv-next: unit lift requires named external operands; "
             << "anonymous operand on instruction:\n  ";
         I->print(llvm::errs());
         llvm::errs() << "\n";
@@ -86,7 +86,7 @@ unionNamedOperands(
   return out;
 }
 
-// Lift one side (src or tgt) of the group: clone each instruction in
+// Lift one side (src or tgt) of the unit: clone each instruction in
 // program order, rewire its operands.
 //
 //   - Constants pass through unchanged.
@@ -95,13 +95,12 @@ unionNamedOperands(
 //   - External references map to function parameters via
 //     `name_to_param`, looked up by SSA name.
 //
-// Returns the cloned exit instruction (last in `group_insts`), used as
+// Returns the cloned exit instruction (last in `insts`), used as
 // the function's return value.
 llvm::Instruction *
-buildGroupHalf(const std::vector<llvm::Instruction *> &group_insts,
-               llvm::Function *fn,
-               const std::map<std::string, llvm::Argument *> &name_to_param,
-               const std::set<llvm::Instruction *> &internal) {
+buildHalf(const std::vector<llvm::Instruction *> &insts, llvm::Function *fn,
+          const std::map<std::string, llvm::Argument *> &name_to_param,
+          const std::set<llvm::Instruction *> &internal) {
   llvm::LLVMContext &ctx = fn->getContext();
   llvm::BasicBlock *entry = llvm::BasicBlock::Create(ctx, "entry", fn);
   llvm::IRBuilder<> b(entry);
@@ -109,7 +108,7 @@ buildGroupHalf(const std::vector<llvm::Instruction *> &group_insts,
   std::map<const llvm::Instruction *, llvm::Instruction *> orig_to_clone;
   llvm::Instruction *exit = nullptr;
 
-  for (llvm::Instruction *orig : group_insts) {
+  for (llvm::Instruction *orig : insts) {
     llvm::Instruction *cloned = orig->clone();
     if (orig->hasName())
       cloned->setName(orig->getName());
@@ -205,7 +204,7 @@ std::optional<TvUnit> buildAsymTvUnit(const DiffRegion &region,
 
   TvUnit unit;
   unit.name = diag_name;
-  unit.module = std::make_unique<llvm::Module>("cut", ctx);
+  unit.module = std::make_unique<llvm::Module>("unit", ctx);
   unit.module->setDataLayout(parent_module.getDataLayout());
   unit.module->setTargetTriple(parent_module.getTargetTriple());
 
@@ -229,8 +228,8 @@ std::optional<TvUnit> buildAsymTvUnit(const DiffRegion &region,
     tgt_name_to_param[(*unioned)[i].first] = unit.tgt_fn->getArg(i);
   }
 
-  buildGroupHalf(src_insts, unit.src_fn, src_name_to_param, src_internal);
-  buildGroupHalf(tgt_insts, unit.tgt_fn, tgt_name_to_param, tgt_internal);
+  buildHalf(src_insts, unit.src_fn, src_name_to_param, src_internal);
+  buildHalf(tgt_insts, unit.tgt_fn, tgt_name_to_param, tgt_internal);
 
   return unit;
 }
@@ -299,7 +298,7 @@ std::optional<TvUnit> buildTvUnit(const DiffRegion &region,
   // Build the TvUnit module.
   TvUnit unit;
   unit.name = diag_name;
-  unit.module = std::make_unique<llvm::Module>("cut", ctx);
+  unit.module = std::make_unique<llvm::Module>("unit", ctx);
   unit.module->setDataLayout(parent_module.getDataLayout());
   unit.module->setTargetTriple(parent_module.getTargetTriple());
 
@@ -324,8 +323,8 @@ std::optional<TvUnit> buildTvUnit(const DiffRegion &region,
     tgt_name_to_param[(*unioned)[i].first] = unit.tgt_fn->getArg(i);
   }
 
-  buildGroupHalf(src_insts, unit.src_fn, src_name_to_param, src_internal);
-  buildGroupHalf(tgt_insts, unit.tgt_fn, tgt_name_to_param, tgt_internal);
+  buildHalf(src_insts, unit.src_fn, src_name_to_param, src_internal);
+  buildHalf(tgt_insts, unit.tgt_fn, tgt_name_to_param, tgt_internal);
 
   return unit;
 }

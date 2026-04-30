@@ -4,28 +4,28 @@
 
 namespace alive_tv_next {
 
-ComposeResult composeCuts(std::vector<CutVerdict> per_cut,
-                          size_t identical_positions) {
+ComposeResult composeVerdicts(std::vector<UnitVerdict> verdicts,
+                              size_t identical_positions) {
   ComposeResult r;
   r.identical_positions = identical_positions;
 
   bool all_passed = true;
   std::stringstream err_summary;
-  for (const CutVerdict &v : per_cut) {
+  for (const UnitVerdict &v : verdicts) {
     if (!v.passed) {
       all_passed = false;
       err_summary << "  " << v.name << ": ";
       switch (v.status) {
-      case CutVerdict::Status::Unsound:
+      case UnitVerdict::Status::Unsound:
         err_summary << "UNSOUND";
         break;
-      case CutVerdict::Status::FailedToProve:
+      case UnitVerdict::Status::FailedToProve:
         err_summary << "failed-to-prove";
         break;
-      case CutVerdict::Status::TypeCheckerFailed:
+      case UnitVerdict::Status::TypeCheckerFailed:
         err_summary << "type-checker-failed";
         break;
-      case CutVerdict::Status::Error:
+      case UnitVerdict::Status::Error:
         err_summary << "error";
         break;
       default:
@@ -39,7 +39,7 @@ ComposeResult composeCuts(std::vector<CutVerdict> per_cut,
   }
 
   r.passed = all_passed;
-  r.per_cut = std::move(per_cut);
+  r.verdicts = std::move(verdicts);
   if (!all_passed)
     r.error_message = std::move(err_summary).str();
   return r;

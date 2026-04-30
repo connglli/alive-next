@@ -42,11 +42,11 @@
 
 namespace alive_tv_next {
 
-// What a proposer returns when it fires. Both `modified_cut` and
+// What a proposer returns when it fires. Both `modified_unit` and
 // `assume_check` are independent TvUnits (each owning its own Module) so
 // alive2 can verify them as standard Transforms.
 struct AssumedTvUnit {
-  TvUnit modified_cut; // injected `llvm.assume(cond)`
+  TvUnit modified_unit; // injected `llvm.assume(cond)`
   TvUnit assume_check; // proves `cond` always holds in the parent's input space
   std::string proposer_name;
 };

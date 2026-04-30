@@ -1,5 +1,8 @@
 #include "tv-next/proposer.h"
 
+#include "tv-next/back.h"
+#include "tv-next/range.h"
+
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -13,6 +16,7 @@
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include <algorithm>
+#include <map>
 #include <vector>
 
 namespace alive_tv_next {
@@ -262,10 +266,195 @@ tryNoOverflowMulFromExt(const TvUnit &original, llvm::Function &parent_src,
 
   AssumedTvUnit out;
   out.proposer_name = "tryNoOverflowMulFromExt";
-  out.modified_cut =
+  out.modified_unit =
       buildModifiedTvUnit(original, a_name, b_name, original.name + "+assume");
   out.assume_check = buildAssumeCheck(*a_src, *b_src, mul_ty, parent_module,
                                       ctx, original.name + "/assume-check");
+  return out;
+}
+
+// --- freeze-drop proposer (Phase 5) ---
+
+// Scan @src for a single freeze whose operand is a function argument;
+// verify @tgt has no freeze. Returns the argument's SSA name or "".
+std::string findFrozenParamName(const TvUnit &unit) {
+  std::string result;
+  for (llvm::BasicBlock &bb : *unit.src_fn)
+    for (llvm::Instruction &I : bb) {
+      if (!llvm::isa<llvm::FreezeInst>(&I))
+        continue;
+      llvm::Value *op = I.getOperand(0);
+      if (!llvm::isa<llvm::Argument>(op) || !op->hasName())
+        return "";
+      if (!result.empty())
+        return ""; // more than one freeze-of-arg
+      result = op->getName().str();
+    }
+  if (result.empty())
+    return "";
+  for (llvm::BasicBlock &bb : *unit.tgt_fn)
+    for (llvm::Instruction &I : bb)
+      if (llvm::isa<llvm::FreezeInst>(&I))
+        return "";
+  return result;
+}
+
+// Prepend `freeze arg; icmp eq arg, frozen; assume(cond)` to `fn`'s entry.
+void injectNoPoisonAssume(llvm::Function *fn, const std::string &param_name) {
+  llvm::Argument *arg = findArgByName(fn, param_name);
+  if (!arg)
+    return;
+  llvm::BasicBlock &entry = fn->getEntryBlock();
+  llvm::IRBuilder<> bld(&entry, entry.begin());
+  llvm::Value *frozen = bld.CreateFreeze(arg, "frozen");
+  llvm::Value *cond = bld.CreateICmpEQ(arg, frozen, "is_non_poison");
+  llvm::Function *assume_fn = llvm::Intrinsic::getOrInsertDeclaration(
+      fn->getParent(), llvm::Intrinsic::assume);
+  bld.CreateCall(assume_fn, {cond});
+}
+
+// Clone the TvUnit and inject a no-poison assume on `param_name` in both sides.
+TvUnit buildNoPoisonModifiedTvUnit(const TvUnit &original,
+                                   const std::string &param_name,
+                                   const std::string &diag_name) {
+  TvUnit out;
+  out.name = diag_name;
+  llvm::ValueToValueMapTy vmap;
+  out.module = llvm::CloneModule(*original.module, vmap);
+  out.src_fn = out.module->getFunction("src");
+  out.tgt_fn = out.module->getFunction("tgt");
+  for (llvm::Function *fn : {out.src_fn, out.tgt_fn})
+    injectNoPoisonAssume(fn, param_name);
+  return out;
+}
+
+// Build the standalone assume-check TvUnit:
+//   @src: rebuild `slice`, then freeze(root) and icmp eq to check non-poison.
+//   @tgt: return true unconditionally.
+TvUnit buildFreezeDropAssumeCheck(const BackwardSlice &slice,
+                                  const std::string &frozen_name,
+                                  llvm::Module &parent_module,
+                                  llvm::LLVMContext &ctx,
+                                  const std::string &diag_name) {
+  TvUnit out;
+  out.name = diag_name;
+  out.module = std::make_unique<llvm::Module>("assume_check_freeze", ctx);
+  out.module->setDataLayout(parent_module.getDataLayout());
+  out.module->setTargetTriple(parent_module.getTargetTriple());
+
+  llvm::Type *i1 = llvm::Type::getInt1Ty(ctx);
+  std::vector<llvm::Type *> param_types;
+  for (auto *arg : slice.arg_roots)
+    param_types.push_back(arg->getType());
+
+  llvm::FunctionType *fn_ty = llvm::FunctionType::get(i1, param_types, false);
+  out.src_fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
+                                      "src", out.module.get());
+  out.tgt_fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
+                                      "tgt", out.module.get());
+  for (size_t i = 0; i < slice.arg_roots.size(); ++i) {
+    out.src_fn->getArg(i)->setName(slice.arg_roots[i]->getName());
+    out.tgt_fn->getArg(i)->setName(slice.arg_roots[i]->getName());
+  }
+
+  // @src: rebuild slice, freeze the root value, icmp eq, ret
+  {
+    llvm::BasicBlock *bb = llvm::BasicBlock::Create(ctx, "entry", out.src_fn);
+    llvm::IRBuilder<> bld(bb);
+
+    std::map<llvm::Value *, llvm::Value *> vmap;
+    for (size_t i = 0; i < slice.arg_roots.size(); ++i)
+      vmap[slice.arg_roots[i]] = out.src_fn->getArg(i);
+
+    llvm::Value *root_clone = nullptr;
+    for (llvm::Instruction *orig : slice.insts) {
+      llvm::Instruction *cloned = orig->clone();
+      if (orig->hasName())
+        cloned->setName(orig->getName());
+      for (unsigned i = 0; i < cloned->getNumOperands(); ++i) {
+        auto it = vmap.find(orig->getOperand(i));
+        if (it != vmap.end())
+          cloned->setOperand(i, it->second);
+      }
+      bld.Insert(cloned);
+      vmap[orig] = cloned;
+      if (orig->hasName() && orig->getName().str() == frozen_name)
+        root_clone = cloned;
+    }
+
+    if (root_clone) {
+      llvm::Value *frozen_result = bld.CreateFreeze(root_clone, "frozen");
+      llvm::Value *cond = bld.CreateICmpEQ(root_clone, frozen_result, "cond");
+      bld.CreateRet(cond);
+    } else {
+      bld.CreateRet(llvm::ConstantInt::getTrue(ctx));
+    }
+  }
+
+  // @tgt: return true
+  {
+    llvm::BasicBlock *bb = llvm::BasicBlock::Create(ctx, "entry", out.tgt_fn);
+    llvm::IRBuilder<> bld(bb);
+    bld.CreateRet(llvm::ConstantInt::getTrue(ctx));
+  }
+
+  return out;
+}
+
+// Propose "freeze %v is identity" for the pattern:
+//   @src has a freeze of a function argument `%frozen_name`; @tgt has none.
+//   In parent_src, `%frozen_name = shl %x, %amt` where range(%amt) < bitwidth.
+//
+// Collects the backward slice of the frozen value first, runs computeRanges
+// on it to bound the shift amount, then builds the assume-check TvUnit.
+std::optional<AssumedTvUnit> tryFreezeDropFromRange(const TvUnit &original,
+                                                    llvm::Function &parent_src,
+                                                    llvm::Module &parent_module,
+                                                    llvm::LLVMContext &ctx) {
+  std::string frozen_name = findFrozenParamName(original);
+  if (frozen_name.empty())
+    return std::nullopt;
+
+  llvm::Instruction *frozen_def = nullptr;
+  for (llvm::BasicBlock &bb : parent_src)
+    for (llvm::Instruction &I : bb)
+      if (I.hasName() && I.getName().str() == frozen_name)
+        frozen_def = &I;
+  if (!frozen_def)
+    return std::nullopt;
+
+  auto *shl_inst = llvm::dyn_cast<llvm::BinaryOperator>(frozen_def);
+  if (!shl_inst || shl_inst->getOpcode() != llvm::Instruction::Shl)
+    return std::nullopt;
+
+  unsigned bitwidth = shl_inst->getType()->getIntegerBitWidth();
+  llvm::Value *shift_amt = shl_inst->getOperand(1);
+
+  // Collect the backward slice first — needed both for range analysis and for
+  // building the assume-check TvUnit.
+  auto slice = collectBackwardSlice(frozen_name, parent_src);
+  if (!slice)
+    return std::nullopt;
+
+  // Check that the shift amount is provably < bitwidth (non-poison from shl).
+  bool amt_bounded = false;
+  if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(shift_amt)) {
+    amt_bounded = CI->getValue().ult(bitwidth);
+  } else {
+    auto ranges = computeRanges(slice->insts);
+    auto it = ranges.find(shift_amt);
+    amt_bounded = (it != ranges.end() && it->second.u &&
+                   it->second.u->second.ult(bitwidth));
+  }
+  if (!amt_bounded)
+    return std::nullopt;
+
+  AssumedTvUnit out;
+  out.proposer_name = "tryFreezeDropFromRange";
+  out.modified_unit = buildNoPoisonModifiedTvUnit(original, frozen_name,
+                                                  original.name + "+assume");
+  out.assume_check = buildFreezeDropAssumeCheck(
+      *slice, frozen_name, parent_module, ctx, original.name + "/assume-check");
   return out;
 }
 
@@ -277,6 +466,9 @@ std::optional<AssumedTvUnit> proposeAssume(const TvUnit &original_unit,
                                            llvm::LLVMContext &ctx) {
   if (auto r = tryNoOverflowMulFromExt(original_unit, parent_src, parent_module,
                                        ctx))
+    return r;
+  if (auto r =
+          tryFreezeDropFromRange(original_unit, parent_src, parent_module, ctx))
     return r;
   return std::nullopt;
 }

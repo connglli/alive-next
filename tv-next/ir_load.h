@@ -19,25 +19,27 @@
 
 namespace alive_tv_next {
 
-// A loaded slice. `module1` always owns the IR backing `src_fn`; `module2`
-// is non-null only in the paired-file form, in which case it owns `tgt_fn`.
-// In single-file form, `module2` is null and `tgt_fn` lives in `module1`.
-struct LoadedSlice {
+// A loaded @src/@tgt pair. `module1` always owns the IR backing `src_fn`;
+// `module2` is non-null only in the paired-file form, in which case it owns
+// `tgt_fn`. In single-file form, `module2` is null and both functions live
+// in `module1`.
+struct LoadedSrcTgt {
   std::unique_ptr<llvm::Module> module1;
   std::unique_ptr<llvm::Module> module2; // null = single-file form
   llvm::Function *src_fn = nullptr;
   llvm::Function *tgt_fn = nullptr;
 };
 
-// Load a paired slice. `file2` may be empty for the single-file form.
-// `src_fn_name` / `tgt_fn_name` default to "src" / "tgt" at the call site.
+// Load a paired @src/@tgt input. `file2` may be empty for the single-file
+// form. `src_fn_name` / `tgt_fn_name` default to "src" / "tgt" at the call
+// site.
 //
 // Returns std::nullopt and prints a diagnostic to errs() on parse,
 // verifyModule, or function-lookup failure.
-std::optional<LoadedSlice> loadSlice(const std::string &file1,
-                                     const std::string &file2,
-                                     const std::string &src_fn_name,
-                                     const std::string &tgt_fn_name,
-                                     llvm::LLVMContext &ctx);
+std::optional<LoadedSrcTgt> loadSrcTgt(const std::string &file1,
+                                       const std::string &file2,
+                                       const std::string &src_fn_name,
+                                       const std::string &tgt_fn_name,
+                                       llvm::LLVMContext &ctx);
 
 } // namespace alive_tv_next

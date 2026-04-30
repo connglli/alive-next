@@ -23,16 +23,14 @@ The exit criterion for the pilot is binary: every example verifies. Performance 
 | `e2.srctgt.ll` | 2 | multi-instr group lift | ✅ PASS |
 | `varB.srctgt.ll` | 2 | multi-instr group lift | ✅ PASS |
 | `varA.srctgt.ll` | 3 | scalar assume + `tryNoOverflowMulFromExt` proposer | ✅ PASS |
-| `e4.srctgt.ll` | 3+5 | freeze drop + range-from-mask proposer | ❌ timeout (Phase 5 range-analysis proposer needed) |
+| `e4.srctgt.ll` | 3+5 | freeze drop + range-from-mask proposer | ✅ PASS (via tryFreezeDropFromRange) |
 | `e3.srctgt.ll` | 4 | multi-side diff + single alive2 call on full vector region | ✅ PASS |
 
-**Phases 1–4 complete.** Six of the seven examples verify end-to-end via the canonical CLI:
+**Phases 1–5 complete.** All seven examples verify end-to-end via the canonical CLI:
 
 ```bash
 ./alive-tv-next --disable-undef-input --smt-to=60000 path/to/foo.srctgt.ll
 ```
-
-The one remaining failure (`e4`) is the Phase 5 milestone — not a regression.
 
 Notes on the implementation as it landed:
 
@@ -44,6 +42,8 @@ Notes on the implementation as it landed:
 - **Per-lane lifting was not needed for e3.** The multi-side cut for e3's vector region is handed directly to alive2, which verifies it in one shot — insertelement / extractelement / vector-sdiv reasoning is within Z3's reach at 60 s. Per-lane lifting (M4.2–M4.4) remains available as a future performance optimization if the direct path times out on larger vector regions.
 - **`--tv-verbose`** flag (renamed from `--alive-tv-next-verbose`). Multi-side groups are counted separately in the summary line, e.g. `2 group(s) (1 multi-side)`.
 - **`--dump-cuts` now also dumps proposer-internal cuts** (modified cut + assume-check) when a proposer fires, to `<dir>/<name>+assume.srctgt.ll` and `<dir>/<name>/assume-check.srctgt.ll`.
+- **`range.{h,cpp}` (Phase 5) implements `computeRanges`** — a single forward pass over an `ArrayRef<Instruction*>`, returning a `RangeMap` keyed by `const Value*`. Handles `and`/`or`/`urem`/`udiv`/`lshr`/`ashr`/`shl` (±nuw/nsw) / `add`/`sub`/`mul` (±nuw/nsw) / `select` / `freeze` / `zext`/`sext`/`trunc`. Cross-derives unsigned↔signed bounds for free when the sign is provably non-negative. Constants are synthesized lazily in `rangeOf` rather than pre-seeded. The analysis is **untrusted**: every predicate it suggests is verified by alive2 before injection.
+- **`tryFreezeDropFromRange` (Phase 5)** walks the backward slice of the frozen operand in `@src`, calls `computeRanges` on it, and — for each `shl`/`lshr`/`ashr` in the slice whose shift amount is shown to be `< bitwidth` — proposes an `icmp ult <amt>, <bw>` assume. e4 (`freeze %v0` dropped; `%v0 = and %p0, 31`; `shl i64 %p1, %v0`) verifies via this path at 10 s.
 
 ---
 
@@ -331,12 +331,12 @@ The single load-bearing invariant: **the analysis never decides soundness.** Eve
 
 | ID | Deliverable | Status |
 |----|-------------|--------|
-| M5.1 | `tv-next/range.{h,cpp}` covering the ops above; cut-local scope; no public API | ⏳ pending |
-| M5.2 | `tryFreezeDropFromRange` proposer (range-from-mask case is the entry point) | ⏳ pending |
-| M5.3 | Generalize `tryNoOverflowMulFromExt` → `tryNoOverflowMul` consulting the range analysis | ⏳ pending |
-| M5.4 | **Example 4 verifies end-to-end** (Phase 4's multi-side diff is already in place; only the range-analysis proposer is missing) | ⏳ pending |
+| M5.1 | `tv-next/range.{h,cpp}` covering the ops above; cut-local scope; no public API | ✅ done |
+| M5.2 | `tryFreezeDropFromRange` proposer (range-from-mask case is the entry point) | ✅ done |
+| M5.3 | Generalize `tryNoOverflowMulFromExt` → `tryNoOverflowMul` consulting the range analysis | ⏳ pending — `tryNoOverflowMulFromExt` still pattern-matches `sext`/`zext` directly; varA passes regardless |
+| M5.4 | **Example 4 verifies end-to-end** (Phase 4's multi-side diff is already in place; only the range-analysis proposer is missing) | ✅ done — passes via `tryFreezeDropFromRange` |
 
-**Phase 5 exits when Example 4 verifies and the range-analysis-backed proposers demonstrably extend reach beyond Phase 3's shape-only matchers on a small set of corpus slices.**
+**Phase 5 exits when Example 4 verifies and the range-analysis-backed proposers demonstrably extend reach beyond Phase 3's shape-only matchers on a small set of corpus slices.** ✅ e4 verifies. M5.3 (range-backed `tryNoOverflowMul`) still pending — does not block Phase 6.
 
 ---
 

@@ -37,22 +37,22 @@ void dumpTvUnit(const TvUnit &unit, const std::string &dump_dir) {
 
 // Run alive2 on a TvUnit once. No proposer logic. Used both for the initial
 // verification and for verifying a proposer's modified unit / assume-check.
-CutVerdict runOnce(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
-                   smt::smt_initializer &smt_init) {
-  CutVerdict v;
+UnitVerdict runOnce(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
+                    smt::smt_initializer &smt_init) {
+  UnitVerdict v;
   v.name = unit.name;
 
   auto fn_src = llvm_util::llvm2alive(*unit.src_fn, tli.getTLI(*unit.src_fn),
                                       /*IsSrc=*/true);
   if (!fn_src) {
-    v.status = CutVerdict::Status::Error;
+    v.status = UnitVerdict::Status::Error;
     v.error_message = "could not translate src to alive2 IR";
     return v;
   }
   auto fn_tgt = llvm_util::llvm2alive(*unit.tgt_fn, tli.getTLI(*unit.tgt_fn),
                                       /*IsSrc=*/false, fn_src->getGlobalVars());
   if (!fn_tgt) {
-    v.status = CutVerdict::Status::Error;
+    v.status = UnitVerdict::Status::Error;
     v.error_message = "could not translate tgt to alive2 IR";
     return v;
   }
@@ -70,7 +70,7 @@ CutVerdict runOnce(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
     t.src.print(ss1);
     t.tgt.print(ss2);
     if (std::move(ss1).str() == std::move(ss2).str()) {
-      v.status = CutVerdict::Status::SyntacticallyEqual;
+      v.status = UnitVerdict::Status::SyntacticallyEqual;
       v.passed = true;
       return v;
     }
@@ -83,7 +83,7 @@ CutVerdict runOnce(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
   {
     auto types = verifier.getTypings();
     if (!types) {
-      v.status = CutVerdict::Status::TypeCheckerFailed;
+      v.status = UnitVerdict::Status::TypeCheckerFailed;
       v.error_message = "alive2 type-checker rejected the cut";
       return v;
     }
@@ -92,9 +92,9 @@ CutVerdict runOnce(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
   util::Errors errs = verifier.verify();
   if (errs) {
     if (errs.isUnsound()) {
-      v.status = CutVerdict::Status::Unsound;
+      v.status = UnitVerdict::Status::Unsound;
     } else {
-      v.status = CutVerdict::Status::FailedToProve;
+      v.status = UnitVerdict::Status::FailedToProve;
     }
     std::stringstream ss;
     ss << errs;
@@ -103,23 +103,24 @@ CutVerdict runOnce(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
     return v;
   }
 
-  v.status = CutVerdict::Status::Correct;
+  v.status = UnitVerdict::Status::Correct;
   v.passed = true;
   return v;
 }
 
 } // namespace
 
-CutVerdict verifyTvUnit(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
-                        smt::smt_initializer &smt_init,
-                        llvm::Function *parent_src, llvm::Module *parent_module,
-                        const std::string &dump_dir) {
-  CutVerdict v = runOnce(unit, tli, smt_init);
+UnitVerdict verifyTvUnit(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
+                         smt::smt_initializer &smt_init,
+                         llvm::Function *parent_src,
+                         llvm::Module *parent_module,
+                         const std::string &dump_dir) {
+  UnitVerdict v = runOnce(unit, tli, smt_init);
 
   if (v.passed)
     return v;
-  if (v.status != CutVerdict::Status::Unsound &&
-      v.status != CutVerdict::Status::FailedToProve)
+  if (v.status != UnitVerdict::Status::Unsound &&
+      v.status != UnitVerdict::Status::FailedToProve)
     return v;
   if (!parent_src || !parent_module)
     return v;
@@ -131,11 +132,11 @@ CutVerdict verifyTvUnit(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
     return v;
 
   dumpTvUnit(proposed->assume_check, dump_dir);
-  dumpTvUnit(proposed->modified_cut, dump_dir);
+  dumpTvUnit(proposed->modified_unit, dump_dir);
 
   // Standalone soundness gate: the precondition must hold unconditionally
   // in the parent's input space.
-  CutVerdict check_v = runOnce(proposed->assume_check, tli, smt_init);
+  UnitVerdict check_v = runOnce(proposed->assume_check, tli, smt_init);
   if (!check_v.passed) {
     v.error_message +=
         "\n  proposer " + proposed->proposer_name +
@@ -144,7 +145,7 @@ CutVerdict verifyTvUnit(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
   }
 
   // Re-verify the unit with `llvm.assume` injected.
-  CutVerdict mod_v = runOnce(proposed->modified_cut, tli, smt_init);
+  UnitVerdict mod_v = runOnce(proposed->modified_unit, tli, smt_init);
   if (mod_v.passed) {
     mod_v.name = unit.name;
     mod_v.proposer_name = proposed->proposer_name;
