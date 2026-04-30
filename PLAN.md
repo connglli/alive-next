@@ -22,17 +22,17 @@ The exit criterion for the pilot is binary: every example verifies. Performance 
 | `e1alt.srctgt.ll` | 1 | + add-comm catalog entry, ptrtoint identity | ✅ PASS |
 | `e2.srctgt.ll` | 2 | multi-instr group lift | ✅ PASS |
 | `varB.srctgt.ll` | 2 | multi-instr group lift | ✅ PASS |
-| `varA.srctgt.ll` | 3 | scalar assume-needed | ❌ UNSOUND (expected — no assume yet) |
-| `e4.srctgt.ll` | 3 | scalar assume-needed | ❌ length-mismatch (expected — needs assume) |
-| `e3.srctgt.ll` | 4 | vectorization + per-lane lifting | ❌ length-mismatch (expected — needs Phase 4) |
+| `varA.srctgt.ll` | 3 | scalar assume + `tryNoOverflowMulFromExt` proposer | ✅ PASS |
+| `e4.srctgt.ll` | 3+5 | freeze drop + range-from-mask proposer | ❌ length-mismatch (gated on Phase 4 diff + Phase 5 range analysis) |
+| `e3.srctgt.ll` | 4 | vectorization + per-lane lifting | ❌ length-mismatch (gated on Phase 4) |
 
-**Phases 1 and 2 complete.** All four examples that fall in those phases verify end-to-end via the canonical CLI:
+**Phases 1, 2, and 3 (Variant A) complete.** Five of the seven examples verify end-to-end via the canonical CLI:
 
 ```bash
 ./alive-tv-next --disable-undef-input --smt-to=60000 path/to/foo.srctgt.ll
 ```
 
-The remaining three failures are precisely the test cases targeted by Phases 3 and 4 — not regressions.
+The remaining two failures (`e3`, `e4`) are precisely the test cases targeted by Phases 4 and 5 — not regressions.
 
 Notes on the implementation as it landed:
 
@@ -132,11 +132,12 @@ The `ptrtoint` at v0 is identical on both sides — handled by the composer's id
        │                              no SMT, no LLM. Hit → cached verdict.)
        │
        ├──► On catalog miss / unsatisfied precondition:
-       │      Assume proposer        (Phase 3+ hand-coded heuristics:
-       │      ├── hand-coded          range-from-mask, no-overflow-from-sext;
-       │      └── LLM (--model …)     LLM fallback for what hand-coded
-       │                              proposers don't cover. Both produce a
-       │                              candidate `cond`.)
+       │      Assume proposer        (Phase 3 hand-coded shape proposers;
+       │      ├── hand-coded          Phase 5 range-analysis-backed proposers
+       │      ├── range-analysis      (untrusted helper — alive2 is still the
+       │      └── LLM (--model …)     soundness gate); Phase 6 LLM fallback
+       │                              for what the previous tiers don't cover.
+       │                              All produce a candidate `cond`.)
        │           │
        │           ▼
        │      Assume verifier        (build a small Transform asking
@@ -229,37 +230,38 @@ Source-level integration cuts the engineering load — there's no IR re-parsing 
 
 ---
 
-## Phase 3 — assume mechanism (Variant A + Example 4)
+## Phase 3 — assume mechanism (Variant A)
 
-**Targets:** Variant A, Example 4.
+**Targets:** Variant A. (Example 4 was originally grouped here on the "scalar assume-needed" axis but its assume — range from `and`-mask — moves to Phase 5 once a small range analysis exists, and its diff requires Phase 4's length-mismatch support, so it lands as a Phase 4 + Phase 5 milestone.)
 
 The pilot's input remains a raw slice (`pre.ll` / `post.ll` or `combined.srctgt.ll`) — assumes are **not** part of the input. `alive-tv-next` derives them itself.
 
 ### What it adds
 
-- **Assume proposer (hand-coded heuristics).** For cuts whose catalog entry has an unsatisfied precondition, walk the slice's local IR to derive a candidate assume. The Phase 3 proposer covers two derivation patterns drawn from the test set:
-  - **range-from-mask** — when an operand needs a bound, look upstream for an `and`-mask that constrains it. Emits `icmp ult/ule` on the masked value.
-  - **no-overflow-from-sext** — when a `mul nsw` is being added, look upstream for `sext` operands that bound the product. Emits a `llvm.smul.with.overflow.i64` + extracted-bit check.
-  These are hand-coded matchers tied to specific rewrite shapes; an LLM-driven generic proposer is a follow-on project.
-- **Assume verifier.** For each proposed `cond`, build a small alive2 query of the form "given the slice's entry state, prove `cond` holds at the proposal's program point." Cheap; alive2 dispatches in milliseconds for the proposers above.
-- **Cut dispatch under assume.** When verifying a cut whose catalog entry needs a precondition, the cut builder injects `llvm.assume(cond)` into the `IR::Function` it constructs from the cut, then calls `TransformVerify::verify`. Alive2 picks up the assume automatically as a constraint.
-- **Catalog entries with preconditions.** Some catalog templates (e.g., `freeze-drop-on-non-poison`, `add-nsw-on-no-overflow`) declare a precondition schema. The matcher checks opcode/operand match AND triggers the proposer to emit a candidate satisfying the schema.
+- **Proposer infrastructure (`tv-next/proposer.{h,cpp}`).** A dispatcher `proposeAssume(cut, parent_src, parent_module, ctx)` runs hand-coded proposers in turn. A proposer recognizes a specific rewrite shape, derives a candidate precondition `cond` from the surrounding IR, and emits two artifacts:
+  1. A *modified cut* — the original cut with `llvm.assume(cond)` injected before the rewrite on both sides. alive2 verifies this for the actual rewrite under the assume.
+  2. A *standalone assume-check* — a small Transform that recomputes `cond` from the parent's relevant inputs and asserts it always holds (vs. `i1 true`). This is the soundness gate; if it fails the proposer's hypothesis is wrong and the proposal is rejected.
+- **One proposer in Phase 3:** `tryNoOverflowMulFromExt`. Recognizes a `mul A, B` → `mul nsw A', B'` rewrite (commutativity allowed) where both operands trace back through one integer extension (`sext` or `zext`) to the mul's destination type in the parent `@src`. Emits the no-signed-overflow predicate via `llvm.smul.with.overflow.iN`. Feasibility for any (M, K, N) bitwidth combo is decided by alive2 on the assume-check, not encoded as arithmetic in the proposer.
+- **Verify retry path (`verify.cpp`).** When a cut returns `Unsound` or `FailedToProve` and the parent context is supplied, `verifyCut` consults `proposeAssume`. If a proposer fires, the assume-check is verified first (must always hold); on success the modified cut is verified next; on success the verdict is upgraded to `Correct` with `proposer_name` set. If either retry-step fails, the original verdict stands with a diagnostic appended.
+- **Driver wiring.** `alive-tv-next.cpp` threads `parent_src` and `parent_module` through `verifyCut`. Verbose mode prints `(via <proposer>)` on retried passes.
+- **Range-from-mask proposer (for Example 4)** is deferred to Phase 5, where a small range analysis becomes a cleaner foundation than hand-matching the `and`-mask shape.
+- **Catalog entries with preconditions** — same caching question as M2.2/M2.3; deferred. The current path consults the proposer directly on Unsound/FailedToProve verdicts, no catalog needed.
 
 ### Concrete proposers / assumes for the test set
 
-- **Variant A — `A2`:** "the `mul i64 %v0, %v1` does not signed-overflow" — emitted by the no-overflow-from-sext proposer when both `%v0` and `%v1` are seen as `sext i32 → i64`.
-- **Example 4 — `A1`:** "%v0 < 64" — emitted by the range-from-mask proposer when `%v0 = and i64 %p0, 31` is upstream of a `shl` whose poison condition is bitwidth-bound.
+- **Variant A — `A2`:** "the `mul i64 %v0, %v1` does not signed-overflow" — emitted by `tryNoOverflowMulFromExt` when both `%v0` and `%v1` are seen as `sext i32 → i64` in `@src`. ✅ verifies.
+- **Example 4 — `A1`:** "%v0 < 64" — needs the range-from-mask shape, which lands in Phase 5 (range analysis). Also gated on Phase 4's length-mismatch diff (e4 has 5 src instructions vs. 4 tgt instructions).
 
 ### Deliverables
 
 | ID | Deliverable | Status |
 |----|-------------|--------|
-| M3.1 | Catalog entries with preconditions: `freeze-drop-on-non-poison`, `add-nsw-on-no-overflow` | ⏳ pending |
-| M3.2 | Hand-coded assume proposers: range-from-mask, no-overflow-from-sext | ⏳ pending |
-| M3.3 | Assume verifier (per-assume alive2 query) + injection of `llvm.assume` into cut builders | ⏳ pending |
-| M3.4 | **Variant A and Example 4 verify end-to-end** | ⏳ pending |
+| M3.1 | Catalog entries with preconditions | ⏸ deferred — same reason as M2.2/M2.3; proposer is consulted directly on Unsound/FailedToProve |
+| M3.2 | Hand-coded assume proposer: `tryNoOverflowMulFromExt` (covers Variant A; the range-from-mask side moves to Phase 5) | ✅ done |
+| M3.3 | Assume verifier (per-assume alive2 query) + `llvm.assume` injection into cut builders | ✅ done |
+| M3.4 | **Variant A verifies end-to-end** | ✅ done |
 
-**Phase 3 exits when Examples 1, 2, 4, and Variants A and B all verify.**
+**Phase 3 exits when Variant A verifies on top of Phases 1–2.** ✅ Done. Example 4 is now a Phase 4 + Phase 5 milestone (length-mismatch diff + range analysis).
 
 ---
 
@@ -286,27 +288,70 @@ The pilot's input remains a raw slice (`pre.ll` / `post.ll` or `combined.srctgt.
 | M4.4 | Catalog entry for the SLP vectorization template | ⏳ pending |
 | M4.5 | **Example 3 verifies end-to-end** | ⏳ pending |
 
-**Phase 4 exits when all seven examples verify.** That's the pilot's goal.
+**Phase 4 exits when Example 3 verifies and the multi-side / length-mismatch diff path is in place.** Example 4 still needs Phase 5's range analysis on top.
 
 ---
 
-## Phase 5 — LLM-driven proposers (corpus-scale reach extension)
+## Phase 5 — small range analysis (proposer-internal, untrusted)
 
-**Targets:** alive-tv-timeout slices from the existing extracted corpus that Phases 1–4's hand-coded mechanisms don't reach.
+**Targets:** Example 4, plus broader proposer reach on the corpus going into Phase 6.
 
-Phases 1–4 establish the *infrastructure* for compositional verification with hand-coded heuristics covering the seven curated examples. Phase 5 turns on the actual reach extension that motivates Alive-Next: the LLM as a proposer for cuts and assumes that fall outside the hand-coded catalog, with alive2 still doing every soundness-critical decision.
+Phase 3 ships proposers that pattern-match a *specific shape* (e.g. "operand is `sext` from i32"). That doesn't scale beyond a handful of cases. Phase 5 introduces a small, **untrusted** range analysis as a proposer-internal helper: it suggests candidate predicates (e.g. "this value is in `[0, 31]`"), and alive2's existing assume-check mechanism (Phase 3) decides whether the predicate actually holds. A buggy analysis can only cause **incompleteness** (missed proposals), never **unsoundness**. The trust base stays at alive2 + LLVM IR semantics; the analysis is a heuristic for *generating* candidate predicates, not for *trusting* them.
+
+### Why it's worth a phase
+
+- Lifts the proposer from "match exact shape" to "operand has known bounds tighter than the target type."
+- One range-aware proposer subsumes several Phase 3-style shape proposers (e.g. range from `sext`, `zext`, `and`-mask, `urem`, constant-fold all fall under one rule).
+- Cheap rejection: skip the alive2 assume-check on cases where the analysis already shows the bound doesn't hold.
+
+### What it adds
+
+- **`tv-next/range.{h,cpp}` — range-analysis helper.** Pure header-and-cpp library, scope-restricted to one parent function and one cut. Walks `parent_src` from the cut's external operands toward function inputs, deriving simple bounds on the way. Initial coverage:
+  - Constant ranges (`iN C` → `[C, C]`).
+  - `and X, C` with non-negative C → `[0, C]`.
+  - `urem X, C` → `[0, C-1]`.
+  - `sext`/`zext` propagation through known ranges.
+  - Constant-fold-style propagation through `add`/`sub`/`mul` when inputs have known ranges and the op doesn't widen.
+  - Single recursion depth bound to keep the analysis cheap.
+  - Returns `std::optional<KnownRange>` where `KnownRange = {ConstantInt low, ConstantInt high}`. No public API beyond proposer code.
+- **Cut-local scope.** The analysis runs over the cut's relevant slice in the parent function — same scope as the existing proposers. (A divide-and-conquer "cut-of-cut" cutting algorithm that would expand this scope is a separate, later discussion; the present range analysis only assumes cut-local visibility.)
+- **`tryFreezeDropFromRange` proposer.** Recognizes a `freeze X` whose operand is dropped on the tgt side. Uses the range analysis on the freeze's operand to derive non-poison conditions (e.g., for `shl Y, %v0`, the operand-range proves `%v0 < bitwidth`). Emits the predicate as `icmp ult %v0, <bitwidth>` and routes it through Phase 3's assume-check + injection mechanism.
+- **`tryNoOverflowMul` (generalized).** Replaces / extends `tryNoOverflowMulFromExt`. Instead of pattern-matching `sext`/`zext` directly, consults `getRange` on each mul operand; if both ranges are known and tight enough, propose the no-overflow predicate. The current proposer becomes a special case (the analysis returns ranges through `sext`/`zext`).
+
+### Trust-base discipline
+
+The single load-bearing invariant: **the analysis never decides soundness.** Every predicate it suggests is verified by alive2 via the standalone assume-check before being injected into the cut. The codebase enforces this by routing every range-derived proposal through `proposeAssume` → `runOnce(assume_check)` → `runOnce(modified_cut)`. There is no "skip alive2 because the analysis is confident" path.
+
+### Deliverables
+
+| ID | Deliverable | Status |
+|----|-------------|--------|
+| M5.1 | `tv-next/range.{h,cpp}` covering the ops above; cut-local scope; no public API | ⏳ pending |
+| M5.2 | `tryFreezeDropFromRange` proposer (range-from-mask case is the entry point) | ⏳ pending |
+| M5.3 | Generalize `tryNoOverflowMulFromExt` → `tryNoOverflowMul` consulting the range analysis | ⏳ pending |
+| M5.4 | **Example 4 verifies end-to-end** (also depends on Phase 4's length-mismatch diff) | ⏳ pending |
+
+**Phase 5 exits when Example 4 verifies (combined with Phase 4) and the range-analysis-backed proposers demonstrably extend reach beyond Phase 3's shape-only matchers on a small set of corpus slices.**
+
+---
+
+## Phase 6 — LLM-driven proposers (corpus-scale reach extension)
+
+**Targets:** alive-tv-timeout slices from the existing extracted corpus that Phases 1–5's hand-coded + range-aware mechanisms don't reach.
+
+Phases 1–5 establish the *infrastructure* for compositional verification with hand-coded heuristics (Phase 3) and a small untrusted range analysis (Phase 5) covering the seven curated examples and a tail of corpus-shaped cases. Phase 6 turns on the actual long-tail reach extension that motivates Alive-Next: the LLM as a proposer for cuts and assumes that fall outside both the hand-coded catalog and the range analysis, with alive2 still doing every soundness-critical decision.
 
 The per-example test set is replaced here by a corpus-scale evaluation: take alive-tv-timeout slices, run `alive-tv-next` with and without `--model`, measure the recovery delta.
 
 ### What it adds
 
-- **LLM client (M5.1).** A small HTTP wrapper around the OpenAI-compatible chat-completion API. Auth via the `ALIVE_NEXT_LLM_API_KEY` env var, endpoint via `ALIVE_NEXT_LLM_BASE_URL`, model via `--model`. No streaming for the first version; synchronous request/response is enough.
-- **LLM cut proposer (M5.2).** When alive2 times out on a group cut, prompt the LLM with the lifted IR and ask for a finer split (or a known-equivalence hint that decomposes the joint rewrite into smaller pieces). Each proposed sub-cut is verified via alive2 — proposals that don't verify are discarded silently. Upper bound on retry budget per slice.
-- **LLM assume proposer (M5.3).** When no hand-coded proposer fires for a precondition-needing rewrite, prompt the LLM with the local IR and ask for a candidate `cond` (in `llvm.assume`-compatible form: an `i1`-valued LLVM expression over the slice's local SSA values). Verify the assume standalone via alive2; on success, inject as `llvm.assume` and verify the rewrite under the assume.
-- **Corpus harness (M5.4).** Test bench that runs `alive-tv-next` on every alive-tv-timeout slice in the corpus (the existing 28K-slice corpus from `extract.cpp` filtered by alive-tv `timeout` outcome). Records per-slice verdict, time, and which mechanism (catalog / hand-coded / LLM-cut-proposer / LLM-assume-proposer / fall-through) succeeded.
+- **LLM client (M6.1).** A small HTTP wrapper around the OpenAI-compatible chat-completion API. Auth via the `ALIVE_NEXT_LLM_API_KEY` env var, endpoint via `ALIVE_NEXT_LLM_BASE_URL`, model via `--model`. No streaming for the first version; synchronous request/response is enough.
+- **LLM cut proposer (M6.2).** When alive2 times out on a group cut, prompt the LLM with the lifted IR and ask for a finer split (or a known-equivalence hint that decomposes the joint rewrite into smaller pieces). Each proposed sub-cut is verified via alive2 — proposals that don't verify are discarded silently. Upper bound on retry budget per slice.
+- **LLM assume proposer (M6.3).** When no hand-coded proposer fires (and the range analysis can't supply a bound) for a precondition-needing rewrite, prompt the LLM with the local IR and ask for a candidate `cond` (in `llvm.assume`-compatible form: an `i1`-valued LLVM expression over the slice's local SSA values). Verify the assume standalone via alive2; on success, inject as `llvm.assume` and verify the rewrite under the assume.
+- **Corpus harness (M6.4).** Test bench that runs `alive-tv-next` on every alive-tv-timeout slice in the corpus (the existing 28K-slice corpus from `extract.cpp` filtered by alive-tv `timeout` outcome). Records per-slice verdict, time, and which mechanism (catalog / hand-coded / range-analysis / LLM-cut-proposer / LLM-assume-proposer / fall-through) succeeded.
 - **Reproducibility scaffolding.** LLM proposals + their alive2 verdicts are logged so a run can be replayed deterministically without the LLM by reading the log.
 
-### Out of scope for Phase 5
+### Out of scope for Phase 6
 
 The minimum-viable LLM integration only. Defer to follow-on phases:
 
@@ -319,15 +364,15 @@ The minimum-viable LLM integration only. Defer to follow-on phases:
 
 | ID | Deliverable | Status |
 |----|-------------|--------|
-| M5.1 | LLM HTTP client + `--model` wiring; lazy init (no errors when unused) | ⏳ pending |
-| M5.2 | LLM cut proposer: prompt + response parsing + per-proposal alive2 verification | ⏳ pending |
-| M5.3 | LLM assume proposer: prompt + `cond` parsing + standalone-assume verification + injection | ⏳ pending |
-| M5.4 | Corpus harness: alive-tv-timeout slices → recovery-rate measurement (with and without `--model`) | ⏳ pending |
-| M5.5 | **Recovery rate ≥ 30 % on the alive-tv-timeout corpus with `--model`** | ⏳ pending |
+| M6.1 | LLM HTTP client + `--model` wiring; lazy init (no errors when unused) | ⏳ pending |
+| M6.2 | LLM cut proposer: prompt + response parsing + per-proposal alive2 verification | ⏳ pending |
+| M6.3 | LLM assume proposer: prompt + `cond` parsing + standalone-assume verification + injection | ⏳ pending |
+| M6.4 | Corpus harness: alive-tv-timeout slices → recovery-rate measurement (with and without `--model`) | ⏳ pending |
+| M6.5 | **Recovery rate ≥ 30 % on the alive-tv-timeout corpus with `--model`** | ⏳ pending |
 
-The 30 % floor is a placeholder — adjust once Phase 5 evaluation produces real numbers. The qualitative test is whether `--model` measurably extends reach beyond what hand-coded heuristics alone deliver.
+The 30 % floor is a placeholder — adjust once Phase 6 evaluation produces real numbers. The qualitative test is whether `--model` measurably extends reach beyond what hand-coded + range-analysis-backed heuristics alone deliver.
 
-**Phase 5 exits** when M5.5's measurement is done and the recovery delta is positive and stable across the corpus.
+**Phase 6 exits** when M6.5's measurement is done and the recovery delta is positive and stable across the corpus.
 
 ---
 
@@ -359,9 +404,13 @@ buildbench/
       cut.{h,cpp}            # cut lifting → small IR::Function pairs
       lift_lane.{h,cpp}      # per-lane lifting for vector cuts (Phase 4)
       match.{h,cpp}          # catalog pattern matching (Phase 2)
-      assume.{h,cpp}         # hand-coded assume proposers + per-assume verifier
-                             #   + llvm.assume injection into cut builders (Phase 3)
+      proposer.{h,cpp}       # hand-coded assume proposers + dispatcher (Phase 3);
+                             #   Phase 5 adds range-analysis-backed proposers here
+      range.{h,cpp}          # small untrusted range analysis used by proposers
+                             #   (Phase 5); cut-local scope; not a public API
       verify.{h,cpp}         # per-cut dispatch via TransformVerify::verify
+                             #   (Phase 3+: retries via proposeAssume on
+                             #   Unsound/FailedToProve)
       compose.{h,cpp}        # composition checker
       verify_catalog.cpp     # one-time catalog verifier (separate target)
       catalog/               # source-of-truth for the bundled catalog;
@@ -463,9 +512,9 @@ That pulls in `--smt-to`, `--disable-undef-input`, `--disable-poison-input`, `--
 | Symbol / file | Provides | Used in |
 |---------------|----------|---------|
 | `llvm_util::llvm2alive(F, TLI, IsSrc)` | LLVM `Function` → `IR::Function` (alive2's IR) | `ir_load.cpp` |
-| `tools::Transform` | src/tgt pair + optional precondition | `cut.cpp`, `assume.cpp` |
-| `tools::TransformVerify::verify()` | run a refinement check, return `util::Errors` | `verify.cpp`, `assume.cpp` |
-| `IR::Predicate` | first-class precondition object | `assume.cpp` |
+| `tools::Transform` | src/tgt pair + optional precondition | `cut.cpp`, `proposer.cpp` |
+| `tools::TransformVerify::verify()` | run a refinement check, return `util::Errors` | `verify.cpp` |
+| `IR::Predicate` | first-class precondition object | `proposer.cpp` (only if a future proposer needs structured preconditions; current proposers express assumes as `llvm.assume(i1)`) |
 | `smt::smt_initializer` | SMT context lifecycle | `tools/alive-tv-next.cpp` |
 | `llvm_util::Verifier` | high-level reference path used by `alive-tv.cpp` | `tools/alive-tv-next.cpp` (model only) |
 
@@ -491,7 +540,7 @@ Some IR-walking helpers in `extract.cpp` (per-BB iteration, `isExcludedInst`, th
 
    Given these three checks, **no whole-function alive2 re-run is needed** — re-running would defeat the decomposition's whole point (it'd re-pay the SMT cost on the function we just decomposed). A `--whole-function-recheck` debug flag is offered for opt-in paranoia. Soundness rests on the composer; design carefully and document the invariant.
 
-4. **Hand-coded proposer coverage.** Phase 3's two proposers (range-from-mask, no-overflow-from-sext) are tied to specific rewrite shapes drawn from the test set. New rewrites in later corpora may need new proposers. Resist generalizing until a real case forces it; the LLM-driven generic proposer is the eventual answer for the long tail. Assumes themselves are expressed via `llvm.assume(i1)` — LLVM's standard intrinsic, no project-specific DSL needed.
+4. **Hand-coded proposer coverage.** Phase 3's `tryNoOverflowMulFromExt` is tied to a specific rewrite shape (`mul → mul nsw` over extension chains). New rewrites in later corpora will need new proposers. Phase 5's range analysis softens this: one range-aware proposer subsumes several shape-specific ones. Phase 6's LLM-driven generic proposer remains the eventual answer for the long tail. Assumes themselves are expressed via `llvm.assume(i1)` — LLVM's standard intrinsic, no project-specific DSL needed. The range analysis is **untrusted** by construction (every predicate it suggests is verified by alive2 before injection), so it doesn't expand the trust base.
 
 5. **Per-lane lifting completeness.** Phase 4 needs vector-op decomposition axioms per opcode. Example 3 uses `sub` and `sdiv exact` on `<2 x i64>`; other opcodes (mul, add, fp variants) come later if/when other vectorized examples appear. The Phase 4 deliverable is the *infrastructure* + the two opcodes Example 3 needs, not a complete library.
 

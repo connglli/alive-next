@@ -18,6 +18,7 @@ set(TV_NEXT_SRCS
   ir_load.cpp
   diff.cpp
   cut.cpp
+  proposer.cpp
   verify.cpp
   compose.cpp
 )

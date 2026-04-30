@@ -92,7 +92,7 @@ llvm::cl::opt<std::string> opt_model(
     llvm::cl::cat(alive_cmdargs), llvm::cl::init(""));
 
 llvm::cl::opt<bool> opt_alive_tv_next_verbose(
-    LLVM_ARGS_PREFIX "alive-tv-next-verbose",
+    LLVM_ARGS_PREFIX "tv-verbose",
     llvm::cl::desc("Print per-cut verdicts and diff summary"),
     llvm::cl::cat(alive_cmdargs), llvm::cl::init(false));
 
@@ -233,10 +233,15 @@ ALIVE_NEXT_LLM_API_KEY env var, endpoint via ALIVE_NEXT_LLM_BASE_URL.
       }
     }
 
-    auto verdict = alive_tv_next::verifyCut(*cut, TLI, smt_init);
+    auto verdict = alive_tv_next::verifyCut(*cut, TLI, smt_init,
+                                            loaded->src_fn,
+                                            loaded->module1.get(),
+                                            opt_dump_cuts);
     if (opt_alive_tv_next_verbose) {
       *out << "  " << verdict.name << ": "
            << (verdict.passed ? "pass" : "FAIL");
+      if (!verdict.proposer_name.empty())
+        *out << " (via " << verdict.proposer_name << ")";
       if (!verdict.passed && !verdict.error_message.empty())
         *out << " — " << verdict.error_message;
       *out << "\n";

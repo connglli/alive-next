@@ -1,19 +1,44 @@
 #include "tv-next/verify.h"
 
+#include "tv-next/proposer.h"
+
 #include "llvm_util/llvm2alive.h"
 
 #include "tools/transform.h"
 
 #include "util/errors.h"
 
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <sstream>
 
 namespace alive_tv_next {
 
-CutVerdict verifyCut(Cut &cut, llvm::TargetLibraryInfoWrapperPass &tli,
-                     smt::smt_initializer &smt_init) {
+namespace {
+
+void dumpCut(const Cut &cut, const std::string &dump_dir) {
+  if (dump_dir.empty())
+    return;
+  std::error_code ec;
+  std::string path = dump_dir + "/";
+  for (char c : cut.name)
+    path += (std::isalnum((unsigned char)c) || c == '.' || c == '_' || c == '-')
+                ? c
+                : '_';
+  path += ".srctgt.ll";
+  llvm::raw_fd_ostream os(path, ec);
+  if (!ec)
+    cut.module->print(os, /*AAW=*/nullptr);
+  else
+    llvm::errs() << "alive-tv-next: dump-cuts: could not open " << path
+                 << ": " << ec.message() << "\n";
+}
+
+// Run alive2 on a Cut once. No proposer logic. Used both for the initial
+// verification and for verifying a proposer's modified cut / assume-check.
+CutVerdict runOnce(Cut &cut, llvm::TargetLibraryInfoWrapperPass &tli,
+                   smt::smt_initializer &smt_init) {
   CutVerdict v;
   v.name = cut.name;
 
@@ -55,8 +80,6 @@ CutVerdict verifyCut(Cut &cut, llvm::TargetLibraryInfoWrapperPass &tli,
   t.preprocess();
   tools::TransformVerify verifier(t, /*check_each_var=*/false);
 
-  // Check typability before running the prover. If type-check fails we
-  // can't proceed.
   {
     auto types = verifier.getTypings();
     if (!types) {
@@ -82,6 +105,56 @@ CutVerdict verifyCut(Cut &cut, llvm::TargetLibraryInfoWrapperPass &tli,
 
   v.status = CutVerdict::Status::Correct;
   v.passed = true;
+  return v;
+}
+
+}  // namespace
+
+CutVerdict verifyCut(Cut &cut, llvm::TargetLibraryInfoWrapperPass &tli,
+                     smt::smt_initializer &smt_init,
+                     llvm::Function *parent_src,
+                     llvm::Module *parent_module,
+                     const std::string &dump_dir) {
+  CutVerdict v = runOnce(cut, tli, smt_init);
+
+  if (v.passed)
+    return v;
+  if (v.status != CutVerdict::Status::Unsound &&
+      v.status != CutVerdict::Status::FailedToProve)
+    return v;
+  if (!parent_src || !parent_module)
+    return v;
+
+  // Try the hand-coded proposers.
+  auto proposed = proposeAssume(cut, *parent_src, *parent_module,
+                                cut.module->getContext());
+  if (!proposed)
+    return v;
+
+  dumpCut(proposed->assume_check, dump_dir);
+  dumpCut(proposed->modified_cut, dump_dir);
+
+  // Standalone soundness gate: the precondition must hold unconditionally
+  // in the parent's input space.
+  CutVerdict check_v = runOnce(proposed->assume_check, tli, smt_init);
+  if (!check_v.passed) {
+    v.error_message += "\n  proposer " + proposed->proposer_name +
+                       " fired but assume-check failed: " +
+                       check_v.error_message;
+    return v;
+  }
+
+  // Re-verify the cut with `llvm.assume` injected.
+  CutVerdict mod_v = runOnce(proposed->modified_cut, tli, smt_init);
+  if (mod_v.passed) {
+    mod_v.name = cut.name;
+    mod_v.proposer_name = proposed->proposer_name;
+    return mod_v;
+  }
+
+  v.error_message += "\n  proposer " + proposed->proposer_name +
+                     " fired and assume-check passed, but modified cut " +
+                     "still does not verify: " + mod_v.error_message;
   return v;
 }
 
