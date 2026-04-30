@@ -81,10 +81,10 @@ std::string instAsText(const llvm::Instruction &I) {
   return s;
 }
 
-}  // namespace
+} // namespace
 
-std::optional<DiffResult> computeDiff(llvm::Function &src,
-                                      llvm::Function &tgt) {
+std::optional<DiffResult> computeDiffRegions(llvm::Function &src,
+                                             llvm::Function &tgt) {
   if (src.size() != 1 || tgt.size() != 1) {
     llvm::errs() << "alive-tv-next: Phase 1 requires single-BB functions; "
                  << "@" << src.getName() << " has " << src.size() << " BBs, "
@@ -108,11 +108,11 @@ std::optional<DiffResult> computeDiff(llvm::Function &src,
 
   if (src_insts.size() == tgt_insts.size()) {
     // ── Equal-count path (Phase 1/2): position-by-position pairing ──────────
-    DiffGroup current;
+    DiffRegion current;
     auto flush_group = [&]() {
       if (!current.positions.empty()) {
-        result.groups.push_back(std::move(current));
-        current = DiffGroup{};
+        result.regions.push_back(std::move(current));
+        current = DiffRegion{};
       }
     };
 
@@ -135,27 +135,26 @@ std::optional<DiffResult> computeDiff(llvm::Function &src,
         continue;
       }
 
-      current.positions.push_back(
-          DiffPosition{i, src_insts[i], tgt_insts[i]});
+      current.positions.push_back(DiffPosition{i, src_insts[i], tgt_insts[i]});
     }
     flush_group();
 
   } else {
-    // ── Multi-side path (Phase 4): unequal instruction counts ───────────────
+    // ── Asymmetric path (Phase 4): unequal instruction counts ───────────────
     //
     // Walk src and tgt in lockstep while pairs are structurally aligned:
     //   (a) Textually identical → counted as an identical position.
     //   (b) Both named with the same SSA name → treat as a paired diff at
-    //       the same semantic position; emit as a standard DiffGroup with
+    //       the same semantic position; emit as a standard DiffRegion with
     //       commutativity-splitting applied as usual.
-    // The first pair that breaks both conditions starts the multi-side
+    // The first pair that breaks both conditions starts the asymmetric
     // region: all remaining instructions on each side are gathered into one
-    // multi-side DiffGroup.
-    DiffGroup paired_current;
+    // asymmetric DiffRegion.
+    DiffRegion paired_current;
     auto flush_paired = [&]() {
       if (!paired_current.positions.empty()) {
-        result.groups.push_back(std::move(paired_current));
-        paired_current = DiffGroup{};
+        result.regions.push_back(std::move(paired_current));
+        paired_current = DiffRegion{};
       }
     };
 
@@ -182,22 +181,22 @@ std::optional<DiffResult> computeDiff(llvm::Function &src,
         continue;
       }
 
-      // Structural divergence: start multi-side region from here.
+      // Structural divergence: start asymmetric region from here.
       break;
     }
     flush_paired();
 
-    // Remaining src[si..] and tgt[ti..] form the multi-side region.
+    // Remaining src[si..] and tgt[ti..] form the asymmetric region.
     if (si < src_insts.size() || ti < tgt_insts.size()) {
-      DiffGroup ms;
-      ms.is_multi_side = true;
+      DiffRegion ms;
+      ms.is_asymmetric = true;
       ms.src_start_idx = si;
       ms.tgt_start_idx = ti;
       for (size_t i = si; i < src_insts.size(); ++i)
         ms.src_region.push_back(src_insts[i]);
       for (size_t i = ti; i < tgt_insts.size(); ++i)
         ms.tgt_region.push_back(tgt_insts[i]);
-      result.groups.push_back(std::move(ms));
+      result.regions.push_back(std::move(ms));
     }
   }
 
@@ -205,8 +204,7 @@ std::optional<DiffResult> computeDiff(llvm::Function &src,
   // would be a soundness issue worth surfacing.
   llvm::Instruction *src_term = src_bb.getTerminator();
   llvm::Instruction *tgt_term = tgt_bb.getTerminator();
-  if (src_term && tgt_term &&
-      instAsText(*src_term) != instAsText(*tgt_term)) {
+  if (src_term && tgt_term && instAsText(*src_term) != instAsText(*tgt_term)) {
     llvm::errs() << "alive-tv-next: terminator differs between @"
                  << src.getName() << " and @" << tgt.getName()
                  << ":\n  src: " << instAsText(*src_term)
@@ -217,4 +215,4 @@ std::optional<DiffResult> computeDiff(llvm::Function &src,
   return result;
 }
 
-}  // namespace alive_tv_next
+} // namespace alive_tv_next

@@ -39,4 +39,4 @@ struct ComposeResult {
 ComposeResult composeCuts(std::vector<CutVerdict> per_cut,
                           size_t identical_positions);
 
-}  // namespace alive_tv_next
+} // namespace alive_tv_next

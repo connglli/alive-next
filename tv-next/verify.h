@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include "cut.h"
+#include "unit.h"
 
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/Function.h"
@@ -34,10 +34,10 @@
 namespace alive_tv_next {
 
 struct CutVerdict {
-  std::string name;            // cut identifier (e.g., "cut@v3")
+  std::string name; // cut identifier (e.g., "cut@v3")
   bool passed = false;
-  std::string error_message;   // populated on fail / fail-to-prove / error
-  std::string proposer_name;   // populated when a proposer was used
+  std::string error_message; // populated on fail / fail-to-prove / error
+  std::string proposer_name; // populated when a proposer was used
   enum class Status {
     Correct,
     Unsound,
@@ -48,23 +48,22 @@ struct CutVerdict {
   } status = Status::Error;
 };
 
-// Run alive2 on a single cut. `tli` and `smt_init` must already be
+// Run alive2 on a single TvUnit. `tli` and `smt_init` must already be
 // initialized by the caller (typically once in main).
 //
 // `parent_src` and `parent_module` are optional: when both are non-null,
 // failed verdicts (Unsound / FailedToProve) trigger the assume-proposer
-// retry path. They should be the @src function and module that the cut
-// was lifted from, so the proposer can trace the cut's parameters back
-// to their parent definitions (e.g., to recognize "operands are sext from
-// i32").
-// `dump_dir`, when non-empty, writes the original cut and any proposer-
-// generated cuts (modified cut + assume-check) to
+// retry path. They should be the @src function and module that the TvUnit
+// was lifted from, so the proposer can trace its parameters back to their
+// parent definitions (e.g., to recognize "operands are sext from i32").
+// `dump_dir`, when non-empty, writes the original TvUnit and any proposer-
+// generated units (modified unit + assume-check) to
 // `<dump_dir>/<name>.srctgt.ll`. Caller is responsible for writing the
-// original cut; this path covers proposer-internal cuts.
-CutVerdict verifyCut(Cut &cut, llvm::TargetLibraryInfoWrapperPass &tli,
-                     smt::smt_initializer &smt_init,
-                     llvm::Function *parent_src = nullptr,
-                     llvm::Module *parent_module = nullptr,
-                     const std::string &dump_dir = "");
+// original unit; this path covers proposer-internal units.
+CutVerdict verifyTvUnit(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
+                        smt::smt_initializer &smt_init,
+                        llvm::Function *parent_src = nullptr,
+                        llvm::Module *parent_module = nullptr,
+                        const std::string &dump_dir = "");
 
-}  // namespace alive_tv_next
+} // namespace alive_tv_next

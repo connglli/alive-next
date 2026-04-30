@@ -1,4 +1,4 @@
-#include "tv-next/cut.h"
+#include "tv-next/unit.h"
 
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"
@@ -22,9 +22,8 @@ namespace {
 // earlier instruction in the same group). Preserves first-seen order.
 // Returns std::nullopt if any non-constant external operand lacks a name.
 std::optional<std::vector<std::pair<std::string, llvm::Type *>>>
-collectExternalOperands(
-    const std::vector<llvm::Instruction *> &group_insts,
-    const std::set<llvm::Instruction *> &internal) {
+collectExternalOperands(const std::vector<llvm::Instruction *> &group_insts,
+                        const std::set<llvm::Instruction *> &internal) {
   std::vector<std::pair<std::string, llvm::Type *>> out;
   std::set<std::string> seen;
 
@@ -98,11 +97,11 @@ unionNamedOperands(
 //
 // Returns the cloned exit instruction (last in `group_insts`), used as
 // the function's return value.
-llvm::Instruction *buildGroupHalf(
-    const std::vector<llvm::Instruction *> &group_insts,
-    llvm::Function *fn,
-    const std::map<std::string, llvm::Argument *> &name_to_param,
-    const std::set<llvm::Instruction *> &internal) {
+llvm::Instruction *
+buildGroupHalf(const std::vector<llvm::Instruction *> &group_insts,
+               llvm::Function *fn,
+               const std::map<std::string, llvm::Argument *> &name_to_param,
+               const std::set<llvm::Instruction *> &internal) {
   llvm::LLVMContext &ctx = fn->getContext();
   llvm::BasicBlock *entry = llvm::BasicBlock::Create(ctx, "entry", fn);
   llvm::IRBuilder<> b(entry);
@@ -145,20 +144,20 @@ llvm::Instruction *buildGroupHalf(
   return exit;
 }
 
-// Build a cut from a multi-side DiffGroup. The src_region and tgt_region
-// may have different lengths. External operands are unioned by SSA name
-// across both sides; the cut exits at the last instruction on each side
-// (which must share a type).
-std::optional<Cut> buildMultiSideCut(const DiffGroup &group,
-                                     llvm::Module &parent_module,
-                                     llvm::LLVMContext &ctx,
-                                     const std::string &diag_name) {
-  const auto &src_insts = group.src_region;
-  const auto &tgt_insts = group.tgt_region;
+// Build a TvUnit from an asymmetric DiffRegion. The src_region and
+// tgt_region may have different lengths. External operands are unioned by
+// SSA name across both sides; the TvUnit exits at the last instruction on
+// each side (which must share a type).
+std::optional<TvUnit> buildAsymTvUnit(const DiffRegion &region,
+                                      llvm::Module &parent_module,
+                                      llvm::LLVMContext &ctx,
+                                      const std::string &diag_name) {
+  const auto &src_insts = region.src_region;
+  const auto &tgt_insts = region.tgt_region;
 
   if (src_insts.empty() || tgt_insts.empty()) {
     llvm::errs() << "alive-tv-next: " << diag_name
-                 << " — multi-side region has empty src or tgt\n";
+                 << " — asymmetric region has empty src or tgt\n";
     return std::nullopt;
   }
   for (auto *I : src_insts) {
@@ -204,11 +203,11 @@ std::optional<Cut> buildMultiSideCut(const DiffGroup &group,
   if (!unioned)
     return std::nullopt;
 
-  Cut cut;
-  cut.name = diag_name;
-  cut.module = std::make_unique<llvm::Module>("cut", ctx);
-  cut.module->setDataLayout(parent_module.getDataLayout());
-  cut.module->setTargetTriple(parent_module.getTargetTriple());
+  TvUnit unit;
+  unit.name = diag_name;
+  unit.module = std::make_unique<llvm::Module>("cut", ctx);
+  unit.module->setDataLayout(parent_module.getDataLayout());
+  unit.module->setTargetTriple(parent_module.getTargetTriple());
 
   std::vector<llvm::Type *> param_types;
   param_types.reserve(unioned->size());
@@ -217,45 +216,45 @@ std::optional<Cut> buildMultiSideCut(const DiffGroup &group,
   llvm::FunctionType *fn_ty =
       llvm::FunctionType::get(result_ty, param_types, /*isVarArg=*/false);
 
-  cut.src_fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
-                                      "src", cut.module.get());
-  cut.tgt_fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
-                                      "tgt", cut.module.get());
+  unit.src_fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
+                                       "src", unit.module.get());
+  unit.tgt_fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
+                                       "tgt", unit.module.get());
 
   std::map<std::string, llvm::Argument *> src_name_to_param, tgt_name_to_param;
   for (size_t i = 0; i < unioned->size(); ++i) {
-    cut.src_fn->getArg(i)->setName((*unioned)[i].first);
-    cut.tgt_fn->getArg(i)->setName((*unioned)[i].first);
-    src_name_to_param[(*unioned)[i].first] = cut.src_fn->getArg(i);
-    tgt_name_to_param[(*unioned)[i].first] = cut.tgt_fn->getArg(i);
+    unit.src_fn->getArg(i)->setName((*unioned)[i].first);
+    unit.tgt_fn->getArg(i)->setName((*unioned)[i].first);
+    src_name_to_param[(*unioned)[i].first] = unit.src_fn->getArg(i);
+    tgt_name_to_param[(*unioned)[i].first] = unit.tgt_fn->getArg(i);
   }
 
-  buildGroupHalf(src_insts, cut.src_fn, src_name_to_param, src_internal);
-  buildGroupHalf(tgt_insts, cut.tgt_fn, tgt_name_to_param, tgt_internal);
+  buildGroupHalf(src_insts, unit.src_fn, src_name_to_param, src_internal);
+  buildGroupHalf(tgt_insts, unit.tgt_fn, tgt_name_to_param, tgt_internal);
 
-  return cut;
+  return unit;
 }
 
-}  // namespace
+} // namespace
 
-std::optional<Cut> buildGroupCut(const DiffGroup &group,
-                                 llvm::Module &parent_module,
-                                 llvm::LLVMContext &ctx,
-                                 const std::string &diag_name) {
-  if (group.is_multi_side)
-    return buildMultiSideCut(group, parent_module, ctx, diag_name);
+std::optional<TvUnit> buildTvUnit(const DiffRegion &region,
+                                  llvm::Module &parent_module,
+                                  llvm::LLVMContext &ctx,
+                                  const std::string &diag_name) {
+  if (region.is_asymmetric)
+    return buildAsymTvUnit(region, parent_module, ctx, diag_name);
 
-  if (group.positions.empty()) {
-    llvm::errs() << "alive-tv-next: " << diag_name << " — empty group\n";
+  if (region.positions.empty()) {
+    llvm::errs() << "alive-tv-next: " << diag_name << " — empty region\n";
     return std::nullopt;
   }
 
   // Extract per-side instruction sequences and validate per-position
   // shape constraints.
   std::vector<llvm::Instruction *> src_insts, tgt_insts;
-  src_insts.reserve(group.positions.size());
-  tgt_insts.reserve(group.positions.size());
-  for (const auto &dp : group.positions) {
+  src_insts.reserve(region.positions.size());
+  tgt_insts.reserve(region.positions.size());
+  for (const auto &dp : region.positions) {
     if (dp.src_inst->isTerminator() || dp.tgt_inst->isTerminator()) {
       llvm::errs() << "alive-tv-next: " << diag_name
                    << " — cannot lift a terminator\n";
@@ -263,15 +262,16 @@ std::optional<Cut> buildGroupCut(const DiffGroup &group,
     }
     if (dp.src_inst->getType() != dp.tgt_inst->getType()) {
       llvm::errs() << "alive-tv-next: " << diag_name
-                   << " — src and tgt types differ at position "
-                   << dp.inst_idx << "\n";
+                   << " — src and tgt types differ at position " << dp.inst_idx
+                   << "\n";
       return std::nullopt;
     }
     src_insts.push_back(dp.src_inst);
     tgt_insts.push_back(dp.tgt_inst);
   }
 
-  // The group's exit value (last position) determines the cut's return type.
+  // The region's exit value (last position) determines the TvUnit's return
+  // type.
   llvm::Type *result_ty = src_insts.back()->getType();
   if (result_ty->isVoidTy()) {
     llvm::errs() << "alive-tv-next: " << diag_name
@@ -279,7 +279,7 @@ std::optional<Cut> buildGroupCut(const DiffGroup &group,
     return std::nullopt;
   }
 
-  // Internal sets: instructions defined *within* the group on each side.
+  // Internal sets: instructions defined *within* the region on each side.
   std::set<llvm::Instruction *> src_internal(src_insts.begin(),
                                              src_insts.end());
   std::set<llvm::Instruction *> tgt_internal(tgt_insts.begin(),
@@ -296,12 +296,12 @@ std::optional<Cut> buildGroupCut(const DiffGroup &group,
   if (!unioned)
     return std::nullopt;
 
-  // Build the cut module.
-  Cut cut;
-  cut.name = diag_name;
-  cut.module = std::make_unique<llvm::Module>("cut", ctx);
-  cut.module->setDataLayout(parent_module.getDataLayout());
-  cut.module->setTargetTriple(parent_module.getTargetTriple());
+  // Build the TvUnit module.
+  TvUnit unit;
+  unit.name = diag_name;
+  unit.module = std::make_unique<llvm::Module>("cut", ctx);
+  unit.module->setDataLayout(parent_module.getDataLayout());
+  unit.module->setTargetTriple(parent_module.getTargetTriple());
 
   std::vector<llvm::Type *> param_types;
   param_types.reserve(unioned->size());
@@ -310,24 +310,24 @@ std::optional<Cut> buildGroupCut(const DiffGroup &group,
   llvm::FunctionType *fn_ty =
       llvm::FunctionType::get(result_ty, param_types, /*isVarArg=*/false);
 
-  cut.src_fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
-                                      "src", cut.module.get());
-  cut.tgt_fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
-                                      "tgt", cut.module.get());
+  unit.src_fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
+                                       "src", unit.module.get());
+  unit.tgt_fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
+                                       "tgt", unit.module.get());
 
   // Name parameters and build per-side name → Argument lookup tables.
   std::map<std::string, llvm::Argument *> src_name_to_param, tgt_name_to_param;
   for (size_t i = 0; i < unioned->size(); ++i) {
-    cut.src_fn->getArg(i)->setName((*unioned)[i].first);
-    cut.tgt_fn->getArg(i)->setName((*unioned)[i].first);
-    src_name_to_param[(*unioned)[i].first] = cut.src_fn->getArg(i);
-    tgt_name_to_param[(*unioned)[i].first] = cut.tgt_fn->getArg(i);
+    unit.src_fn->getArg(i)->setName((*unioned)[i].first);
+    unit.tgt_fn->getArg(i)->setName((*unioned)[i].first);
+    src_name_to_param[(*unioned)[i].first] = unit.src_fn->getArg(i);
+    tgt_name_to_param[(*unioned)[i].first] = unit.tgt_fn->getArg(i);
   }
 
-  buildGroupHalf(src_insts, cut.src_fn, src_name_to_param, src_internal);
-  buildGroupHalf(tgt_insts, cut.tgt_fn, tgt_name_to_param, tgt_internal);
+  buildGroupHalf(src_insts, unit.src_fn, src_name_to_param, src_internal);
+  buildGroupHalf(tgt_insts, unit.tgt_fn, tgt_name_to_param, tgt_internal);
 
-  return cut;
+  return unit;
 }
 
-}  // namespace alive_tv_next
+} // namespace alive_tv_next

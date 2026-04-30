@@ -16,21 +16,21 @@ ComposeResult composeCuts(std::vector<CutVerdict> per_cut,
       all_passed = false;
       err_summary << "  " << v.name << ": ";
       switch (v.status) {
-        case CutVerdict::Status::Unsound:
-          err_summary << "UNSOUND";
-          break;
-        case CutVerdict::Status::FailedToProve:
-          err_summary << "failed-to-prove";
-          break;
-        case CutVerdict::Status::TypeCheckerFailed:
-          err_summary << "type-checker-failed";
-          break;
-        case CutVerdict::Status::Error:
-          err_summary << "error";
-          break;
-        default:
-          err_summary << "unexpected status";
-          break;
+      case CutVerdict::Status::Unsound:
+        err_summary << "UNSOUND";
+        break;
+      case CutVerdict::Status::FailedToProve:
+        err_summary << "failed-to-prove";
+        break;
+      case CutVerdict::Status::TypeCheckerFailed:
+        err_summary << "type-checker-failed";
+        break;
+      case CutVerdict::Status::Error:
+        err_summary << "error";
+        break;
+      default:
+        err_summary << "unexpected status";
+        break;
       }
       if (!v.error_message.empty())
         err_summary << " — " << v.error_message;
@@ -45,4 +45,4 @@ ComposeResult composeCuts(std::vector<CutVerdict> per_cut,
   return r;
 }
 
-}  // namespace alive_tv_next
+} // namespace alive_tv_next

@@ -17,40 +17,40 @@ namespace alive_tv_next {
 
 namespace {
 
-void dumpCut(const Cut &cut, const std::string &dump_dir) {
+void dumpTvUnit(const TvUnit &unit, const std::string &dump_dir) {
   if (dump_dir.empty())
     return;
   std::error_code ec;
   std::string path = dump_dir + "/";
-  for (char c : cut.name)
+  for (char c : unit.name)
     path += (std::isalnum((unsigned char)c) || c == '.' || c == '_' || c == '-')
                 ? c
                 : '_';
   path += ".srctgt.ll";
   llvm::raw_fd_ostream os(path, ec);
   if (!ec)
-    cut.module->print(os, /*AAW=*/nullptr);
+    unit.module->print(os, /*AAW=*/nullptr);
   else
-    llvm::errs() << "alive-tv-next: dump-cuts: could not open " << path
-                 << ": " << ec.message() << "\n";
+    llvm::errs() << "alive-tv-next: dump-units: could not open " << path << ": "
+                 << ec.message() << "\n";
 }
 
-// Run alive2 on a Cut once. No proposer logic. Used both for the initial
-// verification and for verifying a proposer's modified cut / assume-check.
-CutVerdict runOnce(Cut &cut, llvm::TargetLibraryInfoWrapperPass &tli,
+// Run alive2 on a TvUnit once. No proposer logic. Used both for the initial
+// verification and for verifying a proposer's modified unit / assume-check.
+CutVerdict runOnce(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
                    smt::smt_initializer &smt_init) {
   CutVerdict v;
-  v.name = cut.name;
+  v.name = unit.name;
 
-  auto fn_src = llvm_util::llvm2alive(*cut.src_fn, tli.getTLI(*cut.src_fn),
-                                       /*IsSrc=*/true);
+  auto fn_src = llvm_util::llvm2alive(*unit.src_fn, tli.getTLI(*unit.src_fn),
+                                      /*IsSrc=*/true);
   if (!fn_src) {
     v.status = CutVerdict::Status::Error;
     v.error_message = "could not translate src to alive2 IR";
     return v;
   }
-  auto fn_tgt = llvm_util::llvm2alive(*cut.tgt_fn, tli.getTLI(*cut.tgt_fn),
-                                       /*IsSrc=*/false, fn_src->getGlobalVars());
+  auto fn_tgt = llvm_util::llvm2alive(*unit.tgt_fn, tli.getTLI(*unit.tgt_fn),
+                                      /*IsSrc=*/false, fn_src->getGlobalVars());
   if (!fn_tgt) {
     v.status = CutVerdict::Status::Error;
     v.error_message = "could not translate tgt to alive2 IR";
@@ -58,7 +58,7 @@ CutVerdict runOnce(Cut &cut, llvm::TargetLibraryInfoWrapperPass &tli,
   }
 
   tools::Transform t;
-  t.name = cut.name;
+  t.name = unit.name;
   t.src = std::move(*fn_src);
   t.tgt = std::move(*fn_tgt);
 
@@ -108,14 +108,13 @@ CutVerdict runOnce(Cut &cut, llvm::TargetLibraryInfoWrapperPass &tli,
   return v;
 }
 
-}  // namespace
+} // namespace
 
-CutVerdict verifyCut(Cut &cut, llvm::TargetLibraryInfoWrapperPass &tli,
-                     smt::smt_initializer &smt_init,
-                     llvm::Function *parent_src,
-                     llvm::Module *parent_module,
-                     const std::string &dump_dir) {
-  CutVerdict v = runOnce(cut, tli, smt_init);
+CutVerdict verifyTvUnit(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
+                        smt::smt_initializer &smt_init,
+                        llvm::Function *parent_src, llvm::Module *parent_module,
+                        const std::string &dump_dir) {
+  CutVerdict v = runOnce(unit, tli, smt_init);
 
   if (v.passed)
     return v;
@@ -126,36 +125,36 @@ CutVerdict verifyCut(Cut &cut, llvm::TargetLibraryInfoWrapperPass &tli,
     return v;
 
   // Try the hand-coded proposers.
-  auto proposed = proposeAssume(cut, *parent_src, *parent_module,
-                                cut.module->getContext());
+  auto proposed = proposeAssume(unit, *parent_src, *parent_module,
+                                unit.module->getContext());
   if (!proposed)
     return v;
 
-  dumpCut(proposed->assume_check, dump_dir);
-  dumpCut(proposed->modified_cut, dump_dir);
+  dumpTvUnit(proposed->assume_check, dump_dir);
+  dumpTvUnit(proposed->modified_cut, dump_dir);
 
   // Standalone soundness gate: the precondition must hold unconditionally
   // in the parent's input space.
   CutVerdict check_v = runOnce(proposed->assume_check, tli, smt_init);
   if (!check_v.passed) {
-    v.error_message += "\n  proposer " + proposed->proposer_name +
-                       " fired but assume-check failed: " +
-                       check_v.error_message;
+    v.error_message +=
+        "\n  proposer " + proposed->proposer_name +
+        " fired but assume-check failed: " + check_v.error_message;
     return v;
   }
 
-  // Re-verify the cut with `llvm.assume` injected.
+  // Re-verify the unit with `llvm.assume` injected.
   CutVerdict mod_v = runOnce(proposed->modified_cut, tli, smt_init);
   if (mod_v.passed) {
-    mod_v.name = cut.name;
+    mod_v.name = unit.name;
     mod_v.proposer_name = proposed->proposer_name;
     return mod_v;
   }
 
   v.error_message += "\n  proposer " + proposed->proposer_name +
-                     " fired and assume-check passed, but modified cut " +
+                     " fired and assume-check passed, but modified unit " +
                      "still does not verify: " + mod_v.error_message;
   return v;
 }
 
-}  // namespace alive_tv_next
+} // namespace alive_tv_next

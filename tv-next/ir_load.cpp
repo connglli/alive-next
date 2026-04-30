@@ -7,10 +7,11 @@
 
 namespace alive_tv_next {
 
-std::optional<LoadedSlice>
-loadSlice(const std::string &file1, const std::string &file2,
-          const std::string &src_fn_name, const std::string &tgt_fn_name,
-          llvm::LLVMContext &ctx) {
+std::optional<LoadedSlice> loadSlice(const std::string &file1,
+                                     const std::string &file2,
+                                     const std::string &src_fn_name,
+                                     const std::string &tgt_fn_name,
+                                     llvm::LLVMContext &ctx) {
   LoadedSlice slice;
 
   slice.module1 = llvm_util::openInputFile(ctx, file1);
@@ -19,7 +20,8 @@ loadSlice(const std::string &file1, const std::string &file2,
     return std::nullopt;
   }
   if (llvm::verifyModule(*slice.module1, &llvm::errs())) {
-    llvm::errs() << "alive-tv-next: '" << file1 << "' failed llvm::verifyModule\n";
+    llvm::errs() << "alive-tv-next: '" << file1
+                 << "' failed llvm::verifyModule\n";
     return std::nullopt;
   }
 
@@ -61,4 +63,4 @@ loadSlice(const std::string &file1, const std::string &file2,
   return slice;
 }
 
-}  // namespace alive_tv_next
+} // namespace alive_tv_next

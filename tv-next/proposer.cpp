@@ -52,9 +52,9 @@ struct ExtSource {
 // (the value being extended, which is what the assume-check ranges over).
 // Returns nullopt if `name` doesn't resolve to a single such extension
 // or if either source/dest is non-integer.
-std::optional<ExtSource>
-findExtSource(const std::string &name, llvm::Function &parent_src,
-              llvm::Type *expected_dst_ty) {
+std::optional<ExtSource> findExtSource(const std::string &name,
+                                       llvm::Function &parent_src,
+                                       llvm::Type *expected_dst_ty) {
   for (llvm::BasicBlock &bb : parent_src) {
     for (llvm::Instruction &I : bb) {
       if (!I.hasName() || I.getName().str() != name)
@@ -107,18 +107,18 @@ void injectNoOverflowAssume(llvm::Function *fn, llvm::Argument *a,
   llvm::Value *not_ovf =
       bld.CreateXor(ovf_bit, llvm::ConstantInt::getTrue(ctx), "not_ovf");
 
-  llvm::Function *assume_fn = llvm::Intrinsic::getOrInsertDeclaration(
-      M, llvm::Intrinsic::assume);
+  llvm::Function *assume_fn =
+      llvm::Intrinsic::getOrInsertDeclaration(M, llvm::Intrinsic::assume);
   bld.CreateCall(assume_fn, {not_ovf});
 }
 
-// Clone the original cut's module and inject an assume on each side.
-// `a_name` / `b_name` are the SSA names of the two cut-function parameters
+// Clone the original TvUnit's module and inject an assume on each side.
+// `a_name` / `b_name` are the SSA names of the two unit parameters
 // the assume ranges over (i.e. the mul's operands).
-Cut buildModifiedCut(const Cut &original, const std::string &a_name,
-                     const std::string &b_name,
-                     const std::string &diag_name) {
-  Cut out;
+TvUnit buildModifiedTvUnit(const TvUnit &original, const std::string &a_name,
+                           const std::string &b_name,
+                           const std::string &diag_name) {
+  TvUnit out;
   out.name = diag_name;
 
   llvm::ValueToValueMapTy vmap;
@@ -135,14 +135,14 @@ Cut buildModifiedCut(const Cut &original, const std::string &a_name,
   return out;
 }
 
-// Build the standalone assume-check cut. The cut takes the parent's
-// pre-extension inputs as parameters; @src reruns the sext/zext +
-// no-signed-overflow predicate; @tgt always returns true. Verifying this
-// checks the precondition holds in the parent's input space.
-Cut buildAssumeCheck(const ExtSource &a, const ExtSource &b,
-                     llvm::Type *mul_ty, llvm::Module &parent_module,
-                     llvm::LLVMContext &ctx, const std::string &diag_name) {
-  Cut out;
+// Build the standalone assume-check TvUnit. Takes the parent's pre-extension
+// inputs as parameters; @src reruns the sext/zext + no-signed-overflow
+// predicate; @tgt always returns true. Verifying this checks the
+// precondition holds in the parent's input space.
+TvUnit buildAssumeCheck(const ExtSource &a, const ExtSource &b,
+                        llvm::Type *mul_ty, llvm::Module &parent_module,
+                        llvm::LLVMContext &ctx, const std::string &diag_name) {
+  TvUnit out;
   out.name = diag_name;
   out.module = std::make_unique<llvm::Module>("assume_check", ctx);
   out.module->setDataLayout(parent_module.getDataLayout());
@@ -173,15 +173,15 @@ Cut buildAssumeCheck(const ExtSource &a, const ExtSource &b,
     out.tgt_fn->getArg(i)->setName(names[i]);
   }
 
-  auto buildExt = [&](llvm::IRBuilder<> &bld, llvm::Value *v, const ExtSource &e,
+  auto buildExt = [&](llvm::IRBuilder<> &bld, llvm::Value *v,
+                      const ExtSource &e,
                       const llvm::Twine &n) -> llvm::Value * {
     return e.is_signed ? bld.CreateSExt(v, mul_ty, n)
                        : bld.CreateZExt(v, mul_ty, n);
   };
 
   {
-    llvm::BasicBlock *bb =
-        llvm::BasicBlock::Create(ctx, "entry", out.src_fn);
+    llvm::BasicBlock *bb = llvm::BasicBlock::Create(ctx, "entry", out.src_fn);
     llvm::IRBuilder<> bld(bb);
     llvm::Argument *a_arg = out.src_fn->getArg(0);
     llvm::Argument *b_arg = same_src ? a_arg : out.src_fn->getArg(1);
@@ -190,8 +190,7 @@ Cut buildAssumeCheck(const ExtSource &a, const ExtSource &b,
 
     llvm::Function *smul_ovf = llvm::Intrinsic::getOrInsertDeclaration(
         out.module.get(), llvm::Intrinsic::smul_with_overflow, {mul_ty});
-    llvm::CallInst *call =
-        bld.CreateCall(smul_ovf, {a_ext, b_ext}, "ovf_pair");
+    llvm::CallInst *call = bld.CreateCall(smul_ovf, {a_ext, b_ext}, "ovf_pair");
     llvm::Value *ovf_bit = bld.CreateExtractValue(call, {1}, "ovf_bit");
     llvm::Value *not_ovf =
         bld.CreateXor(ovf_bit, llvm::ConstantInt::getTrue(ctx), "not_ovf");
@@ -199,8 +198,7 @@ Cut buildAssumeCheck(const ExtSource &a, const ExtSource &b,
   }
 
   {
-    llvm::BasicBlock *bb =
-        llvm::BasicBlock::Create(ctx, "entry", out.tgt_fn);
+    llvm::BasicBlock *bb = llvm::BasicBlock::Create(ctx, "entry", out.tgt_fn);
     llvm::IRBuilder<> bld(bb);
     bld.CreateRet(llvm::ConstantInt::getTrue(ctx));
   }
@@ -215,10 +213,9 @@ Cut buildAssumeCheck(const ExtSource &a, const ExtSource &b,
 // mul's type. alive2 acts as the soundness gate: the assume-check fires
 // the proof, so feasibility for arbitrary (M, K, N) bitwidth combos is
 // decided there rather than encoded as arithmetic here.
-std::optional<AssumedCut>
-tryNoOverflowMulFromExt(const Cut &original, llvm::Function &parent_src,
-                        llvm::Module &parent_module,
-                        llvm::LLVMContext &ctx) {
+std::optional<AssumedTvUnit>
+tryNoOverflowMulFromExt(const TvUnit &original, llvm::Function &parent_src,
+                        llvm::Module &parent_module, llvm::LLVMContext &ctx) {
   llvm::Instruction *src_inst = singleNonTerminator(*original.src_fn);
   llvm::Instruction *tgt_inst = singleNonTerminator(*original.tgt_fn);
   if (!src_inst || !tgt_inst)
@@ -263,25 +260,25 @@ tryNoOverflowMulFromExt(const Cut &original, llvm::Function &parent_src,
   if (!b_src)
     return std::nullopt;
 
-  AssumedCut out;
+  AssumedTvUnit out;
   out.proposer_name = "tryNoOverflowMulFromExt";
   out.modified_cut =
-      buildModifiedCut(original, a_name, b_name, original.name + "+assume");
+      buildModifiedTvUnit(original, a_name, b_name, original.name + "+assume");
   out.assume_check = buildAssumeCheck(*a_src, *b_src, mul_ty, parent_module,
                                       ctx, original.name + "/assume-check");
   return out;
 }
 
-}  // namespace
+} // namespace
 
-std::optional<AssumedCut> proposeAssume(const Cut &original_cut,
-                                        llvm::Function &parent_src,
-                                        llvm::Module &parent_module,
-                                        llvm::LLVMContext &ctx) {
-  if (auto r = tryNoOverflowMulFromExt(original_cut, parent_src,
-                                       parent_module, ctx))
+std::optional<AssumedTvUnit> proposeAssume(const TvUnit &original_unit,
+                                           llvm::Function &parent_src,
+                                           llvm::Module &parent_module,
+                                           llvm::LLVMContext &ctx) {
+  if (auto r = tryNoOverflowMulFromExt(original_unit, parent_src, parent_module,
+                                       ctx))
     return r;
   return std::nullopt;
 }
 
-}  // namespace alive_tv_next
+} // namespace alive_tv_next

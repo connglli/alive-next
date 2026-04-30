@@ -30,7 +30,7 @@
 
 #pragma once
 
-#include "tv-next/cut.h"
+#include "tv-next/unit.h"
 
 #include "llvm/IR/Function.h"
 #include "llvm/IR/LLVMContext.h"
@@ -43,19 +43,19 @@
 namespace alive_tv_next {
 
 // What a proposer returns when it fires. Both `modified_cut` and
-// `assume_check` are independent Cuts (each owning its own Module) so
+// `assume_check` are independent TvUnits (each owning its own Module) so
 // alive2 can verify them as standard Transforms.
-struct AssumedCut {
-  Cut modified_cut;     // injected `llvm.assume(cond)`
-  Cut assume_check;     // proves `cond` always holds in the parent's input space
+struct AssumedTvUnit {
+  TvUnit modified_cut; // injected `llvm.assume(cond)`
+  TvUnit assume_check; // proves `cond` always holds in the parent's input space
   std::string proposer_name;
 };
 
 // Try every hand-coded proposer in turn. Returns the first that fires;
 // std::nullopt if none match.
-std::optional<AssumedCut> proposeAssume(const Cut &original_cut,
-                                        llvm::Function &parent_src,
-                                        llvm::Module &parent_module,
-                                        llvm::LLVMContext &ctx);
+std::optional<AssumedTvUnit> proposeAssume(const TvUnit &original_unit,
+                                           llvm::Function &parent_src,
+                                           llvm::Module &parent_module,
+                                           llvm::LLVMContext &ctx);
 
-}  // namespace alive_tv_next
+} // namespace alive_tv_next

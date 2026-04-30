@@ -8,12 +8,12 @@
 //
 // Phase 2 (M2.1):
 //   - Diff positions are grouped into runs of *consecutive* diffs. An
-//     identical position breaks a run. A 1-position group recovers Phase
-//     1's single-instr-cut behaviour; multi-position groups are lifted
-//     jointly into one Transform (see cut.h, buildGroupCut).
+//     identical position breaks a run. A 1-position region recovers Phase
+//     1's single-instr-cut behaviour; multi-position regions are lifted
+//     jointly into one TvUnit (see cut.h, buildTvUnit).
 //
-// Multi-BB and multi-side (different src/tgt instruction counts) land in
-// later phases.
+// Multi-BB and asymmetric (different src/tgt instruction counts) cases land
+// in later phases.
 
 #pragma once
 
@@ -39,28 +39,28 @@ struct DiffPosition {
 };
 
 // A run of consecutive diff positions, sorted ascending by inst_idx.
-// Positions in the same group are lifted together into one cut and
+// Positions in the same region are lifted together into one TvUnit and
 // verified jointly.
 //
 // Two shapes:
 //
-//   Equal-count group (is_multi_side == false):
+//   Symmetric region (is_asymmetric == false):
 //     `positions` is non-empty; src and tgt have the same number of
-//     differing instructions in the run. The group's exit instruction is
-//     `positions.back()`; its value type is the cut's return type.
+//     differing instructions in the run. The region's exit instruction is
+//     `positions.back()`; its value type is the TvUnit's return type.
 //
-//   Multi-side group (is_multi_side == true):
+//   Asymmetric region (is_asymmetric == true):
 //     `positions` is empty. `src_region` and `tgt_region` hold the full
 //     instruction lists for each side of the changed region (possibly
-//     different lengths). The cut exits at `src_region.back()` /
+//     different lengths). The TvUnit exits at `src_region.back()` /
 //     `tgt_region.back()` — the last instruction on each side (must share
 //     a type). `src_start_idx` / `tgt_start_idx` are 0-based indices into
 //     the parent function's non-terminator instruction list, for
 //     diagnostics only.
-struct DiffGroup {
+struct DiffRegion {
   std::vector<DiffPosition> positions;
 
-  bool is_multi_side = false;
+  bool is_asymmetric = false;
   std::vector<llvm::Instruction *> src_region;
   std::vector<llvm::Instruction *> tgt_region;
   size_t src_start_idx = 0;
@@ -68,15 +68,15 @@ struct DiffGroup {
 };
 
 struct DiffResult {
-  std::vector<DiffGroup> groups;
+  std::vector<DiffRegion> regions;
   // How many positions matched textually (for verbose reporting).
   size_t identical_count = 0;
 };
 
-// Compute the per-line diff and group consecutive diffs.
+// Compute the per-line diff and group consecutive diffs into DiffRegions.
 // Returns std::nullopt and prints a diagnostic on errs() if the Phase 1
 // preconditions are violated (multi-BB, BB length mismatch).
-std::optional<DiffResult>
-computeDiff(llvm::Function &src, llvm::Function &tgt);
+std::optional<DiffResult> computeDiffRegions(llvm::Function &src,
+                                             llvm::Function &tgt);
 
-}  // namespace alive_tv_next
+} // namespace alive_tv_next

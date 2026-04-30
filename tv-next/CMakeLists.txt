@@ -1,6 +1,6 @@
 # tv-next — alive-next compositional translation validator core (library).
 #
-# The library exposes diff / cut / verify / compose primitives consumed by
+# The library exposes diff / unit / verify / compose primitives consumed by
 # the `alive-tv-next` tool (tools/alive-tv-next.cpp) and, eventually, by
 # any further alive-next-family tools (test helpers, fuzzers, etc.).
 #
@@ -17,7 +17,7 @@
 set(TV_NEXT_SRCS
   ir_load.cpp
   diff.cpp
-  cut.cpp
+  unit.cpp
   proposer.cpp
   verify.cpp
   compose.cpp

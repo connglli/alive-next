@@ -10,9 +10,9 @@
 // diff → cut → per-cut alive2 → compose.
 
 #include "tv-next/compose.h"
-#include "tv-next/cut.h"
 #include "tv-next/diff.h"
 #include "tv-next/ir_load.h"
+#include "tv-next/unit.h"
 #include "tv-next/verify.h"
 
 #include "cache/cache.h"
@@ -60,25 +60,27 @@ using namespace util;
 
 namespace {
 
-llvm::cl::opt<std::string> opt_file1(
-    llvm::cl::Positional, llvm::cl::desc("first_bitcode_file"),
-    llvm::cl::Required, llvm::cl::value_desc("filename"),
-    llvm::cl::cat(alive_cmdargs));
+llvm::cl::opt<std::string> opt_file1(llvm::cl::Positional,
+                                     llvm::cl::desc("first_bitcode_file"),
+                                     llvm::cl::Required,
+                                     llvm::cl::value_desc("filename"),
+                                     llvm::cl::cat(alive_cmdargs));
 
-llvm::cl::opt<std::string> opt_file2(
-    llvm::cl::Positional, llvm::cl::desc("[second_bitcode_file]"),
-    llvm::cl::Optional, llvm::cl::value_desc("filename"),
-    llvm::cl::cat(alive_cmdargs));
+llvm::cl::opt<std::string> opt_file2(llvm::cl::Positional,
+                                     llvm::cl::desc("[second_bitcode_file]"),
+                                     llvm::cl::Optional,
+                                     llvm::cl::value_desc("filename"),
+                                     llvm::cl::cat(alive_cmdargs));
 
-llvm::cl::opt<std::string> opt_src_fn(
-    LLVM_ARGS_PREFIX "src-fn",
-    llvm::cl::desc("Name of src function (without @)"),
-    llvm::cl::cat(alive_cmdargs), llvm::cl::init("src"));
+llvm::cl::opt<std::string>
+    opt_src_fn(LLVM_ARGS_PREFIX "src-fn",
+               llvm::cl::desc("Name of src function (without @)"),
+               llvm::cl::cat(alive_cmdargs), llvm::cl::init("src"));
 
-llvm::cl::opt<std::string> opt_tgt_fn(
-    LLVM_ARGS_PREFIX "tgt-fn",
-    llvm::cl::desc("Name of tgt function (without @)"),
-    llvm::cl::cat(alive_cmdargs), llvm::cl::init("tgt"));
+llvm::cl::opt<std::string>
+    opt_tgt_fn(LLVM_ARGS_PREFIX "tgt-fn",
+               llvm::cl::desc("Name of tgt function (without @)"),
+               llvm::cl::cat(alive_cmdargs), llvm::cl::init("tgt"));
 
 // LLM-mode (later phases). Per-invocation choice → CLI flag. API key /
 // endpoint are deployment-fixed and live in env vars
@@ -96,9 +98,9 @@ llvm::cl::opt<bool> opt_alive_tv_next_verbose(
     llvm::cl::desc("Print per-cut verdicts and diff summary"),
     llvm::cl::cat(alive_cmdargs), llvm::cl::init(false));
 
-llvm::cl::opt<std::string> opt_dump_cuts(
-    LLVM_ARGS_PREFIX "dump-cuts",
-    llvm::cl::desc("Write each generated cut to <DIR>/<name>.srctgt.ll for "
+llvm::cl::opt<std::string> opt_dump_units(
+    LLVM_ARGS_PREFIX "dump-units",
+    llvm::cl::desc("Write each generated TvUnit to <DIR>/<name>.srctgt.ll for "
                    "inspection. Developer/debug flag."),
     llvm::cl::cat(alive_cmdargs), llvm::cl::init(""));
 
@@ -106,14 +108,14 @@ llvm::cl::opt<std::string> opt_dump_cuts(
 // replace anything outside [A-Za-z0-9._-] with '_'.
 std::string sanitizeName(std::string s) {
   for (char &c : s) {
-    if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '.' ||
-          c == '_' || c == '-'))
+    if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '_' ||
+          c == '-'))
       c = '_';
   }
   return s;
 }
 
-}  // namespace
+} // namespace
 
 // Required by cmd_args_def.h's `cache = make_unique<Cache>(...)` branch.
 // Even with NO_REDIS_SUPPORT the symbol is referenced (the -cache opt
@@ -173,84 +175,84 @@ ALIVE_NEXT_LLM_API_KEY env var, endpoint via ALIVE_NEXT_LLM_BASE_URL.
   smt::smt_initializer smt_init;
 
   // Compute the diff. Diff positions are grouped into runs of consecutive
-  // diffs (Phase 2): each run is lifted as one Transform.
-  auto diff = alive_tv_next::computeDiff(*loaded->src_fn, *loaded->tgt_fn);
+  // diffs (Phase 2): each run is lifted as one TvUnit.
+  auto diff =
+      alive_tv_next::computeDiffRegions(*loaded->src_fn, *loaded->tgt_fn);
   if (!diff) {
     return 1;
   }
   if (opt_alive_tv_next_verbose) {
-    size_t total_diffs = 0, multi_side_groups = 0;
-    for (const auto &g : diff->groups) {
-      if (g.is_multi_side) ++multi_side_groups;
-      else total_diffs += g.positions.size();
+    size_t total_diffs = 0, asymmetric_regions = 0;
+    for (const auto &g : diff->regions) {
+      if (g.is_asymmetric)
+        ++asymmetric_regions;
+      else
+        total_diffs += g.positions.size();
     }
     *out << "alive-tv-next: " << diff->identical_count
          << " identical position(s), " << total_diffs
-         << " diff position(s) across " << diff->groups.size()
-         << " group(s)";
-    if (multi_side_groups)
-      *out << " (" << multi_side_groups << " multi-side)";
+         << " diff position(s) across " << diff->regions.size() << " region(s)";
+    if (asymmetric_regions)
+      *out << " (" << asymmetric_regions << " asymmetric)";
     *out << "\n";
   }
 
-  // Build and verify each group as a single Transform.
+  // Build and verify each region as a single TvUnit.
   std::vector<alive_tv_next::CutVerdict> verdicts;
-  verdicts.reserve(diff->groups.size());
+  verdicts.reserve(diff->regions.size());
 
-  for (const alive_tv_next::DiffGroup &group : diff->groups) {
+  for (const alive_tv_next::DiffRegion &region : diff->regions) {
     // Diagnostic name.
     std::string diag_name;
-    if (group.is_multi_side) {
-      diag_name = "cut@src-i" + std::to_string(group.src_start_idx);
-      if (!group.src_region.empty())
-        diag_name += "..i" + std::to_string(group.src_start_idx +
-                                             group.src_region.size() - 1);
-      diag_name += "/tgt-i" + std::to_string(group.tgt_start_idx);
-      if (!group.tgt_region.empty())
-        diag_name += "..i" + std::to_string(group.tgt_start_idx +
-                                             group.tgt_region.size() - 1);
-    } else if (group.positions.size() == 1) {
-      diag_name = "cut@i" + std::to_string(group.positions.front().inst_idx);
-      if (group.positions.front().src_inst->hasName())
+    if (region.is_asymmetric) {
+      diag_name = "unit@src-i" + std::to_string(region.src_start_idx);
+      if (!region.src_region.empty())
+        diag_name += "..i" + std::to_string(region.src_start_idx +
+                                            region.src_region.size() - 1);
+      diag_name += "/tgt-i" + std::to_string(region.tgt_start_idx);
+      if (!region.tgt_region.empty())
+        diag_name += "..i" + std::to_string(region.tgt_start_idx +
+                                            region.tgt_region.size() - 1);
+    } else if (region.positions.size() == 1) {
+      diag_name = "unit@i" + std::to_string(region.positions.front().inst_idx);
+      if (region.positions.front().src_inst->hasName())
         diag_name +=
-            "(%" + group.positions.front().src_inst->getName().str() + ")";
+            "(%" + region.positions.front().src_inst->getName().str() + ")";
     } else {
-      diag_name =
-          "cut@i" + std::to_string(group.positions.front().inst_idx) +
-          "..i" + std::to_string(group.positions.back().inst_idx);
+      diag_name = "unit@i" + std::to_string(region.positions.front().inst_idx) +
+                  "..i" + std::to_string(region.positions.back().inst_idx);
     }
 
-    auto cut = alive_tv_next::buildGroupCut(group, *loaded->module1, Context,
-                                            diag_name);
-    if (!cut) {
+    auto unit = alive_tv_next::buildTvUnit(region, *loaded->module1, Context,
+                                           diag_name);
+    if (!unit) {
       // Build failure: surface as a failed verdict so the slice fails cleanly.
       alive_tv_next::CutVerdict v;
       v.name = diag_name;
       v.passed = false;
       v.status = alive_tv_next::CutVerdict::Status::Error;
-      v.error_message = "could not lift group into a Transform";
+      v.error_message = "could not lift region into a TvUnit";
       verdicts.push_back(std::move(v));
       continue;
     }
 
-    // --dump-cuts: write the lifted IR for inspection.
-    if (!opt_dump_cuts.empty()) {
+    // --dump-units: write the lifted IR for inspection.
+    if (!opt_dump_units.empty()) {
       std::error_code ec;
-      std::string path = opt_dump_cuts + "/" + sanitizeName(diag_name) +
-                         ".srctgt.ll";
+      std::string path =
+          opt_dump_units + "/" + sanitizeName(diag_name) + ".srctgt.ll";
       llvm::raw_fd_ostream dump_os(path, ec);
       if (ec) {
         llvm::errs() << "alive-tv-next: could not open " << path << " for "
                      << "dump: " << ec.message() << "\n";
       } else {
-        cut->module->print(dump_os, /*AAW=*/nullptr);
+        unit->module->print(dump_os, /*AAW=*/nullptr);
       }
     }
 
-    auto verdict = alive_tv_next::verifyCut(*cut, TLI, smt_init,
-                                            loaded->src_fn,
-                                            loaded->module1.get(),
-                                            opt_dump_cuts);
+    auto verdict =
+        alive_tv_next::verifyTvUnit(*unit, TLI, smt_init, loaded->src_fn,
+                                    loaded->module1.get(), opt_dump_units);
     if (opt_alive_tv_next_verbose) {
       *out << "  " << verdict.name << ": "
            << (verdict.passed ? "pass" : "FAIL");
@@ -264,8 +266,8 @@ ALIVE_NEXT_LLM_API_KEY env var, endpoint via ALIVE_NEXT_LLM_BASE_URL.
   }
 
   // Aggregate.
-  auto result = alive_tv_next::composeCuts(std::move(verdicts),
-                                           diff->identical_count);
+  auto result =
+      alive_tv_next::composeCuts(std::move(verdicts), diff->identical_count);
 
   if (result.passed) {
     *out << "Transformation seems to be correct!\n";

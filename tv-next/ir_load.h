@@ -24,7 +24,7 @@ namespace alive_tv_next {
 // In single-file form, `module2` is null and `tgt_fn` lives in `module1`.
 struct LoadedSlice {
   std::unique_ptr<llvm::Module> module1;
-  std::unique_ptr<llvm::Module> module2;  // null = single-file form
+  std::unique_ptr<llvm::Module> module2; // null = single-file form
   llvm::Function *src_fn = nullptr;
   llvm::Function *tgt_fn = nullptr;
 };
@@ -34,11 +34,10 @@ struct LoadedSlice {
 //
 // Returns std::nullopt and prints a diagnostic to errs() on parse,
 // verifyModule, or function-lookup failure.
-std::optional<LoadedSlice>
-loadSlice(const std::string &file1,
-          const std::string &file2,
-          const std::string &src_fn_name,
-          const std::string &tgt_fn_name,
-          llvm::LLVMContext &ctx);
+std::optional<LoadedSlice> loadSlice(const std::string &file1,
+                                     const std::string &file2,
+                                     const std::string &src_fn_name,
+                                     const std::string &tgt_fn_name,
+                                     llvm::LLVMContext &ctx);
 
-}  // namespace alive_tv_next
+} // namespace alive_tv_next
