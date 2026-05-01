@@ -35,6 +35,19 @@ const KnownRange *rangeOf(const llvm::Value *V, const RangeMap &map,
   return nullptr;
 }
 
+// Helper: check whether a shift amount operand is provably < bitwidth.
+// Returns {in_range, const_shift} where const_shift is bw when non-constant.
+std::pair<bool, unsigned> shiftInRange(llvm::Value *amt_op, unsigned bw,
+                                       const KnownRange *rR) {
+  if (auto *C = llvm::dyn_cast<llvm::ConstantInt>(amt_op)) {
+    unsigned sh = (unsigned)C->getValue().getLimitedValue(bw);
+    return {sh < bw, sh};
+  }
+  if (rR && rR->u && rR->u->second.ult(bw))
+    return {true, bw}; // in range, but not a constant
+  return {false, bw};
+}
+
 std::optional<KnownRange> transfer(const llvm::Instruction *I,
                                    const RangeMap &map) {
   if (!I->getType()->isIntegerTy())
@@ -103,7 +116,8 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
 
     case llvm::Instruction::And: {
       KnownRange r;
-      // and X, C (C non-negative): [0, C].
+      // and X, C (C non-negative): [0, C]. Works for any rR/lR with a
+      // non-negative upper bound, not just explicit ConstantInt operands.
       auto tryConst = [&](const KnownRange *xR, const KnownRange *cR) {
         if (cR && cR->u && !cR->u->second.isNegative())
           r.u = {llvm::APInt::getZero(bw), cR->u->second};
@@ -143,81 +157,118 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
     }
 
     case llvm::Instruction::URem: {
-      auto *C = llvm::dyn_cast<llvm::ConstantInt>(BO->getOperand(1));
-      if (!C || C->isZero())
+      // Requires a non-zero divisor lower bound to avoid division-by-zero
+      // poison. Works for both constant and non-constant divisors.
+      if (!rR || !rR->u || rR->u->first.isZero())
         return std::nullopt;
       KnownRange r;
-      r.u = {llvm::APInt::getZero(bw), C->getValue() - 1};
-      // C is a constant (always well-defined); propagate from dividend only.
-      r.undef_free = lR && lR->undef_free;
-      r.poison_free = lR && lR->poison_free;
+      // result ∈ [0, hi_d - 1] since urem(x, d) < d for any d > 0.
+      r.u = {llvm::APInt::getZero(bw), rR->u->second - 1};
+      r.undef_free = (lR && lR->undef_free) && rR->undef_free;
+      r.poison_free = (lR && lR->poison_free) && rR->poison_free;
       crossDerive(r);
       return r;
     }
 
     case llvm::Instruction::UDiv: {
-      auto *C = llvm::dyn_cast<llvm::ConstantInt>(BO->getOperand(1));
-      if (!C || C->isZero() || !lR || !lR->u)
+      // Requires a non-zero divisor lower bound and a known dividend range.
+      // Works for both constant and non-constant divisors.
+      if (!rR || !rR->u || rR->u->first.isZero() || !lR || !lR->u)
         return std::nullopt;
+      // result ∈ [lo_x / hi_d, hi_x / lo_d].
       KnownRange r;
-      r.u = {lR->u->first.udiv(C->getValue()),
-             lR->u->second.udiv(C->getValue())};
-      r.undef_free = lR->undef_free;
-      r.poison_free = lR->poison_free;
+      r.u = {lR->u->first.udiv(rR->u->second),
+             lR->u->second.udiv(rR->u->first)};
+      r.undef_free = lR->undef_free && rR->undef_free;
+      r.poison_free = lR->poison_free && rR->poison_free;
       crossDerive(r);
       return r;
     }
 
     case llvm::Instruction::LShr: {
-      auto *C = llvm::dyn_cast<llvm::ConstantInt>(BO->getOperand(1));
-      if (!C || !lR || !lR->u)
+      // Shift amount must be provably < bitwidth (for both constant and
+      // non-constant amounts whose range upper bound is < bitwidth).
+      auto [in_range, const_shift] =
+          shiftInRange(BO->getOperand(1), bw, rR);
+      if (!in_range)
         return std::nullopt;
-      unsigned shift = (unsigned)C->getValue().getLimitedValue(bw);
+
       KnownRange r;
-      r.u = shift >= bw ? std::make_pair(llvm::APInt::getZero(bw),
-                                         llvm::APInt::getZero(bw))
-                        : std::make_pair(lR->u->first.lshr(shift),
-                                         lR->u->second.lshr(shift));
-      r.undef_free = lR->undef_free;
-      r.poison_free = lR->poison_free;
+      if (lR && lR->u) {
+        if (const_shift < bw) {
+          // Constant shift: tight bounds.
+          r.u = {lR->u->first.lshr(const_shift),
+                 lR->u->second.lshr(const_shift)};
+        } else if (rR && rR->u) {
+          // Variable shift ∈ [lo_amt, hi_amt]:
+          //   min result = lo_x >> hi_amt (smallest x shifted the most)
+          //   max result = hi_x >> lo_amt (largest x shifted the least)
+          unsigned hi_amt = (unsigned)rR->u->second.getLimitedValue();
+          unsigned lo_amt = (unsigned)rR->u->first.getLimitedValue();
+          r.u = {lR->u->first.lshr(hi_amt), lR->u->second.lshr(lo_amt)};
+        }
+      }
+      // Shift is in range: no shift-amount-induced poison; propagate flags.
+      r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
+      r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
+      if (!r.u && !r.s && !r.well_defined())
+        return std::nullopt;
       crossDerive(r);
       return r;
     }
 
     case llvm::Instruction::AShr: {
-      auto *C = llvm::dyn_cast<llvm::ConstantInt>(BO->getOperand(1));
-      if (!C || !lR || !lR->s)
+      // Shift amount must be provably < bitwidth.
+      auto [in_range, const_shift] =
+          shiftInRange(BO->getOperand(1), bw, rR);
+      if (!in_range)
         return std::nullopt;
-      unsigned shift = (unsigned)C->getValue().getLimitedValue(bw);
-      if (shift >= bw)
-        return std::nullopt;
+
       KnownRange r;
-      r.s = {lR->s->first.ashr(shift), lR->s->second.ashr(shift)};
-      r.undef_free = lR->undef_free;
-      r.poison_free = lR->poison_free;
+      if (lR && lR->s) {
+        if (const_shift < bw) {
+          // Constant shift: tight bounds.
+          r.s = {lR->s->first.ashr(const_shift),
+                 lR->s->second.ashr(const_shift)};
+        } else if (rR && rR->u) {
+          // Variable shift ∈ [lo_amt, hi_amt]:
+          //   tightest signed bound uses lo_amt (least shift):
+          //   min result = lo_x >> lo_amt, max result = hi_x >> lo_amt.
+          unsigned lo_amt = (unsigned)rR->u->first.getLimitedValue();
+          r.s = {lR->s->first.ashr(lo_amt), lR->s->second.ashr(lo_amt)};
+        }
+      }
+      // Shift is in range: no shift-amount-induced poison; propagate flags.
+      r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
+      r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
+      if (!r.u && !r.s && !r.well_defined())
+        return std::nullopt;
       crossDerive(r);
       return r;
     }
 
     case llvm::Instruction::Shl: {
-      auto *C = llvm::dyn_cast<llvm::ConstantInt>(BO->getOperand(1));
-      if (!C)
+      // Shift amount must be provably < bitwidth.
+      auto [in_range, const_shift] =
+          shiftInRange(BO->getOperand(1), bw, rR);
+      if (!in_range)
         return std::nullopt;
-      unsigned shift = (unsigned)C->getValue().getLimitedValue(bw);
-      if (shift >= bw)
-        return std::nullopt;
+
       bool nuw = BO->hasNoUnsignedWrap();
       bool nsw = BO->hasNoSignedWrap();
       KnownRange r;
-      if (nuw && lR && lR->u)
-        r.u = {lR->u->first << shift, lR->u->second << shift};
-      if (nsw && lR && lR->s)
-        r.s = {lR->s->first << shift, lR->s->second << shift};
-      if (!r.u && !r.s)
+      // Tight value bounds are only derivable for constant shift amounts.
+      if (const_shift < bw) {
+        if (nuw && lR && lR->u)
+          r.u = {lR->u->first << const_shift, lR->u->second << const_shift};
+        if (nsw && lR && lR->s)
+          r.s = {lR->s->first << const_shift, lR->s->second << const_shift};
+      }
+      // Shift is in range: no shift-amount-induced poison; propagate flags.
+      r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
+      r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
+      if (!r.u && !r.s && !r.well_defined())
         return std::nullopt;
-      // nuw/nsw guarantee no overflow-induced poison; C is a constant.
-      r.undef_free = lR && lR->undef_free;
-      r.poison_free = lR && lR->poison_free;
       crossDerive(r);
       return r;
     }
@@ -230,10 +281,14 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
         r.u = {lR->u->first + rR->u->first, lR->u->second + rR->u->second};
       if (nsw && lR && lR->s && rR && rR->s)
         r.s = {lR->s->first + rR->s->first, lR->s->second + rR->s->second};
-      if (!r.u && !r.s)
-        return std::nullopt;
       r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
-      r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
+      // Plain add always wraps without producing poison. nuw/nsw add may
+      // produce poison on overflow; only assert poison_free when bounds were
+      // derived (proving the result fits, so no overflow occurred).
+      if (!(nuw || nsw) || r.u || r.s)
+        r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
+      if (!r.u && !r.s && !r.well_defined())
+        return std::nullopt;
       crossDerive(r);
       return r;
     }
@@ -247,10 +302,12 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
       if (nsw && lR && lR->s && rR && rR->s && !lR->s->first.isNegative() &&
           !rR->s->second.isNegative() && lR->s->second.sge(rR->s->first))
         r.s = {llvm::APInt::getZero(bw), lR->s->second - rR->s->first};
-      if (!r.u && !r.s)
-        return std::nullopt;
       r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
-      r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
+      // Plain sub wraps without producing poison.
+      if (!(nuw || nsw) || r.u || r.s)
+        r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
+      if (!r.u && !r.s && !r.well_defined())
+        return std::nullopt;
       crossDerive(r);
       return r;
     }
@@ -264,10 +321,12 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
       if (nsw && lR && lR->s && rR && rR->s && !lR->s->first.isNegative() &&
           !rR->s->first.isNegative())
         r.s = {lR->s->first * rR->s->first, lR->s->second * rR->s->second};
-      if (!r.u && !r.s)
-        return std::nullopt;
       r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
-      r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
+      // Plain mul wraps without producing poison.
+      if (!(nuw || nsw) || r.u || r.s)
+        r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
+      if (!r.u && !r.s && !r.well_defined())
+        return std::nullopt;
       crossDerive(r);
       return r;
     }

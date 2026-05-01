@@ -1,4 +1,4 @@
-// alive-tv-next: hand-coded assume proposers (Phase 3).
+// alive-tv-next: hand-coded assume proposers.
 //
 // A proposer recognizes a specific rewrite shape that's sound only under
 // a precondition, derives the precondition from the surrounding IR, and
@@ -13,20 +13,26 @@
 //      gate; if it fails the proposer's hypothesis is wrong and we
 //      reject the proposal.
 //
-// Phase 3 ships one proposer:
-//   - `tryNoOverflowMulFromExt` — covers Variant A. Recognizes a
-//     `mul A, B` → `mul nsw A', B'` rewrite when both operands trace
-//     back through one integer extension (sext or zext) in the parent
-//     @src to the mul's destination type. Proposes the assume "A * B
-//     doesn't signed-overflow" via `llvm.smul.with.overflow.iN`. The
-//     standalone assume-check rebuilds the extension chain on the
-//     parent's pre-extension inputs and asks alive2 to prove the
-//     overflow-free predicate — so feasibility for any (M, K, N)
-//     bitwidth combo (e.g., M+K ≤ N) is decided by the prover, not
-//     hardcoded here.
+// ## Registered patterns (proposer.cpp `kPatterns`)
 //
-// Future proposers (Phase 4 / corpus) plug into the same dispatcher
-// (`proposeAssume`) and follow the same shape.
+//   - NoOverflowMulFromExt — `mul A, B` → `mul nsw A', B'` when both
+//     operands trace through a single integer extension (sext/zext) in
+//     parent @src. Proposes "smul doesn't overflow".
+//
+//   - FreezeDropFromRange — `freeze(arg)` present in @src, absent in
+//     @tgt, and `arg` is a `shl %v, %amt` in parent @src where range
+//     analysis proves `%amt < bitwidth`. Proposes "arg is non-poison".
+//
+// ## How to add a new pattern
+//
+// Append a lambda with type `AssumeProposerFn` to `kPatterns` in
+// proposer.cpp. The lambda receives the original TvUnit, the parent @src
+// function, its Module, and the LLVMContext. Return `AssumedTvUnit` if
+// the pattern fires, `std::nullopt` otherwise. Use `llvm::PatternMatch`
+// for shape recognition and the shared helpers (`buildModifiedTvUnit`,
+// `buildNoPoisonModifiedTvUnit`, etc.) for TvUnit construction.
+// No changes to `proposeAssume` are needed — it iterates `kPatterns`
+// automatically, then falls back to `proposeFromRanges`.
 
 #pragma once
 
@@ -36,6 +42,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -51,8 +58,16 @@ struct AssumedTvUnit {
   std::string proposer_name;
 };
 
-// Try every hand-coded proposer in turn. Returns the first that fires;
-// std::nullopt if none match.
+// Signature for a single pattern lambda. Append a lambda with this type to
+// `kPatterns` in proposer.cpp to register a new pattern — no other changes
+// needed. The lambda should return AssumedTvUnit if the pattern fires and
+// std::nullopt if it does not match.
+using AssumeProposerFn = std::function<std::optional<AssumedTvUnit>(
+    const TvUnit &, llvm::Function &parent_src, llvm::Module &parent_module,
+    llvm::LLVMContext &)>;
+
+// Try every registered pattern in turn, then fall back to proposeFromRanges.
+// Returns the first result that fires; std::nullopt if none match.
 std::optional<AssumedTvUnit> proposeAssume(const TvUnit &original_unit,
                                            llvm::Function &parent_src,
                                            llvm::Module &parent_module,
