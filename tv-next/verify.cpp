@@ -112,36 +112,39 @@ UnitVerdict runOnce(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
 
 UnitVerdict verifyTvUnit(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
                          smt::smt_initializer &smt_init,
-                         llvm::Function *parent_src,
-                         llvm::Module *parent_module,
+                         llvm::Function *parent_src, llvm::Function *parent_tgt,
                          const std::string &dump_dir) {
   UnitVerdict v = runOnce(unit, tli, smt_init);
 
   if (v.passed)
-    return v;
+    return v; // Universally correct units
   if (v.status != UnitVerdict::Status::Unsound &&
       v.status != UnitVerdict::Status::FailedToProve)
-    return v;
-  if (!parent_src || !parent_module)
+    return v; // Erroneous units
+  if (!parent_src || !parent_tgt)
     return v;
 
+  // Unsound and FailedProve cases may need preconditions to make them hold.
   // Try the hand-coded proposers.
-  auto proposed = proposeAssume(unit, *parent_src, *parent_module,
-                                unit.module->getContext());
+  auto proposed =
+      proposeAssume(unit, *parent_src, *parent_tgt, unit.module->getContext());
   if (!proposed)
     return v;
 
-  dumpTvUnit(proposed->assume_check, dump_dir);
+  for (auto &ac : proposed->assume_checks)
+    dumpTvUnit(ac, dump_dir);
   dumpTvUnit(proposed->modified_unit, dump_dir);
 
-  // Standalone soundness gate: the precondition must hold unconditionally
-  // in the parent's input space.
-  UnitVerdict check_v = runOnce(proposed->assume_check, tli, smt_init);
-  if (!check_v.passed) {
-    v.error_message +=
-        "\n  proposer " + proposed->proposer_name +
-        " fired but assume-check failed: " + check_v.error_message;
-    return v;
+  // Standalone soundness gate: every precondition (potentially split across
+  // src-anchored and tgt-anchored checks) must hold unconditionally.
+  for (auto &ac : proposed->assume_checks) {
+    UnitVerdict check_v = runOnce(ac, tli, smt_init);
+    if (!check_v.passed) {
+      v.error_message += "\n  proposer " + proposed->proposer_name +
+                         " fired but assume-check '" + ac.name +
+                         "' failed: " + check_v.error_message;
+      return v;
+    }
   }
 
   // Re-verify the unit with `llvm.assume` injected.
@@ -153,7 +156,7 @@ UnitVerdict verifyTvUnit(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
   }
 
   v.error_message += "\n  proposer " + proposed->proposer_name +
-                     " fired and assume-check passed, but modified unit " +
+                     " fired and assume-checks passed, but modified unit " +
                      "still does not verify: " + mod_v.error_message;
   return v;
 }

@@ -250,9 +250,8 @@ ALIVE_NEXT_LLM_API_KEY env var, endpoint via ALIVE_NEXT_LLM_BASE_URL.
       }
     }
 
-    auto verdict =
-        alive_tv_next::verifyTvUnit(*unit, TLI, smt_init, loaded->src_fn,
-                                    loaded->module1.get(), opt_dump_units);
+    auto verdict = alive_tv_next::verifyTvUnit(
+        *unit, TLI, smt_init, loaded->src_fn, loaded->tgt_fn, opt_dump_units);
     if (opt_alive_tv_next_verbose) {
       *out << "  " << verdict.name << ": "
            << (verdict.passed ? "pass" : "FAIL");

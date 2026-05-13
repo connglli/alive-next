@@ -1,5 +1,6 @@
 #include "tv-next/range.h"
 
+#include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
 
@@ -17,6 +18,53 @@ void crossDerive(KnownRange &r) {
     r.u = r.s;
 }
 
+// Look up the KnownBits for V — from the map if known, else fall back to a
+// constant if V is a ConstantInt, else "all unknown" at the value's width.
+// "All unknown" is the analytical neutral element: it adds no information.
+llvm::KnownBits knownBitsOf(const llvm::Value *V, const RangeMap &map) {
+  if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(V))
+    return llvm::KnownBits::makeConstant(CI->getValue());
+  auto it = map.find(V);
+  if (it != map.end() && it->second.bits)
+    return *it->second.bits;
+  unsigned bw =
+      V->getType()->isIntegerTy() ? V->getType()->getIntegerBitWidth() : 0;
+  return llvm::KnownBits(bw);
+}
+
+// Tighten r.bits from u/s intervals via LLVM's KnownBits::makeConstantRange.
+// E.g. an unsigned range of [0, 31] forces high bits zero. We intersect (=
+// conjoin facts) so every source's known bits contribute.
+void deriveBitsFromIntervals(KnownRange &r, unsigned bw) {
+  if (bw == 0)
+    return;
+  llvm::KnownBits acc(bw);
+  if (r.bits)
+    acc = *r.bits;
+  auto add = [&](llvm::KnownBits kb) {
+    acc.Zero |= kb.Zero;
+    acc.One |= kb.One;
+  };
+  if (r.u && r.u->first.ule(r.u->second)) {
+    llvm::ConstantRange cr(r.u->first, r.u->second + 1);
+    add(cr.toKnownBits());
+  }
+  if (r.s && r.s->first.sle(r.s->second)) {
+    // ConstantRange has no signed flavor; the unsigned interval over the
+    // wraparound case approximates well enough — the toKnownBits() method
+    // returns common bits regardless of which interpretation we use, so
+    // forming a "signed-style" range as just [lo, hi) on the i64 ring still
+    // yields any high-bit agreement that survives.
+    llvm::APInt lo = r.s->first, hi = r.s->second + 1;
+    if (lo.ule(hi)) {
+      llvm::ConstantRange cr(lo, hi);
+      add(cr.toKnownBits());
+    }
+  }
+  if (!acc.isUnknown())
+    r.bits = acc;
+}
+
 // Look up V in the map; if not found and V is a ConstantInt, synthesize a
 // KnownRange for it (constants are always well-defined). Returns nullptr when
 // V has no derivable information.
@@ -26,10 +74,12 @@ const KnownRange *rangeOf(const llvm::Value *V, const RangeMap &map,
   if (it != map.end())
     return &it->second;
   if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(V)) {
-    storage = KnownRange{{{CI->getValue(), CI->getValue()}},
-                         {{CI->getValue(), CI->getValue()}},
-                         /*undef_free=*/true,
-                         /*poison_free=*/true};
+    storage = KnownRange{};
+    storage.u = {CI->getValue(), CI->getValue()};
+    storage.s = {CI->getValue(), CI->getValue()};
+    storage.bits = llvm::KnownBits::makeConstant(CI->getValue());
+    storage.undef_free = true;
+    storage.poison_free = true;
     return &storage;
   }
   return nullptr;
@@ -79,7 +129,16 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
                                                         : falseR->s->second;
       r.s = {lo, hi};
     }
-    if (!r.u && !r.s)
+    // KnownBits: result is either trueValue or falseValue, so a bit is known
+    // only if both branches agree on it. LLVM's `intersectWith` returns
+    // KnownBits whose Zero/One are the bitwise AND of the inputs' — exactly
+    // this "agree on both branches" semantic, despite the confusing name.
+    {
+      llvm::KnownBits tb = knownBitsOf(sel->getTrueValue(), map);
+      llvm::KnownBits fb = knownBitsOf(sel->getFalseValue(), map);
+      r.bits = tb.intersectWith(fb);
+    }
+    if (!r.u && !r.s && (!r.bits || r.bits->isUnknown()))
       return std::nullopt;
     // All three operands must be well-defined for the result to be.
     r.undef_free = (condR && condR->undef_free) &&
@@ -89,6 +148,7 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
                     (trueR && trueR->poison_free) &&
                     (falseR && falseR->poison_free);
     crossDerive(r);
+    deriveBitsFromIntervals(r, bw);
     return r;
   }
 
@@ -99,11 +159,12 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
     if (srcR) {
       r.u = srcR->u;
       r.s = srcR->s;
+      r.bits = srcR->bits;
     }
     // freeze always produces a well-defined value, regardless of input.
     r.undef_free = true;
     r.poison_free = true;
-    // Return even without bounds — the flags alone are useful information.
+    deriveBitsFromIntervals(r, bw);
     return r;
   }
 
@@ -131,28 +192,50 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
             lR->u->second.ult(rR->u->second) ? lR->u->second : rR->u->second;
         r.u = {llvm::APInt::getZero(bw), hi};
       }
-      if (!r.u)
+      // KnownBits: and propagates zeros from either side (and ones from both).
+      r.bits = knownBitsOf(BO->getOperand(0), map) &
+               knownBitsOf(BO->getOperand(1), map);
+      if (!r.u && r.bits->isUnknown())
         return std::nullopt;
       r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
       r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
       crossDerive(r);
+      deriveBitsFromIntervals(r, bw);
       return r;
     }
 
     case llvm::Instruction::Or: {
-      if (!lR || !lR->u || !rR || !rR->u)
-        return std::nullopt;
-      auto lo = lR->u->first.ugt(rR->u->first) ? lR->u->first : rR->u->first;
-      unsigned kx = lR->u->second.getActiveBits();
-      unsigned ky = rR->u->second.getActiveBits();
-      unsigned maxBits = std::max(kx, ky);
-      auto hi = maxBits == 0 ? llvm::APInt::getZero(bw)
-                             : llvm::APInt::getLowBitsSet(bw, maxBits);
       KnownRange r;
-      r.u = {lo, hi};
-      r.undef_free = lR->undef_free && rR->undef_free;
-      r.poison_free = lR->poison_free && rR->poison_free;
+      if (lR && lR->u && rR && rR->u) {
+        auto lo = lR->u->first.ugt(rR->u->first) ? lR->u->first : rR->u->first;
+        unsigned kx = lR->u->second.getActiveBits();
+        unsigned ky = rR->u->second.getActiveBits();
+        unsigned maxBits = std::max(kx, ky);
+        auto hi = maxBits == 0 ? llvm::APInt::getZero(bw)
+                               : llvm::APInt::getLowBitsSet(bw, maxBits);
+        r.u = {lo, hi};
+      }
+      // KnownBits: or propagates ones from either side (and zeros from both).
+      r.bits = knownBitsOf(BO->getOperand(0), map) |
+               knownBitsOf(BO->getOperand(1), map);
+      if (!r.u && r.bits->isUnknown())
+        return std::nullopt;
+      r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
+      r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
       crossDerive(r);
+      deriveBitsFromIntervals(r, bw);
+      return r;
+    }
+
+    case llvm::Instruction::Xor: {
+      KnownRange r;
+      r.bits = knownBitsOf(BO->getOperand(0), map) ^
+               knownBitsOf(BO->getOperand(1), map);
+      if (r.bits->isUnknown())
+        return std::nullopt;
+      r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
+      r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
+      deriveBitsFromIntervals(r, bw);
       return r;
     }
 
@@ -164,9 +247,12 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
       KnownRange r;
       // result ∈ [0, hi_d - 1] since urem(x, d) < d for any d > 0.
       r.u = {llvm::APInt::getZero(bw), rR->u->second - 1};
+      r.bits = llvm::KnownBits::urem(knownBitsOf(BO->getOperand(0), map),
+                                     knownBitsOf(BO->getOperand(1), map));
       r.undef_free = (lR && lR->undef_free) && rR->undef_free;
       r.poison_free = (lR && lR->poison_free) && rR->poison_free;
       crossDerive(r);
+      deriveBitsFromIntervals(r, bw);
       return r;
     }
 
@@ -179,17 +265,19 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
       KnownRange r;
       r.u = {lR->u->first.udiv(rR->u->second),
              lR->u->second.udiv(rR->u->first)};
+      r.bits = llvm::KnownBits::udiv(knownBitsOf(BO->getOperand(0), map),
+                                     knownBitsOf(BO->getOperand(1), map));
       r.undef_free = lR->undef_free && rR->undef_free;
       r.poison_free = lR->poison_free && rR->poison_free;
       crossDerive(r);
+      deriveBitsFromIntervals(r, bw);
       return r;
     }
 
     case llvm::Instruction::LShr: {
       // Shift amount must be provably < bitwidth (for both constant and
       // non-constant amounts whose range upper bound is < bitwidth).
-      auto [in_range, const_shift] =
-          shiftInRange(BO->getOperand(1), bw, rR);
+      auto [in_range, const_shift] = shiftInRange(BO->getOperand(1), bw, rR);
       if (!in_range)
         return std::nullopt;
 
@@ -208,19 +296,21 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
           r.u = {lR->u->first.lshr(hi_amt), lR->u->second.lshr(lo_amt)};
         }
       }
+      r.bits = llvm::KnownBits::lshr(knownBitsOf(BO->getOperand(0), map),
+                                     knownBitsOf(BO->getOperand(1), map));
       // Shift is in range: no shift-amount-induced poison; propagate flags.
       r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
       r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
-      if (!r.u && !r.s && !r.well_defined())
+      if (!r.u && !r.s && !r.well_defined() && (!r.bits || r.bits->isUnknown()))
         return std::nullopt;
       crossDerive(r);
+      deriveBitsFromIntervals(r, bw);
       return r;
     }
 
     case llvm::Instruction::AShr: {
       // Shift amount must be provably < bitwidth.
-      auto [in_range, const_shift] =
-          shiftInRange(BO->getOperand(1), bw, rR);
+      auto [in_range, const_shift] = shiftInRange(BO->getOperand(1), bw, rR);
       if (!in_range)
         return std::nullopt;
 
@@ -238,19 +328,21 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
           r.s = {lR->s->first.ashr(lo_amt), lR->s->second.ashr(lo_amt)};
         }
       }
+      r.bits = llvm::KnownBits::ashr(knownBitsOf(BO->getOperand(0), map),
+                                     knownBitsOf(BO->getOperand(1), map));
       // Shift is in range: no shift-amount-induced poison; propagate flags.
       r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
       r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
-      if (!r.u && !r.s && !r.well_defined())
+      if (!r.u && !r.s && !r.well_defined() && (!r.bits || r.bits->isUnknown()))
         return std::nullopt;
       crossDerive(r);
+      deriveBitsFromIntervals(r, bw);
       return r;
     }
 
     case llvm::Instruction::Shl: {
       // Shift amount must be provably < bitwidth.
-      auto [in_range, const_shift] =
-          shiftInRange(BO->getOperand(1), bw, rR);
+      auto [in_range, const_shift] = shiftInRange(BO->getOperand(1), bw, rR);
       if (!in_range)
         return std::nullopt;
 
@@ -264,12 +356,16 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
         if (nsw && lR && lR->s)
           r.s = {lR->s->first << const_shift, lR->s->second << const_shift};
       }
+      r.bits = llvm::KnownBits::shl(knownBitsOf(BO->getOperand(0), map),
+                                    knownBitsOf(BO->getOperand(1), map),
+                                    /*NUW=*/nuw, /*NSW=*/nsw);
       // Shift is in range: no shift-amount-induced poison; propagate flags.
       r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
       r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
-      if (!r.u && !r.s && !r.well_defined())
+      if (!r.u && !r.s && !r.well_defined() && (!r.bits || r.bits->isUnknown()))
         return std::nullopt;
       crossDerive(r);
+      deriveBitsFromIntervals(r, bw);
       return r;
     }
 
@@ -281,15 +377,19 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
         r.u = {lR->u->first + rR->u->first, lR->u->second + rR->u->second};
       if (nsw && lR && lR->s && rR && rR->s)
         r.s = {lR->s->first + rR->s->first, lR->s->second + rR->s->second};
+      r.bits = llvm::KnownBits::computeForAddSub(
+          /*Add=*/true, nsw, nuw, knownBitsOf(BO->getOperand(0), map),
+          knownBitsOf(BO->getOperand(1), map));
       r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
       // Plain add always wraps without producing poison. nuw/nsw add may
       // produce poison on overflow; only assert poison_free when bounds were
       // derived (proving the result fits, so no overflow occurred).
       if (!(nuw || nsw) || r.u || r.s)
         r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
-      if (!r.u && !r.s && !r.well_defined())
+      if (!r.u && !r.s && !r.well_defined() && (!r.bits || r.bits->isUnknown()))
         return std::nullopt;
       crossDerive(r);
+      deriveBitsFromIntervals(r, bw);
       return r;
     }
 
@@ -302,13 +402,17 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
       if (nsw && lR && lR->s && rR && rR->s && !lR->s->first.isNegative() &&
           !rR->s->second.isNegative() && lR->s->second.sge(rR->s->first))
         r.s = {llvm::APInt::getZero(bw), lR->s->second - rR->s->first};
+      r.bits = llvm::KnownBits::computeForAddSub(
+          /*Add=*/false, nsw, nuw, knownBitsOf(BO->getOperand(0), map),
+          knownBitsOf(BO->getOperand(1), map));
       r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
       // Plain sub wraps without producing poison.
       if (!(nuw || nsw) || r.u || r.s)
         r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
-      if (!r.u && !r.s && !r.well_defined())
+      if (!r.u && !r.s && !r.well_defined() && (!r.bits || r.bits->isUnknown()))
         return std::nullopt;
       crossDerive(r);
+      deriveBitsFromIntervals(r, bw);
       return r;
     }
 
@@ -321,13 +425,16 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
       if (nsw && lR && lR->s && rR && rR->s && !lR->s->first.isNegative() &&
           !rR->s->first.isNegative())
         r.s = {lR->s->first * rR->s->first, lR->s->second * rR->s->second};
+      r.bits = llvm::KnownBits::mul(knownBitsOf(BO->getOperand(0), map),
+                                    knownBitsOf(BO->getOperand(1), map));
       r.undef_free = (lR && lR->undef_free) && (rR && rR->undef_free);
       // Plain mul wraps without producing poison.
       if (!(nuw || nsw) || r.u || r.s)
         r.poison_free = (lR && lR->poison_free) && (rR && rR->poison_free);
-      if (!r.u && !r.s && !r.well_defined())
+      if (!r.u && !r.s && !r.well_defined() && (!r.bits || r.bits->isUnknown()))
         return std::nullopt;
       crossDerive(r);
+      deriveBitsFromIntervals(r, bw);
       return r;
     }
 
@@ -350,11 +457,13 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
         r.u = {srcR->u->first.zext(bw), srcR->u->second.zext(bw)};
       else if (srcR->s && !srcR->s->first.isNegative())
         r.u = {srcR->s->first.zext(bw), srcR->s->second.zext(bw)};
-      if (!r.u)
+      r.bits = knownBitsOf(cast->getOperand(0), map).zext(bw);
+      if (!r.u && (!r.bits || r.bits->isUnknown()))
         return std::nullopt;
       r.undef_free = srcR->undef_free;
       r.poison_free = srcR->poison_free;
       crossDerive(r);
+      deriveBitsFromIntervals(r, bw);
       return r;
     }
 
@@ -364,22 +473,27 @@ std::optional<KnownRange> transfer(const llvm::Instruction *I,
         r.s = {srcR->s->first.sext(bw), srcR->s->second.sext(bw)};
       else if (srcR->u && !srcR->u->second.isNegative())
         r.s = {srcR->u->first.sext(bw), srcR->u->second.sext(bw)};
-      if (!r.s)
+      r.bits = knownBitsOf(cast->getOperand(0), map).sext(bw);
+      if (!r.s && (!r.bits || r.bits->isUnknown()))
         return std::nullopt;
       r.undef_free = srcR->undef_free;
       r.poison_free = srcR->poison_free;
       crossDerive(r);
+      deriveBitsFromIntervals(r, bw);
       return r;
     }
 
     case llvm::Instruction::Trunc: {
-      if (!srcR->u || srcR->u->second.getActiveBits() > bw)
-        return std::nullopt;
       KnownRange r;
-      r.u = {srcR->u->first.trunc(bw), srcR->u->second.trunc(bw)};
+      if (srcR->u && srcR->u->second.getActiveBits() <= bw)
+        r.u = {srcR->u->first.trunc(bw), srcR->u->second.trunc(bw)};
+      r.bits = knownBitsOf(cast->getOperand(0), map).trunc(bw);
+      if (!r.u && (!r.bits || r.bits->isUnknown()))
+        return std::nullopt;
       r.undef_free = srcR->undef_free;
       r.poison_free = srcR->poison_free;
       crossDerive(r);
+      deriveBitsFromIntervals(r, bw);
       return r;
     }
 

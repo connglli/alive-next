@@ -32,6 +32,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/KnownBits.h"
 
 #include <map>
 #include <optional>
@@ -44,6 +45,13 @@ struct KnownRange {
   // An entry with no bounds but with flags set (e.g. from freeze) is valid.
   std::optional<std::pair<llvm::APInt, llvm::APInt>> u; // unsigned [lo, hi]
   std::optional<std::pair<llvm::APInt, llvm::APInt>> s; // signed   [lo, hi]
+
+  // Per-bit known-zero / known-one masks (LLVM's standard KnownBits). Empty
+  // (default-constructed) when nothing is known per-bit. Useful for
+  // discharging flag obligations that aren't expressible from intervals
+  // alone: `or disjoint` (no common 1-bits), `*_exact` shifts/divisions
+  // (low bits zero), alignment / non-zero / power-of-two style facts.
+  std::optional<llvm::KnownBits> bits;
 
   // Well-definedness flags. undef and poison are distinct:
   //   undef_free:  value is definitely not undef  (but may be poison).
