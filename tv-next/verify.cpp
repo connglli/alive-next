@@ -17,7 +17,8 @@ namespace alive_tv_next {
 
 namespace {
 
-void dumpTvUnit(const TvUnit &unit, const std::string &dump_dir) {
+void dumpTvUnit(const TvUnit &unit, const std::string &dump_dir,
+                const std::string &context_header) {
   if (dump_dir.empty())
     return;
   std::error_code ec;
@@ -26,11 +27,13 @@ void dumpTvUnit(const TvUnit &unit, const std::string &dump_dir) {
     path += (std::isalnum((unsigned char)c) || c == '.' || c == '_' || c == '-')
                 ? c
                 : '_';
-  path += ".srctgt.ll";
+  path += ".ll";
   llvm::raw_fd_ostream os(path, ec);
-  if (!ec)
+  if (!ec) {
+    if (!context_header.empty())
+      os << context_header;
     unit.module->print(os, /*AAW=*/nullptr);
-  else
+  } else
     llvm::errs() << "alive-tv-next: dump-units: could not open " << path << ": "
                  << ec.message() << "\n";
 }
@@ -113,8 +116,13 @@ UnitVerdict runOnce(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
 UnitVerdict verifyTvUnit(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
                          smt::smt_initializer &smt_init,
                          llvm::Function *parent_src, llvm::Function *parent_tgt,
-                         const std::string &dump_dir) {
+                         const std::string &dump_dir,
+                         const std::string &context_header,
+                         const UnitProgressFn &progress) {
   UnitVerdict v = runOnce(unit, tli, smt_init);
+  dumpTvUnit(unit, dump_dir, context_header);
+  if (progress)
+    progress(unit, v);
 
   if (v.passed)
     return v; // Universally correct units
@@ -131,14 +139,13 @@ UnitVerdict verifyTvUnit(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
   if (!proposed)
     return v;
 
-  for (auto &ac : proposed->assume_checks)
-    dumpTvUnit(ac, dump_dir);
-  dumpTvUnit(proposed->modified_unit, dump_dir);
-
   // Standalone soundness gate: every precondition (potentially split across
   // src-anchored and tgt-anchored checks) must hold unconditionally.
   for (auto &ac : proposed->assume_checks) {
     UnitVerdict check_v = runOnce(ac, tli, smt_init);
+    dumpTvUnit(ac, dump_dir, context_header);
+    if (progress)
+      progress(ac, check_v);
     if (!check_v.passed) {
       v.error_message += "\n  proposer " + proposed->proposer_name +
                          " fired but assume-check '" + ac.name +
@@ -149,6 +156,9 @@ UnitVerdict verifyTvUnit(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
 
   // Re-verify the unit with `llvm.assume` injected.
   UnitVerdict mod_v = runOnce(proposed->modified_unit, tli, smt_init);
+  dumpTvUnit(proposed->modified_unit, dump_dir, context_header);
+  if (progress)
+    progress(proposed->modified_unit, mod_v);
   if (mod_v.passed) {
     mod_v.name = unit.name;
     mod_v.proposer_name = proposed->proposer_name;

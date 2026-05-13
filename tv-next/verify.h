@@ -29,6 +29,7 @@
 
 #include "smt/smt.h"
 
+#include <functional>
 #include <string>
 
 namespace alive_tv_next {
@@ -48,6 +49,12 @@ struct UnitVerdict {
   } status = Status::Error;
 };
 
+// Callback invoked after each TvUnit (original, assume-check, modified) is
+// verified. Lets callers render verdicts as they happen, including derivative
+// units the proposer generates internally. The callback sees the same TvUnit
+// instance the verifier just ran on; do not retain references past the call.
+using UnitProgressFn = std::function<void(const TvUnit &, const UnitVerdict &)>;
+
 // Run alive2 on a single TvUnit. `tli` and `smt_init` must already be
 // initialized by the caller (typically once in main).
 //
@@ -58,13 +65,19 @@ struct UnitVerdict {
 // range analysis and one of the standalone soundness checks (chain
 // refinement bridges between them).
 // `dump_dir`, when non-empty, writes the original TvUnit and any proposer-
-// generated units (modified unit + assume-check) to
-// `<dump_dir>/<name>.srctgt.ll`. Caller is responsible for writing the
-// original unit; this path covers proposer-internal units.
+// generated units (modified unit + assume-check) to `<dump_dir>/<name>.ll`.
+// `context_header`, when non-empty, is prepended verbatim to each dumped
+// file — typically a `; `-prefixed comment block produced by the caller that
+// locates the unit inside its parent functions.
+// `progress`, when set, is invoked after each runOnce — once for the
+// original unit, once per assume-check, and once for the modified unit (when
+// the proposer fires).
 UnitVerdict verifyTvUnit(TvUnit &unit, llvm::TargetLibraryInfoWrapperPass &tli,
                          smt::smt_initializer &smt_init,
                          llvm::Function *parent_src = nullptr,
                          llvm::Function *parent_tgt = nullptr,
-                         const std::string &dump_dir = "");
+                         const std::string &dump_dir = "",
+                         const std::string &context_header = "",
+                         const UnitProgressFn &progress = {});
 
 } // namespace alive_tv_next

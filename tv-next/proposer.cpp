@@ -973,7 +973,7 @@ std::optional<AssumedTvUnit> proposeFromRanges(const TvUnit &unit,
   // input space is the same on both sides, so injecting both side's claims
   // is sound (each is independently discharged below).
   TvUnit modified;
-  modified.name = unit.name + "+range-assume";
+  modified.name = unit.name + ".range-assume";
   {
     llvm::ValueToValueMapTy vmap;
     modified.module = llvm::CloneModule(*unit.module, vmap);
@@ -1003,12 +1003,12 @@ std::optional<AssumedTvUnit> proposeFromRanges(const TvUnit &unit,
     out.assume_checks.push_back(buildCombinedFactCheck(
         src_side.facts, src_side.obligations, src_side.ob_op_tys,
         src_side.ob_result_bws, parent_src, *parent_src.getParent(), ctx,
-        unit.name + "/src-check"));
+        unit.name + ".src-assume-check"));
   if (!tgt_side.empty())
     out.assume_checks.push_back(buildCombinedFactCheck(
         tgt_side.facts, tgt_side.obligations, tgt_side.ob_op_tys,
         tgt_side.ob_result_bws, parent_tgt, *parent_tgt.getParent(), ctx,
-        unit.name + "/tgt-check"));
+        unit.name + ".tgt-assume-check"));
   return out;
 }
 

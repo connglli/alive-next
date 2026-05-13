@@ -37,6 +37,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -100,19 +101,160 @@ llvm::cl::opt<bool> opt_alive_tv_next_verbose(
 
 llvm::cl::opt<std::string> opt_dump_units(
     LLVM_ARGS_PREFIX "dump-units",
-    llvm::cl::desc("Write each generated TvUnit to <DIR>/<name>.srctgt.ll for "
+    llvm::cl::desc("Write each generated TvUnit to <DIR>/<name>.ll for "
                    "inspection. Developer/debug flag."),
     llvm::cl::cat(alive_cmdargs), llvm::cl::init(""));
 
-// Sanitize a diagnostic name into a filesystem-safe filename stem:
-// replace anything outside [A-Za-z0-9._-] with '_'.
-std::string sanitizeName(std::string s) {
-  for (char &c : s) {
-    if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '_' ||
-          c == '-'))
-      c = '_';
+// Build an LLVM-comment block (each line prefixed with `; `) that locates
+// the unit inside its parent @src and @tgt: every non-terminator parent
+// instruction is listed with its position index `iN`, and lines that fall
+// inside the unit's region are marked with `>`. Same text is used as the
+// header inside dumped .ll files and as the verbose-mode preamble before
+// printing the unit itself — both let a reader see what the unit covers
+// without cross-referencing the parent.
+std::string buildUnitContextHeader(const std::string &unit_name,
+                                   size_t src_start, size_t src_size,
+                                   size_t tgt_start, size_t tgt_size,
+                                   llvm::Function &parent_src,
+                                   llvm::Function &parent_tgt) {
+  std::string out;
+  llvm::raw_string_ostream os(out);
+
+  auto collect = [](llvm::Function &fn) {
+    std::vector<llvm::Instruction *> v;
+    for (auto &bb : fn)
+      for (auto &I : bb)
+        if (!I.isTerminator())
+          v.push_back(&I);
+    return v;
+  };
+  std::vector<llvm::Instruction *> src_insts = collect(parent_src);
+  std::vector<llvm::Instruction *> tgt_insts = collect(parent_tgt);
+
+  auto rangeStr = [](size_t start, size_t size) {
+    if (size == 0)
+      return std::string("(empty)");
+    return "i" + std::to_string(start) + ".." + "i" +
+           std::to_string(start + size - 1);
+  };
+
+  os << "; " << unit_name << ": src " << rangeStr(src_start, src_size)
+     << ", tgt " << rangeStr(tgt_start, tgt_size) << "\n";
+
+  auto dumpSide = [&](const char *label, llvm::Function &fn,
+                      const std::vector<llvm::Instruction *> &insts, size_t lo,
+                      size_t hi) {
+    os << "; parent @" << fn.getName().str() << " (" << label << "):\n";
+    for (size_t i = 0; i < insts.size(); ++i) {
+      bool in_unit = i >= lo && i < hi;
+      os << ";  " << (in_unit ? '>' : ' ') << " i" << i << ":";
+      std::string line;
+      llvm::raw_string_ostream lo_os(line);
+      insts[i]->print(lo_os);
+      // Instruction::print uses leading whitespace for indentation; keep it
+      // so the IR reads naturally.
+      os << line << "\n";
+    }
+  };
+  dumpSide("src", parent_src, src_insts, src_start, src_start + src_size);
+  dumpSide("tgt", parent_tgt, tgt_insts, tgt_start, tgt_start + tgt_size);
+  return out;
+}
+
+// Verbose rendering: every unit (original, assume-check, modified, identical)
+// is shown as a 5-section block — heading, dashes, content, dashes,
+// right-aligned verdict — so reviewers can scan the verdict column and dive
+// into the IR when needed.
+constexpr unsigned kVerboseWidth = 60;
+const std::string kVerboseSep(kVerboseWidth, '-');
+
+std::string rightAlignedVerdict(const std::string &s) {
+  if (s.size() >= kVerboseWidth)
+    return " " + s;
+  return std::string(kVerboseWidth - s.size(), ' ') + s;
+}
+
+std::string verdictText(const alive_tv_next::UnitVerdict &v) {
+  using S = alive_tv_next::UnitVerdict::Status;
+  std::string t;
+  switch (v.status) {
+  case S::Correct:
+    t = "pass";
+    break;
+  case S::SyntacticallyEqual:
+    t = "identical";
+    break;
+  case S::Unsound:
+    t = "FAIL (unsound)";
+    break;
+  case S::FailedToProve:
+    t = "FAIL (failed-to-prove)";
+    break;
+  case S::TypeCheckerFailed:
+    t = "FAIL (type-check)";
+    break;
+  case S::Error:
+    t = "FAIL (error)";
+    break;
   }
-  return s;
+  if (!v.proposer_name.empty())
+    t += " (via " + v.proposer_name + ")";
+  return t;
+}
+
+// Render the @src/@tgt pair of `unit` in alive2's textual Transform form,
+// matching the format `tools/alive-tv` prints, with alive2's own leading
+// `----\nName: ...\n` stripped — the outer block already shows the heading
+// and separator, so duplicating them is just visual noise.
+// Returns the empty string if either side fails to lift.
+std::string renderTransformText(const alive_tv_next::TvUnit &unit,
+                                llvm::TargetLibraryInfoWrapperPass &TLI) {
+  auto fn_src = llvm_util::llvm2alive(*unit.src_fn, TLI.getTLI(*unit.src_fn),
+                                      /*IsSrc=*/true);
+  if (!fn_src)
+    return {};
+  auto fn_tgt = llvm_util::llvm2alive(*unit.tgt_fn, TLI.getTLI(*unit.tgt_fn),
+                                      /*IsSrc=*/false, fn_src->getGlobalVars());
+  if (!fn_tgt)
+    return {};
+  tools::Transform t;
+  t.name = unit.name;
+  t.src = std::move(*fn_src);
+  t.tgt = std::move(*fn_tgt);
+  std::ostringstream oss;
+  t.print(oss);
+  std::string s = oss.str();
+  // Strip leading "\n----...\n" and "Name: ...\n" lines.
+  size_t pos = 0;
+  while (pos < s.size() && s[pos] == '\n')
+    ++pos;
+  if (pos < s.size() && s[pos] == '-') {
+    size_t eol = s.find('\n', pos);
+    if (eol != std::string::npos)
+      pos = eol + 1;
+  }
+  if (s.compare(pos, 6, "Name: ") == 0) {
+    size_t eol = s.find('\n', pos);
+    if (eol != std::string::npos)
+      pos = eol + 1;
+  }
+  return s.substr(pos);
+}
+
+void printVerboseBlock(std::ostream &os, const std::string &heading,
+                       const std::string &context_header,
+                       const std::string &content,
+                       const alive_tv_next::UnitVerdict &verdict) {
+  os << "\n" << heading << "\n" << kVerboseSep << "\n";
+  if (!context_header.empty())
+    os << context_header;
+  os << content;
+  if (!content.empty() && content.back() != '\n')
+    os << "\n";
+  os << kVerboseSep << "\n"
+     << rightAlignedVerdict(verdictText(verdict)) << "\n";
+  if (!verdict.passed && !verdict.error_message.empty())
+    os << verdict.error_message << "\n";
 }
 
 } // namespace
@@ -201,27 +343,75 @@ ALIVE_NEXT_LLM_API_KEY env var, endpoint via ALIVE_NEXT_LLM_BASE_URL.
   std::vector<alive_tv_next::UnitVerdict> verdicts;
   verdicts.reserve(diff->regions.size());
 
-  for (const alive_tv_next::DiffRegion &region : diff->regions) {
-    // Diagnostic name.
-    std::string diag_name;
-    if (region.is_asymmetric) {
-      diag_name = "unit@src-i" + std::to_string(region.src_start_idx);
-      if (!region.src_region.empty())
-        diag_name += "..i" + std::to_string(region.src_start_idx +
-                                            region.src_region.size() - 1);
-      diag_name += "/tgt-i" + std::to_string(region.tgt_start_idx);
-      if (!region.tgt_region.empty())
-        diag_name += "..i" + std::to_string(region.tgt_start_idx +
-                                            region.tgt_region.size() - 1);
-    } else if (region.positions.size() == 1) {
-      diag_name = "unit@i" + std::to_string(region.positions.front().inst_idx);
-      if (region.positions.front().src_inst->hasName())
-        diag_name +=
-            "(%" + region.positions.front().src_inst->getName().str() + ")";
-    } else {
-      diag_name = "unit@i" + std::to_string(region.positions.front().inst_idx) +
-                  "..i" + std::to_string(region.positions.back().inst_idx);
+  // Collect parent non-terminators in order. Used for verbose rendering of
+  // identical positions, which share src/tgt content by definition (Phase 1
+  // assumption: equal-length BBs).
+  auto collectInsts = [](llvm::Function &fn) {
+    std::vector<llvm::Instruction *> v;
+    for (auto &bb : fn)
+      for (auto &I : bb)
+        if (!I.isTerminator())
+          v.push_back(&I);
+    return v;
+  };
+  std::vector<llvm::Instruction *> src_insts = collectInsts(*loaded->src_fn);
+
+  // Unit numbering covers every position — identical and diff — so reviewers
+  // can match `unit@N` against the parent's instruction stream. The progress
+  // callback uses `current_context_header` (rebound per region) so derivative
+  // units (assume-check, range-assume) re-use their parent unit's context.
+  size_t unit_counter = 0;
+  size_t next_src_pos = 0;
+  std::string current_context_header;
+
+  auto flushIdentical = [&](size_t up_to) {
+    while (next_src_pos < up_to && next_src_pos < src_insts.size()) {
+      ++unit_counter;
+      if (opt_alive_tv_next_verbose) {
+        std::string content;
+        llvm::raw_string_ostream cos(content);
+        src_insts[next_src_pos]->print(cos);
+        cos << "\n";
+        alive_tv_next::UnitVerdict v;
+        v.status = alive_tv_next::UnitVerdict::Status::SyntacticallyEqual;
+        v.passed = true;
+        printVerboseBlock(*out, "unit@" + std::to_string(unit_counter),
+                          /*context_header=*/"", content, v);
+      }
+      ++next_src_pos;
     }
+    next_src_pos = std::max(next_src_pos, up_to);
+  };
+
+  alive_tv_next::UnitProgressFn progress =
+      [&](const alive_tv_next::TvUnit &u, const alive_tv_next::UnitVerdict &v) {
+        if (!opt_alive_tv_next_verbose)
+          return;
+        printVerboseBlock(*out, u.name, current_context_header,
+                          renderTransformText(u, TLI), v);
+      };
+
+  for (const alive_tv_next::DiffRegion &region : diff->regions) {
+    // Unify symmetric / asymmetric region indexing into one (start, size)
+    // pair per side. The textual src/tgt position range only appears in
+    // the per-unit comment header — the unit name itself is just a number.
+    size_t src_start, src_size, tgt_start, tgt_size;
+    if (region.is_asymmetric) {
+      src_start = region.src_start_idx;
+      src_size = region.src_region.size();
+      tgt_start = region.tgt_start_idx;
+      tgt_size = region.tgt_region.size();
+    } else {
+      src_start = tgt_start = region.positions.front().inst_idx;
+      src_size = tgt_size = region.positions.size();
+    }
+
+    // Emit any identical positions sitting before this region.
+    flushIdentical(src_start);
+    next_src_pos = src_start + src_size;
+
+    ++unit_counter;
+    std::string diag_name = "unit@" + std::to_string(unit_counter);
 
     auto unit = alive_tv_next::buildTvUnit(region, *loaded->module1, Context,
                                            diag_name);
@@ -232,37 +422,25 @@ ALIVE_NEXT_LLM_API_KEY env var, endpoint via ALIVE_NEXT_LLM_BASE_URL.
       v.passed = false;
       v.status = alive_tv_next::UnitVerdict::Status::Error;
       v.error_message = "could not lift region into a TvUnit";
+      if (opt_alive_tv_next_verbose)
+        printVerboseBlock(*out, diag_name, /*context_header=*/"",
+                          /*content=*/"", v);
       verdicts.push_back(std::move(v));
       continue;
     }
 
-    // --dump-units: write the lifted IR for inspection.
-    if (!opt_dump_units.empty()) {
-      std::error_code ec;
-      std::string path =
-          opt_dump_units + "/" + sanitizeName(diag_name) + ".srctgt.ll";
-      llvm::raw_fd_ostream dump_os(path, ec);
-      if (ec) {
-        llvm::errs() << "alive-tv-next: could not open " << path << " for "
-                     << "dump: " << ec.message() << "\n";
-      } else {
-        unit->module->print(dump_os, /*AAW=*/nullptr);
-      }
-    }
+    current_context_header =
+        buildUnitContextHeader(diag_name, src_start, src_size, tgt_start,
+                               tgt_size, *loaded->src_fn, *loaded->tgt_fn);
 
     auto verdict = alive_tv_next::verifyTvUnit(
-        *unit, TLI, smt_init, loaded->src_fn, loaded->tgt_fn, opt_dump_units);
-    if (opt_alive_tv_next_verbose) {
-      *out << "  " << verdict.name << ": "
-           << (verdict.passed ? "pass" : "FAIL");
-      if (!verdict.proposer_name.empty())
-        *out << " (via " << verdict.proposer_name << ")";
-      if (!verdict.passed && !verdict.error_message.empty())
-        *out << " — " << verdict.error_message;
-      *out << "\n";
-    }
+        *unit, TLI, smt_init, loaded->src_fn, loaded->tgt_fn, opt_dump_units,
+        current_context_header, progress);
     verdicts.push_back(std::move(verdict));
   }
+
+  // Trailing identical positions after the last region.
+  flushIdentical(src_insts.size());
 
   // Aggregate.
   auto result = alive_tv_next::composeVerdicts(std::move(verdicts),
