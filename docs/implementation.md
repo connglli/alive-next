@@ -1,7 +1,7 @@
 # alive-next: Implementation Plan
 
 This document pins down how `docs/design.md` gets built: languages, project
-layout, the native tool, state on disk, the certificate checker, and the build
+layout, the native binary, state on disk, the certificate checker, and the build
 system. Where this document and design.md overlap, design.md defines *what*
 and this document defines *how*.
 
@@ -24,9 +24,9 @@ One rule draws the boundary: does it need LLVM?
 ```
 alive-next/
   docs/                 design.md, implementation.md
-  native/               C++, CMake; builds llops
+  llops/                C++, CMake; builds the llops binary
     src/
-    test/               lit tests over .ll fixtures
+    test/               llops_test.py, driving the binary over JSON
   agent/                TypeScript on Pi; bun
     src/tools/          one file per tool from design.md
     src/state/          store, goal tree, transactions, trajectory
@@ -56,16 +56,17 @@ Subcommands:
 - `validate`: parse a module, check the straightline v1 invariants, report
   diagnostics.
 - `edit`: apply one semantic edit op (swap, move, substitute, replace,
-  insert, erase, commute, retype, dedup, set_body) and return the new module
-  text plus diagnostics. The op catalog mirrors design.md.
-- `outline`: perform the split transformation: given cut points and the value
-  map, produce the outer module and the callee module.
+  insert, erase, commute, retype, dedup, set_body, attrs) and return the new
+  module text. The op catalog mirrors design.md; `attrs` is what the
+  strengthen flow uses to put a proved fact on a parameter.
+- `outline`: perform the split transformation: given a cut point and the
+  value map, produce the outer module and the callee module.
 - `inline`: the inverse: substitute a callee body back at the call site.
   Used by check.py to verify split faithfulness.
 - `canon`: parse, renumber values canonically (`%0, %1, ...`), print. Turns
   "identical up to names" into "identical bytes".
-- `analyze`: run an LLVM analysis (known bits, ranges, alias) at a program
-  point and report facts as JSON shaped for attributes and assumes.
+- `analyze`: run an LLVM analysis (known bits, ranges, pointer facts) at a
+  program point and report facts as JSON shaped for attributes and assumes.
 
 Only `inline` and `canon` are verdict-critical (used by the certificate
 checker); the rest are tier 2. This is documented here and in check.py rather
@@ -77,6 +78,29 @@ Constraint: llops must build against the same LLVM version alive2 uses
 exactly the dialect alive-tv parses. `make install-deps` builds alive2,
 llubi, and the LLVM they share from pinned refs, and llops builds against
 that same install.
+Every response is a JSON object with an `ok` field. A successful one carries
+the subcommand's payload, a failed one an `error` with a stable `code` and a
+message for the agent to read. The exit status repeats that answer, 0 for ok
+and 1 for not ok, so a script can branch without parsing; 2 means the command
+line itself was wrong.
+
+Two rules keep the subcommands composable:
+
+- A value is named by the token that names it in printed IR: `%3` for a slot,
+  `%x` for a name, and `#7` for the instruction at index 7 of the body. The
+  index form is the only way to reach an instruction that defines no value,
+  such as a store or the terminator, and index 0 is the first instruction
+  after the block label.
+- Only `canon` renumbers. Every other subcommand hands back the names it was
+  given, so a transaction can address the values it just created. Programs
+  are canonicalized when they enter the store, which is what makes a hash a
+  program's identity.
+
+`edit` rejects anything that would leave the body ill formed, so a module
+that comes out of llops parses, is straightline, and passes the LLVM
+verifier. Rejection is the normal case during search, not an error path: the
+diagnostic is the feedback.
+
 
 ## External checkers
 
@@ -88,8 +112,8 @@ trajectory and, for certified steps, in the certificate manifest, so replay
 runs exactly what ran. llubi needs a small driver shape: run one function
 with given argument values and initial pointed-to memory, report return
 value, final observable memory, and UB events. If llubi does not support this
-directly we wrap it (wrapper lives in native/ or as a llubi patch, decided at
-integration time).
+directly we wrap it (the wrapper lives in llops/ or as a llubi patch, decided
+at integration time).
 
 ## State on disk
 
@@ -233,9 +257,11 @@ already done.
 
 ## Testing
 
-- llops: lit tests, IR fixture in, expected IR or JSON out; a roundtrip
-  property test that `outline` then `inline` then `canon` reproduces the
-  original module.
+- llops: `llops/test/llops_test.py`, one Python process driving the binary
+  over the same JSON the agent's drivers send, because the interface under
+  test is the protocol rather than the C++ API. Every subcommand is covered
+  by what it accepts and what it rejects, and `outline` then `inline` then
+  `canon` has to reproduce the original module.
 - Agent: bun test for state, drivers (against stub binaries), and tool
   semantics; goal tree derivation replayed from recorded trajectories.
 - check.py: golden certificate packages that must pass, and tampered ones
@@ -246,11 +272,11 @@ already done.
 
 ## Implementation order
 
-1. llops skeleton: validate, canon, edit ops, outline, inline; lit tests.
+1. llops: validate, canon, edit ops, outline, inline, analyze; tests.
 2. TS state layer: store, trajectory, goal tree derivation, transactions.
 3. visualize.py against recorded trajectories.
 4. Drivers: alive-tv, llubi, llops; config plumbing.
 5. Tools wired into Pi; scripted-driver e2e.
 6. Certificate assembly and check.py, with the tamper test suite.
-7. analyze subcommand and the strengthen flow.
+7. The strengthen flow, over the facts analyze proposes.
 8. Real-agent e2e on growing program sizes.
