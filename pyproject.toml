@@ -1,0 +1,26 @@
+[project]
+name = "alive-next"
+version = "0.1.0"
+description = "Agent-driven, alive2-certified translation validation"
+requires-python = ">=3.10"
+# What a run needs. Empty so far: check.py, visualize.py and the llops tests
+# are standard library only, and the certificate checker has to stay that way.
+dependencies = []
+
+# What a contributor needs on top, installed by `make deps-dev`.
+[dependency-groups]
+dev = ["pre-commit>=4", "pytest>=8"]
+
+[tool.uv]
+# The repository is not a Python package; uv manages the environment only.
+package = false
+
+[tool.ruff]
+# One column limit for the project, the same one .clang-format sets.
+line-length = 100
+
+[tool.ruff.lint]
+# ruff's default set, plus import order, modern syntax and the bugbear checks.
+# Naming the set here keeps it from moving under us when ruff changes its own
+# default. Line length is the formatter's business, so E5 stays out.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]

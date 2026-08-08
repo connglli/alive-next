@@ -44,11 +44,11 @@ build/
 Build/
 build-*/
 
-# CMake generated files
+# CMake generated files. A generated Makefile only ever lands in a build
+# directory, which is ignored above; the top-level one is ours.
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
-Makefile
 install_manifest.txt
 compile_commands.json
 
@@ -67,3 +67,12 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+__pycache__/
+
+# --- alive-next specific ---
+node_modules/
+.venv/
+venv/
+deps/
+sessions/
+config.json

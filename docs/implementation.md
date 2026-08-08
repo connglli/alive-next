@@ -28,20 +28,25 @@ alive-next/
     src/
     test/               llops_test.py, driving the binary over JSON
   agent/                TypeScript on Pi; bun
+    package.json        JS packages; bun.lock pins them
     src/tools/          one file per tool from design.md
     src/state/          store, goal tree, transactions, trajectory
     src/drivers/        alive-tv, llubi, llops wrappers
     src/cert/           certificate package assembly
     test/               bun test
   checker/              check.py (Python stdlib only)
-  scripts/              visualize.py, setup and build helpers
+  scripts/              deps.sh, visualize.py, build helpers
   rules/                pre-proved rule library (empty in v1)
   tests/e2e/            small LHS/RHS pairs run end-to-end
-  deps/                 gitignored: clones and build trees made by
-                        make install-deps
+  build/                gitignored: our own build trees
+  deps/                 gitignored: external sources, build trees, and
+                        prefix/ with the tools we install
+  .venv/                gitignored: the Python environment uv builds
+  pyproject.toml        Python dev packages; uv.lock pins them
+  .pre-commit-config.yaml  the checks, and .gitlint the commit rules
   config.json           machine-local (gitignored); config.example.json is
                         checked in
-  Makefile              orchestrates everything
+  Makefile              names the targets, delegates the work
 ```
 
 ## llops: the native binary
@@ -73,11 +78,6 @@ checker); the rest are tier 2. This is documented here and in check.py rather
 than enforced by separate binaries, since all subcommands share one library
 anyway.
 
-Constraint: llops must build against the same LLVM version alive2 uses
-(alive2 requires an RTTI/EH-enabled LLVM build), so the IR dialect we edit is
-exactly the dialect alive-tv parses. `make install-deps` builds alive2,
-llubi, and the LLVM they share from pinned refs, and llops builds against
-that same install.
 Every response is a JSON object with an `ok` field. A successful one carries
 the subcommand's payload, a failed one an `error` with a stable `code` and a
 message for the agent to read. The exit status repeats that answer, 0 for ok
@@ -101,11 +101,16 @@ that comes out of llops parses, is straightline, and passes the LLVM
 verifier. Rejection is the normal case during search, not an error path: the
 diagnostic is the feedback.
 
+Constraint: llops must build against the same LLVM version alive2 uses
+(alive2 requires an RTTI/EH-enabled LLVM build), so the IR dialect we edit is
+exactly the dialect alive-tv parses. `make install-deps` builds alive2,
+llubi, and the LLVM they share from pinned refs, and llops builds against
+that same install.
 
 ## External checkers
 
 alive-tv and llubi are separate binaries, installed by `make install-deps`
-and found on PATH by default; `config.json` may override their paths and
+into the prefix and found on PATH; `config.json` may override their paths and
 records the expected version identifiers. TS drivers wrap them, and
 every invocation is recorded verbatim (argv, flags, timeout) in the
 trajectory and, for certified steps, in the certificate manifest, so replay
@@ -216,44 +221,87 @@ at zero cost.
 
 ## Build system
 
-- `native/`: CMake, `find_package(LLVM)`, lit for tests.
+The `Makefile` is the entry point and owns nothing else: it names targets and
+delegates. One component, one pair of targets, so `make llops` builds llops
+and `make test-llops` tests it, and a component added later brings its own
+pair. `make test` runs every suite, `make check` runs every hook over every
+file, and `make help` lists the lot.
+
+- `llops/`: CMake with `find_package(LLVM)`. `make llops` configures into
+  `build/llops`, builds, and installs the binary into the prefix.
 - `agent/`: bun throughout: `bun install`, `bun run`, `bun test`. Bun runs
-  TypeScript directly, so there is no build step; `tsc --noEmit` runs as the
-  typecheck in CI and `make check`.
-- `checker/` and `scripts/`: plain Python, stdlib only at runtime, no pip;
-  the dev venv below exists for the test harness, not for these scripts.
-- Top-level `Makefile` targets: `install-deps` (below), `native`, `agent`,
-  `check` (typecheck plus lint), `test` (unit), `e2e`, and `package`
-  conveniences.
+  TypeScript directly, so there is no build step; `tsc --noEmit` is the
+  typecheck.
+- `checker/` and `scripts/`: plain Python, standard library only at runtime.
+  The environment uv builds is for the dev tools, not for these.
 
-### make install-deps
+Two directories, both inside the repository and both gitignored, hold
+everything a build produces: `build/` for our own build trees and `deps/` for
+the external tools, their sources and their build trees. `deps/prefix/bin`
+holds every tool `make install-deps` installs, our own llops included, so
+putting it first on PATH completes the environment; a tool that was already
+good enough stays where it was found. `make clean` removes the first
+directory, `make clean-deps` the second. `PREFIX=` and
+`BUILD=` move them, `JOBS=` sets build parallelism, and `BUILD_TYPE=Debug`
+switches the llops build.
 
-One idempotent target that provisions everything, composed of sub-targets
-that also run individually:
+### Checks and git hooks
 
-- `deps-llvm`: clone llvm-project at the pinned ref into `deps/`, build with
-  `-DLLVM_ENABLE_RTTI=ON -DLLVM_ENABLE_EH=ON` (required by alive2), host
-  target only, Release with assertions, install into the prefix.
-- `deps-alive2`: clone alive2 at the pinned ref, build against that LLVM,
-  copy `alive-tv` into the prefix. Requires Z3 development headers; the
-  target checks for them and stops with instructions rather than building
-  Z3 itself.
-- `deps-llubi`: clone llubi at the pinned ref, build against the same LLVM,
-  copy the binary into the prefix.
-- `deps-bun`: install bun via the official installer if not present.
-- `deps-js`: `bun install` in `agent/`.
-- `deps-venv`: create `.venv` and install dev-only Python dependencies (lit,
-  pytest). check.py and visualize.py stay stdlib-only at runtime.
+The checks are not ours. [pre-commit](https://pre-commit.com) runs them, and
+`.pre-commit-config.yaml` is the one place that says which upstream tool
+checks what, each pinned to a revision that `pre-commit autoupdate` bumps in
+a reviewed diff: clang-format for C++, ruff for Python, shellcheck and shfmt
+for shell, whitespace and syntax hooks for the rest, and gitlint for commit
+messages against the rules in [CLAUDE.md](../CLAUDE.md), with `.gitlint`
+holding the settings. The clang-format is the one that ships with the LLVM
+version we pin, so the formatter and the compiler agree.
 
-Contract: `make install-deps PREFIX=$HOME/.local` (the default). Afterwards
-`bun`, `alive-tv`, `llubi`, and `llvm-config` are on PATH via the prefix's
-`bin`, and llops' CMake locates LLVM through `llvm-config --cmakedir`.
-Pinned refs for LLVM, alive2, and llubi live at the top of
-`scripts/install-deps.sh`, so upgrading a dependency is one reviewed diff.
-Clones and build trees live in `deps/` (gitignored); `JOBS=` controls build
-parallelism and ccache is used when found. The LLVM build is the expensive
-one (roughly an hour and tens of GB); every sub-target skips work that is
-already done.
+The hooks are part of the dev environment, so `make deps-dev` provisions
+both: the tools, from `uv.lock`, and the hooks in this clone. A hook that
+rewrites a file fails the commit with the fix already applied, so the loop is
+review, stage, commit again. The hooks see staged files only; `make check` is
+the same set over the whole tree, which is what CI runs.
+
+### Dependencies
+
+`scripts/deps.sh` owns the external tools: LLVM, alive2, llubi, bun with the
+JS packages, and uv with the Python ones. `make install-deps` installs the
+ones that are missing and `make deps-status` reports what is there; a single
+dependency is `make deps-llvm`, `make deps-alive2` and so on, and `FORCE=1`
+reinstalls one that is already present.
+
+What counts as missing is one check per dependency, so a copy that already
+fits is left alone whoever installed it. For LLVM the check is the major
+version and RTTI, because llops and alive2 have to link the same LLVM and
+alive2 does not build without RTTI. For alive2 and llubi it is the binary
+plus the LLVM version it reports. For the Python packages it is
+`uv sync --check`, which compares the environment against `uv.lock` the way
+`bun.lock` pins the JS side, and for the dev environment the same plus the
+git hooks being in place. Prerequisites we do not install (git, cmake,
+ninja, curl, a C++ compiler, and the Z3 development headers alive2 needs) are
+reported with the command that installs them.
+
+Four details are worth knowing before changing that script:
+
+- The pins live at the top of it, so upgrading a dependency is one line and
+  one reviewed diff. They are chosen so that one LLVM serves everything.
+- llubi is a tool inside the LLVM tree, upstreamed after the release we pin.
+  Its sources are fetched into our checkout at `llvm/tools/llubi`, where the
+  LLVM build picks them up on its own, because its build file depends on
+  in-tree targets that an out-of-tree build cannot resolve.
+- alive2 builds `alive-tv` only with `-DBUILD_LLVM_UTILS=1`.
+- uv provides the Python interpreter as well as the packages, so a machine
+  needs no system Python for `make deps-py`. It is still needed for the
+  stdlib-only scripts, `check.py` above all, which run under whatever
+  `python3` a consumer has.
+- `py` and `dev` share one environment: `py` installs what a run needs,
+  `dev` adds what a contributor needs. Both sync with `--inexact`, so
+  installing either never removes what the other put there.
+
+The LLVM build is the expensive one, roughly an hour and tens of gigabytes.
+Everything else is minutes. `LLVM_CONFIG=` names the LLVM to use when a
+machine has several, which is how llops is built against a system LLVM
+without provisioning the pinned one.
 
 ## Testing
 

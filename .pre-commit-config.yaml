@@ -1,0 +1,55 @@
+# What runs before a commit, and what `make check` runs over the whole tree.
+# Every hook comes from upstream at a pinned revision, so this file is the one
+# place that says what is checked; `pre-commit autoupdate` bumps the pins in a
+# reviewed diff.
+#
+# Hooks that rewrite a file make the commit fail with the fix already applied:
+# review it, stage it, commit again.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+
+  # The formatter is the clang-format that ships with the LLVM we pin, so it
+  # agrees with the compiler everywhere. Restricted to our sources because the
+  # hook also claims JSON and JavaScript by default.
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v22.1.8
+    hooks:
+      - id: clang-format
+        files: ^llops/src/.*\.(cpp|h)$
+
+  # Lint first with the fixes it is sure about, then format.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.2
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.13.1-1
+    hooks:
+      - id: shfmt
+        args: [--write, --indent=2, --case-indent]
+
+  # The commit message rules from CLAUDE.md: Conventional Commits, a subject
+  # of at most 50 characters, and a body that says something. .gitlint holds
+  # the settings.
+  - repo: https://github.com/jorisroovers/gitlint
+    rev: v0.19.1
+    hooks:
+      - id: gitlint

@@ -1,0 +1,12 @@
+# Commit message rules, checked by the commit-msg hook. CLAUDE.md states them
+# in prose; this file is where they are executable. Everything else is
+# gitlint's default set, which already covers a missing or too short body and
+# an over-long body line.
+[general]
+contrib=contrib-title-conventional-commits
+
+[title-max-length]
+line-length=50
+
+[contrib-title-conventional-commits]
+types=feat,fix,docs,style,refactor,perf,test,build,ci,chore,revert,deps
