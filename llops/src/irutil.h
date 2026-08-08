@@ -71,14 +71,9 @@ std::vector<Diag> checkFunction(llvm::Function &F);
 std::vector<Diag> checkModule(llvm::Module &M);
 
 // Values are referenced by the token that names them in printed IR, so the
-// agent can quote back what it reads. Three forms are accepted:
-//
-//   "%3" or "3"    an unnamed value, by its slot number
-//   "%x" or "x"    a named value
-//   "#7"           the instruction at index 7 of the body, counting from 0
-//
-// The index form is the only way to reach an instruction that defines no
-// value, such as a store, a void call or the terminator.
+// agent can quote back what it reads: "%3" for a slot, "%x" for a name and
+// "#7" for the instruction at index 7, which is the only form that reaches
+// an instruction defining no value. docs/llops.md states the contract.
 //
 // A ValueRefs is a snapshot of one function: slot numbers come from the same
 // tracker the printer uses, so resolving and printing cannot disagree.

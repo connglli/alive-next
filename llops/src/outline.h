@@ -16,27 +16,17 @@
 // strengthen flow, not to the cut.
 //
 // The faithfulness of the transformation is mechanical: `inline` substitutes
-// the callee body back at the call site, and the certificate checker compares
-// the canonical text against the original.
+// the callee body back at the call site and drops the declaration that
+// carried it, so the certificate checker can compare the canonical text
+// against the original. See docs/llops.md for the request and response.
 #pragma once
 
 #include "llvm/Support/JSON.h"
 
 namespace llops {
 
-// outline request:
-//   src: { "module": "...", "side": "src", "cut": "%v", "callee": "g" }
-//   tgt: { ..., "side": "tgt", "params": <the src response's params>,
-//          "value_map": { "%v1": "%w" } }
-// Response: { "ok": true, "outer": "...", "callee": "...",
-//             "params": [ { "param": "%p0", "type": "i32", "live": "%v1" } ] }
-// Both sides answer with the same `params`, which is the shared signature.
 llvm::json::Object outlineCmd(llvm::json::Object &args);
 
-// inline request: { "outer": "...", "callee": "...", "callee_name": "g" }
-// Response: { "ok": true, "module": "..." }
-// The call is replaced by the callee's body and the now unused declaration of
-// `g` is dropped, so the result matches the program the outline came from.
 llvm::json::Object inlineCmd(llvm::json::Object &args);
 
 } // namespace llops

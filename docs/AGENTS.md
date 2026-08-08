@@ -34,6 +34,8 @@ Use [natural writing](https://github.com/flutter/flutter/blob/fdf8a01bd014798113
 
 ## Formatting
 
+One physical line per paragraph. Use editor soft-wrap. Code blocks, tables, and list structure keep their formatting; code comments stay under the linter's column limit.
+
 Sentence case headers. Plain `*` bullets, no emoji (unless in the top-level README.md). Straight quotes and apostrophes. Em dashes sparingly, since two on a page is already many; commas and parentheses do the same work.
 
 No `* **Header:** description` lists. Tables only where the data is tabular: two facts are a sentence.
