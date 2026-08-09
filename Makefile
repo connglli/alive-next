@@ -24,7 +24,7 @@ LLOPS_BUILD := $(TOOLCHAIN)/llops/build
 
 .PHONY: help install-deps deps-status deps-llvm deps-alive2 deps-llubi deps-bun \
         deps-js deps-uv deps-py deps-dev llops test-llops agent test-agent test e2e \
-        visualize test-scripts check clean
+        cert visualize test-scripts check clean
 
 help:
 	@echo "dependencies"
@@ -43,6 +43,7 @@ help:
 	@echo "  e2e            prove the end-to-end scenarios, into sessions/"
 	@echo "                 (SCENARIO=<name> runs one of them)"
 	@echo "  visualize      render SESSION=sessions/<id> as one HTML page"
+	@echo "  cert           write the certificate SESSION=sessions/<id> earned"
 	@echo "  check          run every hook over every file"
 	@echo ""
 	@echo "cleaning"
@@ -92,6 +93,11 @@ test-agent: deps-js
 # what the visualizer and the certificate checker read.
 e2e: deps-js
 	cd agent && bun run e2e $(SCENARIO)
+
+# The certificate a verified session earned, written into the session.
+cert: deps-js
+	@test -n "$(SESSION)" || { echo "usage: make cert SESSION=sessions/<id>"; exit 2; }
+	cd agent && bun run cert ../$(SESSION)
 
 # --- scripts -----------------------------------------------------------------
 # SESSION names a directory under sessions/; the page lands beside its

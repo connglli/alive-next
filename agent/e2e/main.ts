@@ -4,6 +4,7 @@
 // makes this more than a test: the trajectory, the store and the verdict are
 // left on disk for the visualizer and the certificate checker to read.
 import { join } from "node:path";
+import { certify } from "../src/cert/main.ts";
 import { loadConfig, repoRoot } from "../src/config.ts";
 import { AliveTv } from "../src/drivers/alive2.ts";
 import { Llops } from "../src/drivers/llops.ts";
@@ -54,6 +55,8 @@ async function go(one: Scenario): Promise<boolean> {
     .map((goal) => `${goal.id} ${goal.status}`)
     .join(", ");
   console.log(`  ${outcome} in ${Date.now() - started}ms: ${goals}`);
+  // A verdict is delivered as a package, so a run that earns one writes it.
+  if (outcome === "verified") console.log(`  ${certify(dir, join(dir, "certificate"))}`);
   return outcome === "verified";
 }
 

@@ -84,7 +84,7 @@ Event kinds:
 
 ## Certificate package and check.py
 
-A certificate is `programs/` named by content hash, `manifest.json`, and a copy of `scripts/check.py`.
+A verified run writes one, into `<session>/certificate`: `programs/` named by content hash, `manifest.json`, and a copy of `scripts/check.py`. `make cert SESSION=sessions/<id>` builds it from a session that has already finished, and `make e2e` writes one for each scenario it proves. `agent/src/cert/` assembles it from the trajectory: the goal tree says which pairs survived, the log says what certified each move, and what the run abandoned does not appear.
 
 The manifest is a version, the verdict, the root goal, the toolchain `run_start` recorded, and one entry per goal:
 
