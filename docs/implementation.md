@@ -6,14 +6,14 @@ This document pins down how `docs/design.md` gets built: languages, project layo
 
 One rule draws the boundary: does it need LLVM?
 
-- **TypeScript** (on the Pi agent framework, https://github.com/earendil-works/pi, run with **bun**) owns everything stateful: the goal tree, the program store, transactions, the tool definitions the agent sees, drivers for external binaries, trajectory logging, and certificate assembly. All of it is tier 2 (untrusted for soundness), so keeping it in the agent-side language costs nothing.
+- **TypeScript** (on the Pi agent framework, https://github.com/earendil-works/pi, run with **bun**) owns everything stateful: the goal tree, the program store, transactions, the tool definitions the agent sees, drivers for external binaries, trajectory logging, and certificate assembly. All of it is tier 2 (untrusted for soundness), so keeping it in the agent-side language costs nothing. [agent.md](./agent.md) is how the agent is wired to Pi.
 - **C++** owns everything that touches LLVM, packaged as one stateless binary, `llops`. IR text in, IR text or JSON facts out. No state between calls.
 
 ## Repository layout
 
 ```
 alive-next/
-  docs/                 design.md, implementation.md, llops.md
+  docs/                 design.md, implementation.md, llops.md, agent.md
   llops/                C++, CMake; builds the llops binary
     src/
     test/               llops_test.py, driving the binary over JSON
@@ -151,10 +151,10 @@ The LLVM build is the expensive one, roughly an hour and tens of gigabytes. Ever
 ## Implementation order
 
 1. llops: validate, canon, edit ops, outline, inline, analyze; tests.
-2. TS state layer: store, trajectory, goal tree derivation, transactions.
+2. The llops driver, then the state layer it feeds: store, trajectory, goal tree derivation.
 3. visualize.py against recorded trajectories.
-4. Drivers: alive-tv, llubi, llops; config plumbing.
-5. Tools wired into Pi; scripted-driver e2e.
-6. Certificate assembly and check.py, with the tamper test suite.
-7. The strengthen flow, over the facts analyze proposes.
+4. The alive-tv and llubi drivers; config plumbing.
+5. Steps, transactions, splits, and the strengthen flow over the facts analyze proposes, against a stub alive-tv.
+6. Tools wired into Pi; scripted-driver e2e.
+7. Certificate assembly and check.py, with the tamper test suite.
 8. Real-agent e2e on growing program sizes.

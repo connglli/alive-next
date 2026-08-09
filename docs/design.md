@@ -92,7 +92,7 @@ A local validation failure gives a counterexample for a chunk, but the chunk's e
 
 Instead, a counterexample is certified by replay: a concrete whole-program input on which LHS and RHS are run under a UB/poison-aware interpreter (llubi), and RHS shows a behavior LHS does not allow. That check is cheap, independent of program size, and replayable by anyone.
 
-The search for that input is fully untrusted, so the agent gets full flexibility: infer candidate values from analyses, run chunks forward concretely with `interp`, solve chunk-local inversion queries with `solve`, compute in `bash`/`python`, or guess. Prefer inputs on which LHS runs deterministically (no undef in play), so that "divergence" is crisp.
+The search for that input is fully untrusted, so the agent gets full flexibility: infer candidate values from analyses, run chunks forward concretely with `interp`, solve chunk-local inversion queries with `solve`, compute in `bash`, or guess. Prefer inputs on which LHS runs deterministically (no undef in play), so that "divergence" is crisp.
 
 For programs with memory operations, an input means argument values plus the initial contents of the memory the pointer arguments point to; divergence compares the return value, the final observable memory, and UB events.
 
@@ -115,7 +115,7 @@ A session looks like this:
 1. The framework creates the root goal `(LHS, RHS)`.
 2. The agent inspects (`status`, `show`, `diff`, `analyze`) and picks a strategy: usually, find aligned cut points and `split`, rewriting one side first when no alignment exists yet.
 3. On each open leaf goal: if it looks small enough, `check` it directly. Otherwise rewrite the src toward the tgt (`apply`, transactions), `strengthen` interfaces where the callee lacks facts, and `split` further.
-4. A failed commit, a failed check, or an eager cross-check refutation returns a local counterexample as a hint. The agent either treats it as search feedback (revert, try another path) or investigates it as a possible real miscompilation: use `interp`, `solve`, `bash`/`python` to hunt for a whole-program input, then `report_cex` to certify it.
+4. A failed commit, a failed check, or an eager cross-check refutation returns a local counterexample as a hint. The agent either treats it as search feedback (revert, try another path) or investigates it as a possible real miscompilation: use `interp`, `solve`, `bash` to hunt for a whole-program input, then `report_cex` to certify it.
 5. The session ends when the root goal is proved (verified), the root goal is refuted (counterexample), or the budget runs out (unknown).
 
 ## Tools
@@ -171,7 +171,7 @@ Every tool call is logged. Tools that create certified steps record enough to re
 - `interp(pid, args)`: run any program (chunk or whole, any version) on concrete inputs under llubi. Untrusted helper; results are information only.
 - `solve(pid, spec)`: a chunk-local SMT query, e.g. find arguments that drive a small chunk to a given output, or check whether a candidate cut state is producible. Untrusted helper.
 - `report_cex(inputs)`: the certifying check. The framework itself replays the root pair under llubi; only a confirmed divergence marks the root goal refuted and is recorded in the certificate.
-- `bash(cmd)` / `python(code)`: general scratch computation for the agent. Untrusted; must not touch the program store or goal tree except through the tools above (see Implementation notes).
+- `bash(cmd)`: general scratch computation for the agent, an interpreter included, since running one is a command. Untrusted; must not touch the program store or goal tree except through the tools above (see Implementation notes).
 
 ## Certificate package
 
@@ -215,10 +215,10 @@ Two tiers, drawn by one criterion: can a bug here cause a wrong verdict to be ac
 - The pre-proved rewrite rule applier (used by `check.py` to replay rule steps), together with the rules' external proofs.
 - `check.py`: the small standalone checker that encodes chain connectivity, split faithfulness, and tree composition.
 
-**Tier 2, success-critical (untrusted for soundness).** The framework, the analyses, the agent, and `bash`/`python` scratch work. A bug here can waste time, mislead the search, or end the run at "unknown"; it cannot survive a certificate replay, so it cannot corrupt a verdict. These components are still engineered and tested like normal software, because the tool's success rate depends on them. The framework in particular orchestrates the search and assembles the package, but its mistakes show up as failed replays, not wrong answers.
+**Tier 2, success-critical (untrusted for soundness).** The framework, the analyses, the agent, and `bash` scratch work. A bug here can waste time, mislead the search, or end the run at "unknown"; it cannot survive a certificate replay, so it cannot corrupt a verdict. These components are still engineered and tested like normal software, because the tool's success rate depends on them. The framework in particular orchestrates the search and assembles the package, but its mistakes show up as failed replays, not wrong answers.
 
 ## Implementation notes
 
 - Built on the Pi agent framework.
-- Store isolation: `bash`/`python` run where the agent can write files, so the program store and goal tree must not be reachable from that sandbox, or the framework must verify store integrity (content hashes) on every tool call. Otherwise "immutable store" silently becomes an isolation assumption.
+- Store isolation: `bash` runs where the agent can write files, so the program store and goal tree must not be reachable from that sandbox, or the framework must verify store integrity (content hashes) on every tool call. Otherwise "immutable store" silently becomes an isolation assumption.
 - llubi driver: needs to run a single function with given argument values and initial memory for pointer arguments, and report return value, final observable memory, and UB events, so the replay check can compare the two sides. Wrap llubi with a small driver if it does not support this shape directly.
