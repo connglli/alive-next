@@ -35,6 +35,32 @@ export interface MessageEvent {
   message: unknown;
 }
 
+/**
+ * What an event did to the goal tree.
+ *
+ * The tree is derived by replaying these, so this is the alphabet of every
+ * state change there is. It lives with the log rather than with the deriver
+ * because it is part of what the log records: a tool result carries the
+ * effect it had, and the text the model reads is rendered from the same
+ * result, so there is one record of what happened rather than two.
+ */
+export type Effect =
+  /** A side advanced to a new program, by a rule or by a checked step. */
+  | { effect: "step"; gid: string; side: "src" | "tgt"; to: Hash; how: "rule" | "checked" }
+  /** A goal was cut in two; the children arrive with their initial pairs. */
+  | {
+      effect: "split";
+      gid: string;
+      outer: { gid: string; src: Hash; tgt: Hash };
+      callee: { gid: string; src: Hash; tgt: Hash };
+    }
+  /** A split was undone, discarding both children and their subtrees. */
+  | { effect: "unsplit"; gid: string }
+  /** A side went back to an earlier program of its own history. */
+  | { effect: "revert"; gid: string; side: "src" | "tgt"; to: Hash }
+  | { effect: "proved"; gid: string }
+  | { effect: "refuted"; gid: string };
+
 export interface ToolCall {
   kind: "tool_call";
   id: string;
@@ -46,6 +72,8 @@ export interface ToolResult {
   kind: "tool_result";
   id: string;
   tool: string;
+  /** What it did to the tree; absent for a tool that only reads. */
+  effect?: Effect;
   result: unknown;
   /** Milliseconds the tool took, which is where a slow run shows itself. */
   ms: number;
@@ -55,6 +83,8 @@ export interface ToolResult {
 export interface AutoEvent {
   kind: "auto";
   action: string;
+  /** An eager check that discharges a goal changes the tree like a tool does. */
+  effect?: Effect;
   outcome: unknown;
 }
 
