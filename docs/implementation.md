@@ -49,7 +49,9 @@ Constraint: llops must build against the same LLVM version alive2 uses (alive2 r
 
 ## External checkers
 
-alive-tv and llubi are separate binaries, installed by `make install-deps` into the prefix and found on PATH; `config.json` may override their paths and records the expected version identifiers. TS drivers wrap them, and every invocation is recorded verbatim (argv, flags, timeout) in the trajectory and, for certified steps, in the certificate manifest, so replay runs exactly what ran. llubi needs a small driver shape: run one function with given argument values and initial pointed-to memory, report return value, final observable memory, and UB events. If llubi does not support this directly we wrap it (the wrapper lives in llops/ or as a llubi patch, decided at integration time).
+alive-tv and llubi are separate binaries, installed by `make install-deps` into the prefix and found on PATH; `config.jsonc` may override their paths and records the expected version identifiers. TS drivers wrap them, and every invocation is recorded verbatim (argv, flags, timeout) in the trajectory and, for certified steps, in the certificate manifest, so replay runs exactly what ran. llubi needs a small driver shape: run one function with given argument values and initial pointed-to memory, report return value, final observable memory, and UB events. If llubi does not support this directly we wrap it (the wrapper lives in llops/ or as a llubi patch, decided at integration time).
+
+Every alive-tv run carries `--disable-undef-input`. An undef input takes a fresh value at each use, so it refutes transformations that hold for every concrete input, and the counterexample it comes back with is not one an interpreter can be handed; a run certifies counterexamples by execution, so a refutation we cannot execute is a refutation we cannot use. It is also the difference between an answer and a timeout: `mul x, 8` to `shl x, 3` does not come back inside thirty seconds with undef inputs on, and takes milliseconds with them off. Poison inputs stay on, because a value at a cut point really can be poison and a proof that ignores that is not a proof.
 
 ## State on disk
 

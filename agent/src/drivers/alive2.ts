@@ -53,6 +53,18 @@ export interface CheckOptions {
 const GRACE_MS = 30_000;
 
 /**
+ * Flags every check carries.
+ *
+ * `--disable-undef-input` takes undef off the table at function entry. An
+ * undef input takes a fresh value at each use, so it refutes transformations
+ * that are valid for every concrete input, and the counterexample it comes
+ * back with is not one an interpreter can be handed. A run's counterexamples
+ * are certified by execution, so a refutation we cannot execute is a
+ * refutation we cannot use.
+ */
+const ALWAYS: string[] = ["--disable-undef-input"];
+
+/**
  * Thrown when alive-tv cannot be run at all. That is a broken installation
  * rather than a search outcome, and turning it into one would let a run report
  * "unknown" when the truth is that nothing was ever checked.
@@ -73,13 +85,19 @@ export class AliveTv {
   async version(): Promise<string> {
     const child = Bun.spawn([this.path, "--version"], { stdout: "pipe", stderr: "pipe" });
     const [out] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-    return out.trim().split("\n")[0] ?? "";
+    // alive-tv opens with LLVM's banner, whose first line is a URL. The line
+    // that names a version is the one a manifest wants to record.
+    const lines = out
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "");
+    return lines.find((line) => /version/i.test(line)) ?? lines[0] ?? "";
   }
 
   /** Ask whether `tgt` refines `src`. */
   async check(src: string, tgt: string, options: CheckOptions = {}): Promise<CheckResult> {
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
-    const flags = [`--smt-to=${timeoutMs}`, ...(options.flags ?? [])];
+    const flags = [`--smt-to=${timeoutMs}`, ...ALWAYS, ...(options.flags ?? [])];
     const invocation: Invocation = { binary: this.path, flags, timeoutMs };
 
     const dir = mkdtempSync(join(tmpdir(), "alive-next-tv-"));
