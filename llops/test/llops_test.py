@@ -960,6 +960,126 @@ entry:
         self.assertIn("outer", r["error"]["message"])
 
 
+class TestHarness(Case):
+    F = """define i32 @f(i32 %x, ptr %p) {
+entry:
+  %v = load i32, ptr %p, align 4
+  %s = add i32 %v, %x
+  store i32 %s, ptr %p, align 4
+  ret i32 %s
+}
+"""
+
+    def harness(self, module=None, entry="f", args=None):
+        return run(
+            "harness",
+            {"module": module or self.F, "entry": entry, "args": args if args is not None else []},
+        )
+
+    def two_args(self):
+        return [
+            {"kind": "int", "value": "7"},
+            {"kind": "bytes", "bytes": [35, 0, 0, 0], "align": 4},
+        ]
+
+    def test_wraps_the_entry_in_the_main_llubi_wants(self):
+        r = self.good(self.harness(args=self.two_args()))
+        # llubi refuses any other signature.
+        self.assertIn("define i32 @main(i32 %0, ptr %1)", r["module"])
+        self.assertIn("call i32 @f(i32 7, ptr %buf1)", r["module"])
+        # The function under test is carried along unchanged.
+        self.assertIn("define i32 @f(i32 %x, ptr %p)", r["module"])
+
+    def test_names_everything_worth_observing(self):
+        r = self.good(self.harness(args=self.two_args()))
+        self.assertEqual(
+            r["observations"],
+            ["%obs.result", "%obs.mem.1.0", "%obs.mem.1.1", "%obs.mem.1.2", "%obs.mem.1.3"],
+        )
+        for name in r["observations"]:
+            self.assertIn(f"{name} = load", r["module"])
+
+    def test_the_initial_bytes_are_stored_before_the_call(self):
+        r = self.good(self.harness(args=self.two_args()))
+        body = self.body(r["module"].split("define i32 @main")[1])
+        self.assertTrue(body[0].startswith("%buf1 = alloca [4 x i8]"))
+        self.assertIn("store [4 x i8]", body[1])
+        self.assertIn("call i32 @f", body[2])
+
+    def test_a_null_pointer_argument(self):
+        r = self.good(self.harness(args=[{"kind": "int", "value": "1"}, {"kind": "null"}]))
+        self.assertIn("call i32 @f(i32 1, ptr null)", r["module"])
+        # Nothing was allocated, so there are no bytes to read back.
+        self.assertEqual(r["observations"], ["%obs.result"])
+
+    def test_an_integer_wider_than_json_carries(self):
+        module = """define i64 @f(i64 %x) {
+entry:
+  ret i64 %x
+}
+"""
+        r = self.good(
+            self.harness(module=module, args=[{"kind": "int", "value": "9007199254740993"}])
+        )
+        self.assertIn("call i64 @f(i64 9007199254740993)", r["module"])
+
+    def test_a_void_function_has_no_result_to_observe(self):
+        module = """define void @f(ptr %p) {
+entry:
+  store i8 1, ptr %p, align 1
+  ret void
+}
+"""
+        r = self.good(self.harness(module=module, args=[{"kind": "bytes", "bytes": [0]}]))
+        self.assertEqual(r["observations"], ["%obs.mem.0.0"])
+
+    def test_the_result_parses(self):
+        r = self.good(self.harness(args=self.two_args()))
+        self.good(run("canon", {"module": r["module"]}))
+
+    def test_the_wrong_number_of_arguments(self):
+        self.bad(self.harness(args=[{"kind": "int", "value": "1"}]), "bad_request")
+
+    def test_an_argument_of_the_wrong_kind(self):
+        self.bad(
+            self.harness(args=[{"kind": "null"}, {"kind": "null"}]),
+            "type_mismatch",
+        )
+        self.bad(
+            self.harness(args=[{"kind": "int", "value": "1"}, {"kind": "int", "value": "2"}]),
+            "type_mismatch",
+        )
+
+    def test_a_byte_that_is_not_one(self):
+        self.bad(
+            self.harness(args=[{"kind": "int", "value": "1"}, {"kind": "bytes", "bytes": [256]}]),
+            "invalid",
+        )
+
+    def test_an_alignment_that_is_not_a_power_of_two(self):
+        self.bad(
+            self.harness(
+                args=[{"kind": "int", "value": "1"}, {"kind": "bytes", "bytes": [1], "align": 3}]
+            ),
+            "invalid",
+        )
+
+    def test_an_entry_that_is_not_there(self):
+        self.bad(self.harness(entry="nope", args=[]), "not_found")
+
+    def test_a_module_that_already_has_a_main(self):
+        module = (
+            self.F
+            + """
+define i32 @main(i32 %argc, ptr %argv) {
+entry:
+  ret i32 0
+}
+"""
+        )
+        self.bad(self.harness(module=module, args=self.two_args()), "invalid")
+
+
 class TestAnalyze(Case):
     MASKED = """define i32 @f(i32 %x) {
 entry:

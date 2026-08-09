@@ -4,6 +4,7 @@
 #include "analyze.h"
 #include "canon.h"
 #include "edit.h"
+#include "harness.h"
 #include "irutil.h"
 #include "outline.h"
 #include "validate.h"
@@ -25,6 +26,7 @@ const char *kUsage = "usage: llops <subcommand> < request.json > response.json\n
                      "  outline    cut a function in two at a cut point\n"
                      "  inline     substitute a callee back into its outer function\n"
                      "  analyze    known bits, ranges or pointer facts at a program point\n"
+                     "  harness    wrap a function in a main that llubi can run\n"
                      "  version    print the version\n"
                      "\n"
                      "Exit status is 0 when the response says ok, 1 when it does not, and\n"
@@ -79,6 +81,8 @@ int main(int argc, char **argv) {
     return respond(llops::inlineCmd(*args));
   if (cmd == "analyze")
     return respond(llops::analyzeCmd(*args));
+  if (cmd == "harness")
+    return respond(llops::harnessCmd(*args));
 
   llvm::errs() << "llops: unknown subcommand '" << cmd << "'\n" << kUsage;
   return 2;

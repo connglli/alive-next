@@ -27,6 +27,7 @@ set(LLOPS_SOURCES
   src/canon.cpp
   src/edit.cpp
   src/outline.cpp
+  src/harness.cpp
   src/analyze.cpp
   src/main.cpp
 )
