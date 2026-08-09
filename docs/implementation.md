@@ -28,8 +28,7 @@ alive-next/
     e2e/                small LHS/RHS pairs, each with the script that
                         proves it
     test/               bun test
-  checker/              check.py (Python stdlib only)
-  scripts/              depman.sh, visualize.py, build helpers
+  scripts/              depman.sh, visualize.py, check.py, build helpers
   rules/                pre-proved rule library (empty in v1)
   deps/                 gitignored: where the toolchain is built unless
                         the configuration names somewhere else
@@ -85,20 +84,25 @@ Event kinds:
 
 ## Certificate package and check.py
 
-Produced on a verdict, per design.md. v1 has no rules library, so the checker's trusted surface is minimal:
+A certificate is `programs/` named by content hash, `manifest.json`, and a copy of `scripts/check.py`.
 
-- Python stdlib (hashing with hashlib, JSON, subprocess).
-- alive-tv, rerun on every step and every leaf discharge in the recorded direction with generous timeouts.
-- `llops inline` and `llops canon`, for split faithfulness only.
+The manifest is a version, the verdict, the root goal, the toolchain `run_start` recorded, and one entry per goal:
 
-check.py walks the manifest and verifies:
+- `start` and `end`, the pairs the goal began and ended with, as hashes.
+- `steps`, in the order they happened. A `checked` step names the side it moved, the hash it moved from and to, and the alive-tv options the run passed beyond its timeout. A `strengthen` step names the pair on each end and the outer step that stands behind it.
+- `discharge`, either `checked` or a `split` naming the outlined function and the two children.
 
-1. Connectivity: each step's before-hash equals the current head, starting from the root LHS/RHS hashes; hashes are byte hashes of canonical text.
-2. Steps and leaves: rerun alive-tv; result must be "correct". Leaf goals whose sides became identical are still rerun through alive-tv (they are chunk-sized, so this is cheap); the framework's alpha-equivalence fast path is a runtime optimization, not a trusted component.
-3. Splits: `llops inline` the callee into the outer program, `llops canon` both sides, byte-compare against the parent's stored programs.
-4. Composition: root verified iff every leaf and every split check passed.
+check.py needs Python, alive-tv, and llops for `inline` and `canon`. It takes both from the manifest, which records where the run found them and which LLVM each carried, falling back to the name on PATH and saying which it used and whether that is the LLVM the run had. It reads a program only from a file whose name is its hash, and verifies:
 
-The counterexample package is the symmetric llubi replay, also driven by check.py (or a sibling script) with the recorded input.
+1. Connectivity: each step starts at the current head, and the steps add up to `end`.
+2. Steps: rerun alive-tv in the direction the side implies, a src step forwards and a tgt step backwards. The result must be correct.
+3. Leaves: rerun alive-tv on the pair the goal ended with.
+4. Cuts: `llops inline` the callee's starting program into the outer's, `llops canon` it, and compare bytes against the pair the parent ended with. The declaration of the outlined function in the outer's final programs must match its definition in the callee's, parameter attributes included, which is what a `strengthen` step rests on along with the outer's chain being checked like any other.
+5. Composition: the root is verified when every goal reached under it passed.
+
+`make test-scripts` builds packages and bends them: a program that is not what its name says, a chain that does not start where it says, a step recorded on the wrong side, a cut whose halves do not inline back, a cut whose halves disagree about the callee, an attribute on a goal that is not a callee, and a step of a kind the checker does not know.
+
+The counterexample package is the symmetric llubi replay, also driven by check.py with the recorded input.
 
 ## visualize.py
 
@@ -127,7 +131,7 @@ The `Makefile` is the entry point and owns nothing else: it names targets and de
 
 - `llops/`: CMake with `find_package(LLVM)`. `make llops` configures into `<toolchain>/llops/build` against the toolchain's LLVM and builds there, so which LLVM a binary belongs to is visible from where it sits.
 - `agent/`: bun throughout: `bun install`, `bun run`, `bun test`. Bun runs TypeScript directly, so there is no build step and `make agent` is the typecheck, `tsc --noEmit`.
-- `checker/` and `scripts/`: plain Python, standard library only at runtime. The environment uv builds is for the dev tools, not for these.
+- `scripts/`: plain Python, standard library only at runtime. The environment uv builds is for the dev tools, not for these.
 
 `TOOLCHAIN` is the one location knob: `JOBS=` sets build parallelism and `BUILD_TYPE=Debug` switches the llops build, and that is the whole list. `make clean` removes the llops build tree. No target removes a toolchain.
 
@@ -178,8 +182,8 @@ The LLVM build is the expensive one, roughly an hour and tens of gigabytes. Ever
 
 - llops: `llops/test/llops_test.py` drives the binary over its JSON protocol, which is the interface under test; see [llops.md](./llops.md).
 - Agent: bun test for state, drivers (against stub binaries), and tool semantics; goal tree derivation replayed from recorded trajectories.
-- Scripts: `scripts/visualize_test.py`, standard library unittest, run by `make test-scripts`.
-- check.py: golden certificate packages that must pass, and tampered ones that must fail: a disconnected chain, a bogus split, a modified program file, a wrong-direction step. The negative tests are the important ones.
+- Scripts: standard library unittest, run by `make test-scripts`.
+- check.py: `scripts/check_test.py`, run by `make test-scripts` with the visualizer's. Golden packages that must pass and bent ones that must fail; the second half is the one that matters.
 - e2e: `agent/e2e/` holds a pair and the script that proves it, one file per scenario. `bun test` runs each twice, once against a checker that agrees with everything, which needs no solver installed and tests only which moves the framework makes, and once against alive-tv. `make e2e` runs them into `sessions/`, which is what the visualizer and the certificate checker read.
 
 ## Implementation order

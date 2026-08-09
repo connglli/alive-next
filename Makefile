@@ -100,8 +100,11 @@ visualize:
 	@test -n "$(SESSION)" || { echo "usage: make visualize SESSION=sessions/<id>"; exit 2; }
 	python3 scripts/visualize.py $(SESSION)
 
+# check.py replays a certificate with alive-tv and llops and nothing of ours,
+# so its tests build packages and bend them rather than running the framework.
 test-scripts:
 	python3 scripts/visualize_test.py
+	python3 scripts/check_test.py
 
 # --- everything --------------------------------------------------------------
 test: test-llops test-agent test-scripts
