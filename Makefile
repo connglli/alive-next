@@ -24,7 +24,7 @@ LLOPS_BUILD := $(TOOLCHAIN)/llops/build
 
 .PHONY: help install-deps deps-status deps-llvm deps-alive2 deps-llubi deps-bun \
         deps-js deps-uv deps-py deps-dev llops test-llops agent test-agent test e2e \
-        check clean
+        visualize test-scripts check clean
 
 help:
 	@echo "dependencies"
@@ -42,6 +42,7 @@ help:
 	@echo "  test           run every test suite"
 	@echo "  e2e            prove the end-to-end scenarios, into sessions/"
 	@echo "                 (SCENARIO=<name> runs one of them)"
+	@echo "  visualize      render SESSION=sessions/<id> as one HTML page"
 	@echo "  check          run every hook over every file"
 	@echo ""
 	@echo "cleaning"
@@ -92,8 +93,18 @@ test-agent: deps-js
 e2e: deps-js
 	cd agent && bun run e2e $(SCENARIO)
 
+# --- scripts -----------------------------------------------------------------
+# SESSION names a directory under sessions/; the page lands beside its
+# trajectory.
+visualize:
+	@test -n "$(SESSION)" || { echo "usage: make visualize SESSION=sessions/<id>"; exit 2; }
+	python3 scripts/visualize.py $(SESSION)
+
+test-scripts:
+	python3 scripts/visualize_test.py
+
 # --- everything --------------------------------------------------------------
-test: test-llops test-agent
+test: test-llops test-agent test-scripts
 
 # .pre-commit-config.yaml is the one place that says what is checked and with
 # which upstream tool. The hook sees staged files; this sweeps the whole tree.

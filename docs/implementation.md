@@ -102,7 +102,13 @@ The counterexample package is the symmetric llubi replay, also driven by check.p
 
 ## visualize.py
 
-`scripts/visualize.py`, Python stdlib only. Reads a session directory and emits one self-contained HTML file: no server, data embedded. Timeline of events down the side, filterable by kind; main panel shows the world at the selected moment: goal tree with statuses, the selected goal's current pair as a diff, and the event's detail (args, alive2 output, counterexample hints). Arrow keys and a scrubber travel back and forth; snapshots are precomputed by replaying the trajectory once. Built early, right after the state layer, because it doubles as our main debugging tool.
+`scripts/visualize.py`, Python standard library only. `make visualize SESSION=sessions/<id>` reads a session directory and writes `session.html` beside its trajectory: no server, and the trajectory, every program a goal held and where each goal stood after each event are embedded in the page.
+
+The timeline runs down the side, one line per move, with a tool call and its result on the same line. A switch per tool and per other event kind hides what is not being read, and arrow keys, a click or the scrubber move through it. Moving to a line selects the pair it is about: the one that move produced, or the one held by the goal it names.
+
+The panel beside it draws the derivation at the selected event. A node is a pair a goal held, an edge is the move that led from one pair to the next, and a cut branches into its two halves. The edge carries the move's name and the side it touched, and clicking it goes to the event that made it; clicking the node it points at selects that pair without moving the timeline. A node is coloured by where its goal stands while that pair is the one it holds, green for proved, red for open, amber for cut and doubled for refuted, and faded once the run has moved past it. A caret folds a subtree and says how many pairs it hides. Selecting a pair shows its two programs side by side, under a line naming the move that produced it: the goal, the tool, the side it touched, and the pair it came from. The side that moved shows what it was, an arrow, and what it became; the side that did not says so and is shown once. The event as it was recorded sits under them, alive2 output included.
+
+The fold it replays with is the one `agent/src/state/goals.ts` applies, written a second time. A session that records a verdict is checked against the verdict the fold reaches, and a mismatch is refused rather than drawn; an effect the fold cannot apply stops it, and the page says where. `python3 scripts/visualize_test.py` covers both, over sessions it builds.
 
 ## Configuration
 
@@ -172,6 +178,7 @@ The LLVM build is the expensive one, roughly an hour and tens of gigabytes. Ever
 
 - llops: `llops/test/llops_test.py` drives the binary over its JSON protocol, which is the interface under test; see [llops.md](./llops.md).
 - Agent: bun test for state, drivers (against stub binaries), and tool semantics; goal tree derivation replayed from recorded trajectories.
+- Scripts: `scripts/visualize_test.py`, standard library unittest, run by `make test-scripts`.
 - check.py: golden certificate packages that must pass, and tampered ones that must fail: a disconnected chain, a bogus split, a modified program file, a wrong-direction step. The negative tests are the important ones.
 - e2e: `agent/e2e/` holds a pair and the script that proves it, one file per scenario. `bun test` runs each twice, once against a checker that agrees with everything, which needs no solver installed and tests only which moves the framework makes, and once against alive-tv. `make e2e` runs them into `sessions/`, which is what the visualizer and the certificate checker read.
 
