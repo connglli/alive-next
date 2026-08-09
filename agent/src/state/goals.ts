@@ -39,6 +39,12 @@ export interface Tree {
   goals: Map<GoalId, Goal>;
   /** Agent-facing program names, in the order the programs first appeared. */
   programs: Map<Hash, ProgramId>;
+  /**
+   * The number the next goal will take. It counts goals ever made rather than
+   * goals alive, so an unsplit does not hand its children's names to the next
+   * cut and a trajectory names one goal one thing.
+   */
+  nextGoal: number;
 }
 
 /** Thrown when the log says something the tree cannot mean. */
@@ -101,7 +107,12 @@ function start(src: Hash, tgt: Hash): Tree {
     status: "open",
     children: [],
   };
-  const tree: Tree = { root: root.id, goals: new Map([[root.id, root]]), programs: new Map() };
+  const tree: Tree = {
+    root: root.id,
+    goals: new Map([[root.id, root]]),
+    programs: new Map(),
+    nextGoal: 2,
+  };
   name(tree, src);
   name(tree, tgt);
   return tree;
@@ -142,6 +153,7 @@ function apply(tree: Tree, effect: Effect): void {
           children: [],
         });
         parent.children.push(child.gid);
+        tree.nextGoal = Math.max(tree.nextGoal, number(child.gid) + 1);
         name(tree, child.src);
         name(tree, child.tgt);
       }
@@ -199,6 +211,17 @@ function editable(tree: Tree, id: GoalId): Goal {
   const goal = get(tree, id);
   if (goal.status !== "open") throw new DerivationError(`${id} is ${goal.status}, not open`);
   return goal;
+}
+
+/** The number in a goal id, or 0 for one that is not named that way. */
+function number(id: GoalId): number {
+  const found = id.match(/^g(\d+)$/);
+  return found ? Number(found[1]) : 0;
+}
+
+/** The ids the next cut will give its two children. */
+export function nextGoalIds(tree: Tree): { outer: GoalId; callee: GoalId } {
+  return { outer: `g${tree.nextGoal}`, callee: `g${tree.nextGoal + 1}` };
 }
 
 function name(tree: Tree, hash: Hash): void {
