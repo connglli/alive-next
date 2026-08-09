@@ -43,8 +43,18 @@ export interface BinaryConfig {
   version?: string;
 }
 
+/** Milliseconds a run allows the checkers, all optional in the file. */
+export interface TimeoutConfig {
+  checkDefaultMs?: number;
+  checkCapMs?: number;
+  eagerCheckMs?: number;
+  alive2Ms?: number;
+  llubiMs?: number;
+}
+
 export interface Config {
   model: ModelConfig;
+  timeouts: TimeoutConfig;
   /** Path overrides, keyed by binary name; anything absent is on PATH. */
   binaries: Record<string, BinaryConfig>;
   /** The file this came from, for the run_start snapshot. */
@@ -135,6 +145,7 @@ export function loadConfig(path?: string): Config {
     return {
       model: readModel(raw, candidate),
       binaries: readBinaries(raw, candidate),
+      timeouts: readTimeouts(raw, candidate),
       source: candidate,
     };
   }
@@ -159,6 +170,32 @@ function readBinaries(raw: unknown, source: string): Record<string, BinaryConfig
     };
   }
   return binaries;
+}
+
+const TIMEOUT_KEYS: Record<string, keyof TimeoutConfig> = {
+  check_default_ms: "checkDefaultMs",
+  check_cap_ms: "checkCapMs",
+  eager_check_ms: "eagerCheckMs",
+  alive2_ms: "alive2Ms",
+  llubi_ms: "llubiMs",
+};
+
+function readTimeouts(raw: unknown, source: string): TimeoutConfig {
+  const section = (raw as Record<string, unknown> | undefined)?.timeouts;
+  if (section === undefined) return {};
+  if (typeof section !== "object" || section === null) {
+    throw new Error(`${source}: timeouts must be an object`);
+  }
+  const timeouts: TimeoutConfig = {};
+  for (const [key, value] of Object.entries(section as Record<string, unknown>)) {
+    const name = TIMEOUT_KEYS[key];
+    if (!name) throw new Error(`${source}: timeouts.${key} is not a timeout`);
+    if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+      throw new Error(`${source}: timeouts.${key} must be a positive whole number of ms`);
+    }
+    timeouts[name] = value;
+  }
+  return timeouts;
 }
 
 /** Where to find a program a run spawns, or its name for a PATH lookup. */

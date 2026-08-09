@@ -1,0 +1,178 @@
+// Certified steps: the only way a goal's side ever moves.
+//
+// A goal claims that its tgt side refines its src side. A step replaces one
+// side with a new program and has to show that the claim survives, and which
+// way that check runs depends on the side. The framework owns that choice; the
+// agent never states a direction.
+//
+// After a step lands, the goal's new pair is checked once with a small budget.
+// That runs here rather than around the outside, because whether the path is
+// still alive belongs in the answer the agent reads.
+import type { CheckResult, Invocation } from "../drivers/alive2.ts";
+import { type Goal, head, type Side, type Tree } from "./goals.ts";
+import type { Store } from "./store.ts";
+import type { Effect, Hash } from "./trajectory.ts";
+
+/** What this layer needs of alive-tv, so a test can stand in for it. */
+export interface Checker {
+  check(
+    src: string,
+    tgt: string,
+    options?: { timeoutMs?: number; flags?: string[] },
+  ): Promise<CheckResult>;
+}
+
+export interface Timeouts {
+  /** What `check` uses when the agent names no timeout. */
+  checkDefaultMs: number;
+  /** The most the agent may ask for. */
+  checkCapMs: number;
+  /** The budget for the check that follows a step. */
+  eagerCheckMs: number;
+  /** What a commit or an apply is validated with. */
+  alive2Ms: number;
+}
+
+export const DEFAULT_TIMEOUTS: Timeouts = {
+  checkDefaultMs: 30_000,
+  checkCapMs: 300_000,
+  eagerCheckMs: 5_000,
+  alive2Ms: 120_000,
+};
+
+/** The defaults, with whatever the configuration says on top. */
+export function timeoutsFrom(config: Partial<Timeouts>): Timeouts {
+  return { ...DEFAULT_TIMEOUTS, ...definedOnly(config) };
+}
+
+function definedOnly(config: Partial<Timeouts>): Partial<Timeouts> {
+  return Object.fromEntries(
+    Object.entries(config).filter(([, value]) => value !== undefined),
+  ) as Partial<Timeouts>;
+}
+
+/**
+ * Which program plays src in the alive2 call that certifies a step.
+ *
+ * On the src side the step optimises forward: the new program has to refine
+ * the old one, so the old one is src. On the tgt side it deoptimises backward:
+ * the old program has to refine the new one, so the new one is src. Getting
+ * this backwards costs a whole run and looks like a search failure, which is
+ * why it is one function with a test of its own.
+ */
+export function orient(side: Side, before: string, after: string): { src: string; tgt: string } {
+  return side === "src" ? { src: before, tgt: after } : { src: after, tgt: before };
+}
+
+/** A step that landed, or the reason it did not. */
+export type StepResult =
+  | {
+      kind: "certified";
+      hash: Hash;
+      /** In order: the step, then the discharge when the eager check proved it. */
+      effects: Effect[];
+      check: CheckResult;
+      /** The check of the new pair, absent when the goal has no work left. */
+      eager?: CheckResult;
+    }
+  | { kind: "refused"; check: CheckResult };
+
+/** What checking a goal's current pair came to. */
+export interface CheckGoalResult {
+  outcome: "proved" | "refuted" | "unknown";
+  check: CheckResult;
+  effects: Effect[];
+}
+
+export class Steps {
+  constructor(
+    private readonly store: Store,
+    private readonly checker: Checker,
+    private readonly timeouts: Timeouts = DEFAULT_TIMEOUTS,
+  ) {}
+
+  /**
+   * Ask whether a goal's claim holds as it stands. A refutation is a hint
+   * rather than a verdict: a valid step can overshoot, so what it refutes may
+   * be the path rather than the translation.
+   */
+  async checkGoal(tree: Tree, gid: string, timeoutMs?: number): Promise<CheckGoalResult> {
+    const goal = openGoal(tree, gid);
+    const check = await this.checker.check(
+      this.store.get(head(goal, "src")),
+      this.store.get(head(goal, "tgt")),
+      { timeoutMs: this.capped(timeoutMs ?? this.timeouts.checkDefaultMs) },
+    );
+    if (check.outcome === "correct") {
+      return { outcome: "proved", check, effects: [{ effect: "proved", gid }] };
+    }
+    // Only execution certifies a counterexample, so nothing here marks a goal
+    // refuted; that is report_cex's business.
+    return { outcome: check.outcome === "incorrect" ? "refuted" : "unknown", check, effects: [] };
+  }
+
+  /**
+   * Replace one side of a goal with a new program, if alive2 agrees that the
+   * goal's claim survives. On refusal the head does not move and the reason
+   * comes back for the agent to work with.
+   */
+  async step(
+    tree: Tree,
+    gid: string,
+    side: Side,
+    text: string,
+    how: "rule" | "checked" = "checked",
+  ): Promise<StepResult> {
+    const goal = openGoal(tree, gid);
+    const before = this.store.get(head(goal, side));
+    const after = await this.store.put(text);
+    const afterText = this.store.get(after);
+
+    if (afterText === before) {
+      // Nothing moved, so there is nothing to certify and nothing to record.
+      return {
+        kind: "refused",
+        check: unchanged(this.timeouts.alive2Ms),
+      };
+    }
+
+    const { src, tgt } = orient(side, before, afterText);
+    const check = await this.checker.check(src, tgt, { timeoutMs: this.timeouts.alive2Ms });
+    if (check.outcome !== "correct") return { kind: "refused", check };
+
+    const effects: Effect[] = [{ effect: "step", gid, side, to: after, how }];
+
+    // The pair has changed, so ask cheaply whether the goal is now discharged.
+    const eager = await this.checker.check(
+      side === "src" ? afterText : this.store.get(head(goal, "src")),
+      side === "tgt" ? afterText : this.store.get(head(goal, "tgt")),
+      { timeoutMs: this.timeouts.eagerCheckMs },
+    );
+    if (eager.outcome === "correct") effects.push({ effect: "proved", gid });
+
+    return { kind: "certified", hash: after, effects, check, eager };
+  }
+
+  private capped(timeoutMs: number): number {
+    return Math.min(timeoutMs, this.timeouts.checkCapMs);
+  }
+}
+
+function openGoal(tree: Tree, gid: string): Goal {
+  const goal = tree.goals.get(gid);
+  if (!goal) throw new Error(`no goal ${gid}`);
+  if (goal.status !== "open") throw new Error(`${gid} is ${goal.status}, not open`);
+  return goal;
+}
+
+/** A refusal that cost no solver time, shaped like one that did. */
+function unchanged(timeoutMs: number): CheckResult {
+  const invocation: Invocation = { binary: "", flags: [], timeoutMs };
+  return {
+    outcome: "error",
+    detail: "the program is the one already there",
+    invocation,
+    stdout: "",
+    ms: 0,
+  };
+}
