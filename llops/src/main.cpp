@@ -2,6 +2,7 @@
 // JSON request on stdin, one JSON response on stdout, nothing kept between
 // invocations. See docs/implementation.md for the contract.
 #include "analyze.h"
+#include "assume.h"
 #include "canon.h"
 #include "edit.h"
 #include "harness.h"
@@ -27,6 +28,7 @@ const char *kUsage = "usage: llops <subcommand> < request.json > response.json\n
                      "  inline     substitute a callee back into its outer function\n"
                      "  analyze    known bits, ranges or pointer facts at a program point\n"
                      "  harness    wrap a function in a main that llubi can run\n"
+                     "  assume     state a fact about a value before an instruction\n"
                      "  version    print the version\n"
                      "\n"
                      "Exit status is 0 when the response says ok, 1 when it does not, and\n"
@@ -83,6 +85,8 @@ int main(int argc, char **argv) {
     return respond(llops::analyzeCmd(*args));
   if (cmd == "harness")
     return respond(llops::harnessCmd(*args));
+  if (cmd == "assume")
+    return respond(llops::assumeCmd(*args));
 
   llvm::errs() << "llops: unknown subcommand '" << cmd << "'\n" << kUsage;
   return 2;

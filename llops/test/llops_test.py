@@ -1080,6 +1080,108 @@ entry:
         self.bad(self.harness(module=module, args=self.two_args()), "invalid")
 
 
+class TestAssume(Case):
+    F = """define i32 @f(i32 %n) {
+entry:
+  %m = and i32 %n, 255
+  %s = mul i32 %m, 2
+  ret i32 %s
+}
+"""
+    P = """define i32 @f(ptr %p) {
+entry:
+  %v = load i32, ptr %p, align 4
+  ret i32 %v
+}
+"""
+
+    def assume(self, module=None, before="%s", value="%m", fact=None):
+        return run(
+            "assume",
+            {
+                "module": module or self.F,
+                "before": before,
+                "value": value,
+                "fact": fact if fact is not None else {"range": {"min": 0, "max": 256}},
+            },
+        )
+
+    def test_a_range_becomes_a_pair_of_comparisons(self):
+        r = self.good(self.assume())
+        body = self.body(r["module"])
+        self.assertEqual(body[1], "%0 = icmp sge i32 %m, 0")
+        self.assertEqual(body[2], "%1 = icmp slt i32 %m, 256")
+        self.assertEqual(body[3], "%2 = and i1 %0, %1")
+        self.assertEqual(body[4], "call void @llvm.assume(i1 %2)")
+        # Before the instruction it was told, not at the end.
+        self.assertEqual(body[5], "%s = mul i32 %m, 2")
+
+    def test_a_range_that_wraps_becomes_a_disjunction(self):
+        module = """define i8 @f(i8 %x) {
+entry:
+  %y = add i8 %x, 1
+  ret i8 %y
+}
+"""
+        # The attribute's interval is half-open and wraps when min is above
+        # max, so the predicate has to admit the two runs it describes.
+        r = self.good(
+            self.assume(
+                module=module, before="%y", value="%x", fact={"range": {"min": 10, "max": -56}}
+            )
+        )
+        self.assertIn("%2 = or i1 %0, %1", r["module"])
+
+    def test_pointer_facts_become_operand_bundles(self):
+        r = self.good(
+            self.assume(
+                module=self.P,
+                before="%v",
+                value="%p",
+                fact={"nonnull": True, "align": 8, "dereferenceable": 16},
+            )
+        )
+        self.assertIn('"nonnull"(ptr %p)', r["module"])
+        self.assertIn('"align"(ptr %p, i64 8)', r["module"])
+        self.assertIn('"dereferenceable"(ptr %p, i64 16)', r["module"])
+        self.assertIn("call void @llvm.assume(i1 true)", r["module"])
+
+    def test_noundef_compares_the_value_with_itself(self):
+        # An assume on poison is UB, and that comparison is poison exactly
+        # when the value is, which is what noundef says.
+        r = self.good(self.assume(fact={"noundef": True}))
+        self.assertIn("%0 = icmp eq i32 %m, %m", r["module"])
+
+    def test_the_result_is_still_a_v1_program(self):
+        r = self.good(self.assume())
+        self.assertTrue(self.conforms(r["module"]))
+
+    def test_noalias_has_no_assume_form(self):
+        r = self.bad(
+            self.assume(module=self.P, before="%v", value="%p", fact={"noalias": True}), "invalid"
+        )
+        self.assertIn("noalias", r["error"]["message"])
+
+    def test_a_range_on_a_pointer(self):
+        self.bad(self.assume(module=self.P, before="%v", value="%p"), "invalid")
+
+    def test_a_pointer_fact_on_an_integer(self):
+        self.bad(self.assume(fact={"align": 8}), "invalid")
+
+    def test_an_alignment_that_is_not_a_power_of_two(self):
+        self.bad(self.assume(module=self.P, before="%v", value="%p", fact={"align": 3}), "invalid")
+
+    def test_an_unknown_fact(self):
+        self.bad(self.assume(fact={"speedy": True}), "invalid")
+
+    def test_no_facts_at_all(self):
+        self.bad(self.assume(fact={}), "bad_request")
+
+    def test_an_anchor_or_value_that_is_not_there(self):
+        self.bad(self.assume(before="%nope"), "not_found")
+        self.bad(self.assume(value="%nope"), "not_found")
+
+
 class TestAnalyze(Case):
     MASKED = """define i32 @f(i32 %x) {
 entry:

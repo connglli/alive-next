@@ -28,6 +28,7 @@ set(LLOPS_SOURCES
   src/edit.cpp
   src/outline.cpp
   src/harness.cpp
+  src/assume.cpp
   src/analyze.cpp
   src/main.cpp
 )

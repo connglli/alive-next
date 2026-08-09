@@ -170,6 +170,19 @@ Everything worth judging the run on is loaded back under a name beginning `obs.`
 
 The harness is not a v1 program, since it defines a second function, so `validate` will refuse what this produces. It is an artifact for the interpreter rather than a program under proof.
 
+## assume
+
+States a fact about a value, just before an instruction. This is the first half of interface strengthening: an attribute on an outlined callee's parameter is an assumption its caller has to honour, so it may only be added once the caller has been shown to honour it, and an assume is how that is shown. If the fact were false the assume would add UB the program did not have, and the alive2 check of the insertion refuses it.
+
+Request `{ "module": ..., "before": ref, "value": ref, "fact": { ... } }`, response `{ "ok": true, "module": ... }`.
+
+The fact vocabulary is the one `edit attrs` takes, so what is proved here and what is attributed cannot drift apart. How each one is written depends on what it says:
+
+* `range` becomes two signed comparisons over the value, joined by an `and` when the interval runs upwards and by an `or` when it wraps, which is the same half-open interval the attribute means.
+* `noundef` becomes a comparison of the value with itself, which is poison exactly when the value is, and an assume on poison is UB.
+* `nonnull`, `align` and `dereferenceable` become operand bundles on an assume of `true`, since that is the only form they have.
+* `noalias` is refused. It describes a function's whole argument list rather than a value at a point, so there is nothing here that would prove it.
+
 ## Error codes
 
 `validate` reports the codes above as diagnostics. Everywhere else they arrive as errors, alongside these:
