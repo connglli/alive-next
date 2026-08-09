@@ -13,7 +13,7 @@
 // One transaction at a time, which is what lets edit, commit and abort take no
 // target: the agent is editing one thing or nothing.
 import type { EditOp, Llops } from "../drivers/llops.ts";
-import { head, type Side, type Tree } from "./goals.ts";
+import { head, type Side, type Tree, workable } from "./goals.ts";
 import type { StepResult, Steps } from "./steps.ts";
 import type { Store } from "./store.ts";
 import type { Hash } from "./trajectory.ts";
@@ -66,11 +66,7 @@ export class Transactions {
         `a transaction is already open on ${this.current.gid} ${this.current.side}`,
       );
     }
-    const goal = tree.goals.get(gid);
-    if (!goal) throw new TransactionError(`no goal ${gid}`);
-    if (goal.status !== "open") {
-      throw new TransactionError(`${gid} is ${goal.status}, not open`);
-    }
+    const goal = workable(tree, gid);
     const from = head(goal, side);
     this.current = { gid, side, from, text: this.store.get(from), ops: [] };
     return this.current;

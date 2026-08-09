@@ -61,9 +61,7 @@ function replay(): Tree {
 
 /** Record effects the way the tool wrapper will, then re-derive. */
 function record(effects: Effect[]): Tree {
-  for (const effect of effects) {
-    events.push({ kind: "tool_result", id: "1", tool: "split", effect, result: null, ms: 1 });
-  }
+  events.push({ kind: "tool_result", id: "1", tool: "split", effects, result: null, ms: 1 });
   return replay();
 }
 

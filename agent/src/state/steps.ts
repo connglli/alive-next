@@ -9,7 +9,7 @@
 // That runs here rather than around the outside, because whether the path is
 // still alive belongs in the answer the agent reads.
 import type { CheckResult, Invocation } from "../drivers/alive2.ts";
-import { type Goal, head, type Side, type Tree } from "./goals.ts";
+import { head, type Side, type Tree, workable } from "./goals.ts";
 import type { Store } from "./store.ts";
 import type { Effect, Hash } from "./trajectory.ts";
 
@@ -181,20 +181,6 @@ export class Steps {
   private capped(timeoutMs: number): number {
     return Math.min(timeoutMs, this.timeouts.checkCapMs);
   }
-}
-
-/**
- * A goal that can still be worked on. A proved one qualifies: a step reopens
- * it when the effect is recorded, because the proof was about the pair the
- * step replaces. A cut or refuted one does not.
- */
-function workable(tree: Tree, gid: string): Goal {
-  const goal = tree.goals.get(gid);
-  if (!goal) throw new Error(`no goal ${gid}`);
-  if (goal.status === "split" || goal.status === "refuted") {
-    throw new Error(`${gid} is ${goal.status}, not open`);
-  }
-  return goal;
 }
 
 /** A refusal that cost no solver time, shaped like one that did. */

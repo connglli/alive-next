@@ -19,15 +19,18 @@ alive-next/
     test/               llops_test.py, driving the binary over JSON
   agent/                TypeScript on Pi; bun
     package.json        JS packages; bun.lock pins them
+    src/session.ts      a session directory and the moves that fill it
+    src/agent.ts        the Pi agent: tools, loop, budget
     src/tools/          one file per tool from design.md
     src/state/          store, goal tree, transactions, trajectory
     src/drivers/        alive-tv, llubi, llops wrappers
     src/cert/           certificate package assembly
+    e2e/                small LHS/RHS pairs, each with the script that
+                        proves it
     test/               bun test
   checker/              check.py (Python stdlib only)
   scripts/              deps.sh, visualize.py, build helpers
   rules/                pre-proved rule library (empty in v1)
-  tests/e2e/            small LHS/RHS pairs run end-to-end
   build/                gitignored: our own build trees
   deps/                 gitignored: external sources, build trees, and
                         prefix/ with the tools we install
@@ -148,7 +151,7 @@ The LLVM build is the expensive one, roughly an hour and tens of gigabytes. Ever
 - llops: `llops/test/llops_test.py` drives the binary over its JSON protocol, which is the interface under test; see [llops.md](./llops.md).
 - Agent: bun test for state, drivers (against stub binaries), and tool semantics; goal tree derivation replayed from recorded trajectories.
 - check.py: golden certificate packages that must pass, and tampered ones that must fail: a disconnected chain, a bogus split, a modified program file, a wrong-direction step. The negative tests are the important ones.
-- e2e: small LHS/RHS pairs through the full loop with a scripted (non-LLM) agent driver first, the real agent second.
+- e2e: `agent/e2e/` holds a pair and the script that proves it, one file per scenario, and each scenario is run twice by `bun test`: once against a checker that agrees with everything, which tests that the moves are still moves the framework makes and needs no solver installed, and once against alive-tv, which is the run that means something. `make e2e` runs them for real into `sessions/`, which is where the visualizer and the certificate checker get something to read. A model runs the same scenarios later, through the same operations.
 
 ## Implementation order
 

@@ -23,9 +23,9 @@ function goal(tree: Tree, id: string): Goal {
   return found;
 }
 
-/** A tool result carrying one effect, which is how the tree ever changes. */
-function did(effect: Effect, tool = "commit"): Event {
-  return { kind: "tool_result", id: "1", tool, effect, result: null, ms: 1 };
+/** A tool result carrying the effects it had, which is how the tree changes. */
+function did(...effects: Effect[]): Event {
+  return { kind: "tool_result", id: "1", tool: "commit", effects, result: null, ms: 1 };
 }
 
 describe("derive", () => {
@@ -219,7 +219,7 @@ describe("derive", () => {
       log(run(), {
         kind: "auto",
         action: "eager_check",
-        effect: { effect: "proved", gid: "g1" },
+        effects: [{ effect: "proved", gid: "g1" }],
         outcome: "proved",
       }),
     );

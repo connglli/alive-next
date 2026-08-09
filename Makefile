@@ -19,8 +19,8 @@ export PATH := $(PREFIX)/bin:$(PATH)
 LLOPS_BUILD := $(BUILD)/llops
 
 .PHONY: help install-deps deps-status deps-llvm deps-alive2 deps-llubi deps-bun \
-        deps-js deps-uv deps-py deps-dev llops test-llops agent test-agent test check \
-        clean clean-deps
+        deps-js deps-uv deps-py deps-dev llops test-llops agent test-agent test e2e \
+        check clean clean-deps
 
 help:
 	@echo "dependencies"
@@ -36,6 +36,8 @@ help:
 	@echo "  agent          typecheck the agent"
 	@echo "  test-agent     run the agent tests"
 	@echo "  test           run every test suite"
+	@echo "  e2e            prove the end-to-end scenarios, into sessions/"
+	@echo "                 (SCENARIO=<name> runs one of them)"
 	@echo "  check          run every hook over every file"
 	@echo ""
 	@echo "cleaning"
@@ -78,6 +80,11 @@ agent: deps-js
 # whatever the configuration points at.
 test-agent: deps-js
 	cd agent && LLOPS=$(LLOPS_BUILD)/llops bun test
+
+# The scenarios, run for real: each leaves a session directory behind, which is
+# what the visualizer and the certificate checker read.
+e2e: deps-js
+	cd agent && bun run e2e $(SCENARIO)
 
 # --- everything --------------------------------------------------------------
 test: test-llops test-agent

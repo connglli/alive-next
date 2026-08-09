@@ -12,6 +12,7 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "e2e": "bun run e2e/main.ts"
   }
 }

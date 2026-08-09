@@ -17,10 +17,24 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import type { Llops } from "../drivers/llops.ts";
 import { sha256 } from "./hash.ts";
 
 /** Turns IR text into the canonical text the store keeps, `llops canon`. */
 export type Canonicalize = (text: string) => Promise<string>;
+
+/**
+ * The canonicalizer every store outside a unit test uses. A program llops will
+ * not parse cannot be stored at all, so a store never holds text no later tool
+ * can read.
+ */
+export function canonWith(llops: Llops): Canonicalize {
+  return async (text: string) => {
+    const result = await llops.canon(text);
+    if (!result.ok) throw new Error(`llops canon: ${result.code}, ${result.message}`);
+    return result.module;
+  };
+}
 
 /** Thrown when a stored file is not the program its name claims. */
 export class StoreCorrupt extends Error {

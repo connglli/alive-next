@@ -83,6 +83,21 @@ export function verdict(tree: Tree): "verified" | "counterexample" | "unknown" {
   return "unknown";
 }
 
+/**
+ * The goal a move may touch, which is one that has not been cut or refuted.
+ *
+ * A proved goal qualifies. Touching it reopens it when the effect is recorded,
+ * because the proof was about the pair the move replaces, and every move that
+ * can settle a goal early would otherwise be a move that can freeze it.
+ */
+export function workable(tree: Tree, id: GoalId): Goal {
+  const goal = get(tree, id);
+  if (goal.status === "split" || goal.status === "refuted") {
+    throw new DerivationError(`${id} is ${goal.status}, not open`);
+  }
+  return goal;
+}
+
 /** Apply one effect to a tree, which is what derive does line by line. */
 export function applyEffect(tree: Tree, effect: Effect): void {
   apply(tree, effect);
@@ -97,10 +112,11 @@ export function derive(entries: Entry[]): Tree {
       tree = start(entry.src, entry.tgt);
       continue;
     }
-    const effect = "effect" in entry ? entry.effect : undefined;
-    if (!effect) continue;
-    if (!tree) throw new DerivationError(`${effect.effect} before run_start`);
-    apply(tree, effect);
+    const effects = "effects" in entry ? (entry.effects ?? []) : [];
+    for (const effect of effects) {
+      if (!tree) throw new DerivationError(`${effect.effect} before run_start`);
+      apply(tree, effect);
+    }
   }
   if (!tree) throw new DerivationError("no run_start");
   return tree;

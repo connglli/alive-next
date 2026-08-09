@@ -16,7 +16,7 @@
 // agent to rewrite a side before cutting.
 import type { Llops, OutlineParam } from "../drivers/llops.ts";
 import type { Ref } from "../refs.ts";
-import { type GoalId, head, nextGoalIds, type Tree } from "./goals.ts";
+import { type GoalId, head, nextGoalIds, type Tree, workable } from "./goals.ts";
 import type { Store } from "./store.ts";
 import type { Effect } from "./trajectory.ts";
 
@@ -49,9 +49,7 @@ export class Splits {
     tgtCut: Ref,
     valueMap: Record<Ref, Ref>,
   ): Promise<SplitResult> {
-    const goal = tree.goals.get(gid);
-    if (!goal) throw new Error(`no goal ${gid}`);
-    if (goal.status !== "open") throw new Error(`${gid} is ${goal.status}, not open`);
+    const goal = workable(tree, gid);
 
     const children = nextGoalIds(tree);
     // The outlined function is named after the callee goal, so the name is

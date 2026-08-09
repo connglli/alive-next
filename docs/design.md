@@ -160,6 +160,8 @@ A step may move a goal that has already been proved, and doing so reopens it, be
 
 - `strengthen(gid, param, fact)`: the two-phase recipe as one tool; `gid` must be a split goal. Phase 1: insert `llvm.assume(fact)` before the call in the outer src and validate with alive2 (this is where the proof cost lives). Phase 2: add the corresponding attribute to `g`'s declaration in the outer goal and the callee goal. Fails cleanly at phase 1 if the fact does not hold.
 
+A fact is about a value being defined as well as about its range. An attribute the caller has to honour is violated by a poison argument as surely as by an out of range one, and phase 1 says so on its own: the assume's condition is poison exactly when the value is, and an assume on a poison condition is UB the program did not have, so alive2 refuses the step. A value that can be poison therefore cannot be strengthened, and the fix belongs in the program rather than in the recipe: freeze it, which is what LLVM does when it needs the same guarantee.
+
 Both children are cross-checked once at the end rather than after each step inside, because between the two halves of phase 2 the outer's sides declare `g` differently, and that is a state to pass through rather than one to ask about. Whichever of the two the attribute made provable discharges there, so the agent never has to ask about it.
 
 ### Analyses

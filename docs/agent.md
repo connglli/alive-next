@@ -26,6 +26,16 @@ The agent can reach the session directory with `bash`, and that is not what prot
 
 Isolation is hygiene rather than the soundness boundary. The session `cwd` is the scratch directory and the store lives outside it, so an agent that writes files writes them where it is supposed to.
 
+## The session
+
+Everything the framework can do to a proof goes through one object, `Session` in `src/session.ts`: it owns the session directory, appends the `tool_call` and `tool_result` lines, and rebuilds the goal tree by replaying the log after every move.
+
+Rebuilding rather than mutating is what makes the log the source of truth by construction: there is no second copy of the tree to drift from it, and a derivation bug shows up on the next move instead of in a certificate a day later.
+
+The agent does not appear in it. A scripted scenario and a model driving Pi's loop make the same moves through the same door, which is what lets [implementation.md](./implementation.md)'s end-to-end pairs be proved with nothing in front of the framework.
+
+Pi's own session object is a different thing, held by `src/agent.ts`, which is where the tools and the loop are wired up. One agent drives one `Session`.
+
 ## The wrapper
 
 The tool lifecycle hooks the session exposes are where the framework holds the pen: the `tool_call` line goes to `trajectory.jsonl` before a tool runs and the `tool_result` line after it returns, both synchronously, so the record cannot be skipped or reordered by anything the agent does.
