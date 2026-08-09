@@ -75,4 +75,4 @@ node_modules/
 venv/
 deps/
 sessions/
-config.json
+config.jsonc

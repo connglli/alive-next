@@ -34,7 +34,7 @@ alive-next/
   .venv/                gitignored: the Python environment uv builds
   pyproject.toml        Python dev packages; uv.lock pins them
   .pre-commit-config.yaml  the checks, and .gitlint the commit rules
-  config.json           machine-local (gitignored); config.example.json is
+  config.jsonc          machine-local (gitignored); config.example.jsonc is
                         checked in
   Makefile              names the targets, delegates the work
 ```
@@ -100,9 +100,9 @@ The counterexample package is the symmetric llubi replay, also driven by check.p
 
 ## Configuration
 
-One `config.json` at the repo root; no config directory. The split between config, CLI, and tool arguments follows one rule: the config file describes the machine, the CLI describes the run, tool arguments describe the call.
+One `config.jsonc` at the repo root; no config directory. The dialect is JSONC, JSON with comments and trailing commas, so the checked-in example can carry every option with a note on what it is for; nothing but the agent reads these files, and what a run records is the resolved configuration as plain JSON. The split between config, CLI, and tool arguments follows one rule: the config file describes the machine, the CLI describes the run, tool arguments describe the call.
 
-- **config.json** (machine-local, gitignored; `config.example.json` checked in): optional path overrides for alive-tv, llubi, and llvm-config (by default all are found on PATH); expected version identifiers; default timeouts and budgets. Stable across runs, different on every machine.
+- **config.jsonc** (machine-local, gitignored; `config.example.jsonc` checked in, and read in its place when there is no config.jsonc): the model, named by a provider and an id from Pi's catalogue, or by a `base_url` for an OpenAI-compatible endpoint of your own with `api_key_env` naming the variable its key lives in; optional path overrides for the binaries a run spawns, llops, alive-tv, llubi and llvm-config, all of which are found on PATH by default; the version identifiers a run records; default timeouts and budgets. Stable across runs, different on every machine.
 - **CLI**: per-run facts: the LHS/RHS inputs, the session directory, `--config` to point elsewhere, and overrides for common knobs (`--model`, `--budget`, `--timeout-check`). Precedence: built-in defaults, then config file, then CLI.
 - **Tool arguments**: per-call knobs the agent owns, like the `check` timeout; config supplies only the default and a cap.
 - **Secrets** (API keys for Pi): environment variables only, never config or CLI, so they cannot leak into the trajectory.
