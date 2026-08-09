@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { repoRoot } from "../src/config.ts";
 import { Llops } from "../src/drivers/llops.ts";
 import { Llubi, LlubiCrash, read } from "../src/drivers/llubi.ts";
-import { binary, llopsBinary } from "./binaries.ts";
+import { toolchain } from "./toolchain-under-test.ts";
 
 const RETURNED = `
 Entering function main
@@ -81,20 +81,13 @@ describe("reading what llubi printed", () => {
   });
 });
 
-const llubi = new Llubi(
-  binary(
-    "llubi_legacy",
-    "LLUBI",
-    join(repoRoot(), "deps", "prefix", "bin", "llubi_legacy"),
-    join(repoRoot(), "deps", "prefix", "bin", "llubi", "llubi_legacy"),
-  ),
-);
+const llubi = new Llubi(toolchain.path("llubi"));
 const installed = await llubi
   .version()
   .then((line) => line.length > 0)
   .catch(() => false);
 
-const llops = new Llops(llopsBinary());
+const llops = new Llops(toolchain.path("llops"));
 const llopsBuilt = await llops
   .version()
   .then(() => true)

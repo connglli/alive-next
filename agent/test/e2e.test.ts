@@ -18,17 +18,17 @@ import { Llops } from "../src/drivers/llops.ts";
 import { Session } from "../src/session.ts";
 import type { Checker } from "../src/state/steps.ts";
 import { timeoutsFrom } from "../src/state/steps.ts";
-import { binary, llopsBinary } from "./binaries.ts";
+import { toolchain } from "./toolchain-under-test.ts";
 
 const config = loadConfig();
-const llops = new Llops(llopsBinary());
+const llops = new Llops(toolchain.path("llops"));
 const built = await llops
   .version()
   .then(() => true)
   .catch(() => false);
 
 const timeouts = timeoutsFrom(config.timeouts);
-const aliveTv = new AliveTv(binary("alive-tv", "ALIVE_TV"), timeouts.alive2Ms);
+const aliveTv = new AliveTv(toolchain.path("alive-tv"), timeouts.alive2Ms);
 const installed = await aliveTv
   .version()
   .then((line) => line.length > 0)

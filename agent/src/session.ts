@@ -48,7 +48,9 @@ export interface SessionStartOptions extends SessionOptions {
   tgt: string;
   /** The resolved configuration, so a trajectory says what produced it. */
   config?: unknown;
-  /** Version lines for the binaries and the model, gathered by the caller. */
+  /** What the toolchain reported when the caller insisted on it. */
+  toolchain?: unknown;
+  /** Version lines for everything the toolchain does not cover. */
   versions?: Record<string, string>;
 }
 
@@ -89,6 +91,7 @@ export class Session {
       src,
       tgt,
       config: options.config ?? {},
+      toolchain: options.toolchain,
       versions: options.versions ?? {},
     });
     return session;

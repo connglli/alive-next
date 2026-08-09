@@ -7,9 +7,9 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { repoRoot } from "../src/config.ts";
 import { Llops, LlopsCrash } from "../src/drivers/llops.ts";
-import { llopsBinary } from "./binaries.ts";
+import { toolchain } from "./toolchain-under-test.ts";
 
-const llops = new Llops(llopsBinary());
+const llops = new Llops(toolchain.path("llops"));
 const built = await llops
   .version()
   .then(() => true)

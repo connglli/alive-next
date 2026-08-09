@@ -37,12 +37,6 @@ export interface ModelConfig {
 const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
-/** A program a run spawns, and where to find it. */
-export interface BinaryConfig {
-  path: string;
-  version?: string;
-}
-
 /** Milliseconds a run allows the checkers, all optional in the file. */
 export interface TimeoutConfig {
   checkDefaultMs?: number;
@@ -55,8 +49,12 @@ export interface TimeoutConfig {
 export interface Config {
   model: ModelConfig;
   timeouts: TimeoutConfig;
-  /** Path overrides, keyed by binary name; anything absent is on PATH. */
-  binaries: Record<string, BinaryConfig>;
+  /**
+   * Where LLVM, alive2, llubi and llops were built, absolute. One directory
+   * rather than a path per binary, because they are not four choices: they
+   * have to be one build against one LLVM, which is what a toolchain is.
+   */
+  toolchain: string;
   /** The file this came from, for the run_start snapshot. */
   source: string;
 }
@@ -144,7 +142,7 @@ export function loadConfig(path?: string): Config {
     }
     return {
       model: readModel(raw, candidate),
-      binaries: readBinaries(raw, candidate),
+      toolchain: readToolchain(raw, candidate),
       timeouts: readTimeouts(raw, candidate),
       source: candidate,
     };
@@ -152,24 +150,27 @@ export function loadConfig(path?: string): Config {
   throw new Error(`no configuration found, looked at: ${candidates.join(", ")}`);
 }
 
-function readBinaries(raw: unknown, source: string): Record<string, BinaryConfig> {
-  const section = (raw as Record<string, unknown> | undefined)?.binaries;
-  if (section === undefined) return {};
-  if (typeof section !== "object" || section === null) {
-    throw new Error(`${source}: binaries must be an object`);
+/**
+ * Where the toolchain is: the TOOLCHAIN environment variable, which is also
+ * what the build takes, then the configuration, then deps/ in the repository,
+ * which is where the build puts it when nobody says otherwise. A relative path
+ * is relative to the repository, so one configuration means one directory
+ * whichever directory a process starts in.
+ */
+function readToolchain(raw: unknown, source: string): string {
+  const file = raw as Record<string, unknown> | undefined;
+  if (file?.binaries !== undefined) {
+    throw new Error(
+      `${source}: "binaries" is no longer read. The tools are built as one ` +
+        `toolchain, so name the directory they were built in as "toolchain".`,
+    );
   }
-  const binaries: Record<string, BinaryConfig> = {};
-  for (const [name, value] of Object.entries(section as Record<string, unknown>)) {
-    const entry = value as Record<string, unknown> | null;
-    if (typeof entry !== "object" || entry === null || typeof entry.path !== "string") {
-      throw new Error(`${source}: binaries.${name} needs a path`);
-    }
-    binaries[name] = {
-      path: entry.path,
-      version: typeof entry.version === "string" ? entry.version : undefined,
-    };
+  const configured = file?.toolchain;
+  if (configured !== undefined && (typeof configured !== "string" || configured === "")) {
+    throw new Error(`${source}: toolchain must be a non-empty path`);
   }
-  return binaries;
+  const chosen = process.env.TOOLCHAIN || (configured as string | undefined) || "deps";
+  return resolve(repoRoot(), chosen);
 }
 
 const TIMEOUT_KEYS: Record<string, keyof TimeoutConfig> = {
@@ -196,19 +197,6 @@ function readTimeouts(raw: unknown, source: string): TimeoutConfig {
     timeouts[name] = value;
   }
   return timeouts;
-}
-
-/**
- * Where to find a program a run spawns, or its name for a PATH lookup.
- *
- * A path with a directory in it is taken as relative to the repository rather
- * than to whatever directory the process started in, so one configuration
- * works whether a run is launched from the root, from `agent/`, or by make.
- */
-export function binaryPath(config: Config, name: string): string {
-  const path = config.binaries[name]?.path;
-  if (path === undefined) return name;
-  return path.includes("/") ? resolve(repoRoot(), path) : path;
 }
 
 /**

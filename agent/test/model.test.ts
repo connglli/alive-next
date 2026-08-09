@@ -8,7 +8,7 @@ import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { binaryPath, loadConfig, type ModelConfig, repoRoot } from "../src/config.ts";
+import { loadConfig, type ModelConfig, repoRoot } from "../src/config.ts";
 import { resolveModel } from "../src/model.ts";
 
 const config = loadConfig();
@@ -53,50 +53,91 @@ describe("loadConfig", () => {
     expect(example.model.thinkingLevel).toBeUndefined();
   });
 
-  test("reads path overrides for the binaries a run spawns", () => {
-    const file = join(tmpdir(), `alive-next-binaries-${process.pid}.jsonc`);
+  /**
+   * The environment wins over the file, and make sets it, so a test about
+   * what the file says has to say the environment is silent.
+   */
+  function withoutEnv<T>(body: () => T): T {
+    const saved = process.env.TOOLCHAIN;
+    delete process.env.TOOLCHAIN;
+    try {
+      return body();
+    } finally {
+      if (saved !== undefined) process.env.TOOLCHAIN = saved;
+    }
+  }
+
+  test("reads where the toolchain was built", () => {
+    const file = join(tmpdir(), `alive-next-toolchain-${process.pid}.jsonc`);
     writeFileSync(
       file,
-      `{ // a machine that keeps llops somewhere of its own
+      `{ // a machine that keeps one toolchain for several checkouts
          "model": { "provider": "p", "id": "m" },
-         "binaries": { "llops": { "path": "/opt/llops", "version": "0.1.0" } } }`,
+         "toolchain": "/zdata/llvms" }`,
     );
     try {
-      const loaded = loadConfig(file);
-      expect(binaryPath(loaded, "llops")).toBe("/opt/llops");
-      expect(loaded.binaries.llops?.version).toBe("0.1.0");
-      // Anything the file does not name is looked up on PATH.
-      expect(binaryPath(loaded, "alive-tv")).toBe("alive-tv");
+      expect(withoutEnv(() => loadConfig(file).toolchain)).toBe("/zdata/llvms");
     } finally {
       rmSync(file);
     }
   });
 
-  test("reads a relative path as relative to the repository", () => {
+  test("reads a relative toolchain as relative to the repository", () => {
     const file = join(tmpdir(), `alive-next-relative-${process.pid}.jsonc`);
+    writeFileSync(file, '{ "model": { "provider": "p", "id": "m" }, "toolchain": "./deps" }');
+    try {
+      // Otherwise the same configuration would name a different directory
+      // depending on where the process was started.
+      expect(withoutEnv(() => loadConfig(file).toolchain)).toBe(join(repoRoot(), "deps"));
+    } finally {
+      rmSync(file);
+    }
+  });
+
+  test("falls back to deps in the repository", () => {
+    const file = join(tmpdir(), `alive-next-default-${process.pid}.jsonc`);
+    writeFileSync(file, '{ "model": { "provider": "p", "id": "m" } }');
+    try {
+      expect(withoutEnv(() => loadConfig(file).toolchain)).toBe(join(repoRoot(), "deps"));
+    } finally {
+      rmSync(file);
+    }
+  });
+
+  test("lets the environment name a toolchain for one run", () => {
+    const file = join(tmpdir(), `alive-next-env-${process.pid}.jsonc`);
+    writeFileSync(file, '{ "model": { "provider": "p", "id": "m" }, "toolchain": "/from/file" }');
+    const saved = process.env.TOOLCHAIN;
+    process.env.TOOLCHAIN = "/from/env";
+    try {
+      expect(loadConfig(file).toolchain).toBe("/from/env");
+    } finally {
+      if (saved === undefined) delete process.env.TOOLCHAIN;
+      else process.env.TOOLCHAIN = saved;
+      rmSync(file);
+    }
+  });
+
+  test("says so when a configuration still names binaries", () => {
+    // The old shape was a path per binary, which could name three builds that
+    // do not agree; the message points at what replaced it.
+    const file = join(tmpdir(), `alive-next-old-${process.pid}.jsonc`);
     writeFileSync(
       file,
-      `{ "model": { "provider": "p", "id": "m" },
-         "binaries": { "llops": { "path": "./deps/prefix/bin/llops" },
-                       "alive-tv": { "path": "alive-tv" } } }`,
+      '{ "model": { "provider": "p", "id": "m" }, "binaries": { "llops": { "path": "x" } } }',
     );
     try {
-      const loaded = loadConfig(file);
-      // Otherwise the same configuration would name a different file
-      // depending on where the process was started.
-      expect(binaryPath(loaded, "llops")).toBe(join(repoRoot(), "deps/prefix/bin/llops"));
-      // A bare name is a PATH lookup and stays one.
-      expect(binaryPath(loaded, "alive-tv")).toBe("alive-tv");
+      expect(() => loadConfig(file)).toThrow(/"binaries" is no longer read/);
     } finally {
       rmSync(file);
     }
   });
 
-  test("rejects a binary entry with no path", () => {
-    const file = join(tmpdir(), `alive-next-nopath-${process.pid}.jsonc`);
-    writeFileSync(file, '{ "model": { "provider": "p", "id": "m" }, "binaries": { "llops": {} } }');
+  test("refuses a toolchain that is not a path", () => {
+    const file = join(tmpdir(), `alive-next-badtool-${process.pid}.jsonc`);
+    writeFileSync(file, '{ "model": { "provider": "p", "id": "m" }, "toolchain": 7 }');
     try {
-      expect(() => loadConfig(file)).toThrow(/binaries\.llops needs a path/);
+      expect(() => loadConfig(file)).toThrow(/toolchain must be a non-empty path/);
     } finally {
       rmSync(file);
     }

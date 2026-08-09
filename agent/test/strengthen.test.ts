@@ -18,7 +18,7 @@ import { Steps } from "../src/state/steps.ts";
 import { Store } from "../src/state/store.ts";
 import { Strengthen } from "../src/state/strengthen.ts";
 import type { Effect, Entry, Event } from "../src/state/trajectory.ts";
-import { llopsBinary } from "./binaries.ts";
+import { toolchain } from "./toolchain-under-test.ts";
 
 class FakeChecker {
   readonly calls: { src: string; tgt: string }[] = [];
@@ -36,7 +36,7 @@ class FakeChecker {
   }
 }
 
-const llops = new Llops(llopsBinary());
+const llops = new Llops(toolchain.path("llops"));
 const built = await llops
   .version()
   .then(() => true)

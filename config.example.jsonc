@@ -2,6 +2,12 @@
 // config.jsonc, which is machine-local and gitignored, and uncomment what you
 // want to change. Only the model has to be set; everything else has a default.
 {
+  // Where LLVM, alive2, llubi and llops were built. They read and write the
+  // same IR, so they have to be one build against one LLVM; `make install-deps
+  // TOOLCHAIN=<dir>` builds it, and this says which one a run uses. Relative
+  // paths are relative to the repository, and deps/ is the default.
+  "toolchain": "deps",
+
   "model": {
     // A provider Pi knows, which brings its own catalogue and credentials.
     "provider": "anthropic",
@@ -21,15 +27,6 @@
     // endpoint you describe, where nobody else knows the numbers.
     // "context_window": 32768,
     // "max_tokens": 4096
-  },
-
-  // The programs a run spawns. All are found on PATH, so set a path only to
-  // override it; the versions are what a run records and compares.
-  "binaries": {
-    // "llops": { "path": "llops", "version": "unknown" },
-    // "alive-tv": { "path": "alive-tv", "version": "unknown" },
-    // "llubi_legacy": { "path": "llubi_legacy", "version": "unknown" },
-    // "llvm-config": { "path": "llvm-config", "version": "unknown" }
   },
 
   // Milliseconds. check_default_ms is what the check tool uses when the agent

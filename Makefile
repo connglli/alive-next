@@ -1,37 +1,41 @@
 # Build and test orchestration. docs/implementation.md holds the layout, and
-# scripts/deps.sh owns everything about the external tools, including the pins.
+# scripts/depman.sh owns everything about the toolchain, including the pins.
 #
-# Two knobs matter: PREFIX is where the external tools live and where our own
-# binaries are installed, and BUILD is where build trees go. Both stay inside
-# the repository, so nothing outside it is touched and `make clean-deps` is a
-# plain remove.
+# One knob matters: TOOLCHAIN is where LLVM, alive2, llubi and llops are built,
+# and every one of them is built from source against that one LLVM. It is set
+# in config.jsonc, which is also what a run reads, and the environment
+# overrides it for one command.
 SHELL := /usr/bin/env bash
-PREFIX ?= $(CURDIR)/deps/prefix
-BUILD ?= $(CURDIR)/build
 JOBS ?= $(shell nproc)
 BUILD_TYPE ?= Release
-DEPS := scripts/deps.sh
+DEPS := scripts/depman.sh
+# depman.sh resolves this from the environment, then config.jsonc, then deps/,
+# and the agent reads the same two places. Asking it here rather than repeating
+# the rule is what keeps a build and a run pointed at one directory.
+TOOLCHAIN := $(shell $(DEPS) toolchain)
 PRECOMMIT := $(CURDIR)/.venv/bin/pre-commit
-export PREFIX JOBS
-# Our tools win over the system's for everything below.
-export PATH := $(PREFIX)/bin:$(PATH)
+export TOOLCHAIN JOBS
+# bun and uv are installed by their own installers, which put them here and
+# leave PATH to the shell profile; a make run right after one of them installs
+# would otherwise not see it.
+export PATH := $(PATH):$(HOME)/.bun/bin:$(HOME)/.local/bin
 
-LLOPS_BUILD := $(BUILD)/llops
+LLOPS_BUILD := $(TOOLCHAIN)/llops/build
 
 .PHONY: help install-deps deps-status deps-llvm deps-alive2 deps-llubi deps-bun \
         deps-js deps-uv deps-py deps-dev llops test-llops agent test-agent test e2e \
-        check clean clean-deps
+        check clean
 
 help:
 	@echo "dependencies"
-	@echo "  install-deps   install every external tool that is missing"
-	@echo "  deps-status    report which tools are present, and where"
-	@echo "  deps-<name>    install one of: llvm alive2 llubi bun js uv py dev"
+	@echo "  install-deps   build the toolchain and the host tools, then llops"
+	@echo "  deps-status    report what is built, and where"
+	@echo "  deps-<name>    build one of: llvm alive2 llubi bun js uv py dev"
 	@echo "                 (dev adds the check tools and this clone's git hooks)"
-	@echo "                 (FORCE=1 reinstalls one that is already there)"
+	@echo "                 (FORCE=1 rebuilds one that is already there)"
 	@echo ""
 	@echo "build and test"
-	@echo "  llops          build llops and install it into PREFIX/bin"
+	@echo "  llops          build llops against the toolchain LLVM"
 	@echo "  test-llops     run the llops tests"
 	@echo "  agent          typecheck the agent"
 	@echo "  test-agent     run the agent tests"
@@ -41,15 +45,16 @@ help:
 	@echo "  check          run every hook over every file"
 	@echo ""
 	@echo "cleaning"
-	@echo "  clean          remove our build trees"
-	@echo "  clean-deps     remove deps/ and .venv: every external tool and the prefix"
+	@echo "  clean          remove the llops build tree"
 	@echo ""
-	@echo "PREFIX=$(PREFIX)"
-	@echo "BUILD=$(BUILD)"
+	@echo "TOOLCHAIN=$(TOOLCHAIN)"
 
 # --- dependencies ------------------------------------------------------------
+# llops comes last and is part of the set: it reads and writes the same IR as
+# alive-tv and llubi, so it belongs to the same toolchain and is built with it.
 install-deps:
 	@$(DEPS) install
+	@$(MAKE) --no-print-directory llops
 
 deps-status:
 	@$(DEPS) status
@@ -58,15 +63,16 @@ deps-llvm deps-alive2 deps-llubi deps-bun deps-js deps-uv deps-py deps-dev:
 	@$(DEPS) $(patsubst deps-%,%,$@)
 
 # --- llops -------------------------------------------------------------------
-# llops has to link the LLVM alive2 links, so the LLVM to build against is the
-# one deps.sh resolves, never whatever CMake happens to find first.
+# llops links the LLVM alive-tv and llubi link, which is the toolchain's, never
+# whatever CMake finds first: a system LLVM builds an llops that prints a
+# dialect the checkers do not read. It builds inside the toolchain for the same
+# reason, so which LLVM a binary belongs to is visible from where it sits.
 llops:
 	@cmakedir="$$($(DEPS) llvm-cmakedir)" && \
 	  cmake -S llops -B $(LLOPS_BUILD) -G Ninja \
 	    -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DLLVM_DIR="$$cmakedir"
 	ninja -C $(LLOPS_BUILD) -j$(JOBS)
-	@cmake --install $(LLOPS_BUILD) --prefix $(PREFIX) > /dev/null
-	@echo "llops installed at $(PREFIX)/bin/llops"
+	@echo "llops built at $(LLOPS_BUILD)/llops"
 
 test-llops: llops
 	LLOPS=$(LLOPS_BUILD)/llops python3 llops/test/llops_test.py
@@ -95,7 +101,4 @@ check: deps-dev agent
 	@$(PRECOMMIT) run --all-files
 
 clean:
-	rm -rf $(BUILD)
-
-clean-deps:
-	rm -rf $(CURDIR)/deps $(CURDIR)/.venv
+	rm -rf $(LLOPS_BUILD)

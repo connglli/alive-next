@@ -2,9 +2,10 @@
 """Tests for the llops binary.
 
 Each test drives llops over stdin/stdout JSON, the same way the agent's
-drivers will. Run through `make test-native`, or directly:
+drivers do. Run through `make test-llops`, or directly:
 
-    LLOPS=/path/to/llops python3 native/test/llops_test.py
+    python3 llops/test/llops_test.py
+    LLOPS=/path/to/llops python3 llops/test/llops_test.py
 """
 
 import json
@@ -12,7 +13,26 @@ import os
 import subprocess
 import unittest
 
-LLOPS = os.environ.get("LLOPS", "./deps/native-build/llops")
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def llops_binary() -> str:
+    """The binary under test, in the toolchain unless LLOPS says otherwise.
+
+    Where the toolchain is has one answer, and scripts/depman.sh is the thing
+    that gives it, so a test run and a build cannot disagree about which llops
+    is meant.
+    """
+    if os.environ.get("LLOPS"):
+        return os.environ["LLOPS"]
+    depman = os.path.join(ROOT, "scripts", "depman.sh")
+    toolchain = subprocess.run(
+        [depman, "toolchain"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    return os.path.join(toolchain, "llops", "build", "llops")
+
+
+LLOPS = llops_binary()
 
 F_SIMPLE = """define i32 @f(i32 %x, i32 %y) {
 entry:

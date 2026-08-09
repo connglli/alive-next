@@ -29,11 +29,10 @@ alive-next/
                         proves it
     test/               bun test
   checker/              check.py (Python stdlib only)
-  scripts/              deps.sh, visualize.py, build helpers
+  scripts/              depman.sh, visualize.py, build helpers
   rules/                pre-proved rule library (empty in v1)
-  build/                gitignored: our own build trees
-  deps/                 gitignored: external sources, build trees, and
-                        prefix/ with the tools we install
+  deps/                 gitignored: where the toolchain is built unless
+                        the configuration names somewhere else
   .venv/                gitignored: the Python environment uv builds
   pyproject.toml        Python dev packages; uv.lock pins them
   .pre-commit-config.yaml  the checks, and .gitlint the commit rules
@@ -48,11 +47,11 @@ Named after lli/llc/llubi. One binary, subcommands, invoked process-per-call wit
 
 [llops.md](./llops.md) is the contract: what each subcommand takes and answers, the shape a program has to have, how a request names a value, and what every error code means.
 
-Constraint: llops must build against the same LLVM version alive2 uses (alive2 requires an RTTI/EH-enabled LLVM build), so the IR dialect we edit is exactly the dialect alive-tv parses. `make install-deps` builds alive2, llubi, and the LLVM they share from pinned refs, and llops builds against that same install.
+Constraint: llops builds against the toolchain's LLVM, the one alive-tv and llubi are built against, so the IR dialect we edit is exactly the dialect they parse. It is part of the toolchain rather than a thing beside it, and `make install-deps` builds it last.
 
 ## External checkers
 
-alive-tv and llubi are separate binaries, installed by `make install-deps` into the prefix and found on PATH; `config.jsonc` may override their paths and records the expected version identifiers. TS drivers wrap them, and every invocation is recorded verbatim (argv, flags, timeout) in the trajectory and, for certified steps, in the certificate manifest, so replay runs exactly what ran. llubi needs a small driver shape: run one function with given argument values and initial pointed-to memory, report return value, final observable memory, and UB events. If llubi does not support this directly we wrap it (the wrapper lives in llops/ or as a llubi patch, decided at integration time).
+alive-tv and llubi are separate binaries, built by `make install-deps` into the toolchain and found there by the layout below. TS drivers wrap them, and every invocation is recorded verbatim (argv, flags, timeout) in the trajectory and, for certified steps, in the certificate manifest, so replay runs exactly what ran. llubi needs a small driver shape: run one function with given argument values and initial pointed-to memory, report return value, final observable memory, and UB events. If llubi does not support this directly we wrap it (the wrapper lives in llops/ or as a llubi patch, decided at integration time).
 
 Every alive-tv run carries `--disable-undef-input`. An undef input takes a fresh value at each use, so it refutes transformations that hold for every concrete input, and the counterexample it comes back with is not one an interpreter can be handed; a run certifies counterexamples by execution, so a refutation we cannot execute is a refutation we cannot use. It is also the difference between an answer and a timeout: `mul x, 8` to `shl x, 3` does not come back inside thirty seconds with undef inputs on, and takes milliseconds with them off. Poison inputs stay on, because a value at a cut point really can be poison and a proof that ignores that is not a proof.
 
@@ -107,7 +106,7 @@ The counterexample package is the symmetric llubi replay, also driven by check.p
 
 One `config.jsonc` at the repo root; no config directory. The dialect is JSONC, JSON with comments and trailing commas, so the checked-in example can carry every option with a note on what it is for; nothing but the agent reads these files, and what a run records is the resolved configuration as plain JSON. The split between config, CLI, and tool arguments follows one rule: the config file describes the machine, the CLI describes the run, tool arguments describe the call.
 
-- **config.jsonc** (machine-local, gitignored; `config.example.jsonc` checked in, and read in its place when there is no config.jsonc): the model, named by a provider and an id from Pi's catalogue, or by a `base_url` for an OpenAI-compatible endpoint of your own with `api_key_env` naming the variable its key lives in; optional path overrides for the binaries a run spawns, llops, alive-tv, llubi_legacy and llvm-config, all of which are found on PATH by default; the version identifiers a run records; default timeouts and budgets. Stable across runs, different on every machine.
+- **config.jsonc** (machine-local, gitignored; `config.example.jsonc` checked in, and read in its place when there is no config.jsonc): the model, named by a provider and an id from Pi's catalogue, or by a `base_url` for an OpenAI-compatible endpoint of your own with `api_key_env` naming the variable its key lives in; the `toolchain` directory the binaries were built in, `deps/` by default; default timeouts and budgets. Stable across runs, different on every machine.
 - **CLI**: per-run facts: the LHS/RHS inputs, the session directory, `--config` to point elsewhere, and overrides for common knobs (`--model`, `--budget`, `--timeout-check`). Precedence: built-in defaults, then config file, then CLI.
 - **Tool arguments**: per-call knobs the agent owns, like the `check` timeout; config supplies only the default and a cap.
 - **Secrets** (API keys for Pi): environment variables only, never config or CLI, so they cannot leak into the trajectory.
@@ -118,11 +117,11 @@ This split is purely ergonomic, never a correctness question: `run_start` snapsh
 
 The `Makefile` is the entry point and owns nothing else: it names targets and delegates. One component, one pair of targets, so `make llops` builds llops and `make test-llops` tests it, and a component added later brings its own pair. `make test` runs every suite, `make check` runs every hook over every file, and `make help` lists the lot.
 
-- `llops/`: CMake with `find_package(LLVM)`. `make llops` configures into `build/llops`, builds, and installs the binary into the prefix.
+- `llops/`: CMake with `find_package(LLVM)`. `make llops` configures into `<toolchain>/llops/build` against the toolchain's LLVM and builds there, so which LLVM a binary belongs to is visible from where it sits.
 - `agent/`: bun throughout: `bun install`, `bun run`, `bun test`. Bun runs TypeScript directly, so there is no build step and `make agent` is the typecheck, `tsc --noEmit`.
 - `checker/` and `scripts/`: plain Python, standard library only at runtime. The environment uv builds is for the dev tools, not for these.
 
-Two directories, both inside the repository and both gitignored, hold everything a build produces: `build/` for our own build trees and `deps/` for the external tools, their sources and their build trees. `deps/prefix/bin` holds every tool `make install-deps` installs, our own llops included, so putting it first on PATH completes the environment; a tool that was already good enough stays where it was found. `make clean` removes the first directory, `make clean-deps` the second. `PREFIX=` and `BUILD=` move them, `JOBS=` sets build parallelism, and `BUILD_TYPE=Debug` switches the llops build.
+`TOOLCHAIN` is the one location knob: `JOBS=` sets build parallelism and `BUILD_TYPE=Debug` switches the llops build, and that is the whole list. `make clean` removes the llops build tree. There is no target that removes a toolchain: it is expensive to rebuild, it may be shared with another checkout, and `rm -rf` on a directory the configuration names is not a thing to make convenient.
 
 ### Checks and git hooks
 
@@ -132,19 +131,40 @@ The hooks are part of the dev environment, so `make deps-dev` provisions both: t
 
 ### Dependencies
 
-`scripts/deps.sh` owns the external tools: LLVM, alive2, llubi, bun with the JS packages, and uv with the Python ones. `make install-deps` installs the ones that are missing and `make deps-status` reports what is there; a single dependency is `make deps-llvm`, `make deps-alive2` and so on, and `FORCE=1` reinstalls one that is already present.
+### The toolchain
 
-What counts as missing is one check per dependency, so a copy that already fits is left alone whoever installed it. For LLVM the check is the major version and RTTI, because llops and alive2 have to link the same LLVM and alive2 does not build without RTTI. For alive2 and llubi it is the binary plus the LLVM version it reports. For the Python packages it is `uv sync --check`, which compares the environment against `uv.lock` the way `bun.lock` pins the JS side, and for the dev environment the same plus the git hooks being in place. Prerequisites we do not install (git, cmake, ninja, curl, a C++ compiler, and the Z3 development headers alive2 needs) are reported with the command that installs them.
+llops, alive-tv and llubi all read and write LLVM IR, and they mean the same thing by a module only when they were built against the same LLVM. A mixed set does not fail cleanly: llops prints something alive-tv's parser does not know, or llubi disagrees about a corner of poison, and both read as the search going wrong rather than the install being wrong. So there is no supported way to mix them, and no path that takes a distribution's alive2 or a system LLVM. Everything LLVM-based is built from source, from the pins in `scripts/depman.sh`, against one LLVM.
+
+A toolchain is one directory holding that build. One serves several checkouts, which is why it is a knob rather than a fixed place: building another costs an hour. Its layout is a contract between `scripts/depman.sh`, which builds into it, and `agent/src/toolchain.ts`, which reads from it:
+
+```
+<toolchain>/llvm-project/build/bin/llvm-config
+<toolchain>/alive2/build/alive-tv
+<toolchain>/llubi-legacy/build/llubi
+<toolchain>/llops/build/llops
+<toolchain>/toolchain.json      what was built, from which revisions
+```
+
+Where that directory is has one answer, resolved in one place: the `TOOLCHAIN` environment variable, then `toolchain` in `config.jsonc`, then `deps/` in the repository. `scripts/depman.sh toolchain` prints the answer and the Makefile asks it rather than repeating the rule, so a build and a run cannot end up pointed at different directories.
+
+A run reads the toolchain before it proves anything: it asks each binary which LLVM it carries and stops if they disagree or one is missing, because every failure that check prevents is one that would otherwise be read as a bad proof. What it found, with `toolchain.json`, goes into `run_start`, so a verdict says which binaries produced it.
+
+### Dependencies
+
+`scripts/depman.sh` owns the toolchain, and the host tools beside it: bun with the JS packages, and uv with the Python ones. The host tools are not part of the toolchain and are installed where their own installers put them, because they are how we run our own code rather than how we read LLVM IR, and a machine that already has them keeps the one it has. `make install-deps` builds what is missing and then llops; `make deps-status` reports what is there; a single dependency is `make deps-llvm`, `make deps-alive2` and so on, and `FORCE=1` rebuilds one that is already present.
+
+What counts as missing is one check per dependency, so a build that already fits is left alone. For LLVM it is an `llvm-config` in the toolchain reporting the pinned release, with RTTI, which alive2 needs. For alive2 and llubi it is the binary being there and reporting that same release. For the Python packages it is `uv sync --check`, which compares the environment against `uv.lock` the way `bun.lock` pins the JS side, and for the dev environment the same plus the git hooks being in place. Prerequisites we do not install (git, cmake, ninja, curl, a C++ compiler, and the Z3 development headers alive2 needs) are reported with the command that installs them.
 
 Four details are worth knowing before changing that script:
 
-- The pins live at the top of it, so upgrading a dependency is one line and one reviewed diff. They are chosen so that one LLVM serves everything.
-- llubi is the out-of-tree interpreter at dtcxzyw/llvm-ub-aware-interpreter, not the newer rewrite living in `llvm/tools`, which is not stable yet. Upstream builds it as `llubi_legacy` and that name is kept, so a binary called `llubi` on PATH cannot be mistaken for it.
+- The pins live at the top of it, so upgrading a dependency is one line and one reviewed diff. Moving the LLVM pin means rebuilding everything below it: the pins are one toolchain, not three.
+- LLVM is built with shared libraries, RTTI and assertions. RTTI is alive2's requirement, the assertions are what make a malformed module say so instead of failing later, and shared libraries keep four binaries from costing several gigabytes each.
+- llubi is the out-of-tree interpreter at dtcxzyw/llvm-ub-aware-interpreter, not the newer rewrite living in `llvm/tools`, which is not stable yet.
 - alive2 builds `alive-tv` only with `-DBUILD_LLVM_UTILS=1`.
 - uv provides the Python interpreter as well as the packages, so a machine needs no system Python for `make deps-py`. It is still needed for the stdlib-only scripts, `check.py` above all, which run under whatever `python3` a consumer has.
 - `py` and `dev` share one environment: `py` installs what a run needs, `dev` adds what a contributor needs. Both sync with `--inexact`, so installing either never removes what the other put there.
 
-The LLVM build is the expensive one, roughly an hour and tens of gigabytes. Everything else is minutes. `LLVM_CONFIG=` names the LLVM to use when a machine has several, which is how llops is built against a system LLVM without provisioning the pinned one.
+The LLVM build is the expensive one, roughly an hour and tens of gigabytes. Everything else is minutes, and llops is seconds.
 
 ## Testing
 

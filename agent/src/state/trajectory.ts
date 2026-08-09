@@ -25,7 +25,13 @@ export interface RunStart {
   tgt: Hash;
   /** The fully resolved configuration, so a run says what produced it. */
   config: unknown;
-  /** Version lines for llops, alive-tv, llubi and the model. */
+  /**
+   * The toolchain this run spawned: where it is, which LLVM each binary
+   * carries, and the revisions it was built from. A verdict is only as
+   * reproducible as the binaries that produced it.
+   */
+  toolchain?: unknown;
+  /** Version lines for everything else, the model above all. */
   versions: Record<string, string>;
 }
 

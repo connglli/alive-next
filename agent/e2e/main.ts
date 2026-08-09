@@ -4,22 +4,26 @@
 // makes this more than a test: the trajectory, the store and the verdict are
 // left on disk for the visualizer and the certificate checker to read.
 import { join } from "node:path";
-import { binaryPath, loadConfig, repoRoot } from "../src/config.ts";
+import { loadConfig, repoRoot } from "../src/config.ts";
 import { AliveTv } from "../src/drivers/alive2.ts";
 import { Llops } from "../src/drivers/llops.ts";
 import { Session } from "../src/session.ts";
 import { timeoutsFrom } from "../src/state/steps.ts";
+import { Toolchain } from "../src/toolchain.ts";
 import type { Scenario } from "./scenario.ts";
 import { scenario, scenarios } from "./scenarios.ts";
 
 const config = loadConfig();
-const llops = new Llops(binaryPath(config, "llops"));
 const timeouts = timeoutsFrom(config.timeouts);
-const checker = new AliveTv(binaryPath(config, "alive-tv"), timeouts.alive2Ms);
+// Before anything is proved: a toolchain that disagrees with itself produces
+// failures that read as bad proofs, so it stops the run rather than a goal.
+const toolchain = new Toolchain(config.toolchain);
+const built = await toolchain.insist();
+const llops = new Llops(toolchain.path("llops"));
+const checker = new AliveTv(toolchain.path("alive-tv"), timeouts.alive2Ms);
 
 const asked = process.argv.slice(2);
 const chosen = asked.length > 0 ? asked.map(scenario) : scenarios;
-const versions = { llops: await llops.version(), "alive-tv": await checker.version() };
 
 let failed = 0;
 for (const one of chosen) failed += (await go(one)) ? 0 : 1;
@@ -36,7 +40,7 @@ async function go(one: Scenario): Promise<boolean> {
     checker,
     timeouts,
     config,
-    versions,
+    toolchain: built,
   });
 
   const started = Date.now();
