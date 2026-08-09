@@ -10,6 +10,12 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# An LLVM built as shared libraries is not on any default search path, so the
+# installed binary has to remember where the one it was built against lives.
+# Without this, llops runs from the build tree and dies on the first call once
+# installed, which is the confusing half of that pair.
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
+
 find_package(LLVM REQUIRED CONFIG)
 # The range parameter attribute, which the strengthen flow needs, arrived in
 # LLVM 19.
