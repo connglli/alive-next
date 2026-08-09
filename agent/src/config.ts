@@ -37,8 +37,16 @@ export interface ModelConfig {
 const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
+/** A program a run spawns, and where to find it. */
+export interface BinaryConfig {
+  path: string;
+  version?: string;
+}
+
 export interface Config {
   model: ModelConfig;
+  /** Path overrides, keyed by binary name; anything absent is on PATH. */
+  binaries: Record<string, BinaryConfig>;
   /** The file this came from, for the run_start snapshot. */
   source: string;
 }
@@ -124,9 +132,38 @@ export function loadConfig(path?: string): Config {
         `${candidate} does not parse: ${printParseErrorCode(first.error)} at offset ${first.offset}`,
       );
     }
-    return { model: readModel(raw, candidate), source: candidate };
+    return {
+      model: readModel(raw, candidate),
+      binaries: readBinaries(raw, candidate),
+      source: candidate,
+    };
   }
   throw new Error(`no configuration found, looked at: ${candidates.join(", ")}`);
+}
+
+function readBinaries(raw: unknown, source: string): Record<string, BinaryConfig> {
+  const section = (raw as Record<string, unknown> | undefined)?.binaries;
+  if (section === undefined) return {};
+  if (typeof section !== "object" || section === null) {
+    throw new Error(`${source}: binaries must be an object`);
+  }
+  const binaries: Record<string, BinaryConfig> = {};
+  for (const [name, value] of Object.entries(section as Record<string, unknown>)) {
+    const entry = value as Record<string, unknown> | null;
+    if (typeof entry !== "object" || entry === null || typeof entry.path !== "string") {
+      throw new Error(`${source}: binaries.${name} needs a path`);
+    }
+    binaries[name] = {
+      path: entry.path,
+      version: typeof entry.version === "string" ? entry.version : undefined,
+    };
+  }
+  return binaries;
+}
+
+/** Where to find a program a run spawns, or its name for a PATH lookup. */
+export function binaryPath(config: Config, name: string): string {
+  return config.binaries[name]?.path ?? name;
 }
 
 /**

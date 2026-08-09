@@ -8,7 +8,7 @@ import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, type ModelConfig, repoRoot } from "../src/config.ts";
+import { binaryPath, loadConfig, type ModelConfig, repoRoot } from "../src/config.ts";
 import { resolveModel } from "../src/model.ts";
 
 const config = loadConfig();
@@ -51,6 +51,35 @@ describe("loadConfig", () => {
     expect(example.model.baseUrl).toBeUndefined();
     expect(example.model.apiKeyEnv).toBeUndefined();
     expect(example.model.thinkingLevel).toBeUndefined();
+  });
+
+  test("reads path overrides for the binaries a run spawns", () => {
+    const file = join(tmpdir(), `alive-next-binaries-${process.pid}.jsonc`);
+    writeFileSync(
+      file,
+      `{ // a machine that keeps llops somewhere of its own
+         "model": { "provider": "p", "id": "m" },
+         "binaries": { "llops": { "path": "/opt/llops", "version": "0.1.0" } } }`,
+    );
+    try {
+      const loaded = loadConfig(file);
+      expect(binaryPath(loaded, "llops")).toBe("/opt/llops");
+      expect(loaded.binaries.llops?.version).toBe("0.1.0");
+      // Anything the file does not name is looked up on PATH.
+      expect(binaryPath(loaded, "alive-tv")).toBe("alive-tv");
+    } finally {
+      rmSync(file);
+    }
+  });
+
+  test("rejects a binary entry with no path", () => {
+    const file = join(tmpdir(), `alive-next-nopath-${process.pid}.jsonc`);
+    writeFileSync(file, '{ "model": { "provider": "p", "id": "m" }, "binaries": { "llops": {} } }');
+    try {
+      expect(() => loadConfig(file)).toThrow(/binaries\.llops needs a path/);
+    } finally {
+      rmSync(file);
+    }
   });
 
   test("reports where a file stops parsing", () => {
