@@ -28,7 +28,7 @@
   "binaries": {
     // "llops": { "path": "llops", "version": "unknown" },
     // "alive-tv": { "path": "alive-tv", "version": "unknown" },
-    // "llubi": { "path": "llubi", "version": "unknown" },
+    // "llubi_legacy": { "path": "llubi_legacy", "version": "unknown" },
     // "llvm-config": { "path": "llvm-config", "version": "unknown" }
   },
 

@@ -102,7 +102,7 @@ The counterexample package is the symmetric llubi replay, also driven by check.p
 
 One `config.jsonc` at the repo root; no config directory. The dialect is JSONC, JSON with comments and trailing commas, so the checked-in example can carry every option with a note on what it is for; nothing but the agent reads these files, and what a run records is the resolved configuration as plain JSON. The split between config, CLI, and tool arguments follows one rule: the config file describes the machine, the CLI describes the run, tool arguments describe the call.
 
-- **config.jsonc** (machine-local, gitignored; `config.example.jsonc` checked in, and read in its place when there is no config.jsonc): the model, named by a provider and an id from Pi's catalogue, or by a `base_url` for an OpenAI-compatible endpoint of your own with `api_key_env` naming the variable its key lives in; optional path overrides for the binaries a run spawns, llops, alive-tv, llubi and llvm-config, all of which are found on PATH by default; the version identifiers a run records; default timeouts and budgets. Stable across runs, different on every machine.
+- **config.jsonc** (machine-local, gitignored; `config.example.jsonc` checked in, and read in its place when there is no config.jsonc): the model, named by a provider and an id from Pi's catalogue, or by a `base_url` for an OpenAI-compatible endpoint of your own with `api_key_env` naming the variable its key lives in; optional path overrides for the binaries a run spawns, llops, alive-tv, llubi_legacy and llvm-config, all of which are found on PATH by default; the version identifiers a run records; default timeouts and budgets. Stable across runs, different on every machine.
 - **CLI**: per-run facts: the LHS/RHS inputs, the session directory, `--config` to point elsewhere, and overrides for common knobs (`--model`, `--budget`, `--timeout-check`). Precedence: built-in defaults, then config file, then CLI.
 - **Tool arguments**: per-call knobs the agent owns, like the `check` timeout; config supplies only the default and a cap.
 - **Secrets** (API keys for Pi): environment variables only, never config or CLI, so they cannot leak into the trajectory.
@@ -134,7 +134,7 @@ What counts as missing is one check per dependency, so a copy that already fits 
 Four details are worth knowing before changing that script:
 
 - The pins live at the top of it, so upgrading a dependency is one line and one reviewed diff. They are chosen so that one LLVM serves everything.
-- llubi is a tool inside the LLVM tree, upstreamed after the release we pin. Its sources are fetched into our checkout at `llvm/tools/llubi`, where the LLVM build picks them up on its own, because its build file depends on in-tree targets that an out-of-tree build cannot resolve.
+- llubi is the out-of-tree interpreter at dtcxzyw/llvm-ub-aware-interpreter, not the newer rewrite living in `llvm/tools`, which is not stable yet. Upstream builds it as `llubi_legacy` and that name is kept, so a binary called `llubi` on PATH cannot be mistaken for it.
 - alive2 builds `alive-tv` only with `-DBUILD_LLVM_UTILS=1`.
 - uv provides the Python interpreter as well as the packages, so a machine needs no system Python for `make deps-py`. It is still needed for the stdlib-only scripts, `check.py` above all, which run under whatever `python3` a consumer has.
 - `py` and `dev` share one environment: `py` installs what a run needs, `dev` adds what a contributor needs. Both sync with `--inexact`, so installing either never removes what the other put there.

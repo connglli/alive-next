@@ -17,11 +17,15 @@ set -euo pipefail
 
 # --- Pinned refs -------------------------------------------------------------
 # Upgrading a dependency is one line here and one reviewed diff. The pins share
-# one LLVM: alive2 master builds against LLVM 22, and llubi is taken from the
-# commit that upstreamed it into llvm/tools, which the 22.x branch predates.
+# one LLVM: alive2 master builds against LLVM 22, and so does llubi.
+#
+# llubi is the out-of-tree interpreter, not the one now living in llvm/tools.
+# The in-tree copy is a newer rewrite and is not stable yet; the original is
+# what the counterexample replay is built on.
 LLVM_PIN=llvmorg-22.1.8
 ALIVE2_PIN=a68009c9e815
-LLUBI_PIN=a29f0dd09680
+LLUBI_REPO=https://github.com/dtcxzyw/llvm-ub-aware-interpreter.git
+LLUBI_PIN=4365dcfbc29bc692422194a1b007817e8c6f9a1a
 
 LLVM_MAJOR=${LLVM_PIN#llvmorg-}
 LLVM_MAJOR=${LLVM_MAJOR%%.*}
@@ -35,6 +39,8 @@ LLVM_SRC="$DEPS/llvm-project"
 LLVM_BUILD="$DEPS/llvm-build"
 ALIVE2_SRC="$DEPS/alive2"
 ALIVE2_BUILD="$DEPS/alive2-build"
+LLUBI_SRC="$DEPS/llubi"
+LLUBI_BUILD="$DEPS/llubi-build"
 AGENT="$ROOT/agent"
 VENV="$ROOT/.venv"
 export PATH="$PREFIX/bin:$PATH"
@@ -118,9 +124,6 @@ llvm_configure() {
 
 install_llvm() {
   llvm_sources
-  # llubi is a tool inside the LLVM tree, so planting its sources before the
-  # build means this one build produces both.
-  llubi_sources
   llvm_configure
   say "building llvm with $JOBS jobs; this is the slow one, roughly an hour"
   ninja -C "$LLVM_BUILD" -j"$JOBS"
@@ -172,47 +175,45 @@ alive2 needs Z3; building Z3 is out of scope here."
 }
 
 # --- llubi -------------------------------------------------------------------
+# Upstream builds the interpreter as `llubi_legacy`, and that name is kept: a
+# binary called `llubi` on PATH is most likely the in-tree rewrite, which is a
+# different tool. The check confirms which one it found by a flag only the
+# out-of-tree interpreter has.
 have_llubi() {
   local bin major
-  bin=$(find_tool llubi) || return 1
+  bin=$(find_tool llubi_legacy) || return 1
+  "$bin" --help 2>&1 | grep -q -- --verify-value-tracking || return 1
   major=$(tool_llvm_major "$bin")
   if [ -n "$major" ] && [ "$major" != "$LLVM_MAJOR" ]; then return 1; fi
   echo "$bin${major:+ (LLVM $major)}"
 }
 
-# llubi lives in the LLVM tree at LLUBI_PIN, later than the release we pin, so
-# its sources are copied into our checkout. LLVM picks up any directory under
-# llvm/tools that has a CMakeLists.txt, and its own build file is the only one
-# that resolves the in-tree targets llubi depends on.
-llubi_sources() {
-  require curl "Install it with your package manager."
-  local dir="$LLVM_SRC/llvm/tools/llubi"
-  local stamp="$dir/.llops-pin-$LLUBI_PIN"
-  [ -f "$stamp" ] && return
-  say "fetching llubi sources at $LLUBI_PIN"
-  mkdir -p "$dir/lib"
-  local base="https://raw.githubusercontent.com/llvm/llvm-project/$LLUBI_PIN/llvm/tools/llubi"
-  local file
-  for file in CMakeLists.txt llubi.cpp \
-    lib/CMakeLists.txt lib/Context.h lib/Context.cpp lib/Interpreter.cpp \
-    lib/Value.h lib/Value.cpp; do
-    curl -fsSL "$base/$file" -o "$dir/$file"
-  done
-  rm -f "$dir"/.llops-pin-*
-  touch "$stamp"
-}
-
 install_llubi() {
-  llvm_sources
-  llubi_sources
+  require git "Install it with your package manager."
+  require cmake "Install it with your package manager."
+  require ninja "Install it with your package manager (package 'ninja-build')."
   ensure llvm 0
-  # The sources may have arrived after LLVM was configured, so configure again
-  # to pick them up; for an LLVM that is already built this only adds llubi.
-  llvm_configure
-  say "building llubi"
-  ninja -C "$LLVM_BUILD" -j"$JOBS" llubi
+  local cfg
+  cfg=$(find_llvm_config) || die "llubi: no llvm-config"
+
+  if [ ! -d "$LLUBI_SRC/.git" ]; then
+    say "cloning llubi"
+    git clone "$LLUBI_REPO" "$LLUBI_SRC"
+  fi
+  say "checking out llubi at $LLUBI_PIN"
+  git -C "$LLUBI_SRC" fetch --quiet origin
+  git -C "$LLUBI_SRC" checkout --quiet "$LLUBI_PIN"
+
+  say "building llubi against LLVM $("$cfg" --version)"
+  cmake -S "$LLUBI_SRC" -B "$LLUBI_BUILD" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLLVM_DIR="$("$cfg" --cmakedir)"
+  ninja -C "$LLUBI_BUILD" -j"$JOBS" llubi_legacy
+  local built
+  built=$(find "$LLUBI_BUILD" -maxdepth 2 -type f -name llubi_legacy | head -1)
+  [ -n "$built" ] || die "llubi built but llubi_legacy is not under $LLUBI_BUILD"
   mkdir -p "$PREFIX/bin"
-  cp "$LLVM_BUILD/bin/llubi" "$PREFIX/bin/llubi"
+  cp "$built" "$PREFIX/bin/llubi_legacy"
 }
 
 # --- bun and the JS packages -------------------------------------------------
