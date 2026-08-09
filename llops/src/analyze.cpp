@@ -7,6 +7,7 @@
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/KnownBits.h"
 #include "llvm/Support/raw_ostream.h"
@@ -50,6 +51,18 @@ void rangeFact(llvm::Value &V, llvm::AssumptionCache &AC, const llvm::Instructio
   fact["unsigned_max"] = apToString(U.getUnsignedMax(), 10, false);
 }
 
+// Whether a value is defined where it is asked about: `noundef` in the sense
+// the attribute has, neither undef nor poison, and the two halves separately
+// because they call for different fixes. A value that cannot be poison but
+// may be undef is one a freeze settles; a value that may be poison usually got
+// that way from a flag, which the src side can drop.
+void definedFact(llvm::Value &V, llvm::AssumptionCache &AC, const llvm::DominatorTree &DT,
+                 const llvm::Instruction *point, llvm::json::Object &fact) {
+  fact["noundef"] = llvm::isGuaranteedNotToBeUndefOrPoison(&V, &AC, point, &DT);
+  fact["not_undef"] = llvm::isGuaranteedNotToBeUndef(&V, &AC, point, &DT);
+  fact["not_poison"] = llvm::isGuaranteedNotToBePoison(&V, &AC, point, &DT);
+}
+
 // What a pointer is known to guarantee, in the shape of the attributes the
 // strengthen flow puts on a parameter.
 void pointerFact(llvm::Value &V, const llvm::DataLayout &DL, llvm::json::Object &fact) {
@@ -67,8 +80,10 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
   auto kind = args.getString("kind");
   if (!text || !kind)
     return errResponse("bad_request", "analyze needs 'module' and 'kind'");
-  if (*kind != "knownbits" && *kind != "ranges" && *kind != "pointer")
-    return errResponse("bad_request", "analyze 'kind' must be 'knownbits', 'ranges' or 'pointer'");
+  if (*kind != "knownbits" && *kind != "ranges" && *kind != "pointer" && *kind != "defined") {
+    return errResponse("bad_request",
+                       "analyze 'kind' must be 'knownbits', 'ranges', 'pointer' or 'defined'");
+  }
 
   std::string parseErr;
   auto mwc = parseModule(*text, &parseErr);
@@ -96,10 +111,17 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
 
   const llvm::DataLayout &DL = M.getDataLayout();
   llvm::AssumptionCache AC(*F);
+  // The definedness analysis reads llvm.assume operand bundles, and a bundle
+  // counts only where it dominates the point.
+  llvm::DominatorTree DT(*F);
 
   llvm::json::Array facts;
   auto addFact = [&](llvm::Value &V) {
-    bool applies = *kind == "pointer" ? V.getType()->isPointerTy() : V.getType()->isIntegerTy();
+    // Definedness is about a value rather than about arithmetic, so it is the
+    // one kind that has something to say about every type.
+    bool applies = *kind == "defined"   ? true
+                   : *kind == "pointer" ? V.getType()->isPointerTy()
+                                        : V.getType()->isIntegerTy();
     if (!applies)
       return; // the analysis has nothing to say about this value
     llvm::json::Object fact;
@@ -112,6 +134,8 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
       knownBitsFact(V, DL, AC, point, fact);
     else if (*kind == "ranges")
       rangeFact(V, AC, point, fact);
+    else if (*kind == "defined")
+      definedFact(V, AC, DT, point, fact);
     else
       pointerFact(V, DL, fact);
     facts.emplace_back(std::move(fact));

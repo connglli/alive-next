@@ -127,6 +127,24 @@ entry:
     expect(fact?.unknown_bits).toBe("0xFF");
   });
 
+  test("analyzes what is defined, over every type", async () => {
+    const module = `define i32 @f(i32 noundef %n, i32 %m) {
+entry:
+  %a = and i32 %n, 255
+  %b = add nsw i32 %n, 1
+  ret i32 %a
+}
+`;
+    const result = await llops.analyze(module, "defined");
+    if (!result.ok) throw new Error(result.message);
+    const facts = new Map(result.facts.map((fact) => [fact.value, fact]));
+    expect(facts.get("%a")?.noundef).toBe(true);
+    expect(facts.get("%m")?.noundef).toBe(false);
+    // The halves say which fix a value needs; this one only wants its flag off.
+    expect(facts.get("%b")?.noundef).toBe(false);
+    expect(facts.get("%b")?.not_undef).toBe(true);
+  });
+
   test("defaults the analysis point to the end of the body", async () => {
     const result = await llops.analyze(F, "ranges");
     if (!result.ok) throw new Error(result.message);

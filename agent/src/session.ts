@@ -17,9 +17,9 @@
 // end-to-end scenarios run with nothing in front of them.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { EditOp, Llops } from "./drivers/llops.ts";
+import type { AnalyzeKind, AnalyzeResult, EditOp, Llops, LlopsResult } from "./drivers/llops.ts";
 import type { Ref } from "./refs.ts";
-import { derive, type Side, type Tree, verdict } from "./state/goals.ts";
+import { derive, type Goal, head, type Side, type Tree, verdict } from "./state/goals.ts";
 import { type SplitResult, Splits } from "./state/splits.ts";
 import {
   type Checker,
@@ -56,6 +56,7 @@ export interface SessionStartOptions extends SessionOptions {
 
 export class Session {
   readonly store: Store;
+  private readonly llops: Llops;
   private readonly log: Trajectory;
   private readonly steps: Steps;
   private readonly splits: Splits;
@@ -70,6 +71,7 @@ export class Session {
     options: SessionOptions,
   ) {
     mkdirSync(dir, { recursive: true });
+    this.llops = options.llops;
     this.store = new Store(join(dir, "store"), canonWith(options.llops));
     this.log = new Trajectory(join(dir, "trajectory.jsonl"));
     this.steps = new Steps(this.store, options.checker, options.timeouts ?? DEFAULT_TIMEOUTS);
@@ -114,6 +116,22 @@ export class Session {
 
   get verdict(): "verified" | "counterexample" | "unknown" {
     return verdict(this.tree);
+  }
+
+  /**
+   * Ask an analysis about one side of a goal. It changes nothing, and what it
+   * answers is a proposal: a fact counts once a step alive2 certified put it
+   * in the program.
+   */
+  analyze(
+    gid: string,
+    side: Side,
+    kind: AnalyzeKind,
+    point?: Ref,
+  ): Promise<LlopsResult<AnalyzeResult>> {
+    return this.act("analyze", { gid, side, kind, point }, (tree) =>
+      this.llops.analyze(this.store.get(head(goalOf(tree, gid), side)), kind, point),
+    );
   }
 
   /** Ask whether a goal's claim holds as it stands. */
@@ -212,6 +230,12 @@ export class Session {
     this.entries.push(this.log.append(event));
     this.derived = derive(this.entries);
   }
+}
+
+function goalOf(tree: Tree, gid: string): Goal {
+  const goal = tree.goals.get(gid);
+  if (!goal) throw new Error(`no goal ${gid}`);
+  return goal;
 }
 
 /** A transaction result as the log keeps it: what it did, not what it holds. */

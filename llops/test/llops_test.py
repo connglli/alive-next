@@ -1166,11 +1166,20 @@ entry:
         self.assertIn('"dereferenceable"(ptr %p, i64 16)', r["module"])
         self.assertIn("call void @llvm.assume(i1 true)", r["module"])
 
-    def test_noundef_compares_the_value_with_itself(self):
-        # An assume on poison is UB, and that comparison is poison exactly
-        # when the value is, which is what noundef says.
+    def test_noundef_is_an_operand_bundle(self):
+        # UB exactly when the value is undef or poison, which is what makes
+        # the check of the insertion a proof of the fact, and a form LLVM's
+        # own analyses read back.
         r = self.good(self.assume(fact={"noundef": True}))
-        self.assertIn("%0 = icmp eq i32 %m, %m", r["module"])
+        self.assertIn('call void @llvm.assume(i1 true) [ "noundef"(i32 %m) ]', r["module"])
+
+    def test_a_condition_and_a_bundle_are_two_assumes(self):
+        # An assume that carries bundles must have `true` as its condition, so
+        # the two kinds of fact cannot share one call.
+        r = self.good(self.assume(fact={"noundef": True, "range": {"min": 0, "max": 8}}))
+        body = self.body(r["module"])
+        self.assertEqual(body[4], "call void @llvm.assume(i1 %2)")
+        self.assertEqual(body[5], 'call void @llvm.assume(i1 true) [ "noundef"(i32 %m) ]')
 
     def test_the_result_is_still_a_v1_program(self):
         r = self.good(self.assume())
@@ -1358,6 +1367,64 @@ entry:
         self.assertEqual(facts["%p"]["align"], 8)
         self.assertEqual(facts["%p"]["dereferenceable"], 16)
         self.assertTrue(facts["%p"]["nonnull"])
+
+    def test_defined(self):
+        module = """define i32 @f(i32 noundef %n, i32 %m) {
+entry:
+  %a = and i32 %n, 255
+  %b = add nsw i32 %n, 1
+  %c = freeze i32 %m
+  ret i32 %a
+}
+"""
+        facts, _ = self.facts(module, "defined")
+        # A noundef parameter is defined, and so is anything computed from one
+        # by an instruction that cannot make poison.
+        self.assertTrue(facts["%n"]["noundef"])
+        self.assertTrue(facts["%a"]["noundef"])
+        # A plain parameter is neither, and a freeze of one is both.
+        self.assertFalse(facts["%m"]["noundef"])
+        self.assertFalse(facts["%m"]["not_undef"])
+        self.assertTrue(facts["%c"]["noundef"])
+        # The halves are separate because they call for different fixes: this
+        # one only needs the flag dropped.
+        self.assertFalse(facts["%b"]["noundef"])
+        self.assertTrue(facts["%b"]["not_undef"])
+        self.assertFalse(facts["%b"]["not_poison"])
+
+    def test_defined_reads_a_load_as_undef(self):
+        # Uninitialized memory is where undef comes from inside a function,
+        # which is why a flag that only speaks about arguments is not enough.
+        module = """define i32 @f(ptr %p) {
+entry:
+  %l = load i32, ptr %p, align 4
+  ret i32 %l
+}
+"""
+        facts, _ = self.facts(module, "defined")
+        self.assertFalse(facts["%l"]["noundef"])
+
+    def test_defined_applies_to_every_type(self):
+        facts, _ = self.facts(F_MEMORY, "defined")
+        self.assertEqual(sorted(facts), ["%l", "%p", "%v"])
+
+    def test_defined_reads_the_assume_bundle(self):
+        module = """declare void @llvm.assume(i1)
+
+define i32 @f(i32 %x) {
+entry:
+  call void @llvm.assume(i1 true) ["noundef"(i32 %x)]
+  %d = add i32 %x, 0
+  ret i32 %d
+}
+"""
+        # The form `assume` writes a proved noundef fact in, which is why it
+        # writes it that way: the analysis after the step sees the fact.
+        facts, _ = self.facts(module, "defined", point="d")
+        self.assertTrue(facts["%x"]["noundef"])
+        # And it holds only after the assume has run.
+        at, _ = self.facts(module, "defined", point="#0")
+        self.assertFalse(at["%x"]["noundef"])
 
     def test_only_the_relevant_values_are_reported(self):
         facts, _ = self.facts(F_MEMORY, "pointer")

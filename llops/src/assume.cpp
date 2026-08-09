@@ -139,10 +139,12 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
     }
 
     if (kind == "noundef") {
-      // An assume whose condition is poison is immediate UB, and comparing a
-      // value with itself is poison exactly when the value is, so this says
-      // the value is neither undef nor poison.
-      conjoin(builder.CreateICmpEQ(value, value));
+      // The operand bundle rather than a comparison of the value with itself.
+      // Both are UB exactly when the value is undef or poison, which is what
+      // makes the alive2 check of the insertion a proof of the fact, but only
+      // the bundle is a fact LLVM's own analyses read back, and `analyze
+      // defined` is one of those.
+      bundles.emplace_back("noundef", llvm::ArrayRef<llvm::Value *>{value});
       continue;
     }
 
@@ -169,7 +171,13 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
     return errResponse("invalid", "unknown fact '" + kind.str() + "'");
   }
 
-  builder.CreateAssumption(condition ? condition : builder.getTrue(), bundles);
+  // An assume that carries operand bundles has to have `true` as its
+  // condition, so a request that mixes the two kinds of fact becomes two
+  // assumes rather than one invalid call.
+  if (condition)
+    builder.CreateAssumption(condition);
+  if (!bundles.empty() || !condition)
+    builder.CreateAssumption(builder.getTrue(), bundles);
 
   auto diags = checkFunction(*F);
   if (diags.empty())

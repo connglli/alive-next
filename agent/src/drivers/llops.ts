@@ -42,7 +42,7 @@ export interface OutlineResult {
   params: OutlineParam[];
 }
 
-export type AnalyzeKind = "knownbits" | "ranges" | "pointer";
+export type AnalyzeKind = "knownbits" | "ranges" | "pointer" | "defined";
 
 /** A fact about one value. Which fields are present follows the kind. */
 export interface Fact {
@@ -58,6 +58,10 @@ export interface Fact {
   align?: number;
   dereferenceable?: number;
   nonnull?: boolean;
+  /** Neither undef nor poison, in the sense the attribute has. */
+  noundef?: boolean;
+  not_undef?: boolean;
+  not_poison?: boolean;
 }
 
 /** One argument for a harness, matched to the entry's parameter by position. */

@@ -151,6 +151,7 @@ Every fact carries `value` and `type`. The kind decides the rest:
 * `knownbits` adds `zero_bits`, `one_bits` and `unknown_bits`, hexadecimal masks over the value's width.
 * `ranges` adds `signed_min`, `signed_max`, `unsigned_min` and `unsigned_max`, decimal, each interpretation computed separately.
 * `pointer` adds `align`, `dereferenceable` and `nonnull`.
+* `defined` adds `noundef`, `not_undef` and `not_poison`, and applies to every type. `noundef` is the conjunction of the other two, in the sense the attribute has.
 
 Analyses only propose; [design.md](./design.md) is where that stands in the trust base.
 
@@ -181,9 +182,11 @@ Where the assume goes can be said the other way instead, with `{ "before_call": 
 The fact vocabulary is the one `edit attrs` takes, so what is proved here and what is attributed cannot drift apart. How each one is written depends on what it says:
 
 * `range` becomes two signed comparisons over the value, joined by an `and` when the interval runs upwards and by an `or` when it wraps, which is the same half-open interval the attribute means.
-* `noundef` becomes a comparison of the value with itself, which is poison exactly when the value is, and an assume on poison is UB.
+* `noundef` becomes a `"noundef"` operand bundle, which is UB exactly when the value is undef or poison, and which `analyze defined` reads back.
 * `nonnull`, `align` and `dereferenceable` become operand bundles on an assume of `true`, since that is the only form they have.
 * `noalias` is refused. It describes a function's whole argument list rather than a value at a point, so there is nothing here that would prove it.
+
+A request that asks for a condition and a bundle at once produces two assumes, because an assume carrying operand bundles has to have `true` as its condition.
 
 ## Error codes
 
