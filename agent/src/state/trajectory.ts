@@ -51,9 +51,19 @@ export type Effect =
   | {
       effect: "split";
       gid: string;
+      /** The outlined function, named here so no reader has to guess it. */
+      name: string;
       outer: { gid: string; src: Hash; tgt: Hash };
       callee: { gid: string; src: Hash; tgt: Hash };
     }
+  /**
+   * Both sides of a callee goal gained an attribute on the outlined
+   * function's parameter. This is not a step: adding an attribute to a
+   * definition introduces UB where the old program was defined, so neither
+   * direction of a refinement check would certify it. What makes it sound is
+   * the assume at the call site, and `by` names the step that put it there.
+   */
+  | { effect: "strengthen"; gid: string; src: Hash; tgt: Hash; by: { gid: string; hash: Hash } }
   /** A split was undone, discarding both children and their subtrees. */
   | { effect: "unsplit"; gid: string }
   /** A side went back to an earlier program of its own history. */

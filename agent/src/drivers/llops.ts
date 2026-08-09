@@ -149,6 +149,19 @@ export class Llops {
     return this.run("analyze", point ? { module, kind, point } : { module, kind });
   }
 
+  /**
+   * State a fact about a value, either before an instruction or before a call
+   * about one of its arguments. The two ways of saying where are exclusive.
+   */
+  assume(
+    module: Module,
+    where:
+      | { before: Ref; value: Ref; fact: Record<string, unknown> }
+      | { before_call: string; arg: number; fact: Record<string, unknown> },
+  ): Promise<LlopsResult<ModuleResult>> {
+    return this.run("assume", { module, ...where });
+  }
+
   /** Wrap a function in the main llubi runs, with these argument values. */
   harness(module: Module, entry: string, args: HarnessArg[]): Promise<LlopsResult<HarnessResult>> {
     return this.run("harness", { module, entry, args });

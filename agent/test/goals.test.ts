@@ -143,6 +143,7 @@ describe("derive", () => {
         did({
           effect: "split",
           gid: "g3",
+          name: "outlined_g5",
           outer: { gid: "g4", src: "h4s", tgt: "h4t" },
           callee: { gid: "g5", src: "h5s", tgt: "h5t" },
         }),
@@ -150,6 +151,62 @@ describe("derive", () => {
       ),
     );
     expect([...tree.goals.keys()]).toEqual(["g1"]);
+  });
+
+  test("a split says what it outlined, on both children", () => {
+    const tree = derive(log(run(), did(splitG1())));
+    expect(goal(tree, "g2").callee).toBe("outlined_g3");
+    expect(goal(tree, "g3").callee).toBe("outlined_g3");
+  });
+
+  test("strengthening moves both sides of a goal at once", () => {
+    const tree = derive(
+      log(
+        run(),
+        did(splitG1()),
+        did({
+          effect: "strengthen",
+          gid: "g3",
+          src: "h3s-attr",
+          tgt: "h3t-attr",
+          by: { gid: "g2", hash: "h2s-assume" },
+        }),
+      ),
+    );
+    // One claim about the goal, not a step on either side of it.
+    expect(goal(tree, "g3").src.history).toEqual(["h3s", "h3s-attr"]);
+    expect(goal(tree, "g3").tgt.history).toEqual(["h3t", "h3t-attr"]);
+  });
+
+  test("a step on a proved goal reopens it", () => {
+    // The proof was about the pair the step replaces, so it says nothing
+    // about the new one; the old discharge stays in the log, unused.
+    const tree = derive(
+      log(
+        run(),
+        did({ effect: "proved", gid: "g1" }),
+        did({ effect: "step", gid: "g1", side: "src", to: "hash-2", how: "checked" }),
+      ),
+    );
+    expect(goal(tree, "g1").status).toBe("open");
+    expect(verdict(tree)).toBe("unknown");
+  });
+
+  test("reopening a child undoes what its proof settled above it", () => {
+    const tree = derive(
+      log(
+        run(),
+        did(splitG1()),
+        did({ effect: "proved", gid: "g2" }),
+        did({ effect: "proved", gid: "g3" }),
+        did({ effect: "step", gid: "g2", side: "src", to: "h2s-again", how: "checked" }),
+      ),
+    );
+    expect(goal(tree, "g2").status).toBe("open");
+    // The parent was proved through its children, so it goes back to split.
+    expect(goal(tree, "g1").status).toBe("split");
+    expect(goal(tree, "g3").status).toBe("proved");
+    expect(verdict(tree)).toBe("unknown");
   });
 
   test("a refuted root is a counterexample", () => {
@@ -197,6 +254,7 @@ function splitG1(): Effect {
   return {
     effect: "split",
     gid: "g1",
+    name: "outlined_g3",
     outer: { gid: "g2", src: "h2s", tgt: "h2t" },
     callee: { gid: "g3", src: "h3s", tgt: "h3t" },
   };

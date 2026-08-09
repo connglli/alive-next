@@ -64,6 +64,19 @@ export function orient(side: Side, before: string, after: string): { src: string
   return side === "src" ? { src: before, tgt: after } : { src: after, tgt: before };
 }
 
+/** How a step is made, and whether it should look at where it lands. */
+export interface StepOptions {
+  /** A rule application needs no alive2 run of its own to certify it. */
+  how?: "rule" | "checked";
+  /**
+   * Whether to check the goal's new pair afterwards. On by default, because
+   * catching a discharge early is the point of it, and off for the steps
+   * inside a larger operation, whose intermediate states are not states the
+   * agent is in.
+   */
+  eager?: boolean;
+}
+
 /** A step that landed, or the reason it did not. */
 export type StepResult =
   | {
@@ -97,7 +110,7 @@ export class Steps {
    * be the path rather than the translation.
    */
   async checkGoal(tree: Tree, gid: string, timeoutMs?: number): Promise<CheckGoalResult> {
-    const goal = openGoal(tree, gid);
+    const goal = workable(tree, gid);
     const check = await this.checker.check(
       this.store.get(head(goal, "src")),
       this.store.get(head(goal, "tgt")),
@@ -121,9 +134,10 @@ export class Steps {
     gid: string,
     side: Side,
     text: string,
-    how: "rule" | "checked" = "checked",
+    options: StepOptions = {},
   ): Promise<StepResult> {
-    const goal = openGoal(tree, gid);
+    const how = options.how ?? "checked";
+    const goal = workable(tree, gid);
     const before = this.store.get(head(goal, side));
     const after = await this.store.put(text);
     const afterText = this.store.get(after);
@@ -141,8 +155,11 @@ export class Steps {
     if (check.outcome !== "correct") return { kind: "refused", check };
 
     const effects: Effect[] = [{ effect: "step", gid, side, to: after, how }];
+    if (options.eager === false) return { kind: "certified", hash: after, effects, check };
 
     // The pair has changed, so ask cheaply whether the goal is now discharged.
+    // The pair is built here rather than read from the tree, which does not
+    // know about this step until its effect is recorded.
     const eager = await this.checker.check(
       side === "src" ? afterText : this.store.get(head(goal, "src")),
       side === "tgt" ? afterText : this.store.get(head(goal, "tgt")),
@@ -153,15 +170,30 @@ export class Steps {
     return { kind: "certified", hash: after, effects, check, eager };
   }
 
+  /**
+   * The cheap check of a goal's current pair, for a caller holding a tree
+   * that already reflects what it did.
+   */
+  async crossCheck(tree: Tree, gid: string): Promise<CheckGoalResult> {
+    return this.checkGoal(tree, gid, this.timeouts.eagerCheckMs);
+  }
+
   private capped(timeoutMs: number): number {
     return Math.min(timeoutMs, this.timeouts.checkCapMs);
   }
 }
 
-function openGoal(tree: Tree, gid: string): Goal {
+/**
+ * A goal that can still be worked on. A proved one qualifies: a step reopens
+ * it when the effect is recorded, because the proof was about the pair the
+ * step replaces. A cut or refuted one does not.
+ */
+function workable(tree: Tree, gid: string): Goal {
   const goal = tree.goals.get(gid);
   if (!goal) throw new Error(`no goal ${gid}`);
-  if (goal.status !== "open") throw new Error(`${gid} is ${goal.status}, not open`);
+  if (goal.status === "split" || goal.status === "refuted") {
+    throw new Error(`${gid} is ${goal.status}, not open`);
+  }
   return goal;
 }
 

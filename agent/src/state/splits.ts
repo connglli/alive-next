@@ -88,6 +88,7 @@ export class Splits {
         {
           effect: "split",
           gid,
+          name: callee,
           outer: { gid: children.outer, src: outerSrc, tgt: outerTgt },
           callee: { gid: children.callee, src: calleeSrc, tgt: calleeTgt },
         },

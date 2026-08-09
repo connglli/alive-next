@@ -28,6 +28,8 @@ export interface Goal {
   parent?: GoalId;
   /** Which half of its parent's cut this is. */
   role?: "outer" | "callee";
+  /** The outlined function this cut made, on both of its children. */
+  callee?: string;
   src: SideHistory;
   tgt: SideHistory;
   status: Status;
@@ -81,6 +83,11 @@ export function verdict(tree: Tree): "verified" | "counterexample" | "unknown" {
   return "unknown";
 }
 
+/** Apply one effect to a tree, which is what derive does line by line. */
+export function applyEffect(tree: Tree, effect: Effect): void {
+  apply(tree, effect);
+}
+
 /** Replay the log into the tree it describes. */
 export function derive(entries: Entry[]): Tree {
   let tree: Tree | undefined;
@@ -126,6 +133,7 @@ function apply(tree: Tree, effect: Effect): void {
       name(tree, effect.to);
       return;
     }
+
     case "revert": {
       const goal = editable(tree, effect.gid);
       const at = goal[effect.side].history.lastIndexOf(effect.to);
@@ -147,6 +155,7 @@ function apply(tree: Tree, effect: Effect): void {
           id: child.gid,
           parent: parent.id,
           role,
+          callee: effect.name,
           src: { history: [child.src] },
           tgt: { history: [child.tgt] },
           status: "open",
@@ -159,6 +168,16 @@ function apply(tree: Tree, effect: Effect): void {
       }
       // The parent's heads freeze here: it is proved through its children now.
       parent.status = "split";
+      return;
+    }
+    case "strengthen": {
+      // Both sides move together, because the attribute is one claim about
+      // the goal rather than a step on either side of it.
+      const goal = editable(tree, effect.gid);
+      goal.src.history.push(effect.src);
+      goal.tgt.history.push(effect.tgt);
+      name(tree, effect.src);
+      name(tree, effect.tgt);
       return;
     }
     case "unsplit": {
@@ -206,11 +225,33 @@ function get(tree: Tree, id: GoalId): Goal {
   return goal;
 }
 
-/** A goal a step may touch: one that is still open, so not split or settled. */
+/**
+ * A goal a step may touch, which is one that has not been cut or refuted.
+ *
+ * A proved goal may be touched, and touching it reopens it: the proof was
+ * about the pair the step is replacing, so it says nothing about the new one.
+ * Whatever was settled above it comes undone for the same reason. The old
+ * discharge stays in the log, unused, the way abandoned steps do after a
+ * revert.
+ */
 function editable(tree: Tree, id: GoalId): Goal {
   const goal = get(tree, id);
+  if (goal.status === "proved") {
+    goal.status = "open";
+    unsettle(tree, goal.parent);
+  }
   if (goal.status !== "open") throw new DerivationError(`${id} is ${goal.status}, not open`);
   return goal;
+}
+
+/** Undo the discharges a child's proof carried upwards. */
+function unsettle(tree: Tree, id: GoalId | undefined): void {
+  if (id === undefined) return;
+  const goal = get(tree, id);
+  if (goal.status !== "proved") return;
+  // A goal with children was proved through them, so it goes back to split.
+  goal.status = goal.children.length > 0 ? "split" : "open";
+  unsettle(tree, goal.parent);
 }
 
 /** The number in a goal id, or 0 for one that is not named that way. */

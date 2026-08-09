@@ -154,9 +154,13 @@ Every tool call is logged. Tools that create certified steps record enough to re
 - `abort()`: discard the transaction.
 - `revert(gid, side, pid)`: move the head of an open goal's side back to an earlier program in its history. Later steps are abandoned (kept in the log, unused).
 
+A step may move a goal that has already been proved, and doing so reopens it, because the proof was about the pair the step replaces. Whatever that proof discharged above it comes undone with it, up to the root. The old discharge stays in the log, unused, the way abandoned steps do after a revert. This is what keeps eager cross-checking free of consequences: a goal discharged early is still a goal the agent may work on.
+
 ### Interface strengthening
 
 - `strengthen(gid, param, fact)`: the two-phase recipe as one tool; `gid` must be a split goal. Phase 1: insert `llvm.assume(fact)` before the call in the outer src and validate with alive2 (this is where the proof cost lives). Phase 2: add the corresponding attribute to `g`'s declaration in the outer goal and the callee goal. Fails cleanly at phase 1 if the fact does not hold.
+
+Both children are cross-checked once at the end rather than after each step inside, because between the two halves of phase 2 the outer's sides declare `g` differently, and that is a state to pass through rather than one to ask about. Whichever of the two the attribute made provable discharges there, so the agent never has to ask about it.
 
 ### Analyses
 
