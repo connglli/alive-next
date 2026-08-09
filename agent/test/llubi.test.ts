@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { repoRoot } from "../src/config.ts";
 import { Llops } from "../src/drivers/llops.ts";
 import { Llubi, LlubiCrash, read } from "../src/drivers/llubi.ts";
+import { binary, llopsBinary } from "./binaries.ts";
 
 const RETURNED = `
 Entering function main
@@ -80,25 +81,20 @@ describe("reading what llubi printed", () => {
   });
 });
 
-/** The interpreter, wherever this machine keeps it. */
-function llubiPath(): string {
-  return (
-    process.env.LLUBI ??
-    [
-      join(repoRoot(), "deps", "prefix", "bin", "llubi_legacy"),
-      join(repoRoot(), "deps", "prefix", "bin", "llubi", "llubi_legacy"),
-    ].find((candidate) => Bun.file(candidate).size > 0) ??
-    "llubi_legacy"
-  );
-}
-
-const llubi = new Llubi(llubiPath());
+const llubi = new Llubi(
+  binary(
+    "llubi_legacy",
+    "LLUBI",
+    join(repoRoot(), "deps", "prefix", "bin", "llubi_legacy"),
+    join(repoRoot(), "deps", "prefix", "bin", "llubi", "llubi_legacy"),
+  ),
+);
 const installed = await llubi
   .version()
   .then((line) => line.length > 0)
   .catch(() => false);
 
-const llops = new Llops(process.env.LLOPS ?? join(repoRoot(), "build", "llops", "llops"));
+const llops = new Llops(llopsBinary());
 const llopsBuilt = await llops
   .version()
   .then(() => true)

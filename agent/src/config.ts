@@ -198,9 +198,17 @@ function readTimeouts(raw: unknown, source: string): TimeoutConfig {
   return timeouts;
 }
 
-/** Where to find a program a run spawns, or its name for a PATH lookup. */
+/**
+ * Where to find a program a run spawns, or its name for a PATH lookup.
+ *
+ * A path with a directory in it is taken as relative to the repository rather
+ * than to whatever directory the process started in, so one configuration
+ * works whether a run is launched from the root, from `agent/`, or by make.
+ */
 export function binaryPath(config: Config, name: string): string {
-  return config.binaries[name]?.path ?? name;
+  const path = config.binaries[name]?.path;
+  if (path === undefined) return name;
+  return path.includes("/") ? resolve(repoRoot(), path) : path;
 }
 
 /**

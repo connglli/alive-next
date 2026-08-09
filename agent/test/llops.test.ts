@@ -7,20 +7,9 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { repoRoot } from "../src/config.ts";
 import { Llops, LlopsCrash } from "../src/drivers/llops.ts";
+import { llopsBinary } from "./binaries.ts";
 
-/** Prefer a freshly built binary, then whatever `make llops` installed. */
-function llopsPath(): string {
-  return (
-    process.env.LLOPS ??
-    [
-      join(repoRoot(), "build", "llops", "llops"),
-      join(repoRoot(), "deps", "prefix", "bin", "llops"),
-    ].find((candidate) => Bun.file(candidate).size > 0) ??
-    "llops"
-  );
-}
-
-const llops = new Llops(llopsPath());
+const llops = new Llops(llopsBinary());
 const built = await llops
   .version()
   .then(() => true)

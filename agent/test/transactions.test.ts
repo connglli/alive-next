@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { repoRoot } from "../src/config.ts";
 import type { CheckOutcome, CheckResult } from "../src/drivers/alive2.ts";
 import { Llops } from "../src/drivers/llops.ts";
 import type { Goal, Tree } from "../src/state/goals.ts";
@@ -16,6 +15,7 @@ import { Steps } from "../src/state/steps.ts";
 import { Store } from "../src/state/store.ts";
 import type { Entry, Event } from "../src/state/trajectory.ts";
 import { TransactionError, Transactions } from "../src/state/transactions.ts";
+import { llopsBinary } from "./binaries.ts";
 
 class FakeChecker {
   readonly calls: { src: string; tgt: string }[] = [];
@@ -33,7 +33,7 @@ class FakeChecker {
   }
 }
 
-const llops = new Llops(process.env.LLOPS ?? join(repoRoot(), "build", "llops", "llops"));
+const llops = new Llops(llopsBinary());
 const built = await llops
   .version()
   .then(() => true)

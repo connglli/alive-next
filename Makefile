@@ -74,8 +74,10 @@ test-llops: llops
 agent: deps-js
 	cd agent && bun run check
 
+# LLOPS names what was just built, so the suite tests this tree rather than
+# whatever the configuration points at.
 test-agent: deps-js
-	cd agent && bun test
+	cd agent && LLOPS=$(LLOPS_BUILD)/llops bun test
 
 # --- everything --------------------------------------------------------------
 test: test-llops test-agent

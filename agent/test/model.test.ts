@@ -72,6 +72,26 @@ describe("loadConfig", () => {
     }
   });
 
+  test("reads a relative path as relative to the repository", () => {
+    const file = join(tmpdir(), `alive-next-relative-${process.pid}.jsonc`);
+    writeFileSync(
+      file,
+      `{ "model": { "provider": "p", "id": "m" },
+         "binaries": { "llops": { "path": "./deps/prefix/bin/llops" },
+                       "alive-tv": { "path": "alive-tv" } } }`,
+    );
+    try {
+      const loaded = loadConfig(file);
+      // Otherwise the same configuration would name a different file
+      // depending on where the process was started.
+      expect(binaryPath(loaded, "llops")).toBe(join(repoRoot(), "deps/prefix/bin/llops"));
+      // A bare name is a PATH lookup and stays one.
+      expect(binaryPath(loaded, "alive-tv")).toBe("alive-tv");
+    } finally {
+      rmSync(file);
+    }
+  });
+
   test("rejects a binary entry with no path", () => {
     const file = join(tmpdir(), `alive-next-nopath-${process.pid}.jsonc`);
     writeFileSync(file, '{ "model": { "provider": "p", "id": "m" }, "binaries": { "llops": {} } }');

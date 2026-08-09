@@ -7,15 +7,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { repoRoot } from "../src/config.ts";
 import { Llops } from "../src/drivers/llops.ts";
 import type { Goal } from "../src/state/goals.ts";
 import { derive, head, type Tree } from "../src/state/goals.ts";
 import { Splits } from "../src/state/splits.ts";
 import { Store } from "../src/state/store.ts";
 import type { Effect, Entry, Event } from "../src/state/trajectory.ts";
+import { llopsBinary } from "./binaries.ts";
 
-const llops = new Llops(process.env.LLOPS ?? join(repoRoot(), "build", "llops", "llops"));
+const llops = new Llops(llopsBinary());
 const built = await llops
   .version()
   .then(() => true)
