@@ -60,6 +60,18 @@ export interface Fact {
   nonnull?: boolean;
 }
 
+/** One argument for a harness, matched to the entry's parameter by position. */
+export type HarnessArg =
+  | { kind: "int"; value: string }
+  | { kind: "bytes"; bytes: number[]; align?: number }
+  | { kind: "null" };
+
+export interface HarnessResult {
+  module: Module;
+  /** The names to look for in llubi's trace, in the order they are produced. */
+  observations: Ref[];
+}
+
 export interface AnalyzeResult {
   kind: AnalyzeKind;
   point: Ref;
@@ -135,6 +147,11 @@ export class Llops {
 
   analyze(module: Module, kind: AnalyzeKind, point?: Ref): Promise<LlopsResult<AnalyzeResult>> {
     return this.run("analyze", point ? { module, kind, point } : { module, kind });
+  }
+
+  /** Wrap a function in the main llubi runs, with these argument values. */
+  harness(module: Module, entry: string, args: HarnessArg[]): Promise<LlopsResult<HarnessResult>> {
+    return this.run("harness", { module, entry, args });
   }
 
   /** The version line, which a run records to say what produced its programs. */
