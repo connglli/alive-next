@@ -1177,6 +1177,76 @@ entry:
     def test_no_facts_at_all(self):
         self.bad(self.assume(fact={}), "bad_request")
 
+    def test_anchoring_on_the_call_finds_its_argument(self):
+        module = """define i32 @f(i32 %n) {
+entry:
+  %m = and i32 %n, 255
+  %r = call i32 @g(i32 %m)
+  ret i32 %r
+}
+
+declare i32 @g(i32)
+"""
+        r = self.good(
+            run(
+                "assume",
+                {
+                    "module": module,
+                    "before_call": "g",
+                    "arg": 0,
+                    "fact": {"range": {"min": 0, "max": 256}},
+                },
+            )
+        )
+        body = self.body(r["module"])
+        self.assertIn("icmp sge i32 %m, 0", body[1])
+        # The assume goes before the call, which is what the fact is about.
+        self.assertEqual(body[4], "call void @llvm.assume(i1 %2)")
+        self.assertTrue(body[5].endswith("call i32 @g(i32 %m)"))
+
+    def test_a_call_that_is_not_there(self):
+        self.bad(
+            run(
+                "assume",
+                {"module": self.F, "before_call": "g", "arg": 0, "fact": {"noundef": True}},
+            ),
+            "not_found",
+        )
+
+    def test_an_argument_index_out_of_range(self):
+        module = """define i32 @f(i32 %n) {
+entry:
+  %r = call i32 @g(i32 %n)
+  ret i32 %r
+}
+
+declare i32 @g(i32)
+"""
+        self.bad(
+            run(
+                "assume",
+                {"module": module, "before_call": "g", "arg": 4, "fact": {"noundef": True}},
+            ),
+            "invalid",
+        )
+
+    def test_the_two_ways_of_saying_where_are_exclusive(self):
+        self.bad(
+            run(
+                "assume",
+                {
+                    "module": self.F,
+                    "before": "%s",
+                    "value": "%m",
+                    "before_call": "g",
+                    "arg": 0,
+                    "fact": {"noundef": True},
+                },
+            ),
+            "bad_request",
+        )
+        self.bad(run("assume", {"module": self.F, "fact": {"noundef": True}}), "bad_request")
+
     def test_an_anchor_or_value_that_is_not_there(self):
         self.bad(self.assume(before="%nope"), "not_found")
         self.bad(self.assume(value="%nope"), "not_found")

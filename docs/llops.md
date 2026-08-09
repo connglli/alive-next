@@ -176,6 +176,8 @@ States a fact about a value, just before an instruction. This is the first half 
 
 Request `{ "module": ..., "before": ref, "value": ref, "fact": { ... } }`, response `{ "ok": true, "module": ... }`.
 
+Where the assume goes can be said the other way instead, with `{ "before_call": "g", "arg": 0 }` in place of `before` and `value`: before the call to that function, about the argument at that position. That is what strengthening needs, since a fact about a call's argument outlives the reference that named it, which every edit before the call renumbers. The two forms are exclusive.
+
 The fact vocabulary is the one `edit attrs` takes, so what is proved here and what is attributed cannot drift apart. How each one is written depends on what it says:
 
 * `range` becomes two signed comparisons over the value, joined by an `and` when the interval runs upwards and by an `or` when it wraps, which is the same half-open interval the attribute means.

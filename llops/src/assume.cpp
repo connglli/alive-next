@@ -48,9 +48,17 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
   auto text = args.getString("module");
   auto beforeRef = args.getString("before");
   auto valueRef = args.getString("value");
+  auto beforeCall = args.getString("before_call");
+  auto argIndex = args.getInteger("arg");
   auto *facts = args.getObject("fact");
-  if (!text || !beforeRef || !valueRef || !facts)
-    return errResponse("bad_request", "assume needs 'module', 'before', 'value' and 'fact'");
+  if (!text || !facts)
+    return errResponse("bad_request", "assume needs 'module' and 'fact'");
+  const bool byRef = beforeRef && valueRef;
+  const bool byCall = beforeCall && argIndex;
+  if (byRef == byCall) {
+    return errResponse("bad_request", "assume takes either 'before' with 'value', or "
+                                      "'before_call' with 'arg'");
+  }
   if (facts->empty())
     return errResponse("bad_request", "assume needs at least one fact");
 
@@ -64,12 +72,38 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
   if (!F)
     return errResponse("shape_error", "assume needs the v1 shape: exactly one defined function");
   ValueRefs refs(*F);
-  llvm::Instruction *before = refs.resolveInst(*beforeRef);
-  if (!before)
-    return errResponse("not_found", "'" + beforeRef->str() + "' is not an instruction");
-  llvm::Value *value = refs.resolve(*valueRef);
-  if (!value)
-    return errResponse("not_found", "'" + valueRef->str() + "' is not a value");
+  llvm::Instruction *before = nullptr;
+  llvm::Value *value = nullptr;
+  if (byRef) {
+    before = refs.resolveInst(*beforeRef);
+    if (!before)
+      return errResponse("not_found", "'" + beforeRef->str() + "' is not an instruction");
+    value = refs.resolve(*valueRef);
+    if (!value)
+      return errResponse("not_found", "'" + valueRef->str() + "' is not a value");
+  } else {
+    // Anchoring on the call is what strengthening needs, because the fact is
+    // about what a call passes and the refs around it move with every edit.
+    llvm::CallInst *call = nullptr;
+    for (auto &I : *singleBlock(*F)) {
+      auto *candidate = llvm::dyn_cast<llvm::CallInst>(&I);
+      if (!candidate || !candidate->getCalledFunction())
+        continue;
+      if (candidate->getCalledFunction()->getName() != *beforeCall)
+        continue;
+      if (call)
+        return errResponse("invalid", "more than one call to '@" + beforeCall->str() + "'");
+      call = candidate;
+    }
+    if (!call)
+      return errResponse("not_found", "no call to '@" + beforeCall->str() + "'");
+    if (*argIndex < 0 || (uint64_t)*argIndex >= call->arg_size()) {
+      return errResponse("invalid", "'@" + beforeCall->str() + "' is called with " +
+                                        std::to_string(call->arg_size()) + " arguments");
+    }
+    before = call;
+    value = call->getArgOperand((unsigned)*argIndex);
+  }
 
   llvm::LLVMContext &ctx = M.getContext();
   llvm::IRBuilder<> builder(before);
