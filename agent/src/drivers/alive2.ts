@@ -9,6 +9,10 @@
 // errors, so an incorrect transformation exits 0, and the summary block it
 // prints is what says how the check went. `--quiet` is deliberately not passed:
 // the counterexample is the point.
+//
+// No flag here weakens what alive2 is asked, `--disable-undef-input` least of
+// all: for a callee goal it assumes what the cut has to prove. Definedness is
+// stated in the IR instead, as docs/implementation.md sets out.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -53,18 +57,6 @@ export interface CheckOptions {
 const GRACE_MS = 30_000;
 
 /**
- * Flags every check carries.
- *
- * `--disable-undef-input` takes undef off the table at function entry. An
- * undef input takes a fresh value at each use, so it refutes transformations
- * that are valid for every concrete input, and the counterexample it comes
- * back with is not one an interpreter can be handed. A run's counterexamples
- * are certified by execution, so a refutation we cannot execute is a
- * refutation we cannot use.
- */
-const ALWAYS: string[] = ["--disable-undef-input"];
-
-/**
  * Thrown when alive-tv cannot be run at all. That is a broken installation
  * rather than a search outcome, and turning it into one would let a run report
  * "unknown" when the truth is that nothing was ever checked.
@@ -97,7 +89,7 @@ export class AliveTv {
   /** Ask whether `tgt` refines `src`. */
   async check(src: string, tgt: string, options: CheckOptions = {}): Promise<CheckResult> {
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
-    const flags = [`--smt-to=${timeoutMs}`, ...ALWAYS, ...(options.flags ?? [])];
+    const flags = [`--smt-to=${timeoutMs}`, ...(options.flags ?? [])];
     const invocation: Invocation = { binary: this.path, flags, timeoutMs };
 
     const dir = mkdtempSync(join(tmpdir(), "alive-next-tv-"));

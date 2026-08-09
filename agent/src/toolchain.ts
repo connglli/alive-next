@@ -1,16 +1,10 @@
 // The toolchain: the directory holding the binaries that have to agree.
 //
-// llops, alive-tv and llubi all read and write LLVM IR, and they mean the same
-// thing by a module only when they were built against the same LLVM. A mixed
-// set does not fail cleanly: llops prints a construct alive-tv's parser does
-// not know, or llubi disagrees about a corner of poison, and both look like
-// the search going wrong rather than the install being wrong.
-//
-// So a run does not take three paths and hope. It takes one directory, built
-// by scripts/depman.sh from pinned revisions against one LLVM, and finds the
-// binaries at the places that script puts them. The layout below is the whole
-// contract between the two, and docs/implementation.md states it once for
-// people.
+// llops, alive-tv and llubi mean the same thing by a module only when they
+// were built against the same LLVM, so a run takes one directory rather than
+// three paths: the one scripts/depman.sh builds into, from pinned revisions
+// against one LLVM. The layout below is the contract between the two, and
+// docs/implementation.md states it for people.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 

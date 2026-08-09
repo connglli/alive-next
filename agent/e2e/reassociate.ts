@@ -15,6 +15,14 @@
 // reasoning about division at all. What reaches the solver is four small
 // queries, under a second together.
 //
+// Every cut also has to pay for itself first. A callee's parameters are fresh,
+// and a question about undef-capable inputs is one alive2 does not answer, so
+// each interface is proved defined before the goal behind it is asked about:
+// the caller's values are defined, an assume says so, and the attribute
+// carries it across. That is why the flags come off the src inside the callee
+// before the second cut, since a value an `nsw` could poison is not one the
+// caller can promise.
+//
 // The store holds canonical text, so a script names values by slot, and slots
 // move as a body is edited. The comments track what each slot is where it is
 // named.
@@ -24,10 +32,10 @@ export const reassociate: Scenario = {
   name: "reassociate",
   about: "two cuts keep an sdiv out of every query alive2 is asked",
 
-  src: `define i64 @f(i64 %p0, i64 %p1, i64 %p2) {
+  src: `define i64 @f(i64 noundef %p0, i64 noundef %p1, i64 noundef %p2) {
 entry:
-  %v0 = mul nsw i64 %p0, 4
-  %v1 = sub nsw i64 %p1, %v0
+  %v0 = mul i64 %p0, 4
+  %v1 = sub i64 %p1, %v0
   %v2 = sdiv i64 %v1, 2
   %v3 = mul nsw i64 %v2, 2
   %v4 = add nsw i64 %v0, %v3
@@ -41,10 +49,10 @@ entry:
 }
 `,
 
-  tgt: `define i64 @f(i64 %p0, i64 %p1, i64 %p2) {
+  tgt: `define i64 @f(i64 noundef %p0, i64 noundef %p1, i64 noundef %p2) {
 entry:
-  %v0 = shl nsw i64 %p0, 2
-  %v1 = sub nsw i64 %p1, %v0
+  %v0 = shl i64 %p0, 2
+  %v1 = sub i64 %p1, %v0
   %v2 = sdiv i64 %v1, 2
   %sum = add i64 %v2, %p2
   %twice = shl i64 %sum, 1
@@ -65,7 +73,7 @@ entry:
     const shifted = await session.edit({
       op: "replace",
       v: "%3",
-      insts: ["%v0 = shl nsw i64 %0, 2"],
+      insts: ["%v0 = shl i64 %0, 2"],
     });
     expect("write the multiply as a shift", shifted.kind === "applied", shifted);
     const aligned = await session.commit();
@@ -82,6 +90,17 @@ entry:
     });
     expect("cut after the first division", head.kind === "split", head);
     if (head.kind !== "split") return;
+
+    // The four values crossing the cut are computed from defined parameters
+    // by instructions that cannot make poison, so the callee can be told so.
+    for (const param of [0, 1, 2, 3]) {
+      const defined = await session.strengthen("g1", param, { noundef: true });
+      expect(
+        `prove parameter ${param} of the first cut defined`,
+        defined.kind === "strengthened",
+        defined,
+      );
+    }
 
     // Two identical programs around the same call.
     const shared = await session.check(head.children.outer);
@@ -105,6 +124,27 @@ entry:
     const tail = await session.commit();
     expect("commit the tail", tail.kind === "certified", tail);
 
+    // The total is what crosses the next cut, and an `nsw` in the src could
+    // make it poison, which is a promise the caller cannot keep. The flags say
+    // nothing the tgt relies on, so the src says the whole body the wrapping
+    // way, in one step.
+    await session.begin(callee, "src");
+    const wrapping = await session.edit({
+      op: "set_body",
+      body: `  %4 = mul i64 %1, 2
+  %5 = add i64 %0, %4
+  %6 = mul i64 %3, 2
+  %7 = add i64 %5, %6
+  %8 = sub i64 %2, %7
+  %9 = sdiv i64 %8, 2
+  %10 = mul i64 %9, 2
+  %11 = add i64 %7, %10
+  ret i64 %11`,
+    });
+    expect("take the flags off the src", wrapping.kind === "applied", wrapping);
+    const wrapped = await session.commit();
+    expect("commit the wrapping form", wrapped.kind === "certified", wrapped);
+
     // Both tails need only the total and `p1` now, so the second division and
     // everything after it is cut off into a function the two sides call the
     // same way. The src subtracts at `%8` and the tgt at `%7`, and the totals
@@ -112,6 +152,17 @@ entry:
     const middle = await session.split(callee, "%8", "%7", { "%2": "%2", "%7": "%6" });
     expect("cut at the second division", middle.kind === "split", middle);
     if (middle.kind !== "split") return;
+
+    // And again the interface, which is defined now that nothing before it
+    // can make poison.
+    for (const param of [0, 1]) {
+      const defined = await session.strengthen(callee, param, { noundef: true });
+      expect(
+        `prove parameter ${param} of the second cut defined`,
+        defined.kind === "strengthened",
+        defined,
+      );
+    }
 
     // The total, computed two ways, in front of the same unknown call. This is
     // the query the whole proof was arranged to make askable.

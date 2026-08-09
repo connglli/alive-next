@@ -143,7 +143,7 @@ describe("running alive-tv", () => {
       expect(result.outcome).toBe("correct");
       expect(result.invocation).toEqual({
         binary: path,
-        flags: ["--smt-to=5000", "--disable-undef-input"],
+        flags: ["--smt-to=5000"],
         timeoutMs: 5000,
       });
       expect(result.ms).toBeGreaterThanOrEqual(0);
@@ -169,18 +169,14 @@ describe("running alive-tv", () => {
     }
   });
 
-  test("takes extra flags from the caller, after the ones every run carries", async () => {
+  test("takes extra flags from the caller", async () => {
     const { dir, path } = stub(CORRECT);
     try {
       const result = await new AliveTv(path).check("a", "b", {
         timeoutMs: 1000,
         flags: ["--tgt-unroll=2"],
       });
-      expect(result.invocation.flags).toEqual([
-        "--smt-to=1000",
-        "--disable-undef-input",
-        "--tgt-unroll=2",
-      ]);
+      expect(result.invocation.flags).toEqual(["--smt-to=1000", "--tgt-unroll=2"]);
       expect(await Bun.file(join(dir, "argv")).text()).toContain("--tgt-unroll=2");
     } finally {
       rmSync(dir, { recursive: true, force: true });

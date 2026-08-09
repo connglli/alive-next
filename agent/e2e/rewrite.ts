@@ -11,7 +11,7 @@ export const rewrite: Scenario = {
   name: "rewrite",
   about: "one certified step, discharged by the check that follows it",
 
-  src: `define i32 @f(i32 %x, i32 %y) {
+  src: `define i32 @f(i32 noundef %x, i32 noundef %y) {
 entry:
   %a = mul i32 %x, 4
   %b = add i32 %a, %y
@@ -19,7 +19,7 @@ entry:
 }
 `,
 
-  tgt: `define i32 @f(i32 %x, i32 %y) {
+  tgt: `define i32 @f(i32 noundef %x, i32 noundef %y) {
 entry:
   %a = shl i32 %x, 2
   %b = add i32 %a, %y

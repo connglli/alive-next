@@ -62,7 +62,14 @@ export class Strengthen {
   async strengthen(tree: Tree, gid: string, param: number, fact: Fact): Promise<StrengthenResult> {
     const parent = tree.goals.get(gid);
     if (!parent) throw new Error(`no goal ${gid}`);
-    if (parent.status !== "split") throw new Error(`${gid} is ${parent.status}, not split`);
+    // A goal that was cut, whether or not its children have discharged it
+    // since: a second fact is an ordinary thing to want, and the proof those
+    // children carried comes undone as they are touched, the way a step undoes
+    // one. A goal that was never cut, or whose cut was undone, has no
+    // interface to strengthen.
+    if (parent.children.length === 0) {
+      throw new Error(`${gid} is ${parent.status}, not split`);
+    }
     const outer = child(tree, parent, "outer");
     const callee = child(tree, parent, "callee");
     const name = callee.callee;
