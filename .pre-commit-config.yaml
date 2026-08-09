@@ -27,6 +27,13 @@ repos:
       - id: clang-format
         files: ^llops/src/.*\.(cpp|h)$
 
+  # TypeScript, JavaScript and JSON, formatted and linted by one tool, with
+  # the safe fixes applied. biome.json holds the settings.
+  - repo: https://github.com/biomejs/pre-commit
+    rev: v2.5.7
+    hooks:
+      - id: biome-check
+
   # Lint first with the fixes it is sure about, then format.
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.2

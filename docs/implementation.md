@@ -114,14 +114,14 @@ This split is purely ergonomic, never a correctness question: `run_start` snapsh
 The `Makefile` is the entry point and owns nothing else: it names targets and delegates. One component, one pair of targets, so `make llops` builds llops and `make test-llops` tests it, and a component added later brings its own pair. `make test` runs every suite, `make check` runs every hook over every file, and `make help` lists the lot.
 
 - `llops/`: CMake with `find_package(LLVM)`. `make llops` configures into `build/llops`, builds, and installs the binary into the prefix.
-- `agent/`: bun throughout: `bun install`, `bun run`, `bun test`. Bun runs TypeScript directly, so there is no build step; `tsc --noEmit` is the typecheck.
+- `agent/`: bun throughout: `bun install`, `bun run`, `bun test`. Bun runs TypeScript directly, so there is no build step and `make agent` is the typecheck, `tsc --noEmit`.
 - `checker/` and `scripts/`: plain Python, standard library only at runtime. The environment uv builds is for the dev tools, not for these.
 
 Two directories, both inside the repository and both gitignored, hold everything a build produces: `build/` for our own build trees and `deps/` for the external tools, their sources and their build trees. `deps/prefix/bin` holds every tool `make install-deps` installs, our own llops included, so putting it first on PATH completes the environment; a tool that was already good enough stays where it was found. `make clean` removes the first directory, `make clean-deps` the second. `PREFIX=` and `BUILD=` move them, `JOBS=` sets build parallelism, and `BUILD_TYPE=Debug` switches the llops build.
 
 ### Checks and git hooks
 
-The checks are not ours. [pre-commit](https://pre-commit.com) runs them, and `.pre-commit-config.yaml` is the one place that says which upstream tool checks what, each pinned to a revision that `pre-commit autoupdate` bumps in a reviewed diff: clang-format for C++, ruff for Python, shellcheck and shfmt for shell, whitespace and syntax hooks for the rest, and gitlint for commit messages against the rules in [CLAUDE.md](../CLAUDE.md), with `.gitlint` holding the settings. The clang-format is the one that ships with the LLVM version we pin, so the formatter and the compiler agree.
+The checks are not ours. [pre-commit](https://pre-commit.com) runs them, and `.pre-commit-config.yaml` is the one place that says which upstream tool checks what, each pinned to a revision that `pre-commit autoupdate` bumps in a reviewed diff: clang-format for C++, biome for TypeScript and JSON, ruff for Python, shellcheck and shfmt for shell, whitespace and syntax hooks for the rest, and gitlint for commit messages against the rules in [CLAUDE.md](../CLAUDE.md), with `.gitlint` holding the settings. The clang-format is the one that ships with the LLVM version we pin, so the formatter and the compiler agree.
 
 The hooks are part of the dev environment, so `make deps-dev` provisions both: the tools, from `uv.lock`, and the hooks in this clone. A hook that rewrites a file fails the commit with the fix already applied, so the loop is review, stage, commit again. The hooks see staged files only; `make check` is the same set over the whole tree, which is what CI runs.
 

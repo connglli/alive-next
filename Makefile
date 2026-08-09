@@ -19,7 +19,8 @@ export PATH := $(PREFIX)/bin:$(PATH)
 LLOPS_BUILD := $(BUILD)/llops
 
 .PHONY: help install-deps deps-status deps-llvm deps-alive2 deps-llubi deps-bun \
-        deps-js deps-uv deps-py deps-dev llops test-llops test check clean clean-deps
+        deps-js deps-uv deps-py deps-dev llops test-llops agent test-agent test check \
+        clean clean-deps
 
 help:
 	@echo "dependencies"
@@ -32,6 +33,8 @@ help:
 	@echo "build and test"
 	@echo "  llops          build llops and install it into PREFIX/bin"
 	@echo "  test-llops     run the llops tests"
+	@echo "  agent          typecheck the agent"
+	@echo "  test-agent     run the agent tests"
 	@echo "  test           run every test suite"
 	@echo "  check          run every hook over every file"
 	@echo ""
@@ -66,12 +69,20 @@ llops:
 test-llops: llops
 	LLOPS=$(LLOPS_BUILD)/llops python3 llops/test/llops_test.py
 
+# --- agent -------------------------------------------------------------------
+# Bun runs TypeScript directly, so building the agent is typechecking it.
+agent: deps-js
+	cd agent && bun run check
+
+test-agent: deps-js
+	cd agent && bun test
+
 # --- everything --------------------------------------------------------------
-test: test-llops
+test: test-llops test-agent
 
 # .pre-commit-config.yaml is the one place that says what is checked and with
 # which upstream tool. The hook sees staged files; this sweeps the whole tree.
-check: deps-dev
+check: deps-dev agent
 	@$(PRECOMMIT) run --all-files
 
 clean:
