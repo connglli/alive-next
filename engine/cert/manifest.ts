@@ -1,13 +1,16 @@
-// The manifest: the proof, pruned to what discharged the root.
+// The manifest: what a run earned, pruned to what settled the root.
 //
 // This is the whole of what a certificate says, and scripts/check.py is the
-// only reader that matters. Nothing here is a claim on its own: every step
-// names the pair it moved and the side it moved, and the checker reruns the
-// check that certified it, in the direction the side implies.
+// only reader that matters. Nothing here is a claim on its own. A proof's
+// every step names the pair it moved and the side it moved, and the checker
+// reruns the check that certified it, in the direction the side implies. A
+// counterexample names the pair the run was asked about and one input, and the
+// checker runs them itself.
 //
 // What the run abandoned does not appear. A goal's chain is the path from the
 // pair it started with to the pair it ended with, which is what the goal tree
 // holds after reverts have truncated it.
+import type { HarnessArg } from "../core/drivers/llops.ts";
 import { type Goal, head, type Tree } from "../core/state/goals.ts";
 import type { Effect, Entry, Hash } from "../core/state/trajectory.ts";
 
@@ -49,7 +52,7 @@ export interface ManifestGoal {
   discharge: Discharge;
 }
 
-export interface Manifest {
+export interface Proof {
   version: number;
   verdict: "verified";
   root: string;
@@ -57,6 +60,22 @@ export interface Manifest {
   toolchain: unknown;
   goals: Record<string, ManifestGoal>;
 }
+
+/** A refutation: one input, and the pair it was run on. */
+export interface Counterexample {
+  version: number;
+  verdict: "counterexample";
+  root: string;
+  toolchain: unknown;
+  /** The pair the run was asked about, which is what the input refutes. */
+  pair: Pair;
+  /** The argument values, as `llops harness` takes them. */
+  input: HarnessArg[];
+  /** What the run saw, which a checker recomputes rather than believes. */
+  divergence: string;
+}
+
+export type Manifest = Proof | Counterexample;
 
 export class NotCertifiable extends Error {
   constructor(message: string) {
@@ -66,13 +85,14 @@ export class NotCertifiable extends Error {
 }
 
 /**
- * The manifest for a verified run, and the programs it refers to.
+ * The manifest for a settled run, and the programs it refers to.
  *
  * The tree says which pairs survived; the log says what certified each move.
  */
 export function manifestOf(entries: Entry[], tree: Tree): [Manifest, Set<Hash>] {
   const root = tree.goals.get(tree.root);
   if (!root) throw new NotCertifiable("the run has no root goal");
+  if (root.status === "refuted") return refutation(entries, tree, root);
   if (root.status !== "proved") {
     throw new NotCertifiable(`the root is ${root.status}, so there is nothing to certify`);
   }
@@ -83,13 +103,55 @@ export function manifestOf(entries: Entry[], tree: Tree): [Manifest, Set<Hash>] 
   return [
     {
       version: VERSION,
-      verdict: "verified",
+      verdict: "verified" as const,
       root: tree.root,
       toolchain: toolchainOf(entries),
       goals,
     },
     programs,
   ];
+}
+
+/**
+ * The manifest for a refuted run: the pair it was asked about, and the input
+ * the framework saw them diverge on.
+ *
+ * The steps a run made before the refutation are not part of it. A
+ * counterexample is against the original pair, since that is the pair the
+ * interpreter was given and the only one the verdict is about.
+ */
+function refutation(entries: Entry[], tree: Tree, root: Goal): [Counterexample, Set<Hash>] {
+  const report = reportOf(entries, root.id);
+  const pair = { src: first(root, "src"), tgt: first(root, "tgt") };
+  return [
+    {
+      version: VERSION,
+      verdict: "counterexample",
+      root: tree.root,
+      toolchain: toolchainOf(entries),
+      pair,
+      input: report.input,
+      divergence: report.divergence,
+    },
+    new Set([pair.src, pair.tgt]),
+  ];
+}
+
+/** The report that refuted the root, which is the last one that did. */
+function reportOf(entries: Entry[], gid: string): { input: HarnessArg[]; divergence: string } {
+  let found: { input: HarnessArg[]; divergence: string } | undefined;
+  for (const entry of entries) {
+    if (entry.kind !== "tool_result") continue;
+    const refuted = (entry.effects ?? []).some(
+      (effect) => effect.effect === "refuted" && effect.gid === gid,
+    );
+    if (!refuted) continue;
+    const result = entry.result as { input?: HarnessArg[]; divergence?: string } | null;
+    if (!result?.input) continue;
+    found = { input: result.input, divergence: result.divergence ?? "" };
+  }
+  if (!found) throw new NotCertifiable(`nothing in the log says which input refuted ${gid}`);
+  return found;
 }
 
 /** Walk what discharged the root, and nothing else. */

@@ -37,7 +37,53 @@ def toolchain() -> Path:
 
 ALIVE_TV = os.environ.get("ALIVE_TV") or str(toolchain() / "alive2" / "build" / "alive-tv")
 LLOPS = os.environ.get("LLOPS") or str(toolchain() / "llops" / "build" / "llops")
+LLUBI = os.environ.get("LLUBI") or str(toolchain() / "llubi-legacy" / "build" / "llubi")
 HAVE = Path(ALIVE_TV).exists() and Path(LLOPS).exists()
+HAVE_LLUBI = Path(LLUBI).exists() and Path(LLOPS).exists()
+
+# Halving rounds toward zero and shifting rounds down, so the two part company
+# on every negative odd value.
+HALVE = """define i32 @f(i32 noundef %0) {
+entry:
+  %1 = sdiv i32 %0, 2
+  ret i32 %1
+}
+"""
+SHIFT = """define i32 @f(i32 noundef %0) {
+entry:
+  %1 = ashr i32 %0, 1
+  ret i32 %1
+}
+"""
+# Reading one byte, and reading four to get it, which is only sound where the
+# object is known to hold four.
+BYTE = """define i32 @f(ptr noundef %0) {
+entry:
+  %1 = load i8, ptr %0, align 1
+  %2 = zext i8 %1 to i32
+  ret i32 %2
+}
+"""
+WIDE = """define i32 @f(ptr noundef %0) {
+entry:
+  %1 = load i32, ptr %0, align 1
+  %2 = and i32 %1, 255
+  ret i32 %2
+}
+"""
+# A src that divides by its second argument, which has UB of its own to offer.
+DIVIDE = """define i32 @f(i32 noundef %0, i32 noundef %1) {
+entry:
+  %2 = sdiv i32 %0, %1
+  ret i32 %2
+}
+"""
+SHIFT2 = """define i32 @f(i32 noundef %0, i32 noundef %1) {
+entry:
+  %2 = ashr i32 %0, %1
+  ret i32 %2
+}
+"""
 
 SRC = """define i32 @f(i32 noundef %0) {
 entry:
@@ -94,6 +140,20 @@ class Built:
             "root": root,
             "toolchain": {},
             "goals": self.goals,
+        }
+        (self.root / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        return self.root
+
+    def refutation(self, src: str, tgt: str, input: list[dict]) -> Path:
+        """A counterexample package: the pair, and the input it is run on."""
+        manifest = {
+            "version": 1,
+            "verdict": "counterexample",
+            "root": "g1",
+            "toolchain": {},
+            "pair": {"src": self.program(src), "tgt": self.program(tgt)},
+            "input": input,
+            "divergence": "whatever the run said",
         }
         (self.root / "manifest.json").write_text(json.dumps(manifest, indent=2))
         return self.root
@@ -330,6 +390,96 @@ class TestTampered(Case):
         self.leaf()
         self.built.write(verdict="unknown")
         self.refused(self.built.root, "is not a proof")
+
+
+@unittest.skipUnless(HAVE_LLUBI, "needs llubi and llops")
+class TestCounterexample(unittest.TestCase):
+    """A refutation is confirmed by running the pair, not by being asserted."""
+
+    def setUp(self) -> None:
+        self.dir = Path(tempfile.mkdtemp())
+        self.built = Built(self.dir / "package")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def replay(self, package: Path) -> subprocess.CompletedProcess:
+        return run(package, "--llops", LLOPS, "--llubi", LLUBI)
+
+    def test_a_divergence_is_confirmed(self):
+        package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}])
+        done = self.replay(package)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("i32 -1 in the src and i32 -2 in the tgt", done.stdout)
+        self.assertIn("counterexample", done.stdout)
+
+    def test_it_says_what_was_run_and_what_each_side_did(self):
+        package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}])
+        said = self.replay(package).stdout
+        self.assertIn("ERROR: Value mismatch", said)
+        self.assertIn("Example:\ni32 noundef %0 = -3", said)
+        self.assertIn("Source:\n  %obs.result = i32 -1", said)
+        self.assertIn("Target:\n  %obs.result = i32 -2", said)
+
+    def test_a_tgt_that_returns_poison_is_the_more_poisonous_one(self):
+        # The harness stores what the entry returns and storing poison is UB,
+        # so a tgt that returns poison stops in the harness, which is what
+        # tells it from a tgt with UB of its own.
+        wraps = HALVE.replace("%1 = sdiv i32 %0, 2", "%1 = add i32 %0, 1")
+        nsw = HALVE.replace("%1 = sdiv i32 %0, 2", "%1 = add nsw i32 %0, 1")
+        package = self.built.refutation(wraps, nsw, [{"kind": "int", "value": "2147483647"}])
+        done = self.replay(package)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("ERROR: Target is more poisonous than source", done.stdout)
+        self.assertIn("Source:\n  %obs.result = i32 -2147483648", done.stdout)
+        self.assertIn("Target:\n  %obs.result = poison", done.stdout)
+
+    def test_a_tgt_with_ub_of_its_own_leaves_the_src_more_defined(self):
+        # Widening a load past the object it reads from, on an object of one
+        # byte. The pointer argument also shows what the harness does with
+        # memory: the bytes go in before the call and are read back after.
+        package = self.built.refutation(BYTE, WIDE, [{"kind": "bytes", "bytes": [7]}])
+        done = self.replay(package)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("ERROR: Source is more defined than target", done.stdout)
+        self.assertIn("ptr noundef %0 = [7]", done.stdout)
+        self.assertIn("%obs.mem.0.0 = i8 7", done.stdout)
+        self.assertIn("Target:\n  UB triggered: Out of bound mem op", done.stdout)
+
+    def test_an_input_they_agree_on_is_refused(self):
+        # Rounding parts company below zero only, so 4 halves the same way in
+        # both, whatever the manifest claims about it.
+        package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "4"}])
+        done = self.replay(package)
+        self.assertNotEqual(done.returncode, 0, done.stdout)
+        self.assertIn("the two runs agree", done.stdout)
+        self.assertIn("NOT a counterexample", done.stdout)
+
+    def test_an_input_the_src_has_ub_on_is_refused(self):
+        # Dividing by zero is UB, and a src with UB allows every target.
+        package = self.built.refutation(
+            DIVIDE, SHIFT2, [{"kind": "int", "value": "6"}, {"kind": "int", "value": "0"}]
+        )
+        done = self.replay(package)
+        self.assertNotEqual(done.returncode, 0, done.stdout)
+        self.assertIn("the src has UB on this input", done.stdout)
+
+    def test_a_src_that_is_free_to_choose_is_refused(self):
+        # A freeze takes an arbitrary value, so one run of this src is one of
+        # its behaviours and the tgt is allowed any of them.
+        chooses = HALVE.replace("  %1 = sdiv", "  %f = freeze i32 %0\n  %1 = sdiv")
+        package = self.built.refutation(chooses, SHIFT, [{"kind": "int", "value": "-3"}])
+        done = self.replay(package)
+        self.assertNotEqual(done.returncode, 0, done.stdout)
+        self.assertIn("free to choose (freeze)", done.stdout + done.stderr)
+
+    def test_a_program_that_is_not_what_its_name_says(self):
+        package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}])
+        digest = json.loads((package / "manifest.json").read_text())["pair"]["tgt"]
+        (package / "programs" / f"{digest}.ll").write_text(SHIFT.replace("ashr", "lshr"))
+        done = self.replay(package)
+        self.assertNotEqual(done.returncode, 0, done.stdout)
+        self.assertIn("is not the program its name claims", done.stdout + done.stderr)
 
 
 if __name__ == "__main__":

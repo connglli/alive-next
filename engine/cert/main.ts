@@ -1,11 +1,11 @@
-// Writing the certificate a verified session earned.
+// Writing the certificate a settled session earned.
 //
 //     bun run cert sessions/<id> [<directory>]
 //
-// The package is what someone else replays: the programs the proof refers to,
-// the manifest that says how they compose, and the checker that reruns it. It
-// is assembled from the session directory alone, so a run that has already
-// finished can still be certified.
+// The package is what someone else replays: the programs the verdict refers
+// to, the manifest that says how they compose or where they diverge, and the
+// checker that reruns it. It is assembled from the session directory alone, so
+// a run that has already finished can still be certified.
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot } from "../core/config.ts";

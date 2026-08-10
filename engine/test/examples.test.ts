@@ -4,9 +4,10 @@
 // any program refines any other, and is not meant to: what it tests is that
 // the scripts still describe moves the framework can make, which is where a
 // renamed slot or a changed refusal shows up, and it runs on a machine with no
-// solver on it.
+// solver on it. It leaves out the scenarios that end in a counterexample,
+// since a checker that proves everything cannot reach one.
 //
-// The second pass is the real one, and needs alive-tv installed.
+// The second pass is the real one, and needs alive-tv and llubi installed.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,7 +15,10 @@ import { join } from "node:path";
 import { loadConfig } from "../core/config.ts";
 import { AliveTv, type CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
+import type { RunResult } from "../core/drivers/llubi.ts";
+import { Llubi } from "../core/drivers/llubi.ts";
 import { Session } from "../core/session.ts";
+import type { Interpreter } from "../core/state/counterexamples.ts";
 import type { Checker } from "../core/state/steps.ts";
 import { timeoutsFrom } from "../core/state/steps.ts";
 import { scenarios } from "../examples/scenarios.ts";
@@ -29,10 +33,17 @@ const built = await llops
 
 const timeouts = timeoutsFrom(config.timeouts);
 const aliveTv = new AliveTv(toolchain.path("alive-tv"), timeouts.alive2Ms);
-const installed = await aliveTv
-  .version()
-  .then((line) => line.length > 0)
+const llubi = new Llubi(toolchain.path("llubi"));
+const installed = await Promise.all([aliveTv.version(), llubi.version()])
+  .then((lines) => lines.every((line) => line.length > 0))
   .catch(() => false);
+
+/** The interpreter of a session that will not report a counterexample. */
+class NoRun implements Interpreter {
+  async run(): Promise<RunResult> {
+    throw new Error("this session has no interpreter");
+  }
+}
 
 /** A checker that agrees with everything, so only the moves are under test. */
 class YesMan implements Checker {
@@ -59,8 +70,10 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+// A yes-man proves everything, so it can only drive the scenarios that end
+// verified; the counterexample ones need a refutation and an interpreter.
 describe.skipIf(!built)("scenarios, with a stand-in checker", () => {
-  for (const one of scenarios) {
+  for (const one of scenarios.filter((one) => (one.verdict ?? "verified") === "verified")) {
     test(`${one.name} makes every move`, async () => {
       const checker = new YesMan();
       const session = await Session.start({
@@ -69,6 +82,7 @@ describe.skipIf(!built)("scenarios, with a stand-in checker", () => {
         tgt: one.tgt,
         llops,
         checker,
+        interp: new NoRun(),
         timeouts,
       });
       await one.prove(session);
@@ -77,16 +91,16 @@ describe.skipIf(!built)("scenarios, with a stand-in checker", () => {
 
       // The tree is derived state, so a session picked back up has to be the
       // session that was put down.
-      const again = Session.resume({ dir, llops, checker, timeouts });
+      const again = Session.resume({ dir, llops, checker, interp: new NoRun(), timeouts });
       expect(shape(again)).toEqual(shape(session));
     });
   }
 });
 
-describe.skipIf(!built || !installed)("scenarios, checked by alive2", () => {
+describe.skipIf(!built || !installed)("scenarios, checked by the toolchain", () => {
   for (const one of scenarios) {
     test(
-      `${one.name} verifies`,
+      `${one.name} reaches ${one.verdict ?? "verified"}`,
       async () => {
         const session = await Session.start({
           dir,
@@ -94,10 +108,11 @@ describe.skipIf(!built || !installed)("scenarios, checked by alive2", () => {
           tgt: one.tgt,
           llops,
           checker: aliveTv,
+          interp: llubi,
           timeouts,
         });
         await one.prove(session);
-        expect(session.finish()).toBe("verified");
+        expect(session.finish()).toBe(one.verdict ?? "verified");
       },
       { timeout: timeouts.alive2Ms * 4 },
     );

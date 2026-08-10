@@ -8,16 +8,19 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { certify } from "../cert/main.ts";
-import { type Manifest, manifestOf, NotCertifiable } from "../cert/manifest.ts";
+import { type Counterexample, manifestOf, NotCertifiable, type Proof } from "../cert/manifest.ts";
 import { loadConfig } from "../core/config.ts";
 import type { CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
+import type { RunResult } from "../core/drivers/llubi.ts";
 import type { Scenario } from "../core/scenario.ts";
 import { Session } from "../core/session.ts";
+import type { Interpreter } from "../core/state/counterexamples.ts";
 import { derive } from "../core/state/goals.ts";
 import type { Checker } from "../core/state/steps.ts";
 import { parse } from "../core/state/trajectory.ts";
 import { cut } from "../examples/cut.ts";
+import { miscompile } from "../examples/miscompile.ts";
 import { strengthen } from "../examples/strengthen.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
@@ -40,10 +43,21 @@ class YesMan implements Checker {
   }
 }
 
+/** No scenario here reports a counterexample, so nothing runs a program. */
+const noRun: Interpreter = {
+  run() {
+    throw new Error("this session has no interpreter");
+  },
+};
+
+/** Counts the runs the stand-in interpreter was asked for, src then tgt. */
+let diverging = 0;
+
 let dir: string;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "alive-next-cert-"));
+  diverging = 0;
 });
 
 afterEach(() => {
@@ -58,6 +72,7 @@ async function prove(scenario: Scenario): Promise<string> {
     tgt: scenario.tgt,
     llops,
     checker: new YesMan(),
+    interp: noRun,
     config: loadConfig(),
   });
   await scenario.prove(session);
@@ -65,9 +80,9 @@ async function prove(scenario: Scenario): Promise<string> {
   return join(dir, "session");
 }
 
-function manifestFrom(session: string): Manifest {
+function manifestFrom(session: string): Proof {
   const out = certify(session, join(dir, "certificate"));
-  return JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) as Manifest;
+  return JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) as Proof;
 }
 
 describe.skipIf(!built)("the manifest", () => {
@@ -124,7 +139,7 @@ describe.skipIf(!built)("the manifest", () => {
   test("copies every program the proof names", async () => {
     const session = await prove(cut);
     const out = certify(session, join(dir, "certificate"));
-    const manifest = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) as Manifest;
+    const manifest = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) as Proof;
     for (const goal of Object.values(manifest.goals)) {
       for (const pair of [goal.start, goal.end]) {
         for (const side of ["src", "tgt"] as const) {
@@ -136,6 +151,52 @@ describe.skipIf(!built)("the manifest", () => {
     }
   });
 
+  test("a refuted run ships the pair it was asked about and the input", async () => {
+    // The interpreter is a stand-in: what is under test is what the manifest
+    // keeps, and whether the two runs really diverge is check.py's question.
+    const session = await Session.start({
+      dir: join(dir, "refuted"),
+      src: miscompile.src,
+      tgt: miscompile.tgt,
+      llops,
+      checker: new YesMan(),
+      interp: {
+        async run(): Promise<RunResult> {
+          diverging += 1;
+          return {
+            outcome: "returned",
+            observations: { "%obs.result": diverging === 1 ? "i32 -1" : "i32 -2" },
+            reason: "",
+            trace: "",
+            ms: 1,
+          };
+        },
+      },
+    });
+    const input = [{ kind: "int", value: "-3" } as const];
+    const reported = await session.reportCex(input);
+    expect(reported.kind).toBe("refuted");
+    expect(session.finish()).toBe("counterexample");
+
+    const manifest = JSON.parse(
+      readFileSync(join(certify(session.dir, join(dir, "cex")), "manifest.json"), "utf8"),
+    ) as Counterexample;
+    expect(manifest.verdict).toBe("counterexample");
+    expect(manifest.input).toEqual(input);
+    expect(manifest.divergence).toContain("i32 -1 in the src and i32 -2 in the tgt");
+    // The pair is the one the run started from, and both programs travel.
+    const tree = session.tree.goals.get("g1");
+    expect(manifest.pair).toEqual({
+      src: tree?.src.history[0] as string,
+      tgt: tree?.tgt.history[0] as string,
+    });
+    for (const side of ["src", "tgt"] as const) {
+      expect(
+        readFileSync(join(dir, "cex", "programs", `${manifest.pair[side]}.ll`), "utf8").length,
+      ).toBeGreaterThan(0);
+    }
+  });
+
   test("refuses a run that proved nothing", async () => {
     const session = await Session.start({
       dir: join(dir, "open"),
@@ -143,6 +204,7 @@ describe.skipIf(!built)("the manifest", () => {
       tgt: cut.tgt,
       llops,
       checker: new YesMan(),
+      interp: noRun,
     });
     session.finish();
     const entries = parse(readFileSync(join(session.dir, "trajectory.jsonl"), "utf8"));

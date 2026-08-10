@@ -13,6 +13,8 @@ export interface Scenario {
   name: string;
   /** What it demonstrates, in one line. */
   about: string;
+  /** The verdict the script claims to reach, "verified" unless it says so. */
+  verdict?: "verified" | "counterexample";
   src: string;
   tgt: string;
   /** The moves, in order. Throws with the reason when one is refused. */

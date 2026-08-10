@@ -13,6 +13,7 @@ import { certify } from "../cert/main.ts";
 import { loadConfig, repoRoot } from "./config.ts";
 import { AliveTv } from "./drivers/alive2.ts";
 import { Llops } from "./drivers/llops.ts";
+import { Llubi } from "./drivers/llubi.ts";
 import type { Scenario } from "./scenario.ts";
 import { Session } from "./session.ts";
 import { type Timeouts, timeoutsFrom } from "./state/steps.ts";
@@ -24,7 +25,7 @@ export interface ProveOptions {
   timeouts?: Timeouts;
 }
 
-/** Run one scenario to a verdict. Answers whether it was verified. */
+/** Run one scenario to a verdict. Answers whether it reached the one it claims. */
 export async function prove(one: Scenario, options: ProveOptions = {}): Promise<boolean> {
   const config = loadConfig();
   const timeouts = options.timeouts ?? timeoutsFrom(config.timeouts);
@@ -32,6 +33,7 @@ export async function prove(one: Scenario, options: ProveOptions = {}): Promise<
   const built = await toolchain.insist();
   const llops = new Llops(toolchain.path("llops"));
   const checker = new AliveTv(toolchain.path("alive-tv"), timeouts.alive2Ms);
+  const interp = new Llubi(toolchain.path("llubi"));
 
   const dir = options.dir ?? join(repoRoot(), "sessions", `${one.name}-${stamp()}`);
   console.log(`\n${one.name}: ${one.about}\n  ${dir}`);
@@ -41,6 +43,7 @@ export async function prove(one: Scenario, options: ProveOptions = {}): Promise<
     tgt: one.tgt,
     llops,
     checker,
+    interp,
     timeouts,
     config,
     toolchain: built,
@@ -57,9 +60,10 @@ export async function prove(one: Scenario, options: ProveOptions = {}): Promise<
     .map((goal) => `${goal.id} ${goal.status}`)
     .join(", ");
   console.log(`  ${outcome} in ${Date.now() - started}ms: ${goals}`);
-  // A verdict is delivered as a package, so a run that earns one writes it.
-  if (outcome === "verified") console.log(`  ${certify(dir, join(dir, "certificate"))}`);
-  return outcome === "verified";
+  // Both verdicts are delivered as a package, so a run that earns one writes
+  // it; only "unknown" has nothing to hand over.
+  if (outcome !== "unknown") console.log(`  ${certify(dir, join(dir, "certificate"))}`);
+  return outcome === (one.verdict ?? "verified");
 }
 
 /** A directory name that sorts by when it was made. */

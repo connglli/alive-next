@@ -23,7 +23,8 @@ alive-next/
       session.ts        a session directory and the moves that fill it
       scenario.ts       a scripted proof: a pair and the moves that prove it
       prove.ts          run one scenario to a verdict
-      state/            store, goal tree, transactions, trajectory
+      state/            store, goal tree, transactions, counterexamples,
+                        trajectory
       drivers/          alive-tv, llubi, llops wrappers
     agent/              the Pi agent: model, tools, loop, budget (phase 6)
       model.ts          the configured model, resolved for Pi
@@ -34,7 +35,7 @@ alive-next/
       main.ts           certify a finished session
       manifest.ts       the manifest: what the proof was, pruned
     examples/           small LHS/RHS pairs, each with the script that
-                        proves it
+                        settles it
     test/               bun test
   scripts/              depman.sh, visualize.py, check.py, build helpers
   rules/                pre-proved rule library (empty in v1)
@@ -92,15 +93,15 @@ Event kinds:
 
 ## Certificate package and check.py
 
-A verified run writes one, into `<session>/certificate`: `programs/` named by content hash, `manifest.json`, and a copy of `scripts/check.py`. `make cert SESSION=sessions/<id>` builds it from a session that has already finished, and `make examples` writes one for each example it proves. `engine/cert/` assembles it from the trajectory: the goal tree says which pairs survived, the log says what certified each move, and what the run abandoned does not appear.
+A settled run writes one, into `<session>/certificate`: `programs/` named by content hash, `manifest.json`, and a copy of `scripts/check.py`. `make cert SESSION=sessions/<id>` builds it from a session that has already finished, and `make examples` writes one for each example it settles. `engine/cert/` assembles it from the trajectory: the goal tree says which pairs survived, the log says what certified each move, and what the run abandoned does not appear.
 
-The manifest is a version, the verdict, the root goal, the toolchain `run_start` recorded, and one entry per goal:
+A verified run's manifest is a version, the verdict, the root goal, the toolchain `run_start` recorded, and one entry per goal:
 
 - `start` and `end`, the pairs the goal began and ended with, as hashes.
 - `steps`, in the order they happened. A `checked` step names the side it moved, the hash it moved from and to, and the alive-tv options the run passed beyond its timeout. A `strengthen` step names the pair on each end and the outer step that stands behind it.
 - `discharge`, either `checked` or a `split` naming the outlined function and the two children.
 
-check.py needs Python, alive-tv, and llops for `inline` and `canon`. It takes both from the manifest, which records where the run found them and which LLVM each carried, falling back to the name on PATH and saying which it used and whether that is the LLVM the run had. It reads a program only from a file whose name is its hash, and verifies:
+check.py needs Python, alive-tv for a proof, llubi for a counterexample, and llops for the subcommands each needs. It takes their paths from the manifest, which records where the run found them and which LLVM each carried, falling back to the name on PATH and saying which it used and whether that is the LLVM the run had. It reads a program only from a file whose name is its hash. For a proof it verifies:
 
 1. Connectivity: each step starts at the current head, and the steps add up to `end`.
 2. Steps: rerun alive-tv in the direction the side implies, a src step forwards and a tgt step backwards. The result must be correct.
@@ -108,9 +109,9 @@ check.py needs Python, alive-tv, and llops for `inline` and `canon`. It takes bo
 4. Cuts: `llops inline` the callee's starting program into the outer's, `llops canon` it, and compare bytes against the pair the parent ended with. The declaration of the outlined function in the outer's final programs must match its definition in the callee's, parameter attributes included, which is what a `strengthen` step rests on along with the outer's chain being checked like any other.
 5. Composition: the root is verified when every goal reached under it passed.
 
-`make test-scripts` builds packages and bends them: a program that is not what its name says, a chain that does not start where it says, a step recorded on the wrong side, a cut whose halves do not inline back, a cut whose halves disagree about the callee, an attribute on a goal that is not a callee, and a step of a kind the checker does not know.
+A refuted run's manifest is a version, the verdict, the root goal, the toolchain, the pair the run was asked about, the input, and what the run saw diverge. The pair is the root's first, not the one the run reached: a step may overshoot, so only the original pair is the translation. check.py wraps each side in a `llops harness` around that input, runs both under llubi, and decides for itself. It refuses a src that is free to choose what it does, `undef` or `freeze` in a straightline program, since one run of such a src is one behaviour among several and the tgt is allowed any of them. Otherwise three rules settle it. A src with UB on the input allows every target, so it settles nothing. A tgt with UB where the src returned is a refutation, and so is any observation the two disagree on. Poison needs no rule of its own: the harness stores what the entry returns and storing poison is UB, so a poison result arrives as UB on the side that produced it. It reports what it ran in the shape alive2 reports a counterexample in: the error, the input one parameter per line, and what each side observed or the UB it hit. Which error it is comes from where the tgt stopped. The harness stores what the entry returned so it can be observed, and that store is the only UB the harness itself can have, so stopping there is a poison result, `Target is more poisonous than source`, and stopping anywhere else is UB the tgt has of its own, `Source is more defined than target`.
 
-The counterexample package is the symmetric llubi replay, also driven by check.py with the recorded input.
+`make test-scripts` builds packages and bends them: a program that is not what its name says, a chain that does not start where it says, a step recorded on the wrong side, a cut whose halves do not inline back, a cut whose halves disagree about the callee, an attribute on a goal that is not a callee, a step of a kind the checker does not know, and, for a counterexample, an input the two programs agree on and one the src has UB on.
 
 ## visualize.py
 
@@ -192,7 +193,7 @@ The LLVM build is the expensive one, roughly an hour and tens of gigabytes. Ever
 - Agent: bun test for state, drivers (against stub binaries), and tool semantics; goal tree derivation replayed from recorded trajectories.
 - Scripts: standard library unittest, run by `make test-scripts`.
 - check.py: `scripts/check_test.py`, run by `make test-scripts` with the visualizer's. Golden packages that must pass and bent ones that must fail; the second half is the one that matters.
-- examples: `engine/examples/` holds a pair and the script that proves it, one file per scenario. The example list lives there with them, and `engine/core/prove.ts` runs one; `bun test` runs each twice at `engine/test/examples.test.ts`, once against a checker that agrees with everything, which needs no solver installed and tests only which moves the framework makes, and once against alive-tv. `make examples` runs them into `sessions/`, which is what the visualizer and the certificate checker read.
+- examples: `engine/examples/` holds a pair and the script that settles it, one file per scenario, with the verdict it claims when that is not `verified`. The example list lives there with them, and `engine/core/prove.ts` runs one; `bun test` runs each at `engine/test/examples.test.ts` against the toolchain, and each that ends verified a second time against a checker that agrees with everything, which needs no solver installed and tests only which moves the framework makes. `make examples` runs them into `sessions/`, which is what the visualizer and the certificate checker read.
 
 ## Implementation order
 

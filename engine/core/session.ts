@@ -17,8 +17,16 @@
 // end-to-end scenarios run with nothing in front of them.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { AnalyzeKind, AnalyzeResult, EditOp, Llops, LlopsResult } from "./drivers/llops.ts";
+import type {
+  AnalyzeKind,
+  AnalyzeResult,
+  EditOp,
+  HarnessArg,
+  Llops,
+  LlopsResult,
+} from "./drivers/llops.ts";
 import type { Ref } from "./refs.ts";
+import { Counterexamples, type Interpreter, type ReportResult } from "./state/counterexamples.ts";
 import { derive, type Goal, head, type Side, type Tree, verdict } from "./state/goals.ts";
 import { type SplitResult, Splits } from "./state/splits.ts";
 import {
@@ -39,6 +47,8 @@ export interface SessionOptions {
   dir: string;
   llops: Llops;
   checker: Checker;
+  /** llubi, which is what certifies a counterexample. */
+  interp: Interpreter;
   timeouts?: Timeouts;
 }
 
@@ -62,6 +72,7 @@ export class Session {
   private readonly splits: Splits;
   private readonly strengthening: Strengthen;
   private readonly editing: Transactions;
+  private readonly counterexamples: Counterexamples;
   private entries: Entry[] = [];
   private derived?: Tree;
   private calls = 0;
@@ -78,6 +89,7 @@ export class Session {
     this.splits = new Splits(this.store, options.llops);
     this.strengthening = new Strengthen(this.store, options.llops, this.steps);
     this.editing = new Transactions(this.store, options.llops);
+    this.counterexamples = new Counterexamples(this.store, options.llops, options.interp);
   }
 
   /** Begin a run on a pair, in a directory that has none. */
@@ -183,6 +195,15 @@ export class Session {
     return this.act("strengthen", { gid, facts }, (tree) =>
       this.strengthening.strengthen(tree, gid, facts),
     );
+  }
+
+  /**
+   * Offer a whole-program input as a counterexample. The framework runs the
+   * pair the run was asked about under the interpreter, and a divergence it
+   * sees for itself is what refutes the root.
+   */
+  reportCex(input: HarnessArg[]): Promise<ReportResult> {
+    return this.act("report_cex", { input }, (tree) => this.counterexamples.report(tree, input));
   }
 
   /** An agent turn, recorded verbatim so the log holds what the model saw. */
