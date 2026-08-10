@@ -24,7 +24,7 @@ LLOPS_BUILD := $(TOOLCHAIN)/llops/build
 
 .PHONY: help install-deps deps-status deps-llvm deps-alive2 deps-llubi deps-bun \
         deps-js deps-uv deps-py deps-dev llops test-llops engine test-engine test examples \
-        cert visualize test-scripts check clean
+        cert visualize test-scripts check clean agent
 
 help:
 	@echo "dependencies"
@@ -43,6 +43,7 @@ help:
 	@echo "  examples       prove the example scenarios, into sessions/"
 	@echo "                 (SCENARIO=<name> runs one of them)"
 	@echo "  visualize      render SESSION=sessions/<id> as one HTML page"
+	@echo "  agent          prove SRC=a.ll TGT=b.ll with the configured model"
 	@echo "  cert           write the certificate SESSION=sessions/<id> earned"
 	@echo "  check          run every hook over every file"
 	@echo ""
@@ -93,6 +94,11 @@ test-engine: deps-js
 # what the visualizer and the certificate checker read.
 examples: deps-js
 	cd engine && bun run examples $(SCENARIO)
+
+# One pair, proved by the model the configuration names.
+agent: deps-js
+	@test -n "$(SRC)" -a -n "$(TGT)" || { echo "usage: make agent SRC=a.ll TGT=b.ll"; exit 2; }
+	cd engine && bun run agent $(abspath $(SRC)) $(abspath $(TGT))
 
 # The certificate a verified session earned, written into the session.
 cert: deps-js

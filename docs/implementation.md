@@ -26,11 +26,13 @@ alive-next/
       state/            store, goal tree, transactions, counterexamples,
                         trajectory
       drivers/          alive-tv, llubi, llops wrappers
-    agent/              the Pi agent: model, tools, loop, budget (phase 6)
+    agent/              the Pi agent: the model in front of the engine
       model.ts          the configured model, resolved for Pi
-      agent.ts          the Pi agent: tools, loop, budget
+      prompt.ts         the rules of the game, naming no tool
+      budget.ts         what a run may spend before it stops
+      agent.ts          the Pi session: tools, prompt, stop, recording
+      main.ts           prove one pair with the configured model
       tools/            one file per tool from design.md
-      test/             bun test
     cert/               certificate package assembly
       main.ts           certify a finished session
       manifest.ts       the manifest: what the proof was, pruned
@@ -96,6 +98,18 @@ Event kinds:
 - `tool_call` / `tool_result`: name, args, full result, duration; programs referenced by store hash rather than repeated, whether the move created one or only read it.
 - `auto`: framework-initiated actions (eager cross-checks, root auto-replays) with outcomes.
 - `verdict`: final outcome plus certificate path if one was produced.
+
+## The agent
+
+`engine/agent/` is the one part of the engine that drives a model, and nothing verification-critical is in it: a bug here spends tokens and produces no proof, and cannot produce a wrong one. `make agent SRC=a.ll TGT=b.ll` proves one pair with the configured model, writing the session directory an example writes.
+
+The tool surface is stated rather than discovered. Pi's defaults are dropped, the allowlist names every tool that exists, ours arrive as custom tools, and the resource loader is told to read no extensions, skills, prompts, themes or context files from the machine, so what a run can do is what `agent.ts` says and not what is installed beside it. Tools run sequentially, because they mutate one goal tree. The shell and the file tools are built for the run's scratch directory.
+
+The loop stops on a verdict or on the budget. A tool that settles the root sets Pi's `terminate` hint, and the same test runs again after the turn, since Pi honours the hint only when every result in a batch carries it. The budget is steps and seconds from the configuration, and running out is not a failure: "unknown" is one of the three outputs.
+
+`make agent` prints the run as it happens: the model's text as it streams, each tool call with its arguments, and the first line of each answer. Watching belongs to the entry point rather than to `agent.ts`, which stays quiet so a caller with a screen of its own can draw the same events differently.
+
+What the model said reaches `trajectory.jsonl` as `message` entries and compaction as an `auto` entry. Its tool calls are already there, since every tool of ours writes itself through the session and Pi's own arrive inside the assistant message.
 
 ## Certificate package and check.py
 

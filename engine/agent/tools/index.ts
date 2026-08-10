@@ -16,6 +16,7 @@ import { beginTool } from "./begin.ts";
 import { checkTool } from "./check.ts";
 import { commitTool } from "./commit.ts";
 import { editTool } from "./edit.ts";
+import { giveUpTool } from "./give-up.ts";
 import { reportCexTool } from "./report-cex.ts";
 import { revertTool } from "./revert.ts";
 import { showTool } from "./show.ts";
@@ -24,8 +25,16 @@ import { statusTool } from "./status.ts";
 import { strengthenTool } from "./strengthen.ts";
 import { unsplitTool } from "./unsplit.ts";
 
+/**
+ * Why a run is over, when it is not the goal tree that says so. The agent
+ * loop reads this after every turn, and `give_up` is what writes it.
+ */
+export interface Stop {
+  gaveUp?: string;
+}
+
 /** Ours, in the order they are worth reading: look, decide, edit, cut, settle. */
-export function tools(session: Session): ToolDefinition[] {
+export function tools(session: Session, stop: Stop = {}): ToolDefinition[] {
   return [
     statusTool(session),
     showTool(session),
@@ -40,6 +49,7 @@ export function tools(session: Session): ToolDefinition[] {
     unsplitTool(session),
     strengthenTool(session),
     reportCexTool(session),
+    giveUpTool(session, stop),
   ];
 }
 

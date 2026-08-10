@@ -6,7 +6,13 @@
 // credential resolution. An endpoint we are given instead is described here as
 // an OpenAI-compatible provider, which is how a local server or a proxy is
 // reached. The rest of the agent sees the same pair either way.
-import { type Api, createProvider, type Model, type Models } from "@earendil-works/pi-ai";
+import {
+  type Api,
+  createProvider,
+  type Model,
+  type Models,
+  type Provider,
+} from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { apiKeyFor, type ModelConfig } from "../core/config.ts";
@@ -14,6 +20,32 @@ import { apiKeyFor, type ModelConfig } from "../core/config.ts";
 export interface ResolvedModel {
   models: Models;
   model: Model<Api>;
+}
+
+/**
+ * The provider for an endpoint the configuration describes, and nothing for a
+ * provider Pi already knows. The agent registers this one with Pi's own model
+ * runtime, which is how a local server becomes something it can stream from.
+ */
+export function describedProvider(config: ModelConfig): Provider | undefined {
+  if (!config.baseUrl) return undefined;
+  const baseUrl = config.baseUrl;
+  return createProvider({
+    id: config.provider,
+    name: config.provider,
+    baseUrl,
+    auth: {
+      apiKey: {
+        name: config.provider,
+        // A local server ignores the key, but the OpenAI-compatible client
+        // refuses to send a request without one, so an endpoint with no key
+        // gets a placeholder rather than nothing.
+        resolve: async () => ({ auth: { apiKey: apiKeyFor(config) ?? "unused" } }),
+      },
+    },
+    models: [describe(config, baseUrl)],
+    api: openAICompletionsApi(),
+  });
 }
 
 function describe(config: ModelConfig, baseUrl: string): Model<"openai-completions"> {
@@ -56,24 +88,7 @@ export function resolveModel(config: ModelConfig): ResolvedModel {
   const models = builtinModels();
   if (!config.baseUrl) return take(models, config);
 
-  const baseUrl = config.baseUrl;
-  models.setProvider(
-    createProvider({
-      id: config.provider,
-      name: config.provider,
-      baseUrl,
-      auth: {
-        apiKey: {
-          name: config.provider,
-          // A local server ignores the key, but the OpenAI-compatible client
-          // refuses to send a request without one, so an endpoint with no key
-          // gets a placeholder rather than nothing.
-          resolve: async () => ({ auth: { apiKey: apiKeyFor(config) ?? "unused" } }),
-        },
-      },
-      models: [describe(config, baseUrl)],
-      api: openAICompletionsApi(),
-    }),
-  );
+  const provider = describedProvider(config);
+  if (provider) models.setProvider(provider);
   return take(models, config);
 }

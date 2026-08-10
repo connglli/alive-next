@@ -201,6 +201,14 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(await call("revert", { gid: "g1", side: "src", to: "p2" })).toStartWith("FAILURE");
   });
 
+  test("give_up says the run is over and carries no proof with it", async () => {
+    const said = await call("give_up", { reason: "nothing left to cut" });
+    expect(said).toStartWith("SUCCESS");
+    expect(said).toContain("the run stops here: nothing left to cut");
+    // It settles nothing: the verdict still comes from the tree.
+    expect(session.verdict).toBe("unknown");
+  });
+
   test("the allowlist names Pi's tools and ours, and nothing else", async () => {
     const names = toolNames(session);
     expect(names).toContain("bash");

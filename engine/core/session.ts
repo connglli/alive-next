@@ -365,9 +365,28 @@ export class Session {
     return this.act("report_cex", { input }, (tree) => this.counterexamples.report(tree, input));
   }
 
+  /**
+   * The caller saying it has nothing left to try. It changes no goal, so the
+   * verdict stays whatever the tree says, which is "unknown"; what it adds is
+   * a line saying the run ended on purpose rather than on a budget or a crash.
+   */
+  giveUp(reason: string): Promise<{ reason: string }> {
+    return this.act("give_up", { reason }, async () => ({ reason }));
+  }
+
   /** An agent turn, recorded verbatim so the log holds what the model saw. */
   message(message: unknown): void {
     this.append({ kind: "message", message });
+  }
+
+  /**
+   * Something the framework did that no tool call names: a budget spent, a
+   * compaction, a check it ran on its own. It changes no goal, so it carries
+   * no effects, but a trajectory that leaves it out does not say what
+   * happened.
+   */
+  note(action: string, outcome: unknown): void {
+    this.append({ kind: "auto", action, outcome });
   }
 
   /** Close the run with the verdict its tree has reached. */

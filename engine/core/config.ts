@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { type ParseError, parse, printParseErrorCode } from "jsonc-parser";
+import type { Limits } from "../agent/budget.ts";
 
 /**
  * The model a run talks to. Two cases, told apart by `baseUrl`: without it the
@@ -49,6 +50,8 @@ export interface TimeoutConfig {
 export interface Config {
   model: ModelConfig;
   timeouts: TimeoutConfig;
+  /** What a run may spend before it stops with "unknown". */
+  budget: Limits;
   /**
    * Where LLVM, alive2, llubi and llops were built, absolute. One directory
    * rather than a path per binary, because they are not four choices: they
@@ -144,6 +147,7 @@ export function loadConfig(path?: string): Config {
       model: readModel(raw, candidate),
       toolchain: readToolchain(raw, candidate),
       timeouts: readTimeouts(raw, candidate),
+      budget: readBudget(raw, candidate),
       source: candidate,
     };
   }
@@ -197,6 +201,29 @@ function readTimeouts(raw: unknown, source: string): TimeoutConfig {
     timeouts[name] = value;
   }
   return timeouts;
+}
+
+const BUDGET_KEYS: Record<string, keyof Limits> = {
+  max_steps: "maxSteps",
+  max_seconds: "maxSeconds",
+};
+
+function readBudget(raw: unknown, source: string): Limits {
+  const section = (raw as Record<string, unknown> | undefined)?.budget;
+  if (section === undefined) return {};
+  if (typeof section !== "object" || section === null) {
+    throw new Error(`${source}: budget must be an object`);
+  }
+  const limits: Limits = {};
+  for (const [key, value] of Object.entries(section as Record<string, unknown>)) {
+    const name = BUDGET_KEYS[key];
+    if (!name) throw new Error(`${source}: budget.${key} is not a budget`);
+    if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+      throw new Error(`${source}: budget.${key} must be a positive whole number`);
+    }
+    limits[name] = value;
+  }
+  return limits;
 }
 
 /**
