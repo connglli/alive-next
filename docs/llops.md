@@ -161,7 +161,7 @@ Wraps a function in a `main` that llubi can run, which is what replaying a count
 
 Request `{ "module": ..., "entry": "f", "args": [ ... ] }`, one argument per parameter of the entry function, in order:
 
-* `{ "kind": "int", "value": "42" }` for an integer parameter of any width, the value as text so that a width beyond 64 bits survives JSON.
+* `{ "kind": "int", "value": "42" }` for an integer parameter of any width, the value as text so that a width beyond 64 bits survives JSON. A leading `-` is read as a sign, and a value the parameter's width cannot hold is refused rather than truncated.
 * `{ "kind": "bytes", "bytes": [1, 2], "align": 4 }` for a pointer, which is allocated and filled with those bytes before the call.
 * `{ "kind": "null" }` for a null pointer.
 

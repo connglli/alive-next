@@ -1043,6 +1043,30 @@ entry:
         )
         self.assertIn("call i64 @f(i64 9007199254740993)", r["module"])
 
+    def test_a_negative_integer(self):
+        # A counterexample is as often negative as not, and its own notation is
+        # what a caller has in hand.
+        module = """define i32 @f(i32 %x) {
+entry:
+  ret i32 %x
+}
+"""
+        r = self.good(self.harness(module=module, args=[{"kind": "int", "value": "-3"}]))
+        self.assertIn("call i32 @f(i32 -3)", r["module"])
+
+    def test_an_integer_the_parameter_cannot_hold(self):
+        module = """define i32 @f(i32 %x) {
+entry:
+  ret i32 %x
+}
+"""
+        self.bad(
+            self.harness(module=module, args=[{"kind": "int", "value": "-2147483649"}]), "invalid"
+        )
+        self.bad(
+            self.harness(module=module, args=[{"kind": "int", "value": "4294967296"}]), "invalid"
+        )
+
     def test_a_void_function_has_no_result_to_observe(self):
         module = """define void @f(ptr %p) {
 entry:

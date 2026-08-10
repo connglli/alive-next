@@ -7,6 +7,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,32 @@ bool readBytes(const llvm::json::Array &bytes, std::vector<uint8_t> &out, llvm::
   return true;
 }
 
+// Read an integer argument into the parameter's width.
+//
+// A counterexample is as often negative as not, and LLVM's own parser reads a
+// magnitude only, so the sign is handled here. A value the width cannot hold
+// is refused rather than truncated, because a truncated value is not the one
+// the caller asked about.
+bool readInteger(llvm::StringRef text, unsigned width, llvm::APInt &out, std::string &why) {
+  bool negative = text.consume_front("-");
+  llvm::APInt magnitude(width, 0);
+  if (text.getAsInteger(0, magnitude)) {
+    why = "is not an integer";
+    return false;
+  }
+  // The parse widens rather than truncates, and a sign needs one bit more than
+  // the magnitude it applies to.
+  llvm::APInt value = magnitude.zext(std::max(magnitude.getBitWidth(), width) + 1);
+  if (negative)
+    value.negate();
+  if (!value.isIntN(width) && !value.isSignedIntN(width)) {
+    why = "does not fit in i" + std::to_string(width);
+    return false;
+  }
+  out = value.trunc(width);
+  return true;
+}
+
 // Build the value for one parameter, allocating and filling memory when the
 // parameter is a pointer.
 bool buildArgument(llvm::IRBuilder<> &builder, llvm::Type *paramTy, const llvm::json::Object &spec,
@@ -57,10 +84,11 @@ bool buildArgument(llvm::IRBuilder<> &builder, llvm::Type *paramTy, const llvm::
       return false;
     }
     llvm::APInt parsed(paramTy->getIntegerBitWidth(), 0);
+    std::string why;
     // The value arrives as text so that a width beyond 64 bits survives JSON.
-    if (llvm::StringRef(*text).getAsInteger(0, parsed)) {
-      err = errResponse("invalid", "argument " + std::to_string(index) + ": '" + text->str() +
-                                       "' is not an integer");
+    if (!readInteger(*text, paramTy->getIntegerBitWidth(), parsed, why)) {
+      err = errResponse("invalid",
+                        "argument " + std::to_string(index) + ": '" + text->str() + "' " + why);
       return false;
     }
     out.value = llvm::ConstantInt::get(paramTy->getContext(), parsed);
