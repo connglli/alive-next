@@ -13,8 +13,8 @@
 #
 # TOOLCHAIN is where that build lives, and it defaults to deps/ inside the
 # repository. It is a knob because one toolchain can serve several checkouts
-# and building another costs an hour. Its layout is the contract the agent
-# reads as well, so it is stated here and in docs/implementation.md and
+# and building another costs an hour. Its layout is the contract the
+# engine reads as well, so it is stated here and in docs/implementation.md and
 # nowhere else:
 #
 #   $TOOLCHAIN/llvm-project/build/bin/llvm-config
@@ -53,7 +53,7 @@ LLVM_VERSION=${LLVM_PIN#llvmorg-}
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Which toolchain this is about: the environment, then config.jsonc, then
-# deps/. The agent resolves it the same way, and it asks this script rather
+# deps/. The engine resolves it the same way, and it asks this script rather
 # than reading it twice, because a build and a run that disagree about where
 # the binaries are is the one mistake this file cannot catch.
 configured_toolchain() {
@@ -74,7 +74,7 @@ LLUBI_SRC="$TOOLCHAIN/llubi-legacy"
 LLUBI_BUILD="$LLUBI_SRC/build"
 LLOPS_BUILD="$TOOLCHAIN/llops/build"
 STAMP="$TOOLCHAIN/toolchain.json"
-AGENT="$ROOT/agent"
+ENGINE="$ROOT/engine"
 VENV="$ROOT/.venv"
 
 # --- Output ------------------------------------------------------------------
@@ -127,7 +127,7 @@ checkout() {
   git -C "$dir" checkout --quiet "$ref"
 }
 
-# What a source tree is actually at, for the stamp the agent records.
+# What a source tree is actually at, for the stamp the engine records.
 revision() { git -C "$1" rev-parse HEAD 2>/dev/null || echo unknown; }
 
 builders() {
@@ -255,17 +255,17 @@ install_bun() {
   bash -c "$(curl -fsSL https://bun.sh/install)"
 }
 
-# The JS packages belong to the agent, which is the only thing written in it,
-# so the manifest and the tree both live in agent/.
+# The JS packages belong to the engine, which is the only thing written in
+# it, so the manifest and the tree both live in engine/.
 have_js() {
-  [ -d "$AGENT/node_modules" ] || return 1
-  echo "$AGENT/node_modules"
+  [ -d "$ENGINE/node_modules" ] || return 1
+  echo "$ENGINE/node_modules"
 }
 
 install_js() {
   ensure bun 0
-  say "installing the agent's JS packages"
-  (cd "$AGENT" && "$(find_tool bun)" install)
+  say "installing the engine's JS packages"
+  (cd "$ENGINE" && "$(find_tool bun)" install)
 }
 
 # --- uv and the Python environment -------------------------------------------
@@ -364,7 +364,7 @@ status() {
   [ "$missing" = 0 ] || printf "run 'make install-deps' to build what is missing\n"
 }
 
-# What was built and from what, written where the agent looks for it. A run
+# What was built and from what, written where the engine looks for it. A run
 # records this, so a trajectory says which toolchain produced it, and a
 # toolchain nobody can name is one nobody can reproduce.
 stamp() {

@@ -28,11 +28,11 @@ Isolation is hygiene rather than the soundness boundary. The session `cwd` is th
 
 ## The session
 
-Everything the framework can do to a proof goes through one object, `Session` in `src/session.ts`: it owns the session directory, appends the `tool_call` and `tool_result` lines, and rebuilds the goal tree by replaying the log after every move.
+Everything the framework can do to a proof goes through one object, `Session` in `engine/core/session.ts`: it owns the session directory, appends the `tool_call` and `tool_result` lines, and rebuilds the goal tree by replaying the log after every move.
 
 The agent does not appear in it: a scripted scenario and a model driving Pi's loop make the same moves through the same door, which is how [implementation.md](./implementation.md)'s end-to-end pairs are proved with no model in front of the framework.
 
-Pi's own session object is a different thing, held by `src/agent.ts`, which is where the tools and the loop are wired up. One agent drives one `Session`.
+Pi's own session object is a different thing, held by `engine/agent/agent.ts`, which is where the tools and the loop are wired up. One agent drives one `Session`.
 
 ## The wrapper
 

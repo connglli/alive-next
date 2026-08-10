@@ -17,15 +17,23 @@ alive-next/
   llops/                C++, CMake; builds the llops binary
     src/
     test/               llops_test.py, driving the binary over JSON
-  agent/                TypeScript on Pi; bun
+  engine/               the interactive framework; TypeScript on bun
     package.json        JS packages; bun.lock pins them
-    src/session.ts      a session directory and the moves that fill it
-    src/agent.ts        the Pi agent: tools, loop, budget
-    src/tools/          one file per tool from design.md
-    src/state/          store, goal tree, transactions, trajectory
-    src/drivers/        alive-tv, llubi, llops wrappers
-    src/cert/           certificate package assembly
-    e2e/                small LHS/RHS pairs, each with the script that
+    core/               the framework: session, state, drivers, toolchain
+      session.ts        a session directory and the moves that fill it
+      scenario.ts       a scripted proof: a pair and the moves that prove it
+      prove.ts          run one scenario to a verdict
+      state/            store, goal tree, transactions, trajectory
+      drivers/          alive-tv, llubi, llops wrappers
+    agent/              the Pi agent: model, tools, loop, budget (phase 6)
+      model.ts          the configured model, resolved for Pi
+      agent.ts          the Pi agent: tools, loop, budget
+      tools/            one file per tool from design.md
+      test/             bun test
+    cert/               certificate package assembly
+      main.ts           certify a finished session
+      manifest.ts       the manifest: what the proof was, pruned
+    examples/           small LHS/RHS pairs, each with the script that
                         proves it
     test/               bun test
   scripts/              depman.sh, visualize.py, check.py, build helpers
@@ -84,7 +92,7 @@ Event kinds:
 
 ## Certificate package and check.py
 
-A verified run writes one, into `<session>/certificate`: `programs/` named by content hash, `manifest.json`, and a copy of `scripts/check.py`. `make cert SESSION=sessions/<id>` builds it from a session that has already finished, and `make e2e` writes one for each scenario it proves. `agent/src/cert/` assembles it from the trajectory: the goal tree says which pairs survived, the log says what certified each move, and what the run abandoned does not appear.
+A verified run writes one, into `<session>/certificate`: `programs/` named by content hash, `manifest.json`, and a copy of `scripts/check.py`. `make cert SESSION=sessions/<id>` builds it from a session that has already finished, and `make examples` writes one for each example it proves. `engine/cert/` assembles it from the trajectory: the goal tree says which pairs survived, the log says what certified each move, and what the run abandoned does not appear.
 
 The manifest is a version, the verdict, the root goal, the toolchain `run_start` recorded, and one entry per goal:
 
@@ -112,7 +120,7 @@ The timeline runs down the side, one line per move, with a tool call and its res
 
 The panel beside it draws the derivation at the selected event. A node is a pair a goal held, an edge is the move that led from one pair to the next, and a cut branches into its two halves. The edge carries the move's name and the side it touched, and clicking it goes to the event that made it; clicking the node it points at selects that pair without moving the timeline. A node is coloured by where its goal stands while that pair is the one it holds, green for proved, red for open, amber for cut and doubled for refuted, and faded once the run has moved past it. A caret folds a subtree and says how many pairs it hides. Selecting a pair shows its two programs side by side, under a line naming the move that produced it: the goal, the tool, the side it touched, and the pair it came from. The side that moved shows what it was, an arrow, and what it became; the side that did not says so and is shown once. The event as it was recorded sits under them, alive2 output included.
 
-The fold it replays with is the one `agent/src/state/goals.ts` applies, written a second time. A session that records a verdict is checked against the verdict the fold reaches, and a mismatch is refused rather than drawn; an effect the fold cannot apply stops it, and the page says where. `python3 scripts/visualize_test.py` covers both, over sessions it builds.
+The fold it replays with is the one `engine/core/state/goals.ts` applies, written a second time. A session that records a verdict is checked against the verdict the fold reaches, and a mismatch is refused rather than drawn; an effect the fold cannot apply stops it, and the page says where. `python3 scripts/visualize_test.py` covers both, over sessions it builds.
 
 ## Configuration
 
@@ -130,7 +138,7 @@ This split is purely ergonomic, never a correctness question: `run_start` snapsh
 The `Makefile` is the entry point and owns nothing else: it names targets and delegates. One component, one pair of targets, so `make llops` builds llops and `make test-llops` tests it, and a component added later brings its own pair. `make test` runs every suite, `make check` runs every hook over every file, and `make help` lists the lot.
 
 - `llops/`: CMake with `find_package(LLVM)`. `make llops` configures into `<toolchain>/llops/build` against the toolchain's LLVM and builds there, so which LLVM a binary belongs to is visible from where it sits.
-- `agent/`: bun throughout: `bun install`, `bun run`, `bun test`. Bun runs TypeScript directly, so there is no build step and `make agent` is the typecheck, `tsc --noEmit`.
+- `engine/`: bun throughout: `bun install`, `bun run`, `bun test`. Bun runs TypeScript directly, so there is no build step and `make engine` is the typecheck, `tsc --noEmit`.
 - `scripts/`: plain Python, standard library only at runtime. The environment uv builds is for the dev tools, not for these.
 
 `TOOLCHAIN` is the one location knob: `JOBS=` sets build parallelism and `BUILD_TYPE=Debug` switches the llops build, and that is the whole list. `make clean` removes the llops build tree. No target removes a toolchain.
@@ -147,7 +155,7 @@ The hooks are part of the dev environment, so `make deps-dev` provisions both: t
 
 llops, alive-tv and llubi are built from source, from the pins in `scripts/depman.sh`, against one LLVM. Mixing builds is unsupported: the three agree on what a module means only when they share an LLVM, and a system LLVM or a packaged alive2 is not a configuration any target produces.
 
-A toolchain is one directory holding that build, and one can serve several checkouts. Its layout is a contract between `scripts/depman.sh`, which builds into it, and `agent/src/toolchain.ts`, which reads from it:
+A toolchain is one directory holding that build, and one can serve several checkouts. Its layout is a contract between `scripts/depman.sh`, which builds into it, and `engine/core/toolchain.ts`, which reads from it:
 
 ```
 <toolchain>/llvm-project/build/bin/llvm-config
@@ -184,7 +192,7 @@ The LLVM build is the expensive one, roughly an hour and tens of gigabytes. Ever
 - Agent: bun test for state, drivers (against stub binaries), and tool semantics; goal tree derivation replayed from recorded trajectories.
 - Scripts: standard library unittest, run by `make test-scripts`.
 - check.py: `scripts/check_test.py`, run by `make test-scripts` with the visualizer's. Golden packages that must pass and bent ones that must fail; the second half is the one that matters.
-- e2e: `agent/e2e/` holds a pair and the script that proves it, one file per scenario. `bun test` runs each twice, once against a checker that agrees with everything, which needs no solver installed and tests only which moves the framework makes, and once against alive-tv. `make e2e` runs them into `sessions/`, which is what the visualizer and the certificate checker read.
+- examples: `engine/examples/` holds a pair and the script that proves it, one file per scenario. The example list lives there with them, and `engine/core/prove.ts` runs one; `bun test` runs each twice at `engine/test/examples.test.ts`, once against a checker that agrees with everything, which needs no solver installed and tests only which moves the framework makes, and once against alive-tv. `make examples` runs them into `sessions/`, which is what the visualizer and the certificate checker read.
 
 ## Implementation order
 
@@ -193,6 +201,6 @@ The LLVM build is the expensive one, roughly an hour and tens of gigabytes. Ever
 3. visualize.py against recorded trajectories.
 4. The alive-tv and llubi drivers; config plumbing.
 5. Steps, transactions, splits, and the strengthen flow over the facts analyze proposes, against a stub alive-tv.
-6. Tools wired into Pi; scripted-driver e2e.
+6. Tools wired into Pi; the scripted driver running through the tool layer.
 7. Certificate assembly and check.py, with the tamper test suite.
 8. Real-agent e2e on growing program sizes.

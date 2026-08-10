@@ -23,7 +23,7 @@ export PATH := $(PATH):$(HOME)/.bun/bin:$(HOME)/.local/bin
 LLOPS_BUILD := $(TOOLCHAIN)/llops/build
 
 .PHONY: help install-deps deps-status deps-llvm deps-alive2 deps-llubi deps-bun \
-        deps-js deps-uv deps-py deps-dev llops test-llops agent test-agent test e2e \
+        deps-js deps-uv deps-py deps-dev llops test-llops engine test-engine test examples \
         cert visualize test-scripts check clean
 
 help:
@@ -37,10 +37,10 @@ help:
 	@echo "build and test"
 	@echo "  llops          build llops against the toolchain LLVM"
 	@echo "  test-llops     run the llops tests"
-	@echo "  agent          typecheck the agent"
-	@echo "  test-agent     run the agent tests"
+	@echo "  engine         typecheck the engine"
+	@echo "  test-engine    run the engine tests"
 	@echo "  test           run every test suite"
-	@echo "  e2e            prove the end-to-end scenarios, into sessions/"
+	@echo "  examples       prove the example scenarios, into sessions/"
 	@echo "                 (SCENARIO=<name> runs one of them)"
 	@echo "  visualize      render SESSION=sessions/<id> as one HTML page"
 	@echo "  cert           write the certificate SESSION=sessions/<id> earned"
@@ -79,25 +79,25 @@ llops:
 test-llops: llops
 	LLOPS=$(LLOPS_BUILD)/llops python3 llops/test/llops_test.py
 
-# --- agent -------------------------------------------------------------------
-# Bun runs TypeScript directly, so building the agent is typechecking it.
-agent: deps-js
-	cd agent && bun run check
+# --- engine ------------------------------------------------------------------
+# Bun runs TypeScript directly, so building the engine is typechecking it.
+engine: deps-js
+	cd engine && bun run check
 
 # LLOPS names what was just built, so the suite tests this tree rather than
 # whatever the configuration points at.
-test-agent: deps-js
-	cd agent && LLOPS=$(LLOPS_BUILD)/llops bun test
+test-engine: deps-js
+	cd engine && LLOPS=$(LLOPS_BUILD)/llops bun test
 
 # The scenarios, run for real: each leaves a session directory behind, which is
 # what the visualizer and the certificate checker read.
-e2e: deps-js
-	cd agent && bun run e2e $(SCENARIO)
+examples: deps-js
+	cd engine && bun run examples $(SCENARIO)
 
 # The certificate a verified session earned, written into the session.
 cert: deps-js
 	@test -n "$(SESSION)" || { echo "usage: make cert SESSION=sessions/<id>"; exit 2; }
-	cd agent && bun run cert ../$(SESSION)
+	cd engine && bun run cert ../$(SESSION)
 
 # --- scripts -----------------------------------------------------------------
 # SESSION names a directory under sessions/; the page lands beside its
@@ -113,11 +113,11 @@ test-scripts:
 	python3 scripts/check_test.py
 
 # --- everything --------------------------------------------------------------
-test: test-llops test-agent test-scripts
+test: test-llops test-engine test-scripts
 
 # .pre-commit-config.yaml is the one place that says what is checked and with
 # which upstream tool. The hook sees staged files; this sweeps the whole tree.
-check: deps-dev agent
+check: deps-dev engine
 	@$(PRECOMMIT) run --all-files
 
 clean:

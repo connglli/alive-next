@@ -1,0 +1,19 @@
+{
+  "name": "alive-next-engine",
+  "private": true,
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "jsonc-parser": "^3.3.1",
+    "typebox": "^1.3.11"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^7.0.2"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "examples": "bun run examples/main.ts",
+    "cert": "bun run cert/main.ts"
+  }
+}

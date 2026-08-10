@@ -6,7 +6,7 @@
 The page needs no server and no network: the trajectory, the programs it
 refers to and a goal tree per event are embedded in it.
 
-The fold below is the same one agent/src/state/goals.ts applies, so the two can
+The fold below is the same one engine/core/state/goals.ts applies, so the two can
 drift. What keeps them honest is the verdict: a session that ends in one is
 checked against the verdict this fold arrives at, and a mismatch is reported
 rather than rendered.
