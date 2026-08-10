@@ -29,10 +29,16 @@ export interface Transaction {
   ops: EditOp[];
 }
 
-/** An edit that took, or the diagnostic llops refused it with. */
+/**
+ * An edit that took, or the diagnostic llops refused it with.
+ *
+ * Both carry the scratch program: after an edit it is what the next op works
+ * on, and after a refusal it is what the refused op was addressing, which is
+ * where a caller looks to find the reference it meant.
+ */
 export type EditResult =
   | { kind: "applied"; text: string; ops: number }
-  | { kind: "refused"; code: string; message: string };
+  | { kind: "refused"; code: string; message: string; text: string };
 
 /** Thrown when the agent asks for something the session cannot mean. */
 export class TransactionError extends Error {
@@ -79,7 +85,14 @@ export class Transactions {
   async edit(op: EditOp): Promise<EditResult> {
     const transaction = this.require();
     const result = await this.llops.edit(transaction.text, op);
-    if (!result.ok) return { kind: "refused", code: result.code, message: result.message };
+    if (!result.ok) {
+      return {
+        kind: "refused",
+        code: result.code,
+        message: result.message,
+        text: transaction.text,
+      };
+    }
     transaction.text = result.module;
     transaction.ops.push(op);
     return { kind: "applied", text: result.module, ops: transaction.ops.length };

@@ -79,6 +79,12 @@ sessions/<id>/
 - **Store**: every program version is canonical text (as printed by `llops canon`) stored under its sha256. Filename equals hash, so integrity verification on load is free. This is the isolation guarantee from design.md: agent `bash`/`python` scratch work runs in a separate working directory, and even if it reaches the store, tampering is detected on the next load.
 - **Goal tree**: not stored separately; it is derived state, rebuilt by replaying the trajectory. One source of truth, nothing to drift.
 
+Reading is a move like any other. `status` answers with the tree, each goal's status and heads and the transaction if one is open, and names no program text. `show` answers with one goal and the text of both sides, each side also listing every program it has been. `program` answers with any of those, by the name the tree gave it or by its hash.
+
+A program's value references are the program's own, so a caller reads a side before addressing anything in it: `begin` answers with the body it opened on, an applied edit with the body as it now stands, and a refused edit with the body it refused, which is where the reference it could not find was meant to be.
+
+`revert` moves a side's head back to a program that side has been. The later steps stay in the log, unused, and whatever the proof they carried had settled comes undone with them. It refuses a program the side has never been, the head itself, and a side with a transaction open on it.
+
 ## trajectory.jsonl
 
 One JSON object per line, appended synchronously by the framework's tool wrapper. The agent cannot skip, reorder, or rewrite entries; faithfulness is enforced by who holds the pen. Entries are flushed per event so a crash preserves an honest prefix, and each line carries the sha256 of the previous line, making the file a hash chain and tampering evident.
@@ -87,7 +93,7 @@ Event kinds:
 
 - `run_start`: root program hashes, config snapshot, versions (LLVM, alive2, llubi, model), timestamp.
 - `message`: every agent turn, verbatim.
-- `tool_call` / `tool_result`: name, args, full result, duration; created programs referenced by store hash.
+- `tool_call` / `tool_result`: name, args, full result, duration; programs referenced by store hash rather than repeated, whether the move created one or only read it.
 - `auto`: framework-initiated actions (eager cross-checks, root auto-replays) with outcomes.
 - `verdict`: final outcome plus certificate path if one was produced.
 

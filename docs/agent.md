@@ -16,7 +16,7 @@ Ours are the rest of design.md's catalog, with the names it gives, declared with
 
 A tool that fails throws, and Pi reports a thrown error to the model as a tool error, so a failure carries the diagnostic the agent needs to try something else. A rejected commit, a failed check and a refused edit are ordinary results, not errors: they say what happened and the run continues.
 
-A tool result names what changed rather than reproducing it. A program a step created is named by its id with a summary of the diff, and the agent that wants the text asks for it with `show`. Whole modules in tool results would fill the context window long before a thousand-line program was cut into pieces.
+A tool result is the whole of what the agent knows, since there is no state it can see between calls. So a result carries the text of a program exactly when the agent is about to name values inside it: opening a transaction, an edit that applied, and an edit that was refused. Every other result names programs by their id, and the agent that wants one asks for it with `show` or `program`. Whole modules in every result would fill the context window long before a thousand-line program was cut into pieces.
 
 Tools run sequentially, because they share one store and one goal tree, and two calls in a parallel batch would race on the state the second one reads.
 

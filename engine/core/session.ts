@@ -27,7 +27,17 @@ import type {
 } from "./drivers/llops.ts";
 import type { Ref } from "./refs.ts";
 import { Counterexamples, type Interpreter, type ReportResult } from "./state/counterexamples.ts";
-import { derive, type Goal, head, type Side, type Tree, verdict } from "./state/goals.ts";
+import {
+  derive,
+  type Goal,
+  head,
+  type ProgramId,
+  type Side,
+  type Status,
+  type Tree,
+  verdict,
+  workable,
+} from "./state/goals.ts";
 import { type SplitResult, Splits } from "./state/splits.ts";
 import {
   type Checker,
@@ -39,8 +49,63 @@ import {
 } from "./state/steps.ts";
 import { canonWith, Store } from "./state/store.ts";
 import { type Facts, Strengthen, type StrengthenResult } from "./state/strengthen.ts";
-import { type Effect, type Entry, type Event, Trajectory } from "./state/trajectory.ts";
+import { type Effect, type Entry, type Event, type Hash, Trajectory } from "./state/trajectory.ts";
 import { type EditResult, type Transaction, Transactions } from "./state/transactions.ts";
+
+/** One side of a goal, as a reader needs it: what it is called and what it says. */
+export interface SideView {
+  /** The agent-facing name of the program at the head, as `p7`. */
+  id: ProgramId;
+  hash: Hash;
+  text: string;
+  /** Every program this side has been, oldest first, the last being the head. */
+  history: ProgramId[];
+}
+
+/** A program, by whichever of its two names the caller had. */
+export interface ProgramView {
+  id: ProgramId;
+  hash: Hash;
+  text: string;
+}
+
+/** A head moved back to a program its side has been. */
+export type RevertResult =
+  | { kind: "reverted"; effects: Effect[]; to: ProgramView }
+  | { kind: "refused"; message: string };
+
+/** A goal as a reader needs it before deciding what to do to it. */
+export interface GoalView {
+  gid: string;
+  status: Status;
+  /** Which half of its parent's cut this is. */
+  role?: "outer" | "callee";
+  /** The outlined function the cut that made it named. */
+  callee?: string;
+  parent?: string;
+  children: string[];
+  src: SideView;
+  tgt: SideView;
+}
+
+/** A goal in the tree, without the programs. */
+export interface GoalStanding {
+  gid: string;
+  status: Status;
+  role?: "outer" | "callee";
+  parent?: string;
+  children: string[];
+  src: Hash;
+  tgt: Hash;
+}
+
+/** Where the run stands: every goal, and the transaction if one is open. */
+export interface Standing {
+  root: string;
+  verdict: "verified" | "counterexample" | "unknown";
+  goals: GoalStanding[];
+  editing?: { gid: string; side: Side; from: Hash; ops: number };
+}
 
 /** What a session needs to exist: where it lives and what it can spawn. */
 export interface SessionOptions {
@@ -128,6 +193,100 @@ export class Session {
 
   get verdict(): "verified" | "counterexample" | "unknown" {
     return verdict(this.tree);
+  }
+
+  /**
+   * Where the run stands: every goal with its status and its heads, and the
+   * transaction if one is open. This is the first thing to read and the
+   * cheapest, since it names no program.
+   */
+  status(): Promise<Standing> {
+    return this.act("status", {}, async (tree) => {
+      const open = this.editing.open();
+      const standing: Standing = {
+        root: tree.root,
+        verdict: verdict(tree),
+        goals: [...tree.goals.values()].map(standingOf),
+      };
+      if (open) {
+        standing.editing = {
+          gid: open.gid,
+          side: open.side,
+          from: open.from,
+          ops: open.ops.length,
+        };
+      }
+      return standing;
+    });
+  }
+
+  /**
+   * One goal, both sides, as text. This is what to read before deciding what
+   * to do to it, since a program's value references are the program's own.
+   *
+   * The log keeps the two hashes rather than the two programs, because the
+   * store already holds the text under exactly those names.
+   */
+  show(gid: string): Promise<GoalView> {
+    return this.act(
+      "show",
+      { gid },
+      async (tree) => {
+        const goal = goalOf(tree, gid);
+        const view: GoalView = {
+          gid: goal.id,
+          status: goal.status,
+          children: [...goal.children],
+          src: this.side(tree, goal, "src"),
+          tgt: this.side(tree, goal, "tgt"),
+        };
+        if (goal.role) view.role = goal.role;
+        if (goal.callee) view.callee = goal.callee;
+        if (goal.parent) view.parent = goal.parent;
+        return view;
+      },
+      (view) => ({ gid: view.gid, status: view.status, src: view.src.hash, tgt: view.tgt.hash }),
+    );
+  }
+
+  /**
+   * Any program the run has held, by its name or its hash. A side's history
+   * says which programs those are, so this is how an earlier one is read
+   * before deciding whether to go back to it.
+   */
+  program(ref: string): Promise<ProgramView> {
+    return this.act(
+      "program",
+      { ref },
+      async (tree) => this.programOf(tree, ref),
+      (view) => ({ id: view.id, hash: view.hash }),
+    );
+  }
+
+  /**
+   * Move a side's head back to a program it has been. Later steps stay in the
+   * log, unused, and whatever the proof they carried had settled comes undone
+   * with them.
+   */
+  revert(gid: string, side: Side, to: string): Promise<RevertResult> {
+    return this.act("revert", { gid, side, to }, async (tree) => {
+      if (this.editing.isEditing(gid, side)) {
+        return { kind: "refused", message: `a transaction is open on ${gid} ${side}` };
+      }
+      const goal = workable(tree, gid);
+      const target = this.programOf(tree, to);
+      if (!goal[side].history.includes(target.hash)) {
+        return { kind: "refused", message: `${gid} ${side} has never been ${target.id}` };
+      }
+      if (head(goal, side) === target.hash) {
+        return { kind: "refused", message: `${gid} ${side} is already ${target.id}` };
+      }
+      return {
+        kind: "reverted",
+        effects: [{ effect: "revert", gid, side, to: target.hash }],
+        to: target,
+      };
+    });
   }
 
   /**
@@ -252,6 +411,31 @@ export class Session {
     this.entries.push(this.log.append(event));
     this.derived = derive(this.entries);
   }
+
+  private side(tree: Tree, goal: Goal, side: Side): SideView {
+    const hash = head(goal, side);
+    return {
+      id: nameOf(tree, hash),
+      hash,
+      text: this.store.get(hash),
+      history: goal[side].history.map((was) => nameOf(tree, was)),
+    };
+  }
+
+  /** A program by its agent-facing name or by its hash, whichever was given. */
+  private programOf(tree: Tree, ref: string): ProgramView {
+    for (const [hash, id] of tree.programs) {
+      if (ref === id || ref === hash) return { id, hash, text: this.store.get(hash) };
+    }
+    throw new Error(`no program ${ref}`);
+  }
+}
+
+/** The name a program goes by, which the tree hands out as it first sees one. */
+function nameOf(tree: Tree, hash: Hash): ProgramId {
+  const id = tree.programs.get(hash);
+  if (!id) throw new Error(`the tree has no name for ${hash}`);
+  return id;
 }
 
 function goalOf(tree: Tree, gid: string): Goal {
@@ -260,10 +444,24 @@ function goalOf(tree: Tree, gid: string): Goal {
   return goal;
 }
 
+function standingOf(goal: Goal): GoalStanding {
+  const standing: GoalStanding = {
+    gid: goal.id,
+    status: goal.status,
+    children: [...goal.children],
+    src: head(goal, "src"),
+    tgt: head(goal, "tgt"),
+  };
+  if (goal.role) standing.role = goal.role;
+  if (goal.parent) standing.parent = goal.parent;
+  return standing;
+}
+
 /** A transaction result as the log keeps it: what it did, not what it holds. */
 function scratch(result: Transaction | EditResult): unknown {
   if (!("kind" in result)) {
     return { gid: result.gid, side: result.side, from: result.from, ops: result.ops.length };
   }
-  return result.kind === "applied" ? { kind: "applied", ops: result.ops } : result;
+  if (result.kind === "applied") return { kind: "applied", ops: result.ops };
+  return { kind: "refused", code: result.code, message: result.message };
 }
