@@ -58,6 +58,8 @@ entry:
   ret i32 %s
 }
 `;
+const WIDE_SRC = SRC.replace("  ret i32 %s", "  %r = xor i32 %s, %n\n  ret i32 %r");
+const WIDE_TGT = TGT.replace("  ret i32 %s", "  %r = xor i32 %s, %n\n  ret i32 %r");
 const RANGE = { range: { min: 0, max: 256 } };
 
 let dir: string;
@@ -95,10 +97,19 @@ function record(effects: Effect[]): Tree {
 
 /** A goal cut at the multiply, which is where the range is lost. */
 async function cut(): Promise<Tree> {
-  const src = await store.put(SRC);
-  const tgt = await store.put(TGT);
+  return cutting(SRC, TGT, { "%1": "%1" });
+}
+
+/** The same, with the parameter live past the cut, so two values cross it. */
+async function cutTwice(): Promise<Tree> {
+  return cutting(WIDE_SRC, WIDE_TGT, { "%1": "%1", "%0": "%0" });
+}
+
+async function cutting(srcText: string, tgtText: string, map: Record<string, string>) {
+  const src = await store.put(srcText);
+  const tgt = await store.put(tgtText);
   events.push({ kind: "run_start", src, tgt, config: {}, versions: {} });
-  const result = await new Splits(store, llops).split(replay(), "g1", "%2", "%2", { "%1": "%1" });
+  const result = await new Splits(store, llops).split(replay(), "g1", "%2", "%2", map);
   if (result.kind !== "split") throw new Error(result.message);
   return record(result.effects);
 }
@@ -108,7 +119,7 @@ describe.skipIf(!built)("strengthening", () => {
     const checker = new FakeChecker(["correct", "correct", "correct", "unknown", "unknown"]);
     const tree = await cut();
     const strengthen = new Strengthen(store, llops, new Steps(store, checker));
-    const result = await strengthen.strengthen(tree, "g1", 0, RANGE);
+    const result = await strengthen.strengthen(tree, "g1", { 0: RANGE });
 
     if (result.kind !== "strengthened") throw new Error(result.reason);
     // Three certified steps and one claim: the assume, the outer's two
@@ -136,8 +147,7 @@ describe.skipIf(!built)("strengthening", () => {
     const result = await new Strengthen(store, llops, new Steps(store, checker)).strengthen(
       tree,
       "g1",
-      0,
-      RANGE,
+      { 0: RANGE },
     );
     if (result.kind !== "strengthened") throw new Error(result.reason);
 
@@ -157,8 +167,7 @@ describe.skipIf(!built)("strengthening", () => {
     const result = await new Strengthen(store, llops, new Steps(store, checker)).strengthen(
       tree,
       "g1",
-      0,
-      RANGE,
+      { 0: RANGE },
     );
     if (result.kind !== "strengthened") throw new Error(result.reason);
 
@@ -170,6 +179,26 @@ describe.skipIf(!built)("strengthening", () => {
     expect(goal(tree, "g3").status).toBe("proved");
     expect(goal(tree, "g2").status).toBe("proved");
     expect(goal(tree, "g1").status).toBe("proved");
+  });
+
+  test("several parameters cost what one does", async () => {
+    // An interface is one thing, so the assumes are proved together and the
+    // attributes land together: three steps and two cross-checks, as for one.
+    const checker = new FakeChecker(["correct", "correct", "correct", "unknown", "unknown"]);
+    const tree = await cutTwice();
+    const result = await new Strengthen(store, llops, new Steps(store, checker)).strengthen(
+      tree,
+      "g1",
+      { 0: RANGE, 1: { noundef: true } },
+    );
+    if (result.kind !== "strengthened") throw new Error(result.reason);
+
+    expect(checker.calls).toHaveLength(5);
+    const calleeSrc = store.get(head(goal(tree, "g3"), "src"));
+    expect(calleeSrc).toContain("range(i32 0, 256)");
+    expect(calleeSrc).toContain("noundef");
+    // Both assumes went to alive2 in the one step that certifies the pair.
+    expect(checker.calls[0]?.tgt.match(/call void @llvm\.assume/g)).toHaveLength(2);
   });
 
   test("a second fact can be added after the first discharged the outer", async () => {
@@ -191,11 +220,11 @@ describe.skipIf(!built)("strengthening", () => {
     const strengthen = new Strengthen(store, llops, new Steps(store, checker));
     const tree = await cut();
 
-    const first = await strengthen.strengthen(tree, "g1", 0, RANGE);
+    const first = await strengthen.strengthen(tree, "g1", { 0: RANGE });
     expect(first.kind).toBe("strengthened");
     expect(goal(tree, "g2").status).toBe("proved");
 
-    const second = await strengthen.strengthen(tree, "g1", 0, { noundef: true });
+    const second = await strengthen.strengthen(tree, "g1", { 0: { noundef: true } });
     expect(second.kind).toBe("strengthened");
     expect(store.get(head(goal(tree, "g3"), "src"))).toContain("noundef");
     expect(goal(tree, "g1").status).toBe("proved");
@@ -211,7 +240,7 @@ describe.skipIf(!built)("strengthening", () => {
       store,
       llops,
       new Steps(store, new FakeChecker([])),
-    ).strengthen(tree, "g1", 0, RANGE);
+    ).strengthen(tree, "g1", { 0: RANGE });
     expect(result).toMatchObject({ kind: "refused" });
     if (result.kind !== "refused") throw new Error("unreachable");
     expect(result.reason).toContain("g3 is split");
@@ -221,7 +250,9 @@ describe.skipIf(!built)("strengthening", () => {
     const checker = new FakeChecker(["correct", "correct", "correct", "unknown", "unknown"]);
     const tree = await cut();
     const before = store.get(head(goal(tree, "g2"), "src"));
-    await new Strengthen(store, llops, new Steps(store, checker)).strengthen(tree, "g1", 0, RANGE);
+    await new Strengthen(store, llops, new Steps(store, checker)).strengthen(tree, "g1", {
+      0: RANGE,
+    });
 
     expect(checker.calls[0]?.src).toBe(before);
     expect(checker.calls[0]?.tgt).toContain("llvm.assume");
@@ -235,8 +266,7 @@ describe.skipIf(!built)("strengthening", () => {
     const result = await new Strengthen(store, llops, new Steps(store, checker)).strengthen(
       tree,
       "g1",
-      0,
-      RANGE,
+      { 0: RANGE },
     );
 
     expect(result).toMatchObject({ kind: "refused", phase: "assume" });
@@ -254,8 +284,7 @@ describe.skipIf(!built)("strengthening", () => {
     const result = await new Strengthen(store, llops, new Steps(store, checker)).strengthen(
       tree,
       "g1",
-      0,
-      RANGE,
+      { 0: RANGE },
     );
 
     expect(result).toMatchObject({ kind: "refused", phase: "attribute" });
@@ -273,7 +302,7 @@ describe.skipIf(!built)("strengthening", () => {
       store,
       llops,
       new Steps(store, new FakeChecker([])),
-    ).strengthen(tree, "g1", 0, { noalias: true });
+    ).strengthen(tree, "g1", { 0: { noalias: true } });
     expect(result).toMatchObject({ kind: "refused", phase: "assume" });
     if (result.kind !== "refused") throw new Error("unreachable");
     expect(result.reason).toContain("noalias");
@@ -284,7 +313,7 @@ describe.skipIf(!built)("strengthening", () => {
     const tgt = await store.put(TGT);
     events.push({ kind: "run_start", src, tgt, config: {}, versions: {} });
     const strengthen = new Strengthen(store, llops, new Steps(store, new FakeChecker([])));
-    await expect(strengthen.strengthen(replay(), "g1", 0, RANGE)).rejects.toThrow(
+    await expect(strengthen.strengthen(replay(), "g1", { 0: RANGE })).rejects.toThrow(
       /g1 is open, not split/,
     );
   });

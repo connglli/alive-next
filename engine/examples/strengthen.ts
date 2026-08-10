@@ -53,9 +53,8 @@ entry:
     // script goes on to supply what the callee is missing.
     await session.check(split.children.callee);
 
-    const stronger = await session.strengthen("g1", 0, {
-      noundef: true,
-      range: { min: 0, max: 256 },
+    const stronger = await session.strengthen("g1", {
+      0: { noundef: true, range: { min: 0, max: 256 } },
     });
     expect("state the facts on the parameter", stronger.kind === "strengthened", stronger);
   },

@@ -65,7 +65,7 @@ The declared `g` must have one signature shared by both sides. The signature is 
 
 The only trusted glue is that the outlining transformation itself is faithful (the outer program plus the callee really is the original program). That is mechanical and small.
 
-A cut leaves the callee's parameters undef-capable, since nothing about a fresh function says its arguments are defined. `strengthen(gid, param, {noundef})` is what states otherwise, proved at the call site. The proof fails where the value at the cut can be undef or poison, and then the cut has to move or the program has to be made defined there.
+A cut leaves the callee's parameters undef-capable, since nothing about a fresh function says its arguments are defined. `strengthen(gid, {param: {noundef}})` is what states otherwise, proved at the call site. The proof fails where the value at the cut can be undef or poison, and then the cut has to move or the program has to be made defined there.
 
 Known cost: alive2 is conservative at function entry (arbitrary memory, arbitrary aliasing) and around unknown calls (code cannot move across the cut). So a bad cut placement produces spurious failures. That is fine: cut placement is the agent's job, and a local failure is feedback to the agent, never a bug report. When a cut fails because facts established before the cut are lost, the fix is interface strengthening (below).
 
@@ -160,9 +160,11 @@ A step may move a goal that has already been proved. The goal reopens, and every
 
 ### Interface strengthening
 
-- `strengthen(gid, param, fact)`: the two-phase recipe as one tool; `gid` must be a split goal. Phase 1: insert `llvm.assume(fact)` before the call in the outer src and validate with alive2 (this is where the proof cost lives). Phase 2: add the corresponding attribute to `g`'s declaration in the outer goal and the callee goal. Fails cleanly at phase 1 if the fact does not hold.
+- `strengthen(gid, facts)`: the two-phase recipe as one tool; `gid` must be a split goal, and `facts` gives one fact per parameter position. Phase 1: insert an `llvm.assume(fact)` per parameter before the call in the outer src and validate the lot with alive2 as one step (this is where the proof cost lives). Phase 2: add the corresponding attributes to `g`'s declaration in the outer goal and the callee goal. Fails cleanly at phase 1 if a fact does not hold.
 
 A fact includes the value being defined, since an attribute a caller has to honour is violated by a poison argument as much as by an out of range one. Phase 1 fails for a value that can be undef or poison: the assume is UB the program did not have, and alive2 refuses the step.
+
+An interface is strengthened as a whole rather than one parameter at a time, so the solver cost is the same whether the call carries one fact or all of them: three certified steps and the two cross-checks below.
 
 Both children are cross-checked once, after phase 2 and not between the steps inside it, where the outer's two sides declare `g` differently.
 

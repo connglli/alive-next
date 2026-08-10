@@ -10,12 +10,17 @@
 // the fact is false the assume adds UB the program did not have and alive2
 // refuses it, which is what makes the whole recipe sound.
 //
-// Phase two puts the attribute on the outlined function's parameter, in four
-// programs. The outer's two are ordinary steps, cheap now that the assume is
+// Phase two puts the attribute on the outlined function's parameters, in four
+// programs. The outer's two are ordinary steps, cheap now that the assumes are
 // there. The callee's two are not steps at all: an attribute on a definition
 // introduces UB where the old program was defined, so no direction of a
 // refinement check would certify it. They move together, recorded as one
 // strengthen effect naming the step that justifies them.
+//
+// One call carries as many parameters as the caller has facts for, because an
+// interface is strengthened as a whole. The solver cost is the same for one
+// parameter or for all of them: three certified steps and the two cross-checks
+// at the end, whatever the count.
 import type { CheckResult } from "../drivers/alive2.ts";
 import type { Llops } from "../drivers/llops.ts";
 import { applyEffect, type Goal, head, type Side, type Tree } from "./goals.ts";
@@ -25,6 +30,9 @@ import type { Effect } from "./trajectory.ts";
 
 /** A fact, in the vocabulary `llops edit attrs` and `llops assume` share. */
 export type Fact = Record<string, unknown>;
+
+/** What an interface is to gain, by parameter position. */
+export type Facts = Record<number, Fact>;
 
 export type StrengthenResult =
   | { kind: "strengthened"; effects: Effect[]; checks: CheckResult[] }
@@ -47,11 +55,11 @@ export class Strengthen {
   ) {}
 
   /**
-   * Put `fact` on parameter `param` of the function `gid` was cut at. `gid` is
-   * the split goal, so both halves of the cut are reachable from it.
+   * Put each fact on the parameter it names, of the function `gid` was cut at.
+   * `gid` is the split goal, so both halves of the cut are reachable from it.
    *
    * The tree is advanced as each record lands, because a phase two failure
-   * leaves real work behind: the assume is proved and stays proved, and the
+   * leaves real work behind: the assumes are proved and stay proved, and the
    * agent reverts what it does not want.
    *
    * The steps inside carry no cross-check of their own. Between the two halves
@@ -59,7 +67,11 @@ export class Strengthen {
    * is a state to pass through rather than one to ask about; both goals are
    * checked once at the end instead.
    */
-  async strengthen(tree: Tree, gid: string, param: number, fact: Fact): Promise<StrengthenResult> {
+  async strengthen(tree: Tree, gid: string, facts: Facts): Promise<StrengthenResult> {
+    const params = Object.keys(facts)
+      .map(Number)
+      .sort((a, b) => a - b);
+    if (params.length === 0) throw new Error(`${gid}: no facts to state`);
     const parent = tree.goals.get(gid);
     if (!parent) throw new Error(`no goal ${gid}`);
     // A goal that was cut, whether or not its children have discharged it
@@ -92,22 +104,33 @@ export class Strengthen {
     const landed: Effect[] = [];
     const checks: CheckResult[] = [];
 
-    // Phase one, where the proof cost is.
-    const assumed = await this.llops.assume(this.store.get(head(outer, "src")), {
-      before_call: name,
-      arg: param,
-      fact,
-    });
-    if (!assumed.ok) {
-      return { kind: "refused", phase: "assume", reason: assumed.message, effects: landed };
+    // Phase one, where the proof cost is. Every fact is assumed before the
+    // call, and the whole set goes to alive2 as one step: a caller either
+    // honours the interface it is asked for or it does not.
+    let assumed = this.store.get(head(outer, "src"));
+    for (const param of params) {
+      const one = await this.llops.assume(assumed, {
+        before_call: name,
+        arg: param,
+        fact: facts[param] as Fact,
+      });
+      if (!one.ok) {
+        return {
+          kind: "refused",
+          phase: "assume",
+          reason: `parameter ${param}: ${one.message}`,
+          effects: landed,
+        };
+      }
+      assumed = one.module;
     }
-    const proof = await this.steps.step(tree, outer.id, "src", assumed.module, { eager: false });
+    const proof = await this.steps.step(tree, outer.id, "src", assumed, { eager: false });
     if (proof.kind !== "certified") {
-      // The fact does not hold, or nothing here shows that it does.
+      // A fact does not hold, or nothing here shows that it does.
       return {
         kind: "refused",
         phase: "assume",
-        reason: "the assume was not certified",
+        reason: "the assumes were not certified",
         check: proof.check,
         effects: landed,
       };
@@ -119,14 +142,19 @@ export class Strengthen {
     // Phase two on the outer: both sides declare the same signature for the
     // outlined function, so both sides change, each as its own step.
     for (const side of ["src", "tgt"] as Side[]) {
-      const attributed = await this.attribute(head(outer, side), name, param, fact);
+      const attributed = await this.attribute(
+        this.store.get(head(outer, side)),
+        name,
+        params,
+        facts,
+      );
       if (typeof attributed !== "string") return { ...attributed, effects: landed };
       const step = await this.steps.step(tree, outer.id, side, attributed, { eager: false });
       if (step.kind !== "certified") {
         return {
           kind: "refused",
           phase: "attribute",
-          reason: `the attribute on the outer ${side} was not certified`,
+          reason: `the attributes on the outer ${side} were not certified`,
           check: step.check,
           effects: landed,
         };
@@ -136,9 +164,9 @@ export class Strengthen {
     }
 
     // Phase two on the callee: one claim, both sides, no solver.
-    const src = await this.attribute(head(callee, "src"), name, param, fact);
+    const src = await this.attribute(this.store.get(head(callee, "src")), name, params, facts);
     if (typeof src !== "string") return { ...src, effects: landed };
-    const tgt = await this.attribute(head(callee, "tgt"), name, param, fact);
+    const tgt = await this.attribute(this.store.get(head(callee, "tgt")), name, params, facts);
     if (typeof tgt !== "string") return { ...tgt, effects: landed };
 
     this.land(tree, landed, [
@@ -164,22 +192,31 @@ export class Strengthen {
     return { kind: "strengthened", effects: landed, checks };
   }
 
-  /** The program with the attribute added, or why llops would not add it. */
+  /** The program with every attribute added, or why llops would not add one. */
   private async attribute(
-    hash: string,
+    module: string,
     fn: string,
-    param: number,
-    fact: Fact,
+    params: number[],
+    facts: Facts,
   ): Promise<string | { kind: "refused"; phase: "attribute"; reason: string }> {
-    const result = await this.llops.edit(this.store.get(hash), {
-      op: "attrs",
-      fn,
-      param,
-      attrs: fact,
-    });
-    return result.ok
-      ? result.module
-      : { kind: "refused", phase: "attribute", reason: result.message };
+    let text = module;
+    for (const param of params) {
+      const result = await this.llops.edit(text, {
+        op: "attrs",
+        fn,
+        param,
+        attrs: facts[param] as Fact,
+      });
+      if (!result.ok) {
+        return {
+          kind: "refused",
+          phase: "attribute",
+          reason: `parameter ${param}: ${result.message}`,
+        };
+      }
+      text = result.module;
+    }
+    return text;
   }
 
   private land(tree: Tree, landed: Effect[], effects: Effect[]): void {

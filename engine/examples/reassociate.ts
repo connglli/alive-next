@@ -93,14 +93,14 @@ entry:
 
     // The four values crossing the cut are computed from defined parameters
     // by instructions that cannot make poison, so the callee can be told so.
-    for (const param of [0, 1, 2, 3]) {
-      const defined = await session.strengthen("g1", param, { noundef: true });
-      expect(
-        `prove parameter ${param} of the first cut defined`,
-        defined.kind === "strengthened",
-        defined,
-      );
-    }
+    // One call, since the four assumes are proved in one query.
+    const defined = await session.strengthen("g1", {
+      0: { noundef: true },
+      1: { noundef: true },
+      2: { noundef: true },
+      3: { noundef: true },
+    });
+    expect("prove the first cut's interface defined", defined.kind === "strengthened", defined);
 
     // Two identical programs around the same call.
     const shared = await session.check(head.children.outer);
@@ -153,16 +153,10 @@ entry:
     expect("cut at the second division", middle.kind === "split", middle);
     if (middle.kind !== "split") return;
 
-    // And again the interface, which is defined now that nothing before it
-    // can make poison.
-    for (const param of [0, 1]) {
-      const defined = await session.strengthen(callee, param, { noundef: true });
-      expect(
-        `prove parameter ${param} of the second cut defined`,
-        defined.kind === "strengthened",
-        defined,
-      );
-    }
+    // And again the interface, which is defined once nothing before it can
+    // make poison.
+    const again = await session.strengthen(callee, { 0: { noundef: true }, 1: { noundef: true } });
+    expect("prove the second cut's interface defined", again.kind === "strengthened", again);
 
     // The total, computed two ways, in front of the same unknown call. This is
     // the query the whole proof was arranged to make askable.

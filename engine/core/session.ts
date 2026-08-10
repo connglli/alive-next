@@ -30,7 +30,7 @@ import {
   type Timeouts,
 } from "./state/steps.ts";
 import { canonWith, Store } from "./state/store.ts";
-import { type Fact, Strengthen, type StrengthenResult } from "./state/strengthen.ts";
+import { type Facts, Strengthen, type StrengthenResult } from "./state/strengthen.ts";
 import { type Effect, type Entry, type Event, Trajectory } from "./state/trajectory.ts";
 import { type EditResult, type Transaction, Transactions } from "./state/transactions.ts";
 
@@ -178,9 +178,10 @@ export class Session {
     }));
   }
 
-  strengthen(gid: string, param: number, fact: Fact): Promise<StrengthenResult> {
-    return this.act("strengthen", { gid, param, fact }, (tree) =>
-      this.strengthening.strengthen(tree, gid, param, fact),
+  /** State facts about a cut's parameters, one interface at a time. */
+  strengthen(gid: string, facts: Facts): Promise<StrengthenResult> {
+    return this.act("strengthen", { gid, facts }, (tree) =>
+      this.strengthening.strengthen(tree, gid, facts),
     );
   }
 

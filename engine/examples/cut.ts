@@ -16,6 +16,7 @@
 // Canonically `%0` is the parameter, `%1` the add and `%2` the multiply, which
 // is where both sides are cut.
 import { expect, type Scenario } from "../core/scenario.ts";
+import type { Facts } from "../core/state/strengthen.ts";
 
 export const cut: Scenario = {
   name: "cut",
@@ -54,11 +55,14 @@ entry:
     if (!facts.ok) return;
     const defined = new Set(facts.facts.filter((fact) => fact.noundef).map((fact) => fact.value));
 
+    // An interface is strengthened as a whole, so the facts go in one call.
+    const wanted: Facts = {};
     for (const [param, entry] of split.params.entries()) {
       expect(`${entry.live} is defined`, defined.has(entry.live), facts);
-      const proved = await session.strengthen("g1", param, { noundef: true });
-      expect(`prove ${entry.param} defined`, proved.kind === "strengthened", proved);
+      wanted[param] = { noundef: true };
     }
+    const proved = await session.strengthen("g1", wanted);
+    expect("prove the interface defined", proved.kind === "strengthened", proved);
 
     const outer = await session.check(split.children.outer);
     expect(`check ${split.children.outer}`, outer.outcome === "proved", outer);
