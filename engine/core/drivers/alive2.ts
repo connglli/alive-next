@@ -160,8 +160,15 @@ export function read(
   return { outcome: "error", detail: "alive-tv compared no functions", summary };
 }
 
-/** What alive-tv printed before its summary, which is where the reason lives. */
+/**
+ * What alive-tv found, which is what it printed before its summary, minus the
+ * two functions it opens by echoing. Those are the pair it was handed, so a
+ * reader of the result already has them, and a counterexample is worth more
+ * per line than a copy of the question. `stdout` keeps everything.
+ */
 function report(stdout: string): string {
-  const at = stdout.indexOf("Summary:");
-  return (at < 0 ? stdout : stdout.slice(0, at)).trim();
+  const summary = stdout.indexOf("Summary:");
+  const said = (summary < 0 ? stdout : stdout.slice(0, summary)).trim();
+  const found = said.indexOf("ERROR:");
+  return found < 0 ? said : said.slice(found).trim();
 }

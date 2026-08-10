@@ -32,6 +32,15 @@ Summary:
 
 const INCORRECT = `
 ----------------------------------------
+define i32 @f(i32 %x) {
+  %m = mul i32 %x, 2
+  ret i32 %m
+}
+=>
+define i32 @f(i32 %x) {
+  %m = mul i32 %x, 3
+  ret i32 %m
+}
 Transformation doesn't verify!
 
 ERROR: Value mismatch
@@ -82,8 +91,13 @@ describe("reading what alive-tv printed", () => {
     expect(result.outcome).toBe("incorrect");
     expect(result.detail).toContain("Example:");
     expect(result.detail).toContain("Source value");
-    // The summary is not part of the reason the agent reads.
+    // The summary is not part of the reason the agent reads, and neither is
+    // the pair alive-tv opens by echoing back at whoever handed it over.
     expect(result.detail).not.toContain("Summary:");
+    expect(result.detail).not.toContain("mul i32 %x, 3");
+    expect(result.detail.startsWith("ERROR: Value mismatch")).toBe(true);
+    // What it was told stays in what it said, for a reader who wants it.
+    expect(INCORRECT).toContain("mul i32 %x, 3");
   });
 
   test("a check that did not settle", () => {
