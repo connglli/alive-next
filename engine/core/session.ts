@@ -206,7 +206,7 @@ export class Session {
       const standing: Standing = {
         root: tree.root,
         verdict: verdict(tree),
-        goals: [...tree.goals.values()].map(standingOf),
+        goals: standings(tree),
       };
       if (open) {
         standing.editing = {
@@ -442,6 +442,11 @@ function goalOf(tree: Tree, gid: string): Goal {
   const goal = tree.goals.get(gid);
   if (!goal) throw new Error(`no goal ${gid}`);
   return goal;
+}
+
+/** Every goal without its programs, which is the tree as a reader sees it. */
+export function standings(tree: Tree): GoalStanding[] {
+  return [...tree.goals.values()].map(standingOf);
 }
 
 function standingOf(goal: Goal): GoalStanding {

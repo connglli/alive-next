@@ -16,7 +16,13 @@ Ours are the rest of design.md's catalog, with the names it gives, declared with
 
 A tool that fails throws, and Pi reports a thrown error to the model as a tool error, so a failure carries the diagnostic the agent needs to try something else. A rejected commit, a failed check and a refused edit are ordinary results, not errors: they say what happened and the run continues.
 
-A tool result is the whole of what the agent knows, since there is no state it can see between calls. So a result carries the text of a program exactly when the agent is about to name values inside it: opening a transaction, an edit that applied, and an edit that was refused. Every other result names programs by their id, and the agent that wants one asks for it with `show` or `program`. Whole modules in every result would fill the context window long before a thousand-line program was cut into pieces.
+A tool result is the whole of what the agent knows, since there is no state it can see between calls. Two rules follow, and they are the same rule about what a result is worth carrying.
+
+A result carries the text of a program exactly when the agent is about to name values inside it: opening a transaction, an edit that applied, and an edit that was refused. Every other result names programs by their id, and the agent that wants one asks for it with `show`. Whole modules in every result would fill the context window long before a thousand-line program was cut into pieces.
+
+A result opens with SUCCESS or FAILURE, which says whether the move did what it was asked to do rather than whether the framework worked: a refused edit, a rejected commit and a check that did not prove are all failures to advance, and what follows each of them says why.
+
+A result carries the goal tree exactly when the move changed it, which is what the effects the move recorded say. A read, a refusal and every move inside a transaction change nothing and repeat nothing; a cut, a step, a discharge and a revert answer with the tree they left behind, since the goal to work on next is chosen from it.
 
 Tools run sequentially, because they share one store and one goal tree, and two calls in a parallel batch would race on the state the second one reads.
 
