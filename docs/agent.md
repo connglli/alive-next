@@ -72,13 +72,13 @@ It does not describe the tools. Pi sends each tool's description and schema with
 
 ## Watching a run
 
-`engine/agent/main.ts` chooses how a run is drawn. Interactively that is Pi's `InteractiveMode`, its TUI, which takes the session runtime and brings the transcript, the model picker and `/login` with it.
+`engine/agent/main.ts` draws a run one way: Pi's `InteractiveMode`, its TUI, which takes the session runtime and brings the transcript, the model picker and `/login` with it. What a watcher sees there is in the trajectory too, so a run that was not watched loses nothing.
 
-`--print` is `engine/agent/print.ts`, ours, streaming to stdout for a pipe or a log. Pi's own `runPrintMode` is not what a proof wants: it answers one question and prints the last message when the run is over, and a proof ends on the tool call that settles the root, which is a message with no text in it. So a run drawn that way prints nothing at all, and prints it late. What a watcher of a long search needs is the moves as they happen, which is what `print.ts` writes: `>` for the model speaking or calling, `<` for what the run says back, and an indented line for what a call answered. Everything it prints is in the trajectory too.
+A caller that wants the loop without a screen has `createAgent`, whose `prove` works until the run settles and says how it went. `agent.ts` builds a session runtime and draws nothing, so drawing stays the entry point's business.
 
 A certificate is earned the moment the goal tree settles, which under the TUI is long before the process ends. The run is therefore concluded from the callback the loop fires when it stops, and the summary is held until the terminal belongs to the shell again.
 
-A run with no model to talk to is assembled all the same, because the TUI is where a machine without one is set up: `/login` stores a key and `/model` picks what to prove with. `--print` has no screen to do that on, so it tests the model first and refuses, naming the three ways to get one.
+A run with no model to talk to is assembled all the same, because the TUI is where a machine without one is set up: `/login` stores a key and `/model` picks what to prove with. What that costs is the first turn, which fails saying so.
 
 ## Configuration
 

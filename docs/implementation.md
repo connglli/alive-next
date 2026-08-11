@@ -30,9 +30,8 @@ alive-next/
       prompt.ts         the rules of the game, naming no tool
       budget.ts         what a run may spend, from --max-steps/--max-seconds
       model.ts          which of Pi's models a run talks to
-      print.ts          the run as it happens, in plain text, for --print
       agent.ts          the Pi runtime: tools, prompt, stop, recording
-      main.ts           the CLI: one pair, drawn by Pi's TUI or by --print
+      main.ts           the CLI: one pair, drawn by Pi's TUI
       tools/            one file per tool from design.md
     cert/               certificate package assembly
       main.ts           certify a finished session
@@ -108,7 +107,7 @@ The tool surface is stated rather than discovered. Pi's defaults are dropped, th
 
 The loop stops on a verdict or on the budget. A tool that settles the root sets Pi's `terminate` hint, and the same test runs again after the turn, since Pi honours the hint only when every result in a batch carries it. The budget is `--max-steps` and `--max-seconds`, unbounded when neither is given, and running out is not a failure: "unknown" is one of the three outputs.
 
-`make agent` opens Pi's TUI, which is also where the model and the thinking level are steered from. `bun run agent --print` streams the same run to stdout for a pipe or a log, through `engine/agent/print.ts` rather than Pi's print mode, which prints one last message once a run is over and so prints nothing for a proof that ends on a tool call. Drawing belongs to the entry point rather than to `agent.ts`, which builds a session runtime and stays quiet, so a caller with a screen of its own can draw the same events differently.
+`make agent` opens Pi's TUI, which is also where the model and the thinking level are steered from, and it is the only way a run is drawn. Drawing belongs to the entry point rather than to `agent.ts`, which builds a session runtime and stays quiet, so a caller with a screen of its own can draw the same events differently, and one with no screen drives `createAgent`'s `prove` instead.
 
 What the model said reaches `trajectory.jsonl` as `message` entries and compaction as an `auto` entry. Its tool calls are already there, since every tool of ours writes itself through the session and Pi's own arrive inside the assistant message.
 

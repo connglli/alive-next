@@ -3,10 +3,9 @@
 // The same session directory an example writes, produced by a model instead of
 // a script: the trajectory, the store, and the certificate when it earns one.
 //
-// Pi draws the run. Interactively that is its TUI, which is also where a model
-// is logged into and picked; `--print` streams the run to stdout instead, for
-// a pipe or a log. Neither is drawn here, and what either shows is in the
-// trajectory too.
+// Pi draws the run, in its TUI, which is also where a model is logged into and
+// picked. Nothing is drawn here, and what the screen shows is in the trajectory
+// too.
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -22,14 +21,12 @@ import { Toolchain } from "../core/toolchain.ts";
 import { createAgent, createServices } from "./agent.ts";
 import type { Limits } from "./budget.ts";
 import { chooseModel, listAvailableModels, THINKING_LEVELS } from "./model.ts";
-import { streamRun } from "./print.ts";
 
 const USAGE = `usage: bun run agent [options] <src.ll> <tgt.ll> [<directory>]
 
   -m, --model <ref>      provider/id, a bare id, or either with :<level>
       --provider <id>    which provider a bare id meant
       --thinking <level> ${THINKING_LEVELS.join(", ")}
-  -p, --print            stream to stdout instead of opening Pi's TUI
       --list-models      what this machine can reach, then stop
       --max-steps <n>    stop after n turns, unbounded by default
       --max-seconds <n>  stop after n seconds, unbounded by default
@@ -133,16 +130,6 @@ process.on("exit", () => {
   if (summary) process.stdout.write(summary);
 });
 
-if (flags.print) {
-  // Without a screen there is nowhere to log in, so a machine with no model
-  // has to be told rather than shown.
-  if (!agent.pi.model) exitWithError(NOTHING_AVAILABLE);
-  console.log(`${srcPath} against ${tgtPath}\n  ${dir}\n  ${formatModelName(agent.pi.model)}`);
-  streamRun(agent.pi);
-  const outcome = await agent.prove();
-  await agent.runtime.dispose();
-  process.exit(outcome === "unknown" ? 1 : 0);
-}
 await new InteractiveMode(agent.runtime, { initialMessage: agent.task }).run();
 
 /**
@@ -179,7 +166,6 @@ interface Flags {
   provider?: string;
   thinking?: ThinkingLevel;
   limits: Limits;
-  print?: boolean;
   listModels?: boolean;
   help?: boolean;
   /** The positional arguments, in the order they were given. */
@@ -202,7 +188,6 @@ function parseArgs(args: string[]): Flags {
     if (arg === "-m" || arg === "--model") flags.model = value();
     else if (arg === "--provider") flags.provider = value();
     else if (arg === "--thinking") flags.thinking = parseThinkingLevel(value());
-    else if (arg === "-p" || arg === "--print") flags.print = true;
     else if (arg === "--list-models") flags.listModels = true;
     else if (arg === "--max-steps") flags.limits.maxSteps = count(arg, value());
     else if (arg === "--max-seconds") flags.limits.maxSeconds = count(arg, value());
@@ -227,10 +212,6 @@ function parseThinkingLevel(level: string): ThinkingLevel {
     throw new Error(`--thinking must be one of ${THINKING_LEVELS.join(", ")}`);
   }
   return level as ThinkingLevel;
-}
-
-function formatModelName(model: { provider: string; id: string }): string {
-  return `${model.provider}/${model.id}`;
 }
 
 /**

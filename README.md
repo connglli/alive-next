@@ -34,11 +34,8 @@ make help                              # every target
 ```sh
 bun run agent --list-models                        # what this machine can reach
 bun run agent -m ollama/qwen3:0.6b a.ll b.ll       # prove with one model for one run
-bun run agent --print a.ll b.ll                    # no TUI, for a pipe or a log
 bun run agent --help                               # every option
 ```
-
-`--print` exits 0 when the run settles and 1 when it does not, so it is what a script or CI calls.
 
 `engine/examples/` is the tutorial: eight pairs, each with the moves that settle it, written as scripts so the framework runs with no model in front of it.
 

@@ -78,7 +78,7 @@ export function createServices(options: ServicesOptions): Promise<AgentSessionSe
   });
 }
 
-export interface AgentOptions {
+export interface AliveAgentOpts {
   /** The proof to drive, already started on the pair. */
   session: Session;
   /** What the run may spend, or nothing, which lets it run until it settles. */
@@ -94,14 +94,17 @@ export interface AgentOptions {
   onSettled?: () => void;
 }
 
-export interface Agent {
+export interface AliveAgent {
   /** Pi's session, for a caller that wants to watch or steer it. */
   pi: AgentSession;
   /** What Pi's run modes take, for a caller that wants one to draw the run. */
   runtime: AgentSessionRuntime;
   /** The opening turn, which every way of running this one sends. */
   task: string;
-  /** Work until the run settles or the budget is spent, and say which. */
+  /**
+   * Work until the run settles or the budget is spent, and say which, for a
+   * caller that drives the loop itself rather than watching Pi draw it.
+   */
   prove(): Promise<"verified" | "counterexample" | "unknown">;
 }
 
@@ -113,9 +116,9 @@ export interface Agent {
  *
  * A run with no model is assembled all the same, because Pi's TUI is where a
  * machine with none is set up. What that costs is the first turn, which fails
- * saying so, and a caller with no screen tests `pi.model` before it starts.
+ * saying so.
  */
-export async function createAgent(options: AgentOptions): Promise<Agent> {
+export async function createAgent(options: AliveAgentOpts): Promise<AliveAgent> {
   const { session, limits, services, choice, onSettled } = options;
   const stop: Stop = {};
   const surface = createTools(session, stop);
