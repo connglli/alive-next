@@ -87,7 +87,7 @@ export async function modelRuntime(project: string = repoRoot()): Promise<ModelR
 }
 
 /** What one run asked for, all optional, all from the command line. */
-export interface Asked {
+export interface AskedModel {
   /** `provider/id`, a bare id, or either with a `:level` suffix. */
   model?: string;
   /** Which provider a bare id meant, when more than one offers it. */
@@ -95,7 +95,7 @@ export interface Asked {
   thinking?: ThinkingLevel;
 }
 
-export interface Choice {
+export interface ChosenModel {
   /** Nothing when the run asked for nothing, which leaves it to the settings. */
   model?: Model<Api>;
   thinkingLevel?: ThinkingLevel;
@@ -106,7 +106,7 @@ export interface Choice {
  * what it could have meant, because that mistake should surface before a run
  * starts rather than as a confusing error on the first turn.
  */
-export function chooseModel(runtime: ModelRuntime, asked: Asked): Choice {
+export function chooseModel(runtime: ModelRuntime, asked: AskedModel): ChosenModel {
   if (!asked.model && !asked.provider) return { thinkingLevel: asked.thinking };
 
   const chosen = resolveCliModel({

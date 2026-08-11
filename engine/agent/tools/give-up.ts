@@ -8,9 +8,9 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
 import { toolResult } from "./format.ts";
-import type { Stop } from "./index.ts";
+import type { AssistantStop } from "./index.ts";
 
-export function createGiveUpTool(session: Session, stop: Stop) {
+export function createGiveUpTool(session: Session, stop: AssistantStop) {
   return defineTool({
     name: "run_give_up",
     label: "Give up",

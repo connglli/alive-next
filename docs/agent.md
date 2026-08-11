@@ -10,9 +10,11 @@ A runtime rather than a bare session, because a runtime is what Pi's run modes t
 
 `createAgentSessionFromServices` takes the tools as data, so the surface the model sees is stated in one call rather than assembled by what happens to be installed. Our tools arrive as `customTools`, and `tools` is the allowlist of everything active, so a built-in that is not named is not there.
 
-Active from Pi are `bash`, `read`, `write` and `grep`, which serve the scratch computation design.md's counterexample search asks for. Pi builds them for the `cwd` the session is created with, which is the run's scratch directory, so the shell starts where the agent is meant to work.
+Active are `bash`, `read`, `write`, `grep`, `ls` and `find`, which serve the scratch computation design.md's counterexample search asks for — and they are ours, `tools/sandbox.ts`, because each one is confined to the run's scratch directory. The six keep Pi's bare names on purpose: registering a tool of the same name replaces the built-in, which is Pi's own tool-override pattern, and what a replacement keeps is the built-in rendering, since the TUI looks a renderer up by name.
 
-Inactive are Pi's `edit`, `ls` and `find`. `ls` and `find` are `bash` with more steps, and `edit` is `write` with more steps for a file the run wrote itself, since nothing in a scratch directory is long enough to be worth patching in place.
+`read`, `write`, `grep` and `ls` are Pi's implementations with the filesystem operation hooks replaced by one that refuses a path resolving outside the scratch directory — a symlink planted inside cannot smuggle one out; `grep` and `find` refuse a search root the same way themselves, where the message can say why. `bash` runs every command under bubblewrap, through the sandbox runtime Pi itself ships (its sandbox example uses the same manager), so the machine the shell sees is one machine: the whole filesystem read-only, nothing writable but the scratch directory and the system's `/tmp` (where a tool's temporaries go, exactly as on the host), no network, and the environment the host process carries, with the toolchain's binaries at the tail of PATH. On Linux the shell needs bubblewrap, socat and ripgrep installed; the first command of a run says so when they are not.
+
+Inactive is Pi's `edit`, which is `write` with more steps for a file the run wrote itself, since nothing in a scratch directory is long enough to be worth patching in place.
 
 Ours are the rest of design.md's catalog, declared with `defineTool` and TypeBox parameters, under names that carry the prefix of what the move acts on: `run_` the run as a whole (`run_status`, `run_report_cex`, `run_give_up`), `goal_` one goal (`goal_show`, `goal_analyze`, `goal_check`, `goal_revert`), `tx_` the open transaction (`tx_begin`, `tx_edit`, `tx_commit`, `tx_abort`), `tree_` the shape of the goal tree (`tree_split`, `tree_unsplit`, `tree_strengthen`). Two things follow. No name of ours can collide with one of Pi's, today or when Pi grows a tool, so the surface stays stated rather than negotiated. And a model reaching for the `edit` it has been trained on in every other harness does not land on the tool that rewrites IR under a transaction, which is `tx_edit` and answers to nothing else.
 
@@ -32,13 +34,11 @@ A result carries the goal tree exactly when the move changed it, which is what t
 
 Tools run sequentially, because they share one store and one goal tree, and two calls in a parallel batch would race on the state the second one reads.
 
-## Why a shell is safe here
+## Why the shell is confined
 
-The agent can reach the session directory with `bash`, and that is not what protects a verdict. Programs are stored under the hash of their content and the trajectory is a hash chain, so tampering is evident on the next load; more to the point, a certificate is checked by replaying every step through alive-tv, so a record the agent has bent produces a package that fails replay rather than a wrong answer.
+`bash` walks upwards as easily as down, so it runs in a sandbox rather than in the checkout: the whole filesystem mounts read-only, nothing is writable but the scratch directory and the system's `/tmp`, there is no network, and the environment is the host process's own — so a key is the shell's to print, and what keeps it there is that no network leaves the shell. The run's own record — the trajectory, the program store, the certificate — and Pi's credentials are unmounted as well, so a run can neither read what would let it coach itself nor write what would let it fake itself. The rest of the machine stays readable, because the search runs the toolchain's binaries and an interpreter, and that is read-only for the run by construction.
 
-Isolation is hygiene rather than the soundness boundary. The session `cwd` is the scratch directory and the store lives outside it, so an agent that writes files writes them where it is supposed to.
-
-Credentials are the one thing that hygiene has to get right, and it is why they are the only part of Pi's configuration this repository does not hold. The scratch directory is inside the checkout, and `bash` walks upwards as easily as down, so a key under `.pi/` would be one `cat` away from an agent that is untrusted by construction. Keys stay in `~/.pi/agent/auth.json`, which Pi writes `0600`, outside anything a run can reach by walking the tree.
+What protects a verdict is still the replay. Programs are stored under the hash of their content and the trajectory is a hash chain, so tampering is evident on the next load; more to the point, a certificate is checked by replaying every step through alive-tv, so a record the agent has bent produces a package that fails replay rather than a wrong answer. Confinement is what keeps the search honest about being a search; replay is what makes a wrong answer impossible.
 
 ## The session
 

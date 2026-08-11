@@ -12,7 +12,7 @@ import { join } from "node:path";
 import type { Api, AssistantMessage, Model, ToolCall } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { createAgent, createServices } from "../agent/agent.ts";
+import { createProofAssistant, createServices } from "../agent/agent.ts";
 import { Budget } from "../agent/budget.ts";
 import type { CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
@@ -155,7 +155,7 @@ async function agent(turns: AssistantMessage[], maxSteps = 8) {
     interp: noRun,
   });
   const { models, model } = await stubRuntime(join(dir, "pi"));
-  const built = await createAgent({
+  const built = await createProofAssistant({
     session,
     limits: { maxSteps },
     choice: { model },

@@ -18,7 +18,7 @@ import { Llubi } from "../core/drivers/llubi.ts";
 import { Session } from "../core/session.ts";
 import { timeoutsFrom } from "../core/state/steps.ts";
 import { Toolchain } from "../core/toolchain.ts";
-import { createAgent, createServices } from "./agent.ts";
+import { createProofAssistant, createServices } from "./agent.ts";
 import type { Limits } from "./budget.ts";
 import { chooseModel, listAvailableModels, THINKING_LEVELS } from "./model.ts";
 
@@ -121,10 +121,11 @@ const session = await Session.start({
 
 const started = Date.now();
 let summary: string | undefined;
-const agent = await createAgent({
+const agent = await createProofAssistant({
   session,
   services,
   choice,
+  toolchain: config.toolchain,
   limits: flags.limits,
   onSettled: () => finishRun(),
 });

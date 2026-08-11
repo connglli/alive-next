@@ -31,9 +31,13 @@ import {
 import { repoRoot } from "../core/config.ts";
 import type { Session } from "../core/session.ts";
 import { Budget, type Limits } from "./budget.ts";
-import { type Choice, createResourceOptions } from "./model.ts";
+import { type ChosenModel, createResourceOptions } from "./model.ts";
 import { CARRY_ON_INSTRUCTION, SYSTEM_INSTRUCTION, TASK_INSTRUCTION } from "./prompt.ts";
-import { BUILTIN, createTools, type Stop } from "./tools/index.ts";
+import {
+  type AssistantStop,
+  createProofAssistantTools,
+  createSandboxTools,
+} from "./tools/index.ts";
 
 export interface ServicesOptions {
   /** Where the shell and the file tools work: a run's scratch directory. */
@@ -78,14 +82,16 @@ export function createServices(options: ServicesOptions): Promise<AgentSessionSe
   });
 }
 
-export interface AliveAgentOpts {
+export interface ProofAssistantOpts {
   /** The proof to drive, already started on the pair. */
   session: Session;
   /** What the run may spend, or nothing, which lets it run until it settles. */
   limits?: Limits;
   /** Pi's services, and the model this run asked for, if it asked for one. */
   services: AgentSessionServices;
-  choice?: Choice;
+  /** Where the toolchain the search's shell may run was built. */
+  toolchain?: string;
+  choice?: ChosenModel;
   /**
    * Called when the loop stops, whichever of the three things stopped it. A
    * caller that outlives the loop, which anything holding a screen does, has
@@ -94,7 +100,7 @@ export interface AliveAgentOpts {
   onSettled?: () => void;
 }
 
-export interface AliveAgent {
+export interface ProofAssistant {
   /** Pi's session, for a caller that wants to watch or steer it. */
   pi: AgentSession;
   /** What Pi's run modes take, for a caller that wants one to draw the run. */
@@ -112,16 +118,19 @@ export interface AliveAgent {
  * Assemble the agent. The tool surface is stated here rather than discovered:
  * `noTools` drops Pi's defaults, the allowlist names every tool that exists,
  * and the resource loader is told to read nothing from the machine, so what a
- * run can do is what this file says and not what is installed beside it.
+ * run can do is what this file says and not what is installed beside it. The
+ * names Pi's own built-ins had are in the list only as our sandbox tools, each
+ * confined to the run's scratch directory (tools/sandbox.ts).
  *
  * A run with no model is assembled all the same, because Pi's TUI is where a
  * machine with none is set up. What that costs is the first turn, which fails
  * saying so.
  */
-export async function createAgent(options: AliveAgentOpts): Promise<AliveAgent> {
+export async function createProofAssistant(options: ProofAssistantOpts): Promise<ProofAssistant> {
   const { session, limits, services, choice, onSettled } = options;
-  const stop: Stop = {};
-  const surface = createTools(session, stop);
+  const stop: AssistantStop = {};
+  const surface = createProofAssistantTools(session, stop);
+  const sandbox = createSandboxTools(services.cwd, options.toolchain);
   const budget = new Budget(limits);
 
   // The services are the caller's, already loaded, and one run works in one
@@ -136,8 +145,8 @@ export async function createAgent(options: AliveAgentOpts): Promise<AliveAgent> 
       model: choice?.model,
       thinkingLevel: choice?.thinkingLevel,
       noTools: "all",
-      tools: [...BUILTIN, ...surface.map((tool) => tool.name)],
-      customTools: surface,
+      tools: [...sandbox, ...surface].map((tool) => tool.name),
+      customTools: [...sandbox, ...surface],
     });
     return { ...created, services, diagnostics: services.diagnostics };
   };

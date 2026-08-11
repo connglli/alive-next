@@ -8,14 +8,6 @@
 // A tool that fails throws, which Pi reports to the model as a tool error. A
 // refused edit, a rejected commit and a failed check are not failures: they
 // are what the run looks like, and they come back as ordinary results.
-//
-// Every name says what it acts on before it says what it does: `run_` the run
-// as a whole, `goal_` one goal, `tx_` the open transaction, `tree_` the shape
-// of the goal tree. The session's own moves keep the bare names, since the
-// trajectory is written whoever is driving. What the prefixes buy here is a
-// surface nothing built into Pi can collide with, today or when Pi grows a
-// tool, and a model that can tell `tx_edit`, which rewrites IR under a
-// transaction, from the `edit` it has been trained to reach for.
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Session } from "../../core/session.ts";
 import { createAbortTool } from "./abort.ts";
@@ -27,22 +19,28 @@ import { createEditTool } from "./edit.ts";
 import { createGiveUpTool } from "./give-up.ts";
 import { createReportCexTool } from "./report-cex.ts";
 import { createRevertTool } from "./revert.ts";
+import { createSandboxTools, SANDBOX_TOOLS } from "./sandbox.ts";
 import { createShowTool } from "./show.ts";
 import { createSplitTool } from "./split.ts";
 import { createStatusTool } from "./status.ts";
 import { createStrengthenTool } from "./strengthen.ts";
 import { createUnsplitTool } from "./unsplit.ts";
 
+export { createSandboxTools, SANDBOX_TOOLS };
+
 /**
  * Why a run is over, when it is not the goal tree that says so. The agent
  * loop reads this after every turn, and `run_give_up` is what writes it.
  */
-export interface Stop {
+export interface AssistantStop {
   gaveUp?: string;
 }
 
 /** Ours, in the order they are worth reading: look, decide, edit, cut, settle. */
-export function createTools(session: Session, stop: Stop = {}): ToolDefinition[] {
+export function createProofAssistantTools(
+  session: Session,
+  stop: AssistantStop = {},
+): ToolDefinition[] {
   return [
     createStatusTool(session),
     createShowTool(session),
@@ -61,10 +59,7 @@ export function createTools(session: Session, stop: Stop = {}): ToolDefinition[]
   ];
 }
 
-/** Pi's own tools that stay, which serve the counterexample search. */
-export const BUILTIN = ["bash", "read", "write", "grep"];
-
 /** Every tool a run may call, which is what the allowlist has to say. */
 export function listToolNames(session: Session): string[] {
-  return [...BUILTIN, ...createTools(session).map((tool) => tool.name)];
+  return [...SANDBOX_TOOLS, ...createProofAssistantTools(session).map((tool) => tool.name)];
 }

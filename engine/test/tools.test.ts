@@ -11,7 +11,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Check } from "typebox/value";
-import { BUILTIN, createTools, listToolNames } from "../agent/tools/index.ts";
+import {
+  createProofAssistantTools,
+  createSandboxTools,
+  listToolNames,
+  SANDBOX_TOOLS,
+} from "../agent/tools/index.ts";
 import type { CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
 import { Session } from "../core/session.ts";
@@ -62,7 +67,7 @@ beforeEach(async () => {
     checker: new YesMan(),
     interp: noRun,
   });
-  surface = createTools(session);
+  surface = createProofAssistantTools(session);
 });
 
 afterEach(() => {
@@ -231,28 +236,34 @@ describe.skipIf(!built)("the tool layer", () => {
  */
 describe("the tool surface", () => {
   const names = listToolNames({} as Session);
-  const schemas = createTools({} as Session).map((tool) => ({
-    name: tool.name,
-    // As the provider will see it, since what is sent is JSON.
-    schema: JSON.parse(JSON.stringify(tool.parameters)) as {
-      type?: string;
-      anyOf?: { type?: string }[];
-    },
-  }));
+  const schemas = [...createSandboxTools("."), ...createProofAssistantTools({} as Session)].map(
+    (tool) => ({
+      name: tool.name,
+      // As the provider will see it, since what is sent is JSON.
+      schema: JSON.parse(JSON.stringify(tool.parameters)) as {
+        type?: string;
+        anyOf?: { type?: string }[];
+      },
+    }),
+  );
 
-  test("the allowlist names Pi's tools and ours, and nothing else", () => {
+  test("the allowlist names the sandbox tools and ours, and nothing else", () => {
     expect(names).toContain("bash");
     expect(new Set(names).size).toBe(names.length);
 
-    // Ours are told from Pi's by the prefix that says what they act on, which
-    // is what keeps a name of ours off a name of Pi's however either grows.
-    const ours = names.filter((name) => !BUILTIN.includes(name));
-    expect(ours).toHaveLength(names.length - BUILTIN.length);
+    // Ours are told from the machine's by the prefix that says what they act
+    // on, which is what keeps a name of ours off a name of Pi's however
+    // either grows. The sandbox tools keep the bare names on purpose, so they
+    // replace the built-ins they stand in for.
+    const ours = names.filter(
+      (name) => !SANDBOX_TOOLS.includes(name as (typeof SANDBOX_TOOLS)[number]),
+    );
+    expect(ours).toHaveLength(names.length - SANDBOX_TOOLS.length);
     for (const name of ours) expect(name).toMatch(/^(run|goal|tx|tree)_/);
   });
 
   test("every tool takes an object, which is what a provider insists on", () => {
-    expect(schemas.length).toBe(names.length - BUILTIN.length);
+    expect(schemas.length).toBe(names.length);
     const notObjects = schemas
       .flatMap(({ name, schema }) => [
         { at: name, type: schema.type },
