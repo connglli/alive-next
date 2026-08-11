@@ -92,6 +92,9 @@ const services = await createServices({
         // is an editor to put a paused run's opening turn in.
         if (flags.pause) ctx.ui.setEditorText(agent.task);
       });
+      pi.on("session_shutdown", () => {
+        announce = undefined;
+      });
     },
   ],
 });
@@ -123,7 +126,7 @@ const agent = await createAgent({
   services,
   choice,
   limits: flags.limits,
-  onSettled: () => finishRun(true),
+  onSettled: () => finishRun(),
 });
 
 // The certificate is earned the moment the tree settles, which under the TUI
@@ -131,7 +134,7 @@ const agent = await createAgent({
 // summary is held until the terminal is the shell's again.
 process.on("exit", () => {
   finishRun();
-  if (summary) process.stdout.write(summary);
+  if (summary) process.stdout.write(`${summary}\n`);
 });
 
 // A run sends its opening turn and starts working. `--pause` holds that turn
@@ -229,13 +232,8 @@ function parseThinkingLevel(level: string): ThinkingLevel {
  * Close the run and say how it went, once however often it is asked. The TUI
  * quits through `process.exit`, and a run can be abandoned before it settles,
  * so this has to be safe to call from either end.
- *
- * `watched` says which end called: only the loop stopping is watched, and only
- * then is there a screen to say it on. Pi invalidates the context an extension
- * captured as it tears the session down, so a run abandoned before it settled
- * is concluded when saying anything on screen would throw rather than draw.
  */
-function finishRun(watched = false): void {
+function finishRun(): void {
   if (summary !== undefined) return;
   const outcome = session.finish();
   const goals = [...session.tree.goals.values()]
@@ -247,7 +245,7 @@ function finishRun(watched = false): void {
   summary = `${lines.map((line) => `  ${line}`).join("\n")}\n`;
   // A verdict is news where the run is being watched; the shell gets it too,
   // once the screen is the shell's again.
-  if (watched) announce?.(lines.join("\n"), settled ? "info" : "warning");
+  announce?.(lines.join("\n"), settled ? "info" : "warning");
 }
 
 /** A directory name that sorts by when it was made. */
