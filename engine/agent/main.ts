@@ -58,7 +58,7 @@ if (flags.listModels) {
 const [srcPath, tgtPath, where] = flags.rest;
 if (!srcPath || !tgtPath) {
   const given = flags.rest.length === 0 ? "no program" : "only one program";
-  exitWithError(`Error: ${given} given, and a run proves one against another\n\n${USAGE}`);
+  exitWithError(`${given} given, and a run proves one against another`);
 }
 
 // Both programs, and the model, before anything is created, so a command line
@@ -123,7 +123,7 @@ const agent = await createAgent({
   services,
   choice,
   limits: flags.limits,
-  onSettled: finishRun,
+  onSettled: () => finishRun(true),
 });
 
 // The certificate is earned the moment the tree settles, which under the TUI
@@ -144,12 +144,12 @@ await new InteractiveMode(agent.runtime, {
 /**
  * Say what is wrong with the command line and stop. A mistyped flag is the
  * user's mistake rather than the program's, so it reads as one sentence and
- * not as a stack that points into this file. What each message carries beyond
- * that sentence is its own business: a wrong flag is worth the usage beside
- * it, a model that does not exist is better answered by naming what does.
+ * not as a stack that points into this file. What it carries beyond that
+ * sentence is nothing: `--help` is where the usage is, and a model that does
+ * not exist is better answered by naming what does.
  */
 function exitWithError(wrong: string): never {
-  console.error(wrong);
+  console.error(`Error: ${wrong}`);
   process.exit(2);
 }
 
@@ -192,7 +192,7 @@ function parseArgs(args: string[]): Flags {
     const arg = args[at] as string;
     const value = (): string => {
       const next = args[++at];
-      if (next === undefined) throw new Error(`${arg} wants a value\n\n${USAGE}`);
+      if (next === undefined) throw new Error(`${arg} wants a value`);
       return next;
     };
     if (arg === "-m" || arg === "--model") flags.model = value();
@@ -203,7 +203,7 @@ function parseArgs(args: string[]): Flags {
     else if (arg === "--max-steps") flags.limits.maxSteps = count(arg, value());
     else if (arg === "--max-seconds") flags.limits.maxSeconds = count(arg, value());
     else if (arg === "-h" || arg === "--help") flags.help = true;
-    else if (arg.startsWith("-")) throw new Error(`no such option ${arg}\n\n${USAGE}`);
+    else if (arg.startsWith("-")) throw new Error(`no such option ${arg}`);
     else flags.rest.push(arg);
   }
   return flags;
@@ -229,8 +229,13 @@ function parseThinkingLevel(level: string): ThinkingLevel {
  * Close the run and say how it went, once however often it is asked. The TUI
  * quits through `process.exit`, and a run can be abandoned before it settles,
  * so this has to be safe to call from either end.
+ *
+ * `watched` says which end called: only the loop stopping is watched, and only
+ * then is there a screen to say it on. Pi invalidates the context an extension
+ * captured as it tears the session down, so a run abandoned before it settled
+ * is concluded when saying anything on screen would throw rather than draw.
  */
-function finishRun(): void {
+function finishRun(watched = false): void {
   if (summary !== undefined) return;
   const outcome = session.finish();
   const goals = [...session.tree.goals.values()]
@@ -242,7 +247,7 @@ function finishRun(): void {
   summary = `${lines.map((line) => `  ${line}`).join("\n")}\n`;
   // A verdict is news where the run is being watched; the shell gets it too,
   // once the screen is the shell's again.
-  announce?.(lines.join("\n"), settled ? "info" : "warning");
+  if (watched) announce?.(lines.join("\n"), settled ? "info" : "warning");
 }
 
 /** A directory name that sorts by when it was made. */
