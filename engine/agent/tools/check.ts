@@ -1,4 +1,4 @@
-// check: ask alive2 whether a goal's claim holds as it stands.
+// goal_check: ask alive2 whether a goal's claim holds as it stands.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
@@ -6,7 +6,7 @@ import { toolResultFrom } from "./format.ts";
 
 export function createCheckTool(session: Session) {
   return defineTool({
-    name: "check",
+    name: "goal_check",
     label: "Check",
     description:
       "Ask whether a goal's tgt refines its src as the two stand. Proved discharges the goal. Refuted is a hint about this pair and not about the translation, since a valid step can overshoot and a callee's entry is conservative. Unknown means the solver ran out of time.",

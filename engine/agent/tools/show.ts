@@ -1,4 +1,4 @@
-// show: the text of a goal's two sides, or of one program.
+// goal_show: the text of a goal's two sides, or of one program.
 //
 // One tool for both because the two kinds of name cannot be confused: a goal
 // is `g3` and a program is `p7`.
@@ -16,7 +16,7 @@ function side(which: "src" | "tgt", view: SideView): string {
 
 export function createShowTool(session: Session) {
   return defineTool({
-    name: "show",
+    name: "goal_show",
     label: "Show",
     description:
       "The text of a goal's two sides, given a goal id like g3, or of one program, given a program id like p7. Value references are the program's own, so read a side before naming anything inside it.",

@@ -1,4 +1,4 @@
-// analyze: what an LLVM analysis says about one side of a goal.
+// goal_analyze: what an LLVM analysis says about one side of a goal.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { AnalyzeKind } from "../../core/drivers/llops.ts";
@@ -9,10 +9,10 @@ const KINDS: AnalyzeKind[] = ["knownbits", "ranges", "pointer", "defined"];
 
 export function createAnalyzeTool(session: Session) {
   return defineTool({
-    name: "analyze",
+    name: "goal_analyze",
     label: "Analyze",
     description:
-      "Run an analysis over one side of a goal and report what it found about each value. The facts are proposals: one counts only once a certified step has put it in a program, which is what strengthen does at a cut.",
+      "Run an analysis over one side of a goal and report what it found about each value. The facts are proposals: one counts only once a certified step has put it in a program, which is what tree_strengthen does at a cut.",
     parameters: Type.Object({
       gid: Type.String(),
       side: Type.Union([Type.Literal("src"), Type.Literal("tgt")]),

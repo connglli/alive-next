@@ -8,6 +8,14 @@
 // A tool that fails throws, which Pi reports to the model as a tool error. A
 // refused edit, a rejected commit and a failed check are not failures: they
 // are what the run looks like, and they come back as ordinary results.
+//
+// Every name says what it acts on before it says what it does: `run_` the run
+// as a whole, `goal_` one goal, `tx_` the open transaction, `tree_` the shape
+// of the goal tree. The session's own moves keep the bare names, since the
+// trajectory is written whoever is driving. What the prefixes buy here is a
+// surface nothing built into Pi can collide with, today or when Pi grows a
+// tool, and a model that can tell `tx_edit`, which rewrites IR under a
+// transaction, from the `edit` it has been trained to reach for.
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Session } from "../../core/session.ts";
 import { createAbortTool } from "./abort.ts";
@@ -27,7 +35,7 @@ import { createUnsplitTool } from "./unsplit.ts";
 
 /**
  * Why a run is over, when it is not the goal tree that says so. The agent
- * loop reads this after every turn, and `give_up` is what writes it.
+ * loop reads this after every turn, and `run_give_up` is what writes it.
  */
 export interface Stop {
   gaveUp?: string;

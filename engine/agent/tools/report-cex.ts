@@ -1,4 +1,4 @@
-// report_cex: offer a whole program input as a counterexample.
+// run_report_cex: offer a whole program input as a counterexample.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { HarnessArg } from "../../core/drivers/llops.ts";
@@ -20,7 +20,7 @@ const Argument = Type.Union([
 
 export function createReportCexTool(session: Session) {
   return defineTool({
-    name: "report_cex",
+    name: "run_report_cex",
     label: "Report counterexample",
     description:
       "Offer one whole program input, an argument per parameter of the pair the run was asked about. Both programs are run on it under llubi, and a divergence seen there refutes the root and ends the run. A refutation from alive2 is not one of these: it speaks about whatever pair it was given, and may be about a state no input reaches.",

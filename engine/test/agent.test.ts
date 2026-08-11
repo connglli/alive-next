@@ -202,8 +202,8 @@ describe("the budget", () => {
 describe.skipIf(!built)("the loop", () => {
   test("a tool call reaches the session, and its result the next turn", async () => {
     const { session, prove } = await agent([
-      turn("looking", [{ name: "status", arguments: {} }]),
-      turn("proving", [{ name: "check", arguments: { gid: "g1" } }]),
+      turn("looking", [{ name: "run_status", arguments: {} }]),
+      turn("proving", [{ name: "goal_check", arguments: { gid: "g1" } }]),
     ]);
     expect(await prove()).toBe("verified");
 
@@ -226,7 +226,7 @@ describe.skipIf(!built)("the loop", () => {
    */
   test("what produced a turn is in the record", async () => {
     const { session, prove } = await agent([
-      turn("proving", [{ name: "check", arguments: { gid: "g1" } }]),
+      turn("proving", [{ name: "goal_check", arguments: { gid: "g1" } }]),
     ]);
     expect(await prove()).toBe("verified");
 
@@ -241,8 +241,8 @@ describe.skipIf(!built)("the loop", () => {
 
   test("a verdict ends the run, whatever the model meant to do next", async () => {
     const { session, prove } = await agent([
-      turn("proving", [{ name: "check", arguments: { gid: "g1" } }]),
-      turn("still going", [{ name: "status", arguments: {} }]),
+      turn("proving", [{ name: "goal_check", arguments: { gid: "g1" } }]),
+      turn("still going", [{ name: "run_status", arguments: {} }]),
     ]);
     expect(await prove()).toBe("verified");
 
@@ -254,7 +254,7 @@ describe.skipIf(!built)("the loop", () => {
 
   test("a budget stops a model going in circles, and says so", async () => {
     const going = Array.from({ length: 10 }, () =>
-      turn("again", [{ name: "status", arguments: {} }]),
+      turn("again", [{ name: "run_status", arguments: {} }]),
     );
     const { session, prove } = await agent(going, 3);
     expect(await prove()).toBe("unknown");
@@ -273,7 +273,7 @@ describe.skipIf(!built)("the loop", () => {
     const { session, prove } = await agent([
       turn("thinking about it"),
       turn("thinking some more"),
-      turn("proving", [{ name: "check", arguments: { gid: "g1" } }]),
+      turn("proving", [{ name: "goal_check", arguments: { gid: "g1" } }]),
     ]);
     expect(await prove()).toBe("verified");
 
@@ -284,10 +284,10 @@ describe.skipIf(!built)("the loop", () => {
     expect(calls.map((entry) => entry.tool)).toEqual(["check"]);
   });
 
-  test("give_up ends the run and says why", async () => {
+  test("run_give_up ends the run and says why", async () => {
     const { session, prove } = await agent([
-      turn("done here", [{ name: "give_up", arguments: { reason: "the cut goes nowhere" } }]),
-      turn("more", [{ name: "status", arguments: {} }]),
+      turn("done here", [{ name: "run_give_up", arguments: { reason: "the cut goes nowhere" } }]),
+      turn("more", [{ name: "run_status", arguments: {} }]),
     ]);
     expect(await prove()).toBe("unknown");
 
@@ -299,8 +299,8 @@ describe.skipIf(!built)("the loop", () => {
 
   test("a tool that throws is an error the model can read, not a dead run", async () => {
     const { session, prove } = await agent([
-      turn("looking", [{ name: "show", arguments: { ref: "g9" } }]),
-      turn("proving", [{ name: "check", arguments: { gid: "g1" } }]),
+      turn("looking", [{ name: "goal_show", arguments: { ref: "g9" } }]),
+      turn("proving", [{ name: "goal_check", arguments: { gid: "g1" } }]),
     ]);
     expect(await prove()).toBe("verified");
 

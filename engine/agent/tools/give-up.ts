@@ -1,4 +1,4 @@
-// give_up: the model saying it has nothing left to try.
+// run_give_up: the model saying it has nothing left to try.
 //
 // A run ends on a verdict, on a budget, or here. Without this the only way to
 // stop short would be to fall silent, and falling silent is not the same
@@ -12,7 +12,7 @@ import type { Stop } from "./index.ts";
 
 export function createGiveUpTool(session: Session, stop: Stop) {
   return defineTool({
-    name: "give_up",
+    name: "run_give_up",
     label: "Give up",
     description:
       "End the run without settling it, saying why. Call this when you have run out of things to try, not when you are merely between moves: a turn that calls nothing is taken as thinking aloud and you will be asked to continue. The run reports unknown, which is one of the three outcomes and not a failure to explain away.",

@@ -1,4 +1,4 @@
-// status: where the run stands.
+// run_status: where the run stands.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
@@ -6,7 +6,7 @@ import { formatGoalTree, toolResult } from "./format.ts";
 
 export function createStatusTool(session: Session) {
   return defineTool({
-    name: "status",
+    name: "run_status",
     label: "Status",
     description:
       "The goal tree: every goal, whether it is open, split, proved or refuted, and the two programs it holds. Names no program text, so it is the cheap thing to call before deciding what to do next.",

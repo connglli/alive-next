@@ -1,4 +1,4 @@
-// split: cut a goal in two at aligned points.
+// tree_split: cut a goal in two at aligned points.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
@@ -6,10 +6,10 @@ import { toolResultFrom } from "./format.ts";
 
 export function createSplitTool(session: Session) {
   return defineTool({
-    name: "split",
+    name: "tree_split",
     label: "Split",
     description:
-      "Cut a goal at a value on each side, making an outer goal that calls an outlined function and a callee goal that is its body. The value map says which tgt value each src value crosses the cut as. The callee's parameters are undef-capable until strengthen says otherwise, so a cut is usually followed by one.",
+      "Cut a goal at a value on each side, making an outer goal that calls an outlined function and a callee goal that is its body. The value map says which tgt value each src value crosses the cut as. The callee's parameters are undef-capable until tree_strengthen says otherwise, so a cut is usually followed by one.",
     parameters: Type.Object({
       gid: Type.String(),
       src_cut: Type.String({ description: "The src value the suffix starts at." }),

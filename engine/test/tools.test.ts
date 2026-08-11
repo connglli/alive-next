@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Check } from "typebox/value";
-import { createTools, listToolNames } from "../agent/tools/index.ts";
+import { BUILTIN, createTools, listToolNames } from "../agent/tools/index.ts";
 import type { CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
 import { Session } from "../core/session.ts";
@@ -83,26 +83,26 @@ async function call(name: string, args: unknown): Promise<string> {
 
 describe.skipIf(!built)("the tool layer", () => {
   test("proves a pair, one tool call at a time", async () => {
-    expect(await call("status", {})).toContain("g1 root, open");
+    expect(await call("run_status", {})).toContain("g1 root, open");
 
-    const shown = await call("show", { ref: "g1" });
+    const shown = await call("goal_show", { ref: "g1" });
     expect(shown).toContain("src p1");
     expect(shown).toContain("mul i32");
 
     const cutting = { gid: "g1", src_cut: "%2", tgt_cut: "%2", value_map: SAME };
-    expect(await call("split", cutting)).toContain("cut into @outlined_g3");
-    expect(await call("show", { ref: "g3" })).toContain("callee of g1");
+    expect(await call("tree_split", cutting)).toContain("cut into @outlined_g3");
+    expect(await call("goal_show", { ref: "g3" })).toContain("callee of g1");
 
-    const facts = await call("analyze", { gid: "g2", side: "src", kind: "defined" });
+    const facts = await call("goal_analyze", { gid: "g2", side: "src", kind: "defined" });
     expect(facts).toContain("noundef");
 
-    expect(await call("strengthen", { gid: "g1", facts: { "0": { noundef: true } } })).toContain(
-      "stated on 0",
-    );
+    expect(
+      await call("tree_strengthen", { gid: "g1", facts: { "0": { noundef: true } } }),
+    ).toContain("stated on 0");
 
     // The yes-man discharges both halves, and the last of them ends the run.
-    expect(await call("check", { gid: "g2" })).toContain("g2 proved");
-    const last = await call("check", { gid: "g3" });
+    expect(await call("goal_check", { gid: "g2" })).toContain("g2 proved");
+    const last = await call("goal_check", { gid: "g3" });
     expect(last).toContain("g3 proved");
     expect(last).toContain("the root is verified");
     expect(session.verdict).toBe("verified");
@@ -110,35 +110,35 @@ describe.skipIf(!built)("the tool layer", () => {
 
   test("a move that changed the tree says how it stands, and one that did not says nothing", async () => {
     // A cut changes it, so the two children arrive with the answer.
-    const split = await call("split", {
+    const split = await call("tree_split", {
       gid: "g1",
       src_cut: "%2",
       tgt_cut: "%2",
       value_map: SAME,
     });
     // A tree line carries both programs, which is what tells it from the
-    // heading `show` puts on a goal.
+    // heading `goal_show` puts on a goal.
     expect(split).toContain("g2 outer of g1, open, src");
     expect(split).toContain("g3 callee of g1, open, src");
 
     // Reading changes nothing, and neither does opening a transaction or
     // editing inside it, so none of them repeats a picture the caller has.
     for (const [name, args] of [
-      ["show", { ref: "g2" }],
-      ["begin", { gid: "g2", side: "src" }],
-      ["edit", { op: "commute", v: "%9" }],
+      ["goal_show", { ref: "g2" }],
+      ["tx_begin", { gid: "g2", side: "src" }],
+      ["tx_edit", { op: "commute", v: "%9" }],
     ] as const) {
       expect(await call(name, args)).not.toContain("outer of g1, open, src");
     }
 
     // A check that proves does change it, and says so.
-    await call("abort", {});
-    expect(await call("check", { gid: "g2" })).toContain("g2 outer of g1, proved, src");
+    await call("tx_abort", {});
+    expect(await call("goal_check", { gid: "g2" })).toContain("g2 outer of g1, proved, src");
   });
 
   test("a verdict is what tells the loop to stop", async () => {
-    await call("split", { gid: "g1", src_cut: "%2", tgt_cut: "%2", value_map: SAME });
-    const tool = surface.find((candidate) => candidate.name === "check");
+    await call("tree_split", { gid: "g1", src_cut: "%2", tgt_cut: "%2", value_map: SAME });
+    const tool = surface.find((candidate) => candidate.name === "goal_check");
     if (!tool) throw new Error("no check tool");
 
     const open = await tool.execute("t1", { gid: "g2" }, undefined, undefined, undefined as never);
@@ -154,67 +154,122 @@ describe.skipIf(!built)("the tool layer", () => {
   });
 
   test("a transaction reads and writes through the tools", async () => {
-    const opened = await call("begin", { gid: "g1", side: "src" });
+    const opened = await call("tx_begin", { gid: "g1", side: "src" });
     expect(opened).toContain("editing g1 src");
     expect(opened).toContain("%2 = mul i32 %1, 8");
 
     // A refusal answers with the program it refused, which is where the value
     // the caller meant is to be found.
-    const refused = await call("edit", { op: "replace", v: "%9", insts: ["%s = shl i32 %1, 3"] });
+    const refused = await call("tx_edit", {
+      op: "replace",
+      v: "%9",
+      insts: ["%s = shl i32 %1, 3"],
+    });
     expect(refused).toContain("refused");
     expect(refused).toContain("%2 = mul i32 %1, 8");
 
-    const applied = await call("edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
+    const applied = await call("tx_edit", {
+      op: "replace",
+      v: "%2",
+      insts: ["%s = shl i32 %1, 3"],
+    });
     expect(applied).toContain("applied, 1 so far");
     expect(applied).toContain("shl i32");
 
     // The src is now the tgt, byte for byte, so it is the program the tgt
     // already had a name for, and the check that follows the step proves it.
-    expect(await call("commit", {})).toContain("certified, head is p2");
-    expect(await call("show", { ref: "g1" })).toContain("(was p1)");
+    expect(await call("tx_commit", {})).toContain("certified, head is p2");
+    expect(await call("goal_show", { ref: "g1" })).toContain("(was p1)");
   });
 
   test("a step can be walked back", async () => {
-    await call("begin", { gid: "g1", side: "src" });
-    await call("edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
-    await call("commit", {});
+    await call("tx_begin", { gid: "g1", side: "src" });
+    await call("tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
+    await call("tx_commit", {});
 
-    expect(await call("revert", { gid: "g1", side: "src", to: "p1" })).toContain("g1 src is p1");
+    expect(await call("goal_revert", { gid: "g1", side: "src", to: "p1" })).toContain(
+      "g1 src is p1",
+    );
     // What it was is still readable, by the name the tree gave it.
-    expect(await call("show", { ref: "p2" })).toContain("shl i32");
-    expect(await call("status", {})).toContain("g1 root, open");
+    expect(await call("goal_show", { ref: "p2" })).toContain("shl i32");
+    expect(await call("run_status", {})).toContain("g1 root, open");
   });
 
   test("every answer opens by saying whether the move did what it was asked", async () => {
-    expect(await call("status", {})).toStartWith("SUCCESS");
-    expect(await call("show", { ref: "g1" })).toStartWith("SUCCESS");
+    expect(await call("run_status", {})).toStartWith("SUCCESS");
+    expect(await call("goal_show", { ref: "g1" })).toStartWith("SUCCESS");
 
-    await call("begin", { gid: "g1", side: "src" });
-    expect(await call("edit", { op: "commute", v: "%9" })).toStartWith("FAILURE");
-    expect(await call("edit", { op: "commute", v: "%1" })).toStartWith("SUCCESS");
-    await call("abort", {});
+    await call("tx_begin", { gid: "g1", side: "src" });
+    expect(await call("tx_edit", { op: "commute", v: "%9" })).toStartWith("FAILURE");
+    expect(await call("tx_edit", { op: "commute", v: "%1" })).toStartWith("SUCCESS");
+    await call("tx_abort", {});
 
     // A check that does not prove is a failure to advance, whatever it taught.
     expect(
-      await call("split", { gid: "g1", src_cut: "%2", tgt_cut: "%2", value_map: {} }),
+      await call("tree_split", { gid: "g1", src_cut: "%2", tgt_cut: "%2", value_map: {} }),
     ).toStartWith("FAILURE");
-    expect(await call("revert", { gid: "g1", side: "src", to: "p2" })).toStartWith("FAILURE");
+    expect(await call("goal_revert", { gid: "g1", side: "src", to: "p2" })).toStartWith("FAILURE");
   });
 
-  test("give_up says the run is over and carries no proof with it", async () => {
-    const said = await call("give_up", { reason: "nothing left to cut" });
+  test("run_give_up says the run is over and carries no proof with it", async () => {
+    const said = await call("run_give_up", { reason: "nothing left to cut" });
     expect(said).toStartWith("SUCCESS");
     expect(said).toContain("the run stops here: nothing left to cut");
     // It settles nothing: the verdict still comes from the tree.
     expect(session.verdict).toBe("unknown");
   });
+});
 
-  test("the allowlist names Pi's tools and ours, and nothing else", async () => {
-    const names = listToolNames(session);
+/**
+ * The surface as data, which is what a provider reads before a run begins.
+ *
+ * A name or a schema is a property of the tool alone, so none of this needs a
+ * toolchain, a model or a session, and a stand-in stands in for the one the
+ * tools would reach. What is checked here fails early and far from the proof
+ * when it fails at all: a schema a provider rejects comes back as a 400 naming
+ * a tool, before the model has been asked anything.
+ */
+describe("the tool surface", () => {
+  const names = listToolNames({} as Session);
+  const schemas = createTools({} as Session).map((tool) => ({
+    name: tool.name,
+    // As the provider will see it, since what is sent is JSON.
+    schema: JSON.parse(JSON.stringify(tool.parameters)) as {
+      type?: string;
+      anyOf?: { type?: string }[];
+    },
+  }));
+
+  test("the allowlist names Pi's tools and ours, and nothing else", () => {
     expect(names).toContain("bash");
-    expect(names).not.toContain("edit_file");
-    // `edit` is ours here: Pi's file editor is not in the list.
-    expect(names.filter((name) => name === "edit")).toHaveLength(1);
     expect(new Set(names).size).toBe(names.length);
+
+    // Ours are told from Pi's by the prefix that says what they act on, which
+    // is what keeps a name of ours off a name of Pi's however either grows.
+    const ours = names.filter((name) => !BUILTIN.includes(name));
+    expect(ours).toHaveLength(names.length - BUILTIN.length);
+    for (const name of ours) expect(name).toMatch(/^(run|goal|tx|tree)_/);
+  });
+
+  test("every tool takes an object, which is what a provider insists on", () => {
+    expect(schemas.length).toBe(names.length - BUILTIN.length);
+    const notObjects = schemas
+      .flatMap(({ name, schema }) => [
+        { at: name, type: schema.type },
+        // A union of the ways one tool can be called says it is an object at
+        // the top, so each of the ways has to be one too.
+        ...(schema.anyOf ?? []).map((branch, index) => ({
+          at: `${name} branch ${index}`,
+          type: branch.type,
+        })),
+      ])
+      .filter((one) => one.type !== "object");
+    expect(notObjects).toEqual([]);
+  });
+
+  test("nothing is said by reference, which not every provider resolves", () => {
+    for (const { name, schema } of schemas) {
+      expect(`${name} ${JSON.stringify(schema)}`).not.toContain('"$ref"');
+    }
   });
 });

@@ -1,4 +1,4 @@
-// abort: throw the open transaction away.
+// tx_abort: throw the open transaction away.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
@@ -6,10 +6,10 @@ import { toolResult } from "./format.ts";
 
 export function createAbortTool(session: Session) {
   return defineTool({
-    name: "abort",
+    name: "tx_abort",
     label: "Abort",
     description:
-      "Discard the open transaction. Nothing was certified, so nothing is undone; the head is where it was before begin.",
+      "Discard the open transaction. Nothing was certified, so nothing is undone; the head is where it was before tx_begin.",
     parameters: Type.Object({}),
     execute: async () => {
       const thrown = await session.abort();

@@ -12,15 +12,19 @@ A runtime rather than a bare session, because a runtime is what Pi's run modes t
 
 Active from Pi are `bash`, `read`, `write` and `grep`, which serve the scratch computation design.md's counterexample search asks for. Pi builds them for the `cwd` the session is created with, which is the run's scratch directory, so the shell starts where the agent is meant to work.
 
-Inactive are Pi's `edit`, `ls` and `find`. `edit` would collide with the edit tool in design.md's catalog, whose ops rewrite IR inside a transaction, and a model that has both will eventually reach for the wrong one; `ls` and `find` are `bash` with more steps.
+Inactive are Pi's `edit`, `ls` and `find`. `ls` and `find` are `bash` with more steps, and `edit` is `write` with more steps for a file the run wrote itself, since nothing in a scratch directory is long enough to be worth patching in place.
 
-Ours are the rest of design.md's catalog, with the names it gives, declared with `defineTool` and TypeBox parameters. The eleven edit operations are one `edit` tool taking an `op` field rather than eleven tools, so they do not crowd out the tools that move a proof forward. llops validates the op and its arguments, so the tool passes them through.
+Ours are the rest of design.md's catalog, declared with `defineTool` and TypeBox parameters, under names that carry the prefix of what the move acts on: `run_` the run as a whole (`run_status`, `run_report_cex`, `run_give_up`), `goal_` one goal (`goal_show`, `goal_analyze`, `goal_check`, `goal_revert`), `tx_` the open transaction (`tx_begin`, `tx_edit`, `tx_commit`, `tx_abort`), `tree_` the shape of the goal tree (`tree_split`, `tree_unsplit`, `tree_strengthen`). Two things follow. No name of ours can collide with one of Pi's, today or when Pi grows a tool, so the surface stays stated rather than negotiated. And a model reaching for the `edit` it has been trained on in every other harness does not land on the tool that rewrites IR under a transaction, which is `tx_edit` and answers to nothing else.
+
+The prefixes stop at this layer. The session's moves keep design.md's bare names and so does the trajectory, since a record of what a proof did should read the same whether a model or a script drove it.
+
+The eleven edit operations are one `tx_edit` tool taking an `op` field rather than eleven tools, so they do not crowd out the tools that move a proof forward. llops validates the op and its arguments, so the tool passes them through. The op union is declared with a top-level `type: "object"` beside it: every branch is an object already, but a provider that validates a tool's schema reads the top level and refuses a bare `anyOf` before the run has said anything.
 
 A tool that fails throws, and Pi reports a thrown error to the model as a tool error, so a failure carries the diagnostic the agent needs to try something else. A rejected commit, a failed check and a refused edit are ordinary results, not errors: they say what happened and the run continues.
 
 A tool result is the whole of what the agent knows, since there is no state it can see between calls. Two rules follow, and they are the same rule about what a result is worth carrying.
 
-A result carries the text of a program exactly when the agent is about to name values inside it: opening a transaction, an edit that applied, and an edit that was refused. Every other result names programs by their id, and the agent that wants one asks for it with `show`. Whole modules in every result would fill the context window long before a thousand-line program was cut into pieces.
+A result carries the text of a program exactly when the agent is about to name values inside it: opening a transaction, an edit that applied, and an edit that was refused. Every other result names programs by their id, and the agent that wants one asks for it with `goal_show`. Whole modules in every result would fill the context window long before a thousand-line program was cut into pieces.
 
 A result opens with SUCCESS or FAILURE, which says whether the move did what it was asked to do rather than whether the framework worked: a refused edit, a rejected commit and a check that did not prove are all failures to advance, and what follows each of them says why.
 

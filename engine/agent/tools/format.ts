@@ -2,7 +2,7 @@
 //
 // Two rules hold across every tool. A program appears as text only where the
 // next move has to name values inside it, which is opening a transaction and
-// editing one; everywhere else a program is named by its id and `show` is how
+// editing one; everywhere else a program is named by its id and `goal_show` is how
 // the text is asked for. And a move that changed where the run stands says so,
 // because the model sees nothing between calls but what it is handed.
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";

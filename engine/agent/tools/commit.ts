@@ -1,4 +1,4 @@
-// commit: certify the open transaction as one step.
+// tx_commit: certify the open transaction as one step.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
@@ -6,7 +6,7 @@ import { nameFor, toolResultFrom } from "./format.ts";
 
 export function createCommitTool(session: Session) {
   return defineTool({
-    name: "commit",
+    name: "tx_commit",
     label: "Commit",
     description:
       "Validate the whole of the open transaction with alive2, in the direction the side implies, and advance the head if it holds. On refusal the head does not move and the counterexample comes back as a hint. The goal's new pair is then checked once on a small budget, so a step that finishes a chain discharges the goal here.",
