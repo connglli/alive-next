@@ -241,7 +241,7 @@ function finishRun(): void {
     .map((goal) => `${goal.id} ${goal.status}`)
     .join(", ");
   const settled = outcome !== "unknown";
-  const lines = [`${outcome} in ${Date.now() - started}ms: ${goals}`];
+  const lines = [`status=${outcome} in ${Date.now() - started}ms: ${goals}`];
   if (settled) lines.push(certify(dir, join(dir, "certificate")));
   summary = `${lines.map((line) => `  ${line}`).join("\n")}\n`;
   // A verdict is news where the run is being watched; the shell gets it too,
