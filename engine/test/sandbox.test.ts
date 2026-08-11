@@ -1,12 +1,12 @@
 // Confining the sandbox tools to the scratch directory.
 //
-// bash, read, write and grep are the only way a model touches the sandbox,
-// and the whole point of them is that the touching goes no further than the
-// run's scratch directory: the run's record, Pi's credentials and the
-// repository all live outside it. What is tested here is the door, one
-// refusal at a time: a path that resolves outside is refused, a symlink
-// planted inside cannot smuggle one out, and the shell cannot write anywhere
-// but the scratch directory.
+// read, write, edit, grep, ls, find and bash are the only way a model
+// touches the machine, and the whole point of them is that the touching goes
+// no further than the run's scratch directory: the run's record, Pi's
+// credentials and the repository all live outside it. What is tested here is
+// the door, one refusal at a time: a path that resolves outside is refused, a
+// symlink planted inside cannot smuggle one out, and the shell cannot write
+// anywhere but the scratch directory.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
@@ -47,6 +47,7 @@ interface Tool {
 interface Sandbox {
   read: Tool;
   write: Tool;
+  edit: Tool;
   grep: Tool;
   ls: Tool;
   find: Tool;
@@ -120,6 +121,45 @@ describe("write", () => {
       call(sandbox(scratch).write, { path: "there/pwned.ll", content: "x" }),
     ).rejects.toThrow(/outside the workdir directory/);
     expect(existsSync(join(outside, "pwned.ll"))).toBe(false);
+  });
+});
+
+describe("edit", () => {
+  test("replaces blocks where they are, leaving the rest alone", async () => {
+    writeFileSync(join(scratch, "probe.ll"), "define i32 @a() {\n  ret i32 1\n}");
+    const edited = await call(sandbox(scratch).edit, {
+      path: "probe.ll",
+      edits: [{ oldText: "ret i32 1", newText: "ret i32 2" }],
+    });
+    expect(edited).toContain("Successfully replaced 1 block");
+    expect(readFileSync(join(scratch, "probe.ll"), "utf8")).toBe(
+      "define i32 @a() {\n  ret i32 2\n}",
+    );
+  });
+
+  test("refuses a path that resolves outside", async () => {
+    writeFileSync(join(dir, "escape.ll"), "original");
+    await expect(
+      call(sandbox(scratch).edit, {
+        path: "../escape.ll",
+        edits: [{ oldText: "original", newText: "x" }],
+      }),
+    ).rejects.toThrow(/outside the workdir directory/);
+    expect(readFileSync(join(dir, "escape.ll"), "utf8")).toBe("original");
+  });
+
+  test("a symlink planted inside cannot smuggle an edit out", async () => {
+    const outside = join(dir, "elsewhere");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "pwned.ll"), "original");
+    symlinkSync(outside, join(scratch, "there"));
+    await expect(
+      call(sandbox(scratch).edit, {
+        path: "there/pwned.ll",
+        edits: [{ oldText: "original", newText: "x" }],
+      }),
+    ).rejects.toThrow(/outside the workdir directory/);
+    expect(readFileSync(join(outside, "pwned.ll"), "utf8")).toBe("original");
   });
 });
 

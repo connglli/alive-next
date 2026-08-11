@@ -1,8 +1,8 @@
-// The sandbox: the six tools a model touches the machine through (read,
-// write, grep, ls, find, bash), each a Pi implementation confined to the
-// run's workdir directory, the shell by bubblewrap, the file tools through
-// their operation hooks, both keeping everything else out: the run's record,
-// Pi's credentials, the repository, the network.
+// The sandbox: the seven tools a model touches the machine through (read,
+// write, edit, grep, ls, find, bash), each a Pi implementation confined to
+// the run's workdir directory, the shell by bubblewrap, the file tools
+// through their operation hooks, both keeping everything else out: the run's
+// record, Pi's credentials, the repository, the network.
 //
 // The bare names replace Pi's built-ins on purpose, which is Pi's own
 // tool-override pattern, and what a replacement keeps is the built-in
@@ -16,12 +16,14 @@ import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import {
   type BashOperations,
   createBashTool,
+  createEditTool,
   createFindTool,
   createGrepTool,
   createLsTool,
   createReadTool,
   createWriteTool,
   defineTool,
+  type EditOperations,
   type GrepOperations,
   getAgentDir,
   type LsOperations,
@@ -33,7 +35,7 @@ import { repoRoot } from "../../core/config.ts";
 import { LAYOUT } from "../../core/toolchain.ts";
 
 /** The names Pi's built-ins had, which the sandbox tools now carry. */
-export const SANDBOX_TOOLS = ["read", "write", "grep", "ls", "find", "bash"] as const;
+export const SANDBOX_TOOLS = ["read", "write", "edit", "grep", "ls", "find", "bash"] as const;
 
 /** The toolchain's binary directories, joined at the tail of a PATH. */
 function toolchainPath(path: string | undefined, toolchain: string): string {
@@ -75,6 +77,7 @@ function resolveAgainst(workdir: string, given: string): string {
 function confinedOps(workdir: string): {
   read: ReadOperations;
   write: WriteOperations;
+  edit: EditOperations;
   grep: GrepOperations;
   ls: LsOperations;
 } {
@@ -93,6 +96,20 @@ function confinedOps(workdir: string): {
       mkdir: async (dir) => {
         confine(workdir, dir);
         await mkdir(dir, { recursive: true });
+      },
+      writeFile: async (path, content) => {
+        confine(workdir, path);
+        await writeFile(path, content, "utf-8");
+      },
+    },
+    edit: {
+      access: (path) => {
+        confine(workdir, path);
+        return access(path, constants.R_OK | constants.W_OK);
+      },
+      readFile: (path) => {
+        confine(workdir, path);
+        return readFile(path);
       },
       writeFile: async (path, content) => {
         confine(workdir, path);
@@ -210,6 +227,7 @@ export function createSandboxTools(workdir: string, toolchain?: string): ToolDef
 
   const read = createReadTool(workdir, { operations: ops.read });
   const write = createWriteTool(workdir, { operations: ops.write });
+  const edit = createEditTool(workdir, { operations: ops.edit });
   const grep = createGrepTool(workdir, { operations: ops.grep });
   const ls = createLsTool(workdir, { operations: ops.ls });
   const find = createFindTool(workdir);
@@ -231,6 +249,14 @@ export function createSandboxTools(workdir: string, toolchain?: string): ToolDef
         "Write a file, creating parent directories, inside the workdir directory. Relative paths are relative to it, and a path that resolves anywhere else is refused.",
       parameters: write.parameters,
       execute: (id, params, signal, onUpdate) => write.execute(id, params, signal, onUpdate),
+    }),
+    defineTool({
+      name: edit.name,
+      label: edit.label,
+      description:
+        "Edit a text file by exact text replacement, inside the workdir directory. Every oldText must match a unique block of the file, and each edit matches against the file as it was, so edits in one call must not overlap. Relative paths are relative to it, and a path that resolves anywhere else is refused.",
+      parameters: edit.parameters,
+      execute: (id, params, signal, onUpdate) => edit.execute(id, params, signal, onUpdate),
     }),
     defineTool({
       name: grep.name,
