@@ -36,7 +36,7 @@ describe("loadConfig", () => {
   });
 
   test("reads the example, whose commented options stay off", () => {
-    const example = loadConfig(join(repoRoot(), "config.example.jsonc"));
+    const example = withoutEnv(() => loadConfig(join(repoRoot(), "config.example.jsonc")));
     expect(example.timeouts).toEqual({});
     expect(example.toolchain).toBe(join(repoRoot(), "deps"));
   });
