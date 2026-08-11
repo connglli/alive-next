@@ -4,6 +4,9 @@
 // succeed, so the loop is bounded rather than judged. Running out is not a
 // failure of the run: "unknown" is one of the three outputs, and a run that
 // stopped is one a reader can pick up from its trajectory.
+//
+// A run is bounded by what its caller asked for, which is a per-run choice and
+// so is named on the command line rather than kept in a file.
 export interface Limits {
   /** Turns the model may take, a turn being one assistant message and its tools. */
   maxSteps?: number;

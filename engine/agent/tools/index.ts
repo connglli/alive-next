@@ -10,20 +10,20 @@
 // are what the run looks like, and they come back as ordinary results.
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Session } from "../../core/session.ts";
-import { abortTool } from "./abort.ts";
-import { analyzeTool } from "./analyze.ts";
-import { beginTool } from "./begin.ts";
-import { checkTool } from "./check.ts";
-import { commitTool } from "./commit.ts";
-import { editTool } from "./edit.ts";
-import { giveUpTool } from "./give-up.ts";
-import { reportCexTool } from "./report-cex.ts";
-import { revertTool } from "./revert.ts";
-import { showTool } from "./show.ts";
-import { splitTool } from "./split.ts";
-import { statusTool } from "./status.ts";
-import { strengthenTool } from "./strengthen.ts";
-import { unsplitTool } from "./unsplit.ts";
+import { createAbortTool } from "./abort.ts";
+import { createAnalyzeTool } from "./analyze.ts";
+import { createBeginTool } from "./begin.ts";
+import { createCheckTool } from "./check.ts";
+import { createCommitTool } from "./commit.ts";
+import { createEditTool } from "./edit.ts";
+import { createGiveUpTool } from "./give-up.ts";
+import { createReportCexTool } from "./report-cex.ts";
+import { createRevertTool } from "./revert.ts";
+import { createShowTool } from "./show.ts";
+import { createSplitTool } from "./split.ts";
+import { createStatusTool } from "./status.ts";
+import { createStrengthenTool } from "./strengthen.ts";
+import { createUnsplitTool } from "./unsplit.ts";
 
 /**
  * Why a run is over, when it is not the goal tree that says so. The agent
@@ -34,22 +34,22 @@ export interface Stop {
 }
 
 /** Ours, in the order they are worth reading: look, decide, edit, cut, settle. */
-export function tools(session: Session, stop: Stop = {}): ToolDefinition[] {
+export function createTools(session: Session, stop: Stop = {}): ToolDefinition[] {
   return [
-    statusTool(session),
-    showTool(session),
-    analyzeTool(session),
-    checkTool(session),
-    beginTool(session),
-    editTool(session),
-    commitTool(session),
-    abortTool(session),
-    revertTool(session),
-    splitTool(session),
-    unsplitTool(session),
-    strengthenTool(session),
-    reportCexTool(session),
-    giveUpTool(session, stop),
+    createStatusTool(session),
+    createShowTool(session),
+    createAnalyzeTool(session),
+    createCheckTool(session),
+    createBeginTool(session),
+    createEditTool(session),
+    createCommitTool(session),
+    createAbortTool(session),
+    createRevertTool(session),
+    createSplitTool(session),
+    createUnsplitTool(session),
+    createStrengthenTool(session),
+    createReportCexTool(session),
+    createGiveUpTool(session, stop),
   ];
 }
 
@@ -57,6 +57,6 @@ export function tools(session: Session, stop: Stop = {}): ToolDefinition[] {
 export const BUILTIN = ["bash", "read", "write", "grep"];
 
 /** Every tool a run may call, which is what the allowlist has to say. */
-export function toolNames(session: Session): string[] {
-  return [...BUILTIN, ...tools(session).map((tool) => tool.name)];
+export function listToolNames(session: Session): string[] {
+  return [...BUILTIN, ...createTools(session).map((tool) => tool.name)];
 }

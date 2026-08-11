@@ -2,9 +2,9 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { answerFrom } from "./format.ts";
+import { toolResultFrom } from "./format.ts";
 
-export function unsplitTool(session: Session) {
+export function createUnsplitTool(session: Session) {
   return defineTool({
     name: "unsplit",
     label: "Unsplit",
@@ -13,7 +13,7 @@ export function unsplitTool(session: Session) {
     parameters: Type.Object({ gid: Type.String({ description: "The goal that was cut." }) }),
     execute: async (_id, { gid }) => {
       const undone = await session.unsplit(gid);
-      return answerFrom(session, true, `${gid} is open again`, undone);
+      return toolResultFrom(session, true, `${gid} is open again`, undone);
     },
   });
 }

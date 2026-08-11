@@ -2,9 +2,9 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { answer, nameOf, program } from "./format.ts";
+import { formatProgram, nameFor, toolResult } from "./format.ts";
 
-export function beginTool(session: Session) {
+export function createBeginTool(session: Session) {
   return defineTool({
     name: "begin",
     label: "Begin",
@@ -16,9 +16,9 @@ export function beginTool(session: Session) {
     }),
     execute: async (_id, { gid, side }) => {
       const opened = await session.begin(gid, side);
-      return answer(
+      return toolResult(
         true,
-        program(`editing ${gid} ${side}, from ${nameOf(session, opened.from)}`, opened.text),
+        formatProgram(`editing ${gid} ${side}, from ${nameFor(session, opened.from)}`, opened.text),
         { gid, side, from: opened.from },
       );
     },

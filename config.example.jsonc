@@ -1,33 +1,12 @@
 // Every option a configuration can carry, with its default. Copy this file to
 // config.jsonc, which is machine-local and gitignored, and uncomment what you
-// want to change. Only the model has to be set; everything else has a default.
+// want to change. Nothing has to be set: every option here has a default.
 {
   // Where LLVM, alive2, llubi and llops were built. They read and write the
   // same IR, so they have to be one build against one LLVM; `make install-deps
   // TOOLCHAIN=<dir>` builds it, and this says which one a run uses. Relative
   // paths are relative to the repository, and deps/ is the default.
   "toolchain": "deps",
-
-  "model": {
-    // A provider Pi knows, which brings its own catalogue and credentials.
-    "provider": "anthropic",
-    "id": "claude-sonnet-4-6",
-
-    // Set base_url instead for an OpenAI-compatible endpoint of your own, a
-    // local server or a proxy, and name the variable its key lives in. Keys
-    // never live in this file.
-    // "base_url": "http://127.0.0.1:11434/v1",
-    // "api_key_env": "OPENAI_API_KEY",
-
-    // How much the model should think, when it can: minimal, low, medium,
-    // high, xhigh or max.
-    // "thinking_level": "medium",
-
-    // Read from the catalogue for a provider Pi knows. Needed only for an
-    // endpoint you describe, where nobody else knows the numbers.
-    // "context_window": 32768,
-    // "max_tokens": 4096
-  },
 
   // Milliseconds. check_default_ms is what the check tool uses when the agent
   // names no timeout, and check_cap_ms is the most it may ask for.
@@ -37,11 +16,5 @@
     // "eager_check_ms": 5000,
     // "alive2_ms": 120000,
     // "llubi_ms": 30000
-  },
-
-  // What a run may spend before it stops and reports unknown.
-  "budget": {
-    // "max_steps": 200,
-    // "max_seconds": 3600
   },
 }

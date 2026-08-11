@@ -3,8 +3,8 @@
 // `config.jsonc` at the repository root holds it, and `config.example.jsonc`
 // stands in when there is none, so a fresh clone runs without setup and the
 // example is the file a machine-local config is copied from. Nothing here has
-// a built-in default for a model or an endpoint: those differ on every
-// machine, which is what makes them configuration.
+// a built-in default for the toolchain: it differs on every machine, which is
+// what makes it configuration.
 //
 // The dialect is JSONC, JSON with comments and trailing commas, so the example
 // can say what each option means beside it. Nothing else reads these files:
@@ -12,31 +12,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { type ParseError, parse, printParseErrorCode } from "jsonc-parser";
-import type { Limits } from "../agent/budget.ts";
-
-/**
- * The model a run talks to. Two cases, told apart by `baseUrl`: without it the
- * provider is one Pi knows, which carries the catalogue and the credentials;
- * with it the provider is an OpenAI-compatible endpoint we describe ourselves,
- * which is how a local server or a proxy is reached.
- */
-export interface ModelConfig {
-  /** Provider id, `anthropic` or `openai` for a provider Pi knows. */
-  provider: string;
-  /** Model id as the provider names it. */
-  id: string;
-  /** Root of an OpenAI-compatible API, including the version segment. */
-  baseUrl?: string;
-  /** Environment variable holding the key for an endpoint we describe. */
-  apiKeyEnv?: string;
-  /** How much the model should think, when it can. */
-  thinkingLevel?: ThinkingLevel;
-  contextWindow?: number;
-  maxTokens?: number;
-}
-
-const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
-export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 /** Milliseconds a run allows the checkers, all optional in the file. */
 export interface TimeoutConfig {
@@ -48,10 +23,7 @@ export interface TimeoutConfig {
 }
 
 export interface Config {
-  model: ModelConfig;
   timeouts: TimeoutConfig;
-  /** What a run may spend before it stops with "unknown". */
-  budget: Limits;
   /**
    * Where LLVM, alive2, llubi and llops were built, absolute. One directory
    * rather than a path per binary, because they are not four choices: they
@@ -62,59 +34,25 @@ export interface Config {
   source: string;
 }
 
+/** Every section a configuration carries. */
+const SECTIONS = ["toolchain", "timeouts"];
+
 /** The repository root, found from this file rather than the caller's cwd. */
 export function repoRoot(): string {
   return resolve(dirname(new URL(import.meta.url).pathname), "..", "..");
 }
 
-function readModel(raw: unknown, source: string): ModelConfig {
-  const config = raw as Record<string, unknown> | undefined;
-  const model = config?.model as Record<string, unknown> | undefined;
-  if (!model) throw new Error(`${source} has no "model" section`);
-
-  const text = (key: string, required: boolean): string | undefined => {
-    const value = model[key];
-    if (value === undefined) {
-      if (required) throw new Error(`${source}: model.${key} is missing`);
-      return undefined;
-    }
-    if (typeof value !== "string" || value === "") {
-      throw new Error(`${source}: model.${key} must be a non-empty string`);
-    }
-    return value;
-  };
-  const count = (key: string): number | undefined => {
-    const value = model[key];
-    if (value === undefined) return undefined;
-    if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-      throw new Error(`${source}: model.${key} must be a positive integer`);
-    }
-    return value;
-  };
-
-  const baseUrl = text("base_url", false);
-  if (baseUrl !== undefined) {
-    try {
-      new URL(baseUrl);
-    } catch {
-      throw new Error(`${source}: model.base_url is not a URL: ${baseUrl}`);
-    }
+/**
+ * Reject a section this file does not carry, because a setting that is read by
+ * nothing is worse than an error.
+ */
+function checkSections(raw: unknown, source: string): void {
+  for (const key of Object.keys((raw as Record<string, unknown> | undefined) ?? {})) {
+    if (SECTIONS.includes(key)) continue;
+    throw new Error(
+      `${source}: "${key}" is not a section; this file carries ${SECTIONS.join(", ")}`,
+    );
   }
-
-  const thinking = text("thinking_level", false);
-  if (thinking !== undefined && !THINKING_LEVELS.includes(thinking as ThinkingLevel)) {
-    throw new Error(`${source}: model.thinking_level must be one of ${THINKING_LEVELS.join(", ")}`);
-  }
-
-  return {
-    provider: text("provider", true) as string,
-    id: text("id", true) as string,
-    baseUrl,
-    apiKeyEnv: text("api_key_env", false),
-    thinkingLevel: thinking as ThinkingLevel | undefined,
-    contextWindow: count("context_window"),
-    maxTokens: count("max_tokens"),
-  };
 }
 
 /**
@@ -143,11 +81,10 @@ export function loadConfig(path?: string): Config {
         `${candidate} does not parse: ${printParseErrorCode(first.error)} at offset ${first.offset}`,
       );
     }
+    checkSections(raw, candidate);
     return {
-      model: readModel(raw, candidate),
       toolchain: readToolchain(raw, candidate),
       timeouts: readTimeouts(raw, candidate),
-      budget: readBudget(raw, candidate),
       source: candidate,
     };
   }
@@ -162,14 +99,7 @@ export function loadConfig(path?: string): Config {
  * whichever directory a process starts in.
  */
 function readToolchain(raw: unknown, source: string): string {
-  const file = raw as Record<string, unknown> | undefined;
-  if (file?.binaries !== undefined) {
-    throw new Error(
-      `${source}: "binaries" is no longer read. The tools are built as one ` +
-        `toolchain, so name the directory they were built in as "toolchain".`,
-    );
-  }
-  const configured = file?.toolchain;
+  const configured = (raw as Record<string, unknown> | undefined)?.toolchain;
   if (configured !== undefined && (typeof configured !== "string" || configured === "")) {
     throw new Error(`${source}: toolchain must be a non-empty path`);
   }
@@ -201,36 +131,4 @@ function readTimeouts(raw: unknown, source: string): TimeoutConfig {
     timeouts[name] = value;
   }
   return timeouts;
-}
-
-const BUDGET_KEYS: Record<string, keyof Limits> = {
-  max_steps: "maxSteps",
-  max_seconds: "maxSeconds",
-};
-
-function readBudget(raw: unknown, source: string): Limits {
-  const section = (raw as Record<string, unknown> | undefined)?.budget;
-  if (section === undefined) return {};
-  if (typeof section !== "object" || section === null) {
-    throw new Error(`${source}: budget must be an object`);
-  }
-  const limits: Limits = {};
-  for (const [key, value] of Object.entries(section as Record<string, unknown>)) {
-    const name = BUDGET_KEYS[key];
-    if (!name) throw new Error(`${source}: budget.${key} is not a budget`);
-    if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-      throw new Error(`${source}: budget.${key} must be a positive whole number`);
-    }
-    limits[name] = value;
-  }
-  return limits;
-}
-
-/**
- * The key for an endpoint we describe, from the environment variable the
- * config names. A provider Pi knows resolves its own credentials, so this
- * returns nothing for those.
- */
-export function apiKeyFor(model: ModelConfig): string | undefined {
-  return model.apiKeyEnv ? process.env[model.apiKeyEnv] : undefined;
 }

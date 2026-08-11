@@ -18,7 +18,11 @@ import type { Hash } from "../../core/state/trajectory.ts";
  * the thing a reader scanning its own history needs to see at a glance. What
  * follows says why, which is what it does next from.
  */
-export function answer(ok: boolean, text: string, details: unknown = {}): AgentToolResult<unknown> {
+export function toolResult(
+  ok: boolean,
+  text: string,
+  details: unknown = {},
+): AgentToolResult<unknown> {
   return { content: [{ type: "text", text: `${ok ? "SUCCESS" : "FAILURE"}\n\n${text}` }], details };
 }
 
@@ -34,7 +38,7 @@ export function answer(ok: boolean, text: string, details: unknown = {}): AgentT
  * result says so, and the loop repeats the test after the turn, since a batch
  * that mixes them would carry on.
  */
-export function answerFrom(
+export function toolResultFrom(
   session: Session,
   ok: boolean,
   text: string,
@@ -44,38 +48,38 @@ export function answerFrom(
   const settled = session.verdict !== "unknown";
   const said = [
     text,
-    moved ? goalTree(session, standings(session.tree)) : "",
+    moved ? formatGoalTree(session, standings(session.tree)) : "",
     settled ? `the root is ${session.verdict}` : "",
   ]
     .filter((part) => part !== "")
     .join("\n\n");
-  return { ...answer(ok, said, details), ...(settled ? { terminate: true } : {}) };
+  return { ...toolResult(ok, said, details), ...(settled ? { terminate: true } : {}) };
 }
 
 /** The name a program goes by, which is what a caller says back to us. */
-export function nameOf(session: Session, hash: Hash): string {
+export function nameFor(session: Session, hash: Hash): string {
   return session.tree.programs.get(hash) ?? hash.slice(0, 12);
 }
 
 /** A program as the model reads it: what to call it, then what it says. */
-export function program(heading: string, text: string): string {
+export function formatProgram(heading: string, text: string): string {
   return `${heading}\n\`\`\`llvm\n${text.trimEnd()}\n\`\`\``;
 }
 
 /** One goal on one line: what it is, where it stands, and its two programs. */
-export function goalLine(session: Session, goal: GoalStanding): string {
+export function formatGoalLine(session: Session, goal: GoalStanding): string {
   const role = goal.role ? `${goal.role} of ${goal.parent}` : "root";
-  const pair = `src ${nameOf(session, goal.src)}, tgt ${nameOf(session, goal.tgt)}`;
+  const pair = `src ${nameFor(session, goal.src)}, tgt ${nameFor(session, goal.tgt)}`;
   return `${goal.gid} ${role}, ${goal.status}, ${pair}`;
 }
 
 /** The goals as a tree, each under the one it was cut from. */
-export function goalTree(session: Session, goals: GoalStanding[]): string {
+export function formatGoalTree(session: Session, goals: GoalStanding[]): string {
   const under = (parent: string | undefined): GoalStanding[] =>
     goals.filter((goal) => goal.parent === parent);
   const lines: string[] = [];
   const walk = (goal: GoalStanding, depth: number): void => {
-    lines.push(`${"  ".repeat(depth)}${goalLine(session, goal)}`);
+    lines.push(`${"  ".repeat(depth)}${formatGoalLine(session, goal)}`);
     for (const child of under(goal.gid)) walk(child, depth + 1);
   };
   for (const root of under(undefined)) walk(root, 0);

@@ -3,9 +3,9 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
 import type { Facts } from "../../core/state/strengthen.ts";
-import { answerFrom } from "./format.ts";
+import { toolResultFrom } from "./format.ts";
 
-export function strengthenTool(session: Session) {
+export function createStrengthenTool(session: Session) {
   return defineTool({
     name: "strengthen",
     label: "Strengthen",
@@ -22,7 +22,7 @@ export function strengthenTool(session: Session) {
       const stronger = await session.strengthen(gid, facts as Facts);
       if (stronger.kind === "refused") {
         const said = stronger.check?.detail ? `\n${stronger.check.detail}` : "";
-        return answerFrom(
+        return toolResultFrom(
           session,
           false,
           `refused in the ${stronger.phase} phase: ${stronger.reason}${said}`,
@@ -30,7 +30,7 @@ export function strengthenTool(session: Session) {
         );
       }
       const proved = stronger.checks.filter((check) => check.outcome === "correct").length;
-      return answerFrom(
+      return toolResultFrom(
         session,
         true,
         `stated on ${Object.keys(facts).join(", ")}, ${proved} of ${stronger.checks.length} checks came back correct`,

@@ -2,9 +2,9 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { answerFrom, nameOf } from "./format.ts";
+import { nameFor, toolResultFrom } from "./format.ts";
 
-export function commitTool(session: Session) {
+export function createCommitTool(session: Session) {
   return defineTool({
     name: "commit",
     label: "Commit",
@@ -14,7 +14,7 @@ export function commitTool(session: Session) {
     execute: async () => {
       const step = await session.commit();
       if (step.kind === "refused") {
-        return answerFrom(
+        return toolResultFrom(
           session,
           false,
           `refused: ${step.check.detail || step.check.outcome}`,
@@ -22,10 +22,10 @@ export function commitTool(session: Session) {
         );
       }
       const eager = step.eager ? `, the pair is ${step.eager.outcome}` : "";
-      return answerFrom(
+      return toolResultFrom(
         session,
         true,
-        `certified, head is ${nameOf(session, step.hash)}${eager}`,
+        `certified, head is ${nameFor(session, step.hash)}${eager}`,
         step,
       );
     },

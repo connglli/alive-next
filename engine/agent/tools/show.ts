@@ -5,16 +5,16 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session, SideView } from "../../core/session.ts";
-import { answer, program } from "./format.ts";
+import { formatProgram, toolResult } from "./format.ts";
 
 /** One side: what it is called now, what it has been, and what it says. */
 function side(which: "src" | "tgt", view: SideView): string {
   const was = view.history.slice(0, -1);
   const earlier = was.length > 0 ? ` (was ${was.join(", ")})` : "";
-  return program(`${which} ${view.id}${earlier}`, view.text);
+  return formatProgram(`${which} ${view.id}${earlier}`, view.text);
 }
 
-export function showTool(session: Session) {
+export function createShowTool(session: Session) {
   return defineTool({
     name: "show",
     label: "Show",
@@ -26,11 +26,11 @@ export function showTool(session: Session) {
     execute: async (_id, { ref }) => {
       if (/^p\d+$/.test(ref)) {
         const view = await session.program(ref);
-        return answer(true, program(view.id, view.text), view);
+        return toolResult(true, formatProgram(view.id, view.text), view);
       }
       const view = await session.show(ref);
       const what = view.role ? `${view.role} of ${view.parent}, cut into @${view.callee}` : "root";
-      return answer(
+      return toolResult(
         true,
         [`${view.gid} ${what}, ${view.status}`, side("src", view.src), side("tgt", view.tgt)].join(
           "\n",

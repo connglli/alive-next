@@ -8,31 +8,99 @@
 // Pi holds the message history and compacts it. The trajectory stays our
 // record, because the goal tree is derived from it, and a second persisted
 // history would be a cache to keep in step.
-import { join } from "node:path";
+//
+// What is built is a session runtime rather than a bare session, because that
+// is what Pi's own run modes take, so a caller can draw the run with Pi's TUI
+// or with nothing at all. Nothing here draws anything.
+import type {
+  AgentSessionServices,
+  InlineExtension,
+  ModelRuntime,
+} from "@earendil-works/pi-coding-agent";
 import {
   type AgentSession,
-  createAgentSession,
-  DefaultResourceLoader,
+  type AgentSessionRuntime,
+  type CreateAgentSessionRuntimeFactory,
+  createAgentSessionFromServices,
+  createAgentSessionRuntime,
+  createAgentSessionServices,
+  getAgentDir,
   SessionManager,
+  SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import type { Config } from "../core/config.ts";
+import { repoRoot } from "../core/config.ts";
 import type { Session } from "../core/session.ts";
-import { Budget } from "./budget.ts";
-import { describedProvider, resolveModel } from "./model.ts";
+import { Budget, type Limits } from "./budget.ts";
+import { type Choice, createResourceOptions } from "./model.ts";
 import { CARRY_ON_INSTRUCTION, SYSTEM_INSTRUCTION, TASK_INSTRUCTION } from "./prompt.ts";
-import { BUILTIN, type Stop, tools } from "./tools/index.ts";
+import { BUILTIN, createTools, type Stop } from "./tools/index.ts";
+
+export interface ServicesOptions {
+  /** Where the shell and the file tools work: a run's scratch directory. */
+  cwd: string;
+  /** The project Pi reads its project layer from, which is the repository. */
+  project?: string;
+  /** Pi's own directory, holding the machine's settings and credentials. */
+  agentDir?: string;
+  /** An already built runtime, for a caller that has one. */
+  models?: ModelRuntime;
+  /** Extensions a caller supplies itself, which a screen uses to draw with. */
+  extensionFactories?: InlineExtension[];
+}
+
+/**
+ * Pi's services for one run: its models and credentials, this project's
+ * settings, and the resources a run is allowed to load.
+ *
+ * Built here rather than inside `createAgent`, because a caller has to choose a
+ * model before a run starts and the providers a project declares are known
+ * only once its extensions have been loaded. Loading them is what this does,
+ * so it happens once and the runtime a model is chosen from is the one that
+ * streams it.
+ *
+ * The project layer is read from the repository rather than from `cwd`, which
+ * is where Pi would look for it, because a run's `cwd` is its scratch
+ * directory and not where the project is.
+ */
+export function createServices(options: ServicesOptions): Promise<AgentSessionServices> {
+  const project = options.project ?? repoRoot();
+  const agentDir = options.agentDir ?? getAgentDir();
+  return createAgentSessionServices({
+    cwd: options.cwd,
+    agentDir,
+    modelRuntime: options.models,
+    settingsManager: SettingsManager.create(project, agentDir),
+    resourceLoaderOptions: createResourceOptions(
+      project,
+      SYSTEM_INSTRUCTION,
+      options.extensionFactories,
+    ),
+  });
+}
 
 export interface AgentOptions {
   /** The proof to drive, already started on the pair. */
   session: Session;
-  config: Config;
-  /** Where the shell and the file tools work, which is not the store. */
-  scratch: string;
+  /** What the run may spend, or nothing, which lets it run until it settles. */
+  limits?: Limits;
+  /** Pi's services, and the model this run asked for, if it asked for one. */
+  services: AgentSessionServices;
+  choice?: Choice;
+  /**
+   * Called when the loop stops, whichever of the three things stopped it. A
+   * caller that outlives the loop, which anything holding a screen does, has
+   * work that belongs to the moment the run ended rather than to its own exit.
+   */
+  onSettled?: () => void;
 }
 
 export interface Agent {
   /** Pi's session, for a caller that wants to watch or steer it. */
   pi: AgentSession;
+  /** What Pi's run modes take, for a caller that wants one to draw the run. */
+  runtime: AgentSessionRuntime;
+  /** The opening turn, which every way of running this one sends. */
+  task: string;
   /** Work until the run settles or the budget is spent, and say which. */
   prove(): Promise<"verified" | "counterexample" | "unknown">;
 }
@@ -42,44 +110,41 @@ export interface Agent {
  * `noTools` drops Pi's defaults, the allowlist names every tool that exists,
  * and the resource loader is told to read nothing from the machine, so what a
  * run can do is what this file says and not what is installed beside it.
+ *
+ * A run with no model is assembled all the same, because Pi's TUI is where a
+ * machine with none is set up. What that costs is the first turn, which fails
+ * saying so, and a caller with no screen tests `pi.model` before it starts.
  */
-export async function agentFor(options: AgentOptions): Promise<Agent> {
-  const { session, config, scratch } = options;
+export async function createAgent(options: AgentOptions): Promise<Agent> {
+  const { session, limits, services, choice, onSettled } = options;
   const stop: Stop = {};
-  const surface = tools(session, stop);
-  const provider = describedProvider(config.model);
-  const budget = new Budget(config.budget);
+  const surface = createTools(session, stop);
+  const budget = new Budget(limits);
 
-  const loader = new DefaultResourceLoader({
-    cwd: scratch,
-    agentDir: join(scratch, "pi"),
-    systemPrompt: SYSTEM_INSTRUCTION,
-    noExtensions: true,
-    noSkills: true,
-    noPromptTemplates: true,
-    noThemes: true,
-    noContextFiles: true,
-    extensionFactories: [
-      (pi) => {
-        // A local endpoint is ours to describe; a provider Pi knows brings
-        // its own catalogue and credentials.
-        if (provider) pi.registerProvider(provider);
-      },
-    ],
-  });
-  await loader.reload();
+  // The services are the caller's, already loaded, and one run works in one
+  // directory, so every session this runtime makes is bound to the same ones.
+  // Pi would build fresh services per session, which is what a host that lets
+  // the working directory change needs and this one does not.
+  const build: CreateAgentSessionRuntimeFactory = async (target) => {
+    const created = await createAgentSessionFromServices({
+      services,
+      sessionManager: target.sessionManager,
+      sessionStartEvent: target.sessionStartEvent,
+      model: choice?.model,
+      thinkingLevel: choice?.thinkingLevel,
+      noTools: "all",
+      tools: [...BUILTIN, ...surface.map((tool) => tool.name)],
+      customTools: surface,
+    });
+    return { ...created, services, diagnostics: services.diagnostics };
+  };
 
-  const { session: pi } = await createAgentSession({
-    cwd: scratch,
-    agentDir: join(scratch, "pi"),
-    model: resolveModel(config.model).model,
-    thinkingLevel: config.model.thinkingLevel ?? "medium",
-    noTools: "all",
-    tools: [...BUILTIN, ...surface.map((tool) => tool.name)],
-    customTools: surface,
-    resourceLoader: loader,
-    sessionManager: SessionManager.inMemory(scratch),
+  const runtime = await createAgentSessionRuntime(build, {
+    cwd: services.cwd,
+    agentDir: services.agentDir,
+    sessionManager: SessionManager.inMemory(services.cwd),
   });
+  const pi = runtime.session;
 
   // Our tools mutate one goal tree, so a batch holding a commit and a split
   // would answer differently depending on which ran first.
@@ -95,11 +160,16 @@ export async function agentFor(options: AgentOptions): Promise<Agent> {
   // there, having nothing left to answer, so the run says what remains and
   // queues it as a follow-up, which is what its outer loop drains.
   pi.agent.shouldStopAfterTurn = async (turn) => {
-    if (session.verdict !== "unknown") return true;
-    if (stop.gaveUp) return true;
-    const spent = budget.spend();
-    if (spent) {
+    const over = (): boolean => {
+      if (session.verdict !== "unknown") return true;
+      if (stop.gaveUp) return true;
+      const spent = budget.spend();
+      if (!spent) return false;
       session.note("budget", { stopped: spent, spent: budget.spent });
+      return true;
+    };
+    if (over()) {
+      onSettled?.();
       return true;
     }
     const called = turn.message.content.some((part) => part.type === "toolCall");
@@ -109,7 +179,9 @@ export async function agentFor(options: AgentOptions): Promise<Agent> {
 
   // What the model said, and what the framework did to its history, both
   // reach the trajectory. Its tool calls are already there: every one of ours
-  // writes itself, and Pi's own arrive inside the assistant message.
+  // writes itself, and Pi's own arrive inside the assistant message. So does
+  // the model that said it, which is why no separate record names one: the
+  // TUI can switch models mid-run, and a second copy would go stale.
   pi.subscribe((event) => {
     if (event.type === "message_end") session.message(event.message);
     if (event.type === "compaction_end") {
@@ -119,6 +191,8 @@ export async function agentFor(options: AgentOptions): Promise<Agent> {
 
   return {
     pi,
+    runtime,
+    task: TASK_INSTRUCTION,
     prove: async () => {
       await pi.prompt(TASK_INSTRUCTION);
       return session.verdict;

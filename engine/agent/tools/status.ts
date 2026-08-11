@@ -2,9 +2,9 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { answer, goalTree } from "./format.ts";
+import { formatGoalTree, toolResult } from "./format.ts";
 
-export function statusTool(session: Session) {
+export function createStatusTool(session: Session) {
   return defineTool({
     name: "status",
     label: "Status",
@@ -16,9 +16,9 @@ export function statusTool(session: Session) {
       const editing = standing.editing
         ? `\nediting ${standing.editing.gid} ${standing.editing.side}, ${standing.editing.ops} ops so far`
         : "";
-      return answer(
+      return toolResult(
         true,
-        `${goalTree(session, standing.goals)}\nverdict ${standing.verdict}${editing}`,
+        `${formatGoalTree(session, standing.goals)}\nverdict ${standing.verdict}${editing}`,
         standing,
       );
     },

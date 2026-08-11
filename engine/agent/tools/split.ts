@@ -2,9 +2,9 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { answerFrom } from "./format.ts";
+import { toolResultFrom } from "./format.ts";
 
-export function splitTool(session: Session) {
+export function createSplitTool(session: Session) {
   return defineTool({
     name: "split",
     label: "Split",
@@ -21,12 +21,12 @@ export function splitTool(session: Session) {
     execute: async (_id, { gid, src_cut, tgt_cut, value_map }) => {
       const split = await session.split(gid, src_cut, tgt_cut, value_map);
       if (split.kind === "refused") {
-        return answerFrom(session, false, `refused, ${split.code}: ${split.message}`, split);
+        return toolResultFrom(session, false, `refused, ${split.code}: ${split.message}`, split);
       }
       const params = split.params
         .map((param, at) => `  ${at}: ${param.param} ${param.type}, the src's ${param.live}`)
         .join("\n");
-      return answerFrom(
+      return toolResultFrom(
         session,
         true,
         [

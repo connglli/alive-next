@@ -27,11 +27,12 @@ alive-next/
                         trajectory
       drivers/          alive-tv, llubi, llops wrappers
     agent/              the Pi agent: the model in front of the engine
-      model.ts          the configured model, resolved for Pi
       prompt.ts         the rules of the game, naming no tool
-      budget.ts         what a run may spend before it stops
-      agent.ts          the Pi session: tools, prompt, stop, recording
-      main.ts           prove one pair with the configured model
+      budget.ts         what a run may spend, from --max-steps/--max-seconds
+      model.ts          which of Pi's models a run talks to
+      print.ts          the run as it happens, in plain text, for --print
+      agent.ts          the Pi runtime: tools, prompt, stop, recording
+      main.ts           the CLI: one pair, drawn by Pi's TUI or by --print
       tools/            one file per tool from design.md
     cert/               certificate package assembly
       main.ts           certify a finished session
@@ -105,9 +106,9 @@ Event kinds:
 
 The tool surface is stated rather than discovered. Pi's defaults are dropped, the allowlist names every tool that exists, ours arrive as custom tools, and the resource loader is told to read no extensions, skills, prompts, themes or context files from the machine, so what a run can do is what `agent.ts` says and not what is installed beside it. Tools run sequentially, because they mutate one goal tree. The shell and the file tools are built for the run's scratch directory.
 
-The loop stops on a verdict or on the budget. A tool that settles the root sets Pi's `terminate` hint, and the same test runs again after the turn, since Pi honours the hint only when every result in a batch carries it. The budget is steps and seconds from the configuration, and running out is not a failure: "unknown" is one of the three outputs.
+The loop stops on a verdict or on the budget. A tool that settles the root sets Pi's `terminate` hint, and the same test runs again after the turn, since Pi honours the hint only when every result in a batch carries it. The budget is `--max-steps` and `--max-seconds`, unbounded when neither is given, and running out is not a failure: "unknown" is one of the three outputs.
 
-`make agent` prints the run as it happens: the model's text as it streams, each tool call with its arguments, and the first line of each answer. Watching belongs to the entry point rather than to `agent.ts`, which stays quiet so a caller with a screen of its own can draw the same events differently.
+`make agent` opens Pi's TUI, which is also where the model and the thinking level are steered from. `bun run agent --print` streams the same run to stdout for a pipe or a log, through `engine/agent/print.ts` rather than Pi's print mode, which prints one last message once a run is over and so prints nothing for a proof that ends on a tool call. Drawing belongs to the entry point rather than to `agent.ts`, which builds a session runtime and stays quiet, so a caller with a screen of its own can draw the same events differently.
 
 What the model said reaches `trajectory.jsonl` as `message` entries and compaction as an `auto` entry. Its tool calls are already there, since every tool of ours writes itself through the session and Pi's own arrive inside the assistant message.
 
@@ -147,12 +148,15 @@ The fold it replays with is the one `engine/core/state/goals.ts` applies, writte
 
 One `config.jsonc` at the repo root; no config directory. The dialect is JSONC, JSON with comments and trailing commas, so the checked-in example can carry every option with a note on what it is for; nothing but the agent reads these files, and what a run records is the resolved configuration as plain JSON. The split between config, CLI, and tool arguments follows one rule: the config file describes the machine, the CLI describes the run, tool arguments describe the call.
 
-- **config.jsonc** (machine-local, gitignored; `config.example.jsonc` checked in, and read in its place when there is no config.jsonc): the model, named by a provider and an id from Pi's catalogue, or by a `base_url` for an OpenAI-compatible endpoint of your own with `api_key_env` naming the variable its key lives in; the `toolchain` directory the binaries were built in, `deps/` by default; default timeouts and budgets. Stable across runs, different on every machine.
-- **CLI**: per-run facts: the LHS/RHS inputs, the session directory, `--config` to point elsewhere, and overrides for common knobs (`--model`, `--budget`, `--timeout-check`). Precedence: built-in defaults, then config file, then CLI.
+- **`~/.pi/agent/`** (the machine, shared with `pi`): `auth.json` for credentials, kept `0600` and written by `/login`, which is the only thing that writes outside the checkout; `models.json` for providers the machine can reach; `settings.json` for personal defaults. Credentials stay outside the checkout because the agent is untrusted and its shell starts inside it, so a key kept there would be one `cat` away.
+- **`.pi/`** (the project, in the repository, gitignored): `extensions/` declares the providers this checkout proves with, `settings.json` says which is the default. These are Pi's own project layer, so `pi` run in this repository reads the same files. A local server such as Ollama or vLLM is declared as an extension there, since Pi reads models from one file per machine and has no project counterpart; [agent.md](./agent.md#configuration) carries the recipe.
+- **config.jsonc** (machine-local, gitignored; `config.example.jsonc` checked in, and read in its place when there is no config.jsonc): the `toolchain` directory the binaries were built in, `deps/` by default, and the default timeouts. Stable across runs, different on every machine. A section it does not carry is an error rather than a setting that does nothing.
+- **CLI**: per-run facts: the LHS/RHS inputs, the session directory, `--max-steps` and `--max-seconds`, and `--model`, `--provider` and `--thinking`, which resolve through Pi's own `resolveCliModel` so a reference means here what it means in `pi`.
 - **Tool arguments**: per-call knobs the agent owns, like the `check` timeout; config supplies only the default and a cap.
-- **Secrets** (API keys for Pi): environment variables only, never config or CLI, so they cannot leak into the trajectory.
 
-This split is purely ergonomic, never a correctness question: `run_start` snapshots the fully resolved configuration and the certificate manifest records exact invocations, so a knob can move between config and CLI later at zero cost.
+`engine/core/config.ts` carries the toolchain and the timeouts, and nothing that belongs to the agent: what bounds a model is a per-run choice, so `engine/agent/budget.ts` takes it from the command line.
+
+This split is purely ergonomic, never a correctness question: `run_start` snapshots the fully resolved configuration, every assistant message the trajectory records names the model that produced it, and the certificate manifest records exact invocations.
 
 ## Build system
 

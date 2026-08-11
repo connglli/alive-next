@@ -7,10 +7,10 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { answer } from "./format.ts";
+import { toolResult } from "./format.ts";
 import type { Stop } from "./index.ts";
 
-export function giveUpTool(session: Session, stop: Stop) {
+export function createGiveUpTool(session: Session, stop: Stop) {
   return defineTool({
     name: "give_up",
     label: "Give up",
@@ -24,7 +24,7 @@ export function giveUpTool(session: Session, stop: Stop) {
     execute: async (_id, { reason }) => {
       stop.gaveUp = reason;
       const given = await session.giveUp(reason);
-      return { ...answer(true, `the run stops here: ${reason}`, given), terminate: true };
+      return { ...toolResult(true, `the run stops here: ${reason}`, given), terminate: true };
     },
   });
 }

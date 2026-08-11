@@ -2,9 +2,9 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { answer, answerFrom } from "./format.ts";
+import { toolResult, toolResultFrom } from "./format.ts";
 
-export function revertTool(session: Session) {
+export function createRevertTool(session: Session) {
   return defineTool({
     name: "revert",
     label: "Revert",
@@ -18,9 +18,9 @@ export function revertTool(session: Session) {
     execute: async (_id, { gid, side, to }) => {
       const reverted = await session.revert(gid, side, to);
       if (reverted.kind === "refused") {
-        return answer(false, `refused: ${reverted.message}`, reverted);
+        return toolResult(false, `refused: ${reverted.message}`, reverted);
       }
-      return answerFrom(session, true, `${gid} ${side} is ${reverted.to.id} again`, reverted);
+      return toolResultFrom(session, true, `${gid} ${side} is ${reverted.to.id} again`, reverted);
     },
   });
 }

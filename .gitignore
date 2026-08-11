@@ -69,10 +69,13 @@ Testing/
 .cache/
 __pycache__/
 
-# --- alive-next specific ---
+# ours
 node_modules/
 .venv/
 venv/
 deps/
 sessions/
 config.jsonc
+
+# pi
+.pi/

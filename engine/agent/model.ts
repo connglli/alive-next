@@ -1,94 +1,132 @@
-// Turning the configured model into the one Pi runs on.
+// Choosing the model a run talks to.
 //
-// Two paths, chosen by whether the configuration gives a base URL. A provider
-// Pi knows, anthropic or openai among others, comes from its built-in
-// catalogue, which already holds the context window, the pricing and the
-// credential resolution. An endpoint we are given instead is described here as
-// an OpenAI-compatible provider, which is how a local server or a proxy is
-// reached. The rest of the agent sees the same pair either way.
+// Pi owns the models and the credentials, in the files it already keeps them
+// in, so there is nothing here that reads or writes either. What is here is
+// the choosing: the command line for one run, over whatever Pi would pick for
+// itself.
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import {
-  type Api,
-  createProvider,
-  type Model,
-  type Models,
-  type Provider,
-} from "@earendil-works/pi-ai";
-import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { apiKeyFor, type ModelConfig } from "../core/config.ts";
+  createAgentSessionServices,
+  getAgentDir,
+  type InlineExtension,
+  type ModelRuntime,
+  resolveCliModel,
+} from "@earendil-works/pi-coding-agent";
+import { repoRoot } from "../core/config.ts";
 
-export interface ResolvedModel {
-  models: Models;
-  model: Model<Api>;
-}
+export const THINKING_LEVELS: ThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
 
 /**
- * The provider for an endpoint the configuration describes, and nothing for a
- * provider Pi already knows. The agent registers this one with Pi's own model
- * runtime, which is how a local server becomes something it can stream from.
+ * The project's own extensions, which is where a provider it declares lives.
+ * Named rather than discovered: Pi looks for them beside the shell's working
+ * directory, which for a run is the scratch directory, and `noExtensions`
+ * drops what is found on the machine while keeping what a caller names. Naming
+ * them means listing them, which is the layout Pi documents for a project,
+ * `.pi/extensions/<name>.ts` and `.pi/extensions/<name>/index.ts`.
  */
-export function describedProvider(config: ModelConfig): Provider | undefined {
-  if (!config.baseUrl) return undefined;
-  const baseUrl = config.baseUrl;
-  return createProvider({
-    id: config.provider,
-    name: config.provider,
-    baseUrl,
-    auth: {
-      apiKey: {
-        name: config.provider,
-        // A local server ignores the key, but the OpenAI-compatible client
-        // refuses to send a request without one, so an endpoint with no key
-        // gets a placeholder rather than nothing.
-        resolve: async () => ({ auth: { apiKey: apiKeyFor(config) ?? "unused" } }),
-      },
-    },
-    models: [describe(config, baseUrl)],
-    api: openAICompletionsApi(),
-  });
+export function findProjectExtensions(project: string): string[] {
+  const dir = join(project, ".pi", "extensions");
+  if (!existsSync(dir)) return [];
+  const found: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".ts")) found.push(join(dir, entry.name));
+    if (entry.isDirectory()) {
+      const index = join(dir, entry.name, "index.ts");
+      if (existsSync(index)) found.push(index);
+    }
+  }
+  return found.sort();
 }
 
-function describe(config: ModelConfig, baseUrl: string): Model<"openai-completions"> {
+/** What a run loads from the machine, which is the prompt and nothing else. */
+export function createResourceOptions(
+  project: string,
+  systemPrompt?: string,
+  extensionFactories: InlineExtension[] = [],
+) {
   return {
-    id: config.id,
-    name: `${config.id} (${config.provider})`,
-    api: "openai-completions",
-    provider: config.provider,
-    baseUrl,
-    reasoning: false,
-    input: ["text"],
-    // An endpoint we describe is in nobody's price list, and a local one bills
-    // nothing; a provider Pi knows brings its own costs.
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: config.contextWindow ?? 32768,
-    maxTokens: config.maxTokens ?? 4096,
+    systemPrompt,
+    extensionFactories,
+    additionalExtensionPaths: findProjectExtensions(project),
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
   };
 }
 
-function take(models: Models, config: ModelConfig): ResolvedModel {
-  const model = models.getModel(config.provider, config.id);
-  if (!model) {
-    // getModels is the synchronous read; getAvailable would need credentials
-    // and a network round trip to say the same thing.
-    const known = models.getModels(config.provider).map((candidate) => candidate.id);
-    const hint = known.length
-      ? `known ids for ${config.provider}: ${known.slice(0, 8).join(", ")}`
-      : `no provider named ${config.provider}; set model.base_url to describe your own`;
-    throw new Error(`model ${config.provider}/${config.id} not found, ${hint}`);
-  }
-  return { models, model };
+/**
+ * Pi's models and credentials, from the files Pi keeps them in, plus whatever
+ * this project's extensions declare. A provider of one's own, a local Ollama
+ * or a vLLM among them, is declared to Pi rather than to us: to a machine in
+ * `~/.pi/agent/models.json`, to a project in `.pi/extensions/`. Both are what
+ * `pi` itself reads, so one declaration serves it and this engine alike.
+ *
+ * Building it through Pi's own services is what applies those declarations, so
+ * the runtime a model is chosen from is the one that will stream it.
+ */
+export async function modelRuntime(project: string = repoRoot()): Promise<ModelRuntime> {
+  const services = await createAgentSessionServices({
+    cwd: project,
+    agentDir: getAgentDir(),
+    resourceLoaderOptions: createResourceOptions(project),
+  });
+  return services.modelRuntime;
+}
+
+/** What one run asked for, all optional, all from the command line. */
+export interface Asked {
+  /** `provider/id`, a bare id, or either with a `:level` suffix. */
+  model?: string;
+  /** Which provider a bare id meant, when more than one offers it. */
+  provider?: string;
+  thinking?: ThinkingLevel;
+}
+
+export interface Choice {
+  /** Nothing when the run asked for nothing, which leaves it to the settings. */
+  model?: Model<Api>;
+  thinkingLevel?: ThinkingLevel;
 }
 
 /**
- * Resolve the configured model. Throws when neither the catalogue nor the
- * configuration accounts for the provider and id, naming what it does know,
- * because that mistake should surface before a run starts.
+ * The model a run asked for. Throws when this machine cannot reach it, naming
+ * what it could have meant, because that mistake should surface before a run
+ * starts rather than as a confusing error on the first turn.
  */
-export function resolveModel(config: ModelConfig): ResolvedModel {
-  const models = builtinModels();
-  if (!config.baseUrl) return take(models, config);
+export function chooseModel(runtime: ModelRuntime, asked: Asked): Choice {
+  if (!asked.model && !asked.provider) return { thinkingLevel: asked.thinking };
 
-  const provider = describedProvider(config);
-  if (provider) models.setProvider(provider);
-  return take(models, config);
+  const chosen = resolveCliModel({
+    cliModel: asked.model,
+    cliProvider: asked.provider,
+    cliThinking: asked.thinking,
+    modelRuntime: runtime,
+  });
+  if (chosen.error || !chosen.model) {
+    throw new Error(chosen.error ?? `no model matches ${asked.model}`);
+  }
+  return { model: chosen.model, thinkingLevel: chosen.thinkingLevel ?? asked.thinking };
+}
+
+/**
+ * Every model this machine can reach, as lines. Availability needs the
+ * credentials, so a provider with no key of any kind is absent rather than
+ * listed and unusable.
+ */
+export async function listAvailableModels(runtime: ModelRuntime): Promise<string[]> {
+  const available = await runtime.getAvailable();
+  return available.map((model) => `${model.provider}/${model.id}`).sort();
 }

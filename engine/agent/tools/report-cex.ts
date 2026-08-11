@@ -3,7 +3,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { HarnessArg } from "../../core/drivers/llops.ts";
 import type { Session } from "../../core/session.ts";
-import { answerFrom } from "./format.ts";
+import { toolResultFrom } from "./format.ts";
 
 const Argument = Type.Union([
   Type.Object({
@@ -18,7 +18,7 @@ const Argument = Type.Union([
   Type.Object({ kind: Type.Literal("null") }),
 ]);
 
-export function reportCexTool(session: Session) {
+export function createReportCexTool(session: Session) {
   return defineTool({
     name: "report_cex",
     label: "Report counterexample",
@@ -32,9 +32,9 @@ export function reportCexTool(session: Session) {
     execute: async (_id, { input }) => {
       const reported = await session.reportCex(input as HarnessArg[]);
       if (reported.kind === "refused") {
-        return answerFrom(session, false, `not a counterexample: ${reported.reason}`, reported);
+        return toolResultFrom(session, false, `not a counterexample: ${reported.reason}`, reported);
       }
-      return answerFrom(session, true, `refuted: ${reported.divergence}`, reported);
+      return toolResultFrom(session, true, `refuted: ${reported.divergence}`, reported);
     },
   });
 }

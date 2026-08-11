@@ -7,7 +7,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import type { EditOp } from "../../core/drivers/llops.ts";
 import type { Session } from "../../core/session.ts";
-import { answer, program } from "./format.ts";
+import { formatProgram, toolResult } from "./format.ts";
 
 const Ref = Type.String({
   description: "A value as the program prints it, %3 or %x, or #7 for the instruction at index 7.",
@@ -43,7 +43,7 @@ export const Op = Type.Union([
 
 export type OpParams = Static<typeof Op>;
 
-export function editTool(session: Session) {
+export function createEditTool(session: Session) {
   return defineTool({
     name: "edit",
     label: "Edit",
@@ -53,13 +53,13 @@ export function editTool(session: Session) {
     execute: async (_id, params) => {
       const edited = await session.edit(params as EditOp);
       if (edited.kind === "refused") {
-        return answer(
+        return toolResult(
           false,
-          program(`refused, ${edited.code}: ${edited.message}`, edited.text),
+          formatProgram(`refused, ${edited.code}: ${edited.message}`, edited.text),
           edited,
         );
       }
-      return answer(true, program(`applied, ${edited.ops} so far`, edited.text), {
+      return toolResult(true, formatProgram(`applied, ${edited.ops} so far`, edited.text), {
         kind: edited.kind,
         ops: edited.ops,
       });

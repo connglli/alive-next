@@ -14,19 +14,31 @@ Needs git, cmake, ninja, curl, a C++ compiler, and Z3's development headers. Eve
 
 ```sh
 make install-deps
-cp config.example.jsonc config.jsonc   # then set the model to use
+cp config.example.jsonc config.jsonc   # toolchain, timeouts, budget
 make test
 ```
+
+### Agent
+The agent is built upon [Pi](https://github.com/earendil-works/pi). Start `./engine/node_modules/.bin/pi` and `/login` to login, or export a provider's key as environment variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `DEEPSEEK_API_KEY`. To use local OpenAI-compatible servers, such as Ollama or vLLM or llama.cpp, declare it in `~/.pi/agent/models.json` or in `.pi/extensions/`, [docs/agent.md](docs/agent.md#configuration) has the recipe.
 
 ## Run
 
 ```sh
 make examples                          # prove the worked examples, into sessions/
-make agent SRC=a.ll TGT=b.ll           # prove one pair with the configured model
+make agent SRC=a.ll TGT=b.ll           # prove one pair, watched in Pi's TUI
 python3 scripts/check.py sessions/<id>/certificate
 make visualize SESSION=sessions/<id>   # the run as one HTML page
 make help                              # every target
 ```
+
+```sh
+bun run agent --list-models                        # what this machine can reach
+bun run agent -m ollama/qwen3:0.6b a.ll b.ll       # prove with one model for one run
+bun run agent --print a.ll b.ll                    # no TUI, for a pipe or a log
+bun run agent --help                               # every option
+```
+
+`--print` exits 0 when the run settles and 1 when it does not, so it is what a script or CI calls.
 
 `engine/examples/` is the tutorial: eight pairs, each with the moves that settle it, written as scripts so the framework runs with no model in front of it.
 

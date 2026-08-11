@@ -9,11 +9,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AssistantMessage, ToolCall } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model, ToolCall } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { agentFor } from "../agent/agent.ts";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { createAgent, createServices } from "../agent/agent.ts";
 import { Budget } from "../agent/budget.ts";
-import { loadConfig } from "../core/config.ts";
 import type { CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
 import { Session } from "../core/session.ts";
@@ -100,6 +100,40 @@ function saying(turns: AssistantMessage[]) {
   };
 }
 
+/**
+ * A runtime holding one model that is never called, since the stub answers in
+ * its place. Every path it reads is inside `at`, so the loop under test is the
+ * same loop on every machine and touches nobody's Pi configuration. The key is
+ * a placeholder because Pi declines to prompt a provider with no credential at
+ * all, which it checks before it would reach the stub.
+ */
+async function stubRuntime(at: string): Promise<{ models: ModelRuntime; model: Model<Api> }> {
+  const models = await ModelRuntime.create({
+    authPath: join(at, "auth.json"),
+    modelsPath: join(at, "models.json"),
+  });
+  models.registerProvider("stub", {
+    name: "stub",
+    baseUrl: "http://127.0.0.1:1/v1",
+    api: "openai-completions",
+    apiKey: "unused",
+    models: [
+      {
+        id: "stub",
+        name: "stub",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 32768,
+        maxTokens: 4096,
+      },
+    ],
+  });
+  const model = models.getModel("stub", "stub");
+  if (!model) throw new Error("the stub provider did not register");
+  return { models, model };
+}
+
 let dir: string;
 
 beforeEach(() => {
@@ -120,8 +154,20 @@ async function agent(turns: AssistantMessage[], maxSteps = 8) {
     checker: new YesMan(),
     interp: noRun,
   });
-  const config = { ...loadConfig(), budget: { maxSteps } };
-  const built = await agentFor({ session, config, scratch: join(dir, "scratch") });
+  const { models, model } = await stubRuntime(join(dir, "pi"));
+  const built = await createAgent({
+    session,
+    limits: { maxSteps },
+    choice: { model },
+    // Pi's own directory and the project layer both inside the temporary one,
+    // so a run reads neither the machine's settings nor this repository's.
+    services: await createServices({
+      cwd: join(dir, "scratch"),
+      agentDir: join(dir, "pi"),
+      project: dir,
+      models,
+    }),
+  });
   built.pi.agent.streamFunction = saying(turns);
   return { session, ...built };
 }
@@ -173,6 +219,26 @@ describe.skipIf(!built)("the loop", () => {
     expect(answered).toContain("g1 proved");
   });
 
+  /**
+   * The configuration does not name a model, so what produced a run is read
+   * off what it said. Every assistant message carries it, which is also why
+   * nothing records it a second time.
+   */
+  test("what produced a turn is in the record", async () => {
+    const { session, prove } = await agent([
+      turn("proving", [{ name: "check", arguments: { gid: "g1" } }]),
+    ]);
+    expect(await prove()).toBe("verified");
+
+    const said = log(session)
+      .filter((entry) => entry.kind === "message")
+      .map((entry) => entry.message as { role?: string; provider?: string; model?: string })
+      .filter((message) => message.role === "assistant");
+    expect(said.length).toBeGreaterThan(0);
+    expect(said[0]?.provider).toBe("stub");
+    expect(said[0]?.model).toBe("stub");
+  });
+
   test("a verdict ends the run, whatever the model meant to do next", async () => {
     const { session, prove } = await agent([
       turn("proving", [{ name: "check", arguments: { gid: "g1" } }]),
@@ -193,7 +259,9 @@ describe.skipIf(!built)("the loop", () => {
     const { session, prove } = await agent(going, 3);
     expect(await prove()).toBe("unknown");
 
-    const notes = log(session).filter((entry) => entry.kind === "auto");
+    const notes = log(session).filter(
+      (entry) => entry.kind === "auto" && entry.action === "budget",
+    );
     expect(notes).toHaveLength(1);
     expect(JSON.stringify(notes[0])).toContain("3 steps");
     // It stopped where it said it did.

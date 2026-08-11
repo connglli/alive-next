@@ -1,10 +1,16 @@
-// Running the agent by hand: `bun run agent <src.ll> <tgt.ll> [<directory>]`.
+// Running the agent by hand.
 //
 // The same session directory an example writes, produced by a model instead of
 // a script: the trajectory, the store, and the certificate when it earns one.
+//
+// Pi draws the run. Interactively that is its TUI, which is also where a model
+// is logged into and picked; `--print` streams the run to stdout instead, for
+// a pipe or a log. Neither is drawn here, and what either shows is in the
+// trajectory too.
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 import { certify } from "../cert/main.ts";
 import { loadConfig, repoRoot } from "../core/config.ts";
 import { AliveTv } from "../core/drivers/alive2.ts";
@@ -13,125 +19,241 @@ import { Llubi } from "../core/drivers/llubi.ts";
 import { Session } from "../core/session.ts";
 import { timeoutsFrom } from "../core/state/steps.ts";
 import { Toolchain } from "../core/toolchain.ts";
-import { agentFor } from "./agent.ts";
+import { createAgent, createServices } from "./agent.ts";
+import type { Limits } from "./budget.ts";
+import { chooseModel, listAvailableModels, THINKING_LEVELS } from "./model.ts";
+import { streamRun } from "./print.ts";
 
-const [srcPath, tgtPath, where] = process.argv.slice(2);
-if (!srcPath || !tgtPath) {
-  console.error("usage: bun run agent <src.ll> <tgt.ll> [<directory>]");
-  process.exit(2);
+const USAGE = `usage: bun run agent [options] <src.ll> <tgt.ll> [<directory>]
+
+  -m, --model <ref>      provider/id, a bare id, or either with :<level>
+      --provider <id>    which provider a bare id meant
+      --thinking <level> ${THINKING_LEVELS.join(", ")}
+  -p, --print            stream to stdout instead of opening Pi's TUI
+      --list-models      what this machine can reach, then stop
+      --max-steps <n>    stop after n turns, unbounded by default
+      --max-seconds <n>  stop after n seconds, unbounded by default
+  -h, --help
+
+The model, and the key it needs, are Pi's: /login and /model inside the TUI
+set them up, and --model overrides the choice for one run.`;
+
+const NOTHING_AVAILABLE = `Error: no model this machine can reach. Any one of these gives it one:
+  bun run agent <src.ll> <tgt.ll>   then /login inside the TUI
+  export ANTHROPIC_API_KEY=...      or the variable your provider uses
+  .pi/extensions/                   to declare a local server of your own`;
+
+const flags = tryOrExit(() => parseArgs(process.argv.slice(2)));
+if (flags.help) {
+  console.log(USAGE);
+  process.exit(0);
 }
+
+if (flags.listModels) {
+  const { modelRuntime } = await createServices({ cwd: repoRoot() });
+  const available = await listAvailableModels(modelRuntime);
+  console.log(available.length ? available.join("\n") : NOTHING_AVAILABLE);
+  process.exit(available.length ? 0 : 1);
+}
+
+// A run is one pair, so both sides are named or there is nothing to prove.
+const [srcPath, tgtPath, where] = flags.rest;
+if (!srcPath || !tgtPath) {
+  const given = flags.rest.length === 0 ? "no program" : "only one program";
+  exitWithError(`Error: ${given} given, and a run proves one against another\n\n${USAGE}`);
+}
+
+// Both programs, and the model, before anything is created, so a command line
+// naming a file or a model that is not there leaves nothing behind it.
+const src = readProgram(srcPath);
+const tgt = readProgram(tgtPath);
 
 const config = loadConfig();
 const timeouts = timeoutsFrom(config.timeouts);
 const toolchain = new Toolchain(config.toolchain);
 const built = await toolchain.insist();
 
-const dir = where ?? join(repoRoot(), "sessions", `agent-${stamp()}`);
+const dir = where ?? join(repoRoot(), "sessions", `agent-${timestamp()}`);
 const scratch = join(dir, "scratch");
-mkdirSync(scratch, { recursive: true });
 
+// What a settled run says, on the screen the run is being watched on. Pi's
+// TUI outlives the loop, so a verdict reached there would otherwise be visible
+// only after quitting, and the certificate is the thing a run is for.
+let announce: ((line: string, kind: "info" | "warning") => void) | undefined;
+
+// Pi's services, once. A project declares its providers in extensions, which
+// are known only once they are loaded, so the loading happens here and the
+// runtime the model is chosen from is the one that will stream it.
+const services = await createServices({
+  cwd: scratch,
+  extensionFactories: [
+    (pi) => {
+      pi.on("session_start", (_event, ctx) => {
+        announce = (line, kind) => ctx.ui.notify(line, kind);
+      });
+    },
+  ],
+});
+const choice = tryOrExit(() =>
+  chooseModel(services.modelRuntime, {
+    model: flags.model,
+    provider: flags.provider,
+    thinking: flags.thinking,
+  }),
+);
+
+mkdirSync(scratch, { recursive: true });
 const session = await Session.start({
   dir,
-  src: readFileSync(srcPath, "utf8"),
-  tgt: readFileSync(tgtPath, "utf8"),
+  src,
+  tgt,
   llops: new Llops(toolchain.path("llops")),
   checker: new AliveTv(toolchain.path("alive-tv"), timeouts.alive2Ms),
   interp: new Llubi(toolchain.path("llubi")),
   timeouts,
   config,
   toolchain: built,
-  versions: { model: `${config.model.provider}/${config.model.id}` },
 });
 
-console.log(
-  `${srcPath} against ${tgtPath}\n  ${dir}\n  ${config.model.provider}/${config.model.id}`,
-);
-const agent = await agentFor({ session, config, scratch });
-watch(agent.pi);
 const started = Date.now();
-const outcome = await agent.prove();
-session.finish();
+let summary: string | undefined;
+const agent = await createAgent({
+  session,
+  services,
+  choice,
+  limits: flags.limits,
+  onSettled: finishRun,
+});
 
-const goals = [...session.tree.goals.values()]
-  .map((goal) => `${goal.id} ${goal.status}`)
-  .join(", ");
-console.log(`  ${outcome} in ${Date.now() - started}ms: ${goals}`);
-if (outcome !== "unknown") console.log(`  ${certify(dir, join(dir, "certificate"))}`);
-process.exit(outcome === "unknown" ? 1 : 0);
+// The certificate is earned the moment the tree settles, which under the TUI
+// is long before the process ends, so the run is concluded there and the
+// summary is held until the terminal is the shell's again.
+process.on("exit", () => {
+  finishRun();
+  if (summary) process.stdout.write(summary);
+});
 
-/** A directory name that sorts by when it was made. */
-function stamp(): string {
-  return new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "").replace("T", "-");
+if (flags.print) {
+  // Without a screen there is nowhere to log in, so a machine with no model
+  // has to be told rather than shown.
+  if (!agent.pi.model) exitWithError(NOTHING_AVAILABLE);
+  console.log(`${srcPath} against ${tgtPath}\n  ${dir}\n  ${formatModelName(agent.pi.model)}`);
+  streamRun(agent.pi);
+  const outcome = await agent.prove();
+  await agent.runtime.dispose();
+  process.exit(outcome === "unknown" ? 1 : 0);
+}
+await new InteractiveMode(agent.runtime, { initialMessage: agent.task }).run();
+
+/**
+ * Say what is wrong with the command line and stop. A mistyped flag is the
+ * user's mistake rather than the program's, so it reads as one sentence and
+ * not as a stack that points into this file. What each message carries beyond
+ * that sentence is its own business: a wrong flag is worth the usage beside
+ * it, a model that does not exist is better answered by naming what does.
+ */
+function exitWithError(wrong: string): never {
+  console.error(wrong);
+  process.exit(2);
+}
+
+function tryOrExit<T>(reading: () => T): T {
+  try {
+    return reading();
+  } catch (wrong) {
+    return exitWithError(wrong instanceof Error ? wrong.message : String(wrong));
+  }
+}
+
+/** A program the command line named, or a sentence saying why there is none. */
+function readProgram(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (wrong) {
+    return exitWithError(`cannot read ${path}: ${(wrong as NodeJS.ErrnoException).code ?? wrong}`);
+  }
+}
+
+interface Flags {
+  model?: string;
+  provider?: string;
+  thinking?: ThinkingLevel;
+  limits: Limits;
+  print?: boolean;
+  listModels?: boolean;
+  help?: boolean;
+  /** The positional arguments, in the order they were given. */
+  rest: string[];
 }
 
 /**
- * The run as it happens. `>` is the model, whether it is speaking or calling;
- * `<` is what the run says back to it; an indented line is what a call
- * answered with. Watching is this file's business rather than the agent's,
- * which stays quiet so that a caller with a screen of its own can draw the
- * same events differently. Everything printed here is in the trajectory too.
+ * The command line. Throws on a flag it does not know rather than treating it
+ * as a file, since a mistyped flag would otherwise become a missing pair.
  */
-function watch(pi: AgentSession): void {
-  let speaking = false;
-  const say = (line: string) => {
-    if (speaking) process.stdout.write("\n");
-    speaking = false;
-    process.stdout.write(`${line}\n`);
-  };
-  pi.subscribe((event) => {
-    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-      // A message often opens with blank lines, and an arrow on a line of
-      // its own says nothing, so the marker waits for the first real word.
-      let delta = event.assistantMessageEvent.delta;
-      if (!speaking) {
-        delta = delta.replace(/^\s+/, "");
-        if (delta === "") return;
-        process.stdout.write("\n> ");
-        speaking = true;
-      }
-      process.stdout.write(delta.replace(/\n/g, "\n  "));
-      return;
-    }
-    if (event.type === "message_end") {
-      // A message that ends while it is still being written needs the line
-      // closed, or whatever prints next continues the model's sentence.
-      if (speaking) {
-        speaking = false;
-        process.stdout.write("\n");
-      }
-      // What the run says back to the model: the opening task, and the turn
-      // that asks it to carry on after it has fallen silent. Without these a
-      // watcher sees the model answering questions nobody asked.
-      if (event.message.role === "user") say(`\n< ${trim(text(event.message.content), 200)}`);
-    }
-    if (event.type === "tool_execution_start") {
-      say(`\n> ${event.toolName} ${trim(JSON.stringify(event.args ?? {}), 100)}`);
-    }
-    if (event.type === "tool_execution_end") say(`  ${said(event.result)}`);
-  });
+function parseArgs(args: string[]): Flags {
+  const flags: Flags = { limits: {}, rest: [] };
+  for (let at = 0; at < args.length; at += 1) {
+    const arg = args[at] as string;
+    const value = (): string => {
+      const next = args[++at];
+      if (next === undefined) throw new Error(`${arg} wants a value\n\n${USAGE}`);
+      return next;
+    };
+    if (arg === "-m" || arg === "--model") flags.model = value();
+    else if (arg === "--provider") flags.provider = value();
+    else if (arg === "--thinking") flags.thinking = parseThinkingLevel(value());
+    else if (arg === "-p" || arg === "--print") flags.print = true;
+    else if (arg === "--list-models") flags.listModels = true;
+    else if (arg === "--max-steps") flags.limits.maxSteps = count(arg, value());
+    else if (arg === "--max-seconds") flags.limits.maxSeconds = count(arg, value());
+    else if (arg === "-h" || arg === "--help") flags.help = true;
+    else if (arg.startsWith("-")) throw new Error(`no such option ${arg}\n\n${USAGE}`);
+    else flags.rest.push(arg);
+  }
+  return flags;
 }
 
-/** How a call came back: the first word, and the first thing it said. */
-function said(result: unknown): string {
-  const content = (result as { content?: { type: string; text?: string }[] }).content ?? [];
-  const lines = text(content)
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
-  return trim(lines.slice(0, 2).join(": "), 160);
+/** A count a flag carries, which is whole and above zero or it bounds nothing. */
+function count(flag: string, given: string): number {
+  const value = Number(given);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${flag} must be a whole number above zero, not ${given}`);
+  }
+  return value;
 }
 
-function trim(said: string, at: number): string {
-  return said.length > at ? `${said.slice(0, at)}...` : said;
+function parseThinkingLevel(level: string): ThinkingLevel {
+  if (!THINKING_LEVELS.includes(level as ThinkingLevel)) {
+    throw new Error(`--thinking must be one of ${THINKING_LEVELS.join(", ")}`);
+  }
+  return level as ThinkingLevel;
 }
 
-/** The words out of a message's content, whatever else it carries. */
-function text(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((part) =>
-      (part as { type?: string }).type === "text" ? ((part as { text?: string }).text ?? "") : "",
-    )
-    .join("");
+function formatModelName(model: { provider: string; id: string }): string {
+  return `${model.provider}/${model.id}`;
+}
+
+/**
+ * Close the run and say how it went, once however often it is asked. The TUI
+ * quits through `process.exit`, and a run can be abandoned before it settles,
+ * so this has to be safe to call from either end.
+ */
+function finishRun(): void {
+  if (summary !== undefined) return;
+  const outcome = session.finish();
+  const goals = [...session.tree.goals.values()]
+    .map((goal) => `${goal.id} ${goal.status}`)
+    .join(", ");
+  const settled = outcome !== "unknown";
+  const lines = [`${outcome} in ${Date.now() - started}ms: ${goals}`];
+  if (settled) lines.push(certify(dir, join(dir, "certificate")));
+  summary = `${lines.map((line) => `  ${line}`).join("\n")}\n`;
+  // A verdict is news where the run is being watched; the shell gets it too,
+  // once the screen is the shell's again.
+  announce?.(lines.join("\n"), settled ? "info" : "warning");
+}
+
+/** A directory name that sorts by when it was made. */
+function timestamp(): string {
+  return new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "").replace("T", "-");
 }

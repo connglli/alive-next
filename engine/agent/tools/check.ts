@@ -2,9 +2,9 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { answerFrom } from "./format.ts";
+import { toolResultFrom } from "./format.ts";
 
-export function checkTool(session: Session) {
+export function createCheckTool(session: Session) {
   return defineTool({
     name: "check",
     label: "Check",
@@ -21,7 +21,7 @@ export function checkTool(session: Session) {
       const detail = checked.check.detail ? `\n${checked.check.detail}` : "";
       // Proved is the only outcome that advanced the run; a refutation is a
       // hint and a timeout is nothing at all.
-      return answerFrom(
+      return toolResultFrom(
         session,
         checked.outcome === "proved",
         `${gid} ${checked.outcome}${detail}`,

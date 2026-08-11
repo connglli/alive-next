@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Check } from "typebox/value";
-import { toolNames, tools } from "../agent/tools/index.ts";
+import { createTools, listToolNames } from "../agent/tools/index.ts";
 import type { CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
 import { Session } from "../core/session.ts";
@@ -62,7 +62,7 @@ beforeEach(async () => {
     checker: new YesMan(),
     interp: noRun,
   });
-  surface = tools(session);
+  surface = createTools(session);
 });
 
 afterEach(() => {
@@ -210,7 +210,7 @@ describe.skipIf(!built)("the tool layer", () => {
   });
 
   test("the allowlist names Pi's tools and ours, and nothing else", async () => {
-    const names = toolNames(session);
+    const names = listToolNames(session);
     expect(names).toContain("bash");
     expect(names).not.toContain("edit_file");
     // `edit` is ours here: Pi's file editor is not in the list.
