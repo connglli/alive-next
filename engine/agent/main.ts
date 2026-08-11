@@ -28,6 +28,7 @@ const USAGE = `usage: bun run agent [options] <src.ll> <tgt.ll> [<directory>]
       --provider <id>    which provider a bare id meant
       --thinking <level> ${THINKING_LEVELS.join(", ")}
       --list-models      what this machine can reach, then stop
+      --pause            open with the opening turn unsent, for enter to send
       --max-steps <n>    stop after n turns, unbounded by default
       --max-seconds <n>  stop after n seconds, unbounded by default
   -h, --help
@@ -87,6 +88,9 @@ const services = await createServices({
     (pi) => {
       pi.on("session_start", (_event, ctx) => {
         announce = (line, kind) => ctx.ui.notify(line, kind);
+        // Pi fires this once its screen is up, which is the first moment there
+        // is an editor to put a paused run's opening turn in.
+        if (flags.pause) ctx.ui.setEditorText(agent.task);
       });
     },
   ],
@@ -130,7 +134,12 @@ process.on("exit", () => {
   if (summary) process.stdout.write(summary);
 });
 
-await new InteractiveMode(agent.runtime, { initialMessage: agent.task }).run();
+// A run sends its opening turn and starts working. `--pause` holds that turn
+// back in the editor instead, where enter sends it, so a model can be picked,
+// a thinking level set or the pair read before any of it is paid for.
+await new InteractiveMode(agent.runtime, {
+  initialMessage: flags.pause ? undefined : agent.task,
+}).run();
 
 /**
  * Say what is wrong with the command line and stop. A mistyped flag is the
@@ -167,6 +176,7 @@ interface Flags {
   thinking?: ThinkingLevel;
   limits: Limits;
   listModels?: boolean;
+  pause?: boolean;
   help?: boolean;
   /** The positional arguments, in the order they were given. */
   rest: string[];
@@ -189,6 +199,7 @@ function parseArgs(args: string[]): Flags {
     else if (arg === "--provider") flags.provider = value();
     else if (arg === "--thinking") flags.thinking = parseThinkingLevel(value());
     else if (arg === "--list-models") flags.listModels = true;
+    else if (arg === "--pause") flags.pause = true;
     else if (arg === "--max-steps") flags.limits.maxSteps = count(arg, value());
     else if (arg === "--max-seconds") flags.limits.maxSeconds = count(arg, value());
     else if (arg === "-h" || arg === "--help") flags.help = true;

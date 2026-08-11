@@ -76,6 +76,8 @@ It does not describe the tools. Pi sends each tool's description and schema with
 
 A caller that wants the loop without a screen has `createAgent`, whose `prove` works until the run settles and says how it went. `agent.ts` builds a session runtime and draws nothing, so drawing stays the entry point's business.
 
+A run sends its opening turn as it opens, which is what makes it a run. `--pause` puts that turn in the editor unsent instead, so the screen where a model is picked and a thinking level is set is reached before anything is spent. It is written there from the `session_start` handler, since Pi fires that once its screen is up, which is the first moment there is an editor to write to.
+
 A certificate is earned the moment the goal tree settles, which under the TUI is long before the process ends. The run is therefore concluded from the callback the loop fires when it stops, and the summary is held until the terminal belongs to the shell again.
 
 A run with no model to talk to is assembled all the same, because the TUI is where a machine without one is set up: `/login` stores a key and `/model` picks what to prove with. What that costs is the first turn, which fails saying so.

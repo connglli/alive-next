@@ -14,7 +14,7 @@ Needs git, cmake, ninja, curl, a C++ compiler, and Z3's development headers. Eve
 
 ```sh
 make install-deps
-cp config.example.jsonc config.jsonc   # toolchain, timeouts, budget
+cp config.example.jsonc config.jsonc   # toolchain, timeouts
 make test
 ```
 
@@ -22,6 +22,17 @@ make test
 The agent is built upon [Pi](https://github.com/earendil-works/pi). Start `./engine/node_modules/.bin/pi` and `/login` to login, or export a provider's key as environment variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `DEEPSEEK_API_KEY`. To use local OpenAI-compatible servers, such as Ollama or vLLM or llama.cpp, declare it in `~/.pi/agent/models.json` or in `.pi/extensions/`, [docs/agent.md](docs/agent.md#configuration) has the recipe.
 
 ## Run
+
+Run the agent to find a refinement proof of a pair of LLVM IR files, `a.ll` and `b.ll`:
+
+```sh
+cd engine
+bun run agent a.ll b.ll
+```
+
+This agent will use the default model and provider registered in Pi. To change it, use for example `-m deepseek/deepseek-v4-flash`. Or use `--pause` to pause the agent after it starts, then set the model in Pi's TUI with `/model`, and then start it with any instruction.
+
+More example commands:
 
 ```sh
 make examples                          # prove the worked examples, into sessions/
@@ -34,6 +45,7 @@ make help                              # every target
 ```sh
 bun run agent --list-models                        # what this machine can reach
 bun run agent -m ollama/qwen3:0.6b a.ll b.ll       # prove with one model for one run
+bun run agent --pause a.ll b.ll                    # open without starting, enter starts it
 bun run agent --help                               # every option
 ```
 
