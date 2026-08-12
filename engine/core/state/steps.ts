@@ -35,9 +35,9 @@ export interface Timeouts {
 
 export const DEFAULT_TIMEOUTS: Timeouts = {
   checkDefaultMs: 30_000,
-  checkCapMs: 300_000,
-  eagerCheckMs: 5_000,
-  alive2Ms: 120_000,
+  checkCapMs: 60_000,
+  eagerCheckMs: 3_000,
+  alive2Ms: 30_000,
 };
 
 /** The defaults, with whatever the configuration says on top. */
