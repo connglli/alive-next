@@ -9,7 +9,8 @@
 // That runs here rather than around the outside, because whether the path is
 // still alive belongs in the answer the agent reads.
 import type { CheckOutcome, CheckResult, Invocation } from "../drivers/alive2.ts";
-import { head, type Side, type Tree, workable } from "./goals.ts";
+import { assumptionFlags } from "./arguments.ts";
+import { hasRootEntry, head, type Side, type Tree, workable } from "./goals.ts";
 import type { Store } from "./store.ts";
 import type { Effect, Hash } from "./trajectory.ts";
 
@@ -123,7 +124,7 @@ export class Steps {
     const check = await this.checker.check(
       this.store.get(head(goal, "src")),
       this.store.get(head(goal, "tgt")),
-      { timeoutMs: budgetMs },
+      { timeoutMs: budgetMs, flags: askedUnder(tree, gid) },
     );
     const result: CheckGoalResult = {
       outcome: goalOutcome(check.outcome),
@@ -160,7 +161,11 @@ export class Steps {
     }
 
     const { src, tgt } = orient(side, before, afterText);
-    const check = await this.checker.check(src, tgt, { timeoutMs: this.timeouts.alive2Ms });
+    const flags = askedUnder(tree, gid);
+    const check = await this.checker.check(src, tgt, {
+      timeoutMs: this.timeouts.alive2Ms,
+      flags,
+    });
     if (check.outcome !== "correct") return { kind: "refused", check };
 
     const effects: Effect[] = [{ effect: "step", gid, side, to: after, how }];
@@ -172,7 +177,7 @@ export class Steps {
     const eager = await this.checker.check(
       side === "src" ? afterText : this.store.get(head(goal, "src")),
       side === "tgt" ? afterText : this.store.get(head(goal, "tgt")),
-      { timeoutMs: this.timeouts.eagerCheckMs },
+      { timeoutMs: this.timeouts.eagerCheckMs, flags },
     );
     if (eager.outcome === "correct") effects.push({ effect: "proved", gid });
 
@@ -195,6 +200,15 @@ export class Steps {
   private capped(timeoutMs: number): number {
     return Math.min(timeoutMs, this.timeouts.checkCapMs);
   }
+}
+
+/**
+ * What a check of this goal is asked under: the run's assumption about the
+ * pair's arguments where the goal still has the pair's entry, and nothing at
+ * all below a cut, where the parameters are values the program computed.
+ */
+function askedUnder(tree: Tree, gid: string): string[] {
+  return hasRootEntry(tree, gid) ? assumptionFlags(tree.assumed) : [];
 }
 
 /** What a check's answer says about the goal it was asked about. */

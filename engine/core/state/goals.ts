@@ -9,6 +9,7 @@
 // log is the only thing that has to be right, and a reader that replays it
 // sees exactly what the run saw. That also makes this file pure: no disk, no
 // clock, no processes.
+import { type ArgumentAssumption, NO_ASSUMPTION } from "./arguments.ts";
 import type { Effect, Entry, Hash } from "./trajectory.ts";
 
 export type GoalId = string;
@@ -39,6 +40,8 @@ export interface Goal {
 export interface Tree {
   root: GoalId;
   goals: Map<GoalId, Goal>;
+  /** What the run assumes about the pair's arguments, as run_start stated it. */
+  assumed: ArgumentAssumption;
   /** Agent-facing program names, in the order the programs first appeared. */
   programs: Map<Hash, ProgramId>;
   /**
@@ -63,6 +66,25 @@ export function head(goal: Goal, side: Side): Hash {
   const last = history[history.length - 1];
   if (last === undefined) throw new DerivationError(`${goal.id} has no ${side} program`);
   return last;
+}
+
+/**
+ * Whether a goal is asked about the arguments the run was given.
+ *
+ * The root is, and so is the outer half of every cut under it, since outlining
+ * a suffix leaves the entry where it was. Everything under a callee is not: a
+ * callee's parameters are values the program computed, so what the run assumes
+ * about arguments says nothing about them. This is what decides whether a
+ * check carries that assumption, and scripts/check.py decides it the same way
+ * rather than believing what a manifest says.
+ */
+export function hasRootEntry(tree: Tree, id: GoalId): boolean {
+  let goal: Goal | undefined = get(tree, id);
+  while (goal) {
+    if (goal.role === "callee") return false;
+    goal = goal.parent === undefined ? undefined : tree.goals.get(goal.parent);
+  }
+  return true;
 }
 
 /** Goals with no children that are still open, which is where work remains. */
@@ -109,7 +131,9 @@ export function derive(entries: Entry[]): Tree {
   for (const entry of entries) {
     if (entry.kind === "run_start") {
       if (tree) throw new DerivationError("a second run_start");
-      tree = start(entry.src, entry.tgt);
+      // A log that stated no assumption was made under none, so this is read
+      // rather than defaulted: what a run assumed is what it recorded.
+      tree = start(entry.src, entry.tgt, entry.assumed ?? NO_ASSUMPTION);
       continue;
     }
     const effects = "effects" in entry ? (entry.effects ?? []) : [];
@@ -122,7 +146,7 @@ export function derive(entries: Entry[]): Tree {
   return tree;
 }
 
-function start(src: Hash, tgt: Hash): Tree {
+function start(src: Hash, tgt: Hash, assumed: ArgumentAssumption): Tree {
   const root: Goal = {
     id: "g1",
     src: { history: [src] },
@@ -133,6 +157,7 @@ function start(src: Hash, tgt: Hash): Tree {
   const tree: Tree = {
     root: root.id,
     goals: new Map([[root.id, root]]),
+    assumed,
     programs: new Map(),
     nextGoal: 2,
   };

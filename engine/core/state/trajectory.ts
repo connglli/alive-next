@@ -14,6 +14,7 @@
 // a verdict rests on replaying the certificate rather than on this file.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import type { ArgumentAssumption } from "./arguments.ts";
 import { sha256 } from "./hash.ts";
 
 /** Programs are named by their store hash wherever an event mentions one. */
@@ -23,6 +24,12 @@ export interface RunStart {
   kind: "run_start";
   src: Hash;
   tgt: Hash;
+  /**
+   * What the run takes for granted about the arguments the pair is given.
+   * This is part of the question rather than anything proved, so it is
+   * recorded where the question is, and a log that names none assumed none.
+   */
+  assumed?: ArgumentAssumption;
   /** The fully resolved configuration, so a run says what produced it. */
   config: unknown;
   /**

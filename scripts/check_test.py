@@ -107,6 +107,20 @@ entry:
 """
 WRAPS = NSW.replace(" nsw", "")
 
+# Dropping a freeze holds only where the argument cannot be poison, which is
+# what tells a replay that used the manifest's assumption from one that did not.
+FROZEN = """define i32 @f(i32 %0) {
+entry:
+  %1 = freeze i32 %0
+  ret i32 %1
+}
+"""
+RAW = """define i32 @f(i32 %0) {
+entry:
+  ret i32 %0
+}
+"""
+
 
 def llops(subcommand: str, request: dict) -> dict:
     done = subprocess.run(
@@ -133,12 +147,19 @@ class Built:
     def goal(self, gid: str, start: dict, end: dict, steps: list, discharge: dict) -> None:
         self.goals[gid] = {"start": start, "steps": steps, "end": end, "discharge": discharge}
 
-    def write(self, root: str = "g1", version: int = 1, verdict: str = "verified") -> Path:
+    def write(
+        self,
+        root: str = "g1",
+        version: int = 1,
+        verdict: str = "verified",
+        assumed: dict | None = None,
+    ) -> Path:
         manifest = {
             "version": version,
             "verdict": verdict,
             "root": root,
             "toolchain": {},
+            "assumed": assumed or {},
             "goals": self.goals,
         }
         (self.root / "manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -226,6 +247,16 @@ class TestGolden(Case):
 
     def test_a_cut_verifies(self):
         self.verified(self.cut())
+
+    def test_a_proof_is_replayed_under_the_assumption_it_names(self):
+        # The same package settles either way depending on what it says the run
+        # was allowed to assume, which is how a replay shows the assumption
+        # reached alive-tv rather than having been written down and forgotten.
+        pair = {"src": self.built.program(FROZEN), "tgt": self.built.program(RAW)}
+        self.built.goal("g1", pair, pair, [], {"kind": "checked"})
+        done = self.verified(self.built.write(assumed={"noUndef": True, "noPoison": True}))
+        self.assertIn("assuming no argument is undef and no argument is poison", done.stdout)
+        self.refused(self.built.write(assumed={"noUndef": True}), "not correct")
 
     def test_the_binaries_come_from_the_manifest(self):
         # A package is replayed by someone who was not there, so where the run
@@ -375,6 +406,31 @@ class TestTampered(Case):
             {"kind": "checked"},
         )
         self.refused(self.built.write(), "not a callee")
+
+    def test_an_assumption_on_a_goal_below_a_cut(self):
+        # A callee's parameters are values the program computed, so nothing the
+        # run assumed about arguments reaches it, however the manifest is
+        # written. The step below is otherwise sound: the options are the only
+        # thing wrong with it.
+        TestGolden.cut(self)
+        inner = self.built.goals["g3"]["start"]
+        step = {
+            "kind": "checked",
+            "side": "src",
+            "from": inner["src"],
+            "to": inner["src"],
+            "flags": ["--disable-undef-input"],
+        }
+        self.built.goal("g3", inner, inner, [step], {"kind": "checked"})
+        self.refused(
+            self.built.write(assumed={"noUndef": True}),
+            "are not the ones its goal is asked under",
+        )
+
+    def test_an_assumption_the_checker_does_not_know(self):
+        self.leaf()
+        self.built.bend(lambda m: m.update({"assumed": {"noWrapping": True}}))
+        self.refused(self.built.root, "does not know")
 
     def test_a_step_of_a_kind_the_checker_does_not_know(self):
         pair = {"src": self.src, "tgt": self.tgt}

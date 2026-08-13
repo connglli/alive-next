@@ -11,6 +11,7 @@
 // pair it started with to the pair it ended with, which is what the goal tree
 // holds after reverts have truncated it.
 import type { HarnessArg } from "../core/drivers/llops.ts";
+import type { ArgumentAssumption } from "../core/state/arguments.ts";
 import { type Goal, head, type Tree } from "../core/state/goals.ts";
 import type { Effect, Entry, Hash } from "../core/state/trajectory.ts";
 
@@ -58,6 +59,13 @@ export interface Proof {
   root: string;
   /** The binaries the run used, as `run_start` recorded them. */
   toolchain: unknown;
+  /**
+   * What the run assumed about the pair's arguments. A proof means what it
+   * means only under this, so a checker states it beside the verdict and works
+   * out for itself which goals it reaches, rather than believing the flags a
+   * step claims to have run with.
+   */
+  assumed: ArgumentAssumption;
   goals: Record<string, ManifestGoal>;
 }
 
@@ -106,6 +114,7 @@ export function manifestOf(entries: Entry[], tree: Tree): [Manifest, Set<Hash>] 
       verdict: "verified" as const,
       root: tree.root,
       toolchain: toolchainOf(entries),
+      assumed: tree.assumed,
       goals,
     },
     programs,

@@ -26,6 +26,7 @@ import type {
   LlopsResult,
 } from "./drivers/llops.ts";
 import type { Ref } from "./refs.ts";
+import { type ArgumentAssumption, DEFAULT_ASSUMPTION } from "./state/arguments.ts";
 import { Counterexamples, type Interpreter, type ReportResult } from "./state/counterexamples.ts";
 import {
   derive,
@@ -111,6 +112,8 @@ export interface Standing {
    * that already cost the time.
    */
   budgets: Timeouts;
+  /** What the run assumes about the pair's arguments, which it never proves. */
+  assumed: ArgumentAssumption;
 }
 
 /** What a session needs to exist: where it lives and what it can spawn. */
@@ -127,6 +130,12 @@ export interface SessionOptions {
 export interface SessionStartOptions extends SessionOptions {
   src: string;
   tgt: string;
+  /**
+   * What the pair's arguments may be, which is part of the question and is
+   * never proved. Defaults to arguments that are defined but may be poison.
+   * A resumed run reads it back from the log rather than being told again.
+   */
+  assumed?: ArgumentAssumption;
   /** The resolved configuration, so a trajectory says what produced it. */
   config?: unknown;
   /** What the toolchain reported when the caller insisted on it. */
@@ -175,6 +184,7 @@ export class Session {
       kind: "run_start",
       src,
       tgt,
+      assumed: options.assumed ?? DEFAULT_ASSUMPTION,
       config: resolved(options.config, session.steps.budgets),
       toolchain: options.toolchain,
       versions: options.versions ?? {},
@@ -214,6 +224,7 @@ export class Session {
         verdict: verdict(tree),
         goals: standings(tree),
         budgets: this.steps.budgets,
+        assumed: tree.assumed,
       };
       if (open) {
         standing.editing = {

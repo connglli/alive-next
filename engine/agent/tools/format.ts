@@ -7,6 +7,7 @@
 // because the model sees nothing between calls but what it is handed.
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { type GoalStanding, type Session, standings } from "../../core/session.ts";
+import type { ArgumentAssumption } from "../../core/state/arguments.ts";
 import type { Timeouts } from "../../core/state/steps.ts";
 import type { Hash } from "../../core/state/trajectory.ts";
 
@@ -55,6 +56,19 @@ export function toolResultFrom(
     .filter((part) => part !== "")
     .join("\n\n");
   return { ...toolResult(ok, said, details), ...(settled ? { terminate: true } : {}) };
+}
+
+/**
+ * What the run was told about the pair's arguments. It is not something to
+ * prove and not something to strengthen: it is the question, and a proof means
+ * less than it looks like it does if a reader does not know it was made.
+ */
+export function formatAssumption(assumed: ArgumentAssumption): string {
+  const said = [
+    assumed.noUndef ? "no argument is undef" : "an argument may be undef",
+    assumed.noPoison ? "no argument is poison" : "an argument may be poison",
+  ];
+  return `assumed of the arguments: ${said.join(", ")}. A cut's callee assumes nothing of its parameters, which are values the program computed`;
 }
 
 /**

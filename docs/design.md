@@ -30,6 +30,14 @@ A wrong proposal wastes time; it never produces a wrong certificate. Since refin
 
 Straightline code (no conditionals, no loops), but **all** features alive2 supports, including memory operations. Target size: >1000 lines. Conditionals and loops are future work and need further design.
 
+## What a run assumes about its arguments
+
+A function's arguments come from callers it cannot see, so which values it may be handed is part of the question rather than part of the answer. A run states it once. By default the arguments are defined but may be poison, which is what a caller of a real function can produce: poison travels through arguments, while undef is on its way out of LLVM and a question about undef-capable arguments is one alive2 answers for almost nothing. Nothing proves this, so it is recorded beside the pair and `check.py` prints it with the verdict, and a proof is never read as more than it is.
+
+It cannot be written into the IR. LLVM's `noundef` forbids poison as well as undef and there is nothing in between, so the assumption reaches alive2 as `--disable-undef-input` and `--disable-poison-input` rather than as an attribute on the parameters. That is the one thing the framework passes alive2 beyond a timeout.
+
+The assumption belongs to the entry the run was asked about. The root goal has it, and so does the outer half of every cut under it, since outlining a suffix leaves the entry where it was. A callee has an entry of its own, and its parameters are values the program computed: a function can produce undef whatever it was handed, through a load of uninitialised memory, an `undef` constant, or a call to a function nobody has the body of. So a callee assumes nothing, and what it needs it proves at the call site by strengthening. `check.py` works out which goals are which for itself rather than believing what a manifest records.
+
 ## Conceptual model
 
 The framework state has two parts: an immutable **program store** and a **goal tree**. Every tool reads or evolves this state; the agent can only act on it through the tools.
@@ -210,7 +218,7 @@ Replay cost is the same order as the original validation run (the solver queries
 
 Exactly three:
 
-- **verified**: a certificate package replaying the proof through alive2.
+- **verified**: a certificate package replaying the proof through alive2, under the assumption about arguments the run was given and the package states.
 - **counterexample**: a package replaying a concrete input through llubi.
 - **unknown**: the agent could not close the gap. Local failures along the way are never reported as bugs. No package is produced.
 

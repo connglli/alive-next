@@ -15,6 +15,7 @@ import { Llops } from "../core/drivers/llops.ts";
 import type { RunResult } from "../core/drivers/llubi.ts";
 import type { Scenario } from "../core/scenario.ts";
 import { Session } from "../core/session.ts";
+import { DEFAULT_ASSUMPTION } from "../core/state/arguments.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { derive } from "../core/state/goals.ts";
 import type { Checker } from "../core/state/steps.ts";
@@ -30,13 +31,26 @@ const built = await llops
   .then(() => true)
   .catch(() => false);
 
-/** A checker that agrees, so what is left under test is the bookkeeping. */
+/**
+ * A checker that agrees, so what is left under test is the bookkeeping. It
+ * reports the options it was handed, as the real one does, because what the
+ * manifest keeps is the invocation that happened.
+ */
 class YesMan implements Checker {
-  async check(): Promise<CheckResult> {
+  async check(
+    _src: string,
+    _tgt: string,
+    options?: { timeoutMs?: number; flags?: string[] },
+  ): Promise<CheckResult> {
+    const timeoutMs = options?.timeoutMs ?? 5000;
     return {
       outcome: "correct",
       detail: "",
-      invocation: { binary: "yes-man", flags: ["--smt-to=5000"], timeoutMs: 5000 },
+      invocation: {
+        binary: "yes-man",
+        flags: [`--smt-to=${timeoutMs}`, ...(options?.flags ?? [])],
+        timeoutMs,
+      },
       stdout: "",
       ms: 0,
     };
@@ -127,13 +141,24 @@ describe.skipIf(!built)("the manifest", () => {
     expect(outer.some((step) => step.kind === "checked" && step.to === only.by.hash)).toBe(true);
   });
 
-  test("carries the flags a check was run with, and not its timeout", async () => {
-    const manifest = manifestFrom(await prove(cut));
-    for (const goal of Object.values(manifest.goals)) {
+  test("states what the run assumed, and what each check was run under", async () => {
+    const manifest = manifestFrom(await prove(strengthen));
+    // A proof means what it means only under this, so it is part of what the
+    // certificate says rather than something a replay has to be told.
+    expect(manifest.assumed).toEqual(DEFAULT_ASSUMPTION);
+
+    let checked = 0;
+    for (const [gid, goal] of Object.entries(manifest.goals)) {
       for (const step of goal.steps) {
-        if (step.kind === "checked") expect(step.flags).toEqual([]);
+        if (step.kind !== "checked") continue;
+        checked += 1;
+        // The outer half keeps the pair's entry and is asked under the run's
+        // assumption; a callee's parameters are values the program computed.
+        expect(step.flags).toEqual(gid === "g3" ? [] : ["--disable-undef-input"]);
+        expect(step.flags.some((flag) => flag.startsWith("--smt-to"))).toBe(false);
       }
     }
+    expect(checked).toBeGreaterThan(0);
   });
 
   test("copies every program the proof names", async () => {

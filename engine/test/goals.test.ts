@@ -3,8 +3,16 @@
 // The fold is pure, so these build event lists by hand rather than running
 // anything: what is under test is what a sequence of effects means.
 import { describe, expect, test } from "bun:test";
+import { DEFAULT_ASSUMPTION, NO_ASSUMPTION } from "../core/state/arguments.ts";
 import type { Goal, Tree } from "../core/state/goals.ts";
-import { DerivationError, derive, head, openLeaves, verdict } from "../core/state/goals.ts";
+import {
+  DerivationError,
+  derive,
+  hasRootEntry,
+  head,
+  openLeaves,
+  verdict,
+} from "../core/state/goals.ts";
 import type { Effect, Entry, Event } from "../core/state/trajectory.ts";
 
 /** Entries as the log holds them; the chain is the trajectory's business. */
@@ -237,6 +245,45 @@ describe("derive", () => {
     );
     expect(tree.goals.size).toBe(1);
     expect(verdict(tree)).toBe("unknown");
+  });
+
+  test("what a run assumed is what it recorded", () => {
+    expect(derive(log(run())).assumed).toEqual(NO_ASSUMPTION);
+    const stated = derive(
+      log({
+        kind: "run_start",
+        src: "s",
+        tgt: "t",
+        assumed: DEFAULT_ASSUMPTION,
+        config: {},
+        versions: {},
+      }),
+    );
+    expect(stated.assumed).toEqual(DEFAULT_ASSUMPTION);
+  });
+
+  test("the entry a goal is asked about survives an outer and not a callee", () => {
+    // The assumption is about the arguments the run was given, and only a goal
+    // that still has them may be asked under it.
+    const tree = derive(
+      log(
+        run(),
+        did(splitG1()),
+        did({
+          effect: "split",
+          gid: "g2",
+          name: "outlined_g5",
+          outer: { gid: "g4", src: "h4s", tgt: "h4t" },
+          callee: { gid: "g5", src: "h5s", tgt: "h5t" },
+        }),
+      ),
+    );
+    expect(hasRootEntry(tree, "g1")).toBe(true);
+    expect(hasRootEntry(tree, "g2")).toBe(true);
+    expect(hasRootEntry(tree, "g3")).toBe(false);
+    // An outer under an outer keeps it; anything under a callee never does.
+    expect(hasRootEntry(tree, "g4")).toBe(true);
+    expect(hasRootEntry(tree, "g5")).toBe(false);
   });
 
   test("refuses a log that does not start a run", () => {

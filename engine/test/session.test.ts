@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
 import { Session } from "../core/session.ts";
+import { DEFAULT_ASSUMPTION } from "../core/state/arguments.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, DEFAULT_TIMEOUTS, timeoutsFrom } from "../core/state/steps.ts";
 import { parse } from "../core/state/trajectory.ts";
@@ -125,6 +126,21 @@ describe.skipIf(!built)("reading a session", () => {
   test("status says what a check and a commit may spend", async () => {
     const run = await session();
     expect((await run.status()).budgets).toEqual(DEFAULT_TIMEOUTS);
+  });
+
+  test("the run states what it assumes about the pair's arguments", async () => {
+    // It is never proved and it decides what every check means, so it is
+    // recorded where the question is and read back with the tree.
+    const run = await session();
+    expect((await run.status()).assumed).toEqual(DEFAULT_ASSUMPTION);
+
+    const start = log(run).find((entry) => entry.kind === "run_start");
+    if (start?.kind !== "run_start") throw new Error("no run_start was logged");
+    expect(start.assumed).toEqual(DEFAULT_ASSUMPTION);
+    // A resumed run reads it back rather than being told again.
+    expect(
+      Session.resume({ dir: run.dir, llops, checker: new YesMan(), interp: noRun }).tree.assumed,
+    ).toEqual(DEFAULT_ASSUMPTION);
   });
 
   test("the run records the budgets it resolved to, not the file's silence", async () => {

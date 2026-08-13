@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckOutcome, CheckResult } from "../core/drivers/alive2.ts";
+import { DEFAULT_ASSUMPTION } from "../core/state/arguments.ts";
 import { derive } from "../core/state/goals.ts";
 import { DEFAULT_TIMEOUTS, orient, Steps, timeoutsFrom } from "../core/state/steps.ts";
 import { Store } from "../core/state/store.ts";
@@ -15,11 +16,15 @@ import type { Entry, Event } from "../core/state/trajectory.ts";
 
 /** Remembers every call, and answers whatever the test lined up. */
 class FakeChecker {
-  readonly calls: { src: string; tgt: string; timeoutMs?: number }[] = [];
+  readonly calls: { src: string; tgt: string; timeoutMs?: number; flags?: string[] }[] = [];
   constructor(private outcomes: CheckOutcome[]) {}
 
-  async check(src: string, tgt: string, options?: { timeoutMs?: number }): Promise<CheckResult> {
-    this.calls.push({ src, tgt, timeoutMs: options?.timeoutMs });
+  async check(
+    src: string,
+    tgt: string,
+    options?: { timeoutMs?: number; flags?: string[] },
+  ): Promise<CheckResult> {
+    this.calls.push({ src, tgt, timeoutMs: options?.timeoutMs, flags: options?.flags });
     const outcome = this.outcomes.shift() ?? "unknown";
     return {
       outcome,
@@ -47,11 +52,41 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function tree() {
+async function tree(...events: Event[]) {
   const src = await store.put(SRC);
   const tgt = await store.put(TGT);
-  const events: Event[] = [{ kind: "run_start", src, tgt, config: {}, versions: {} }];
-  return derive(events.map((event) => ({ ...event, time: 0, prev: "" }) as Entry));
+  const start: Event[] = [{ kind: "run_start", src, tgt, config: {}, versions: {} }];
+  return derive([...start, ...events].map((event) => ({ ...event, time: 0, prev: "" }) as Entry));
+}
+
+/** The same run, told that its arguments are defined but may be poison. */
+async function assuming(...events: Event[]) {
+  const src = await store.put(SRC);
+  const tgt = await store.put(TGT);
+  const start: Event[] = [
+    { kind: "run_start", src, tgt, assumed: DEFAULT_ASSUMPTION, config: {}, versions: {} },
+  ];
+  return derive([...start, ...events].map((event) => ({ ...event, time: 0, prev: "" }) as Entry));
+}
+
+/** A cut of the root, which is what puts a goal below one. */
+function cutG1(src: string, tgt: string): Event {
+  return {
+    kind: "tool_result",
+    id: "1",
+    tool: "split",
+    effects: [
+      {
+        effect: "split",
+        gid: "g1",
+        name: "outlined_g3",
+        outer: { gid: "g2", src, tgt },
+        callee: { gid: "g3", src, tgt },
+      },
+    ],
+    result: null,
+    ms: 1,
+  };
 }
 
 describe("timeouts", () => {
@@ -197,6 +232,29 @@ describe("checking a goal", () => {
     // A timeout on the cap is a different situation from a timeout on what
     // was asked for, so the result says which one it ran on.
     expect(capped.cappedFromMs).toBe(DEFAULT_TIMEOUTS.checkCapMs * 10);
+  });
+
+  test("carries the run's assumption, and stops at a cut", async () => {
+    const checker = new FakeChecker(["unknown", "unknown", "unknown"]);
+    const steps = new Steps(store, checker);
+    const src = await store.put(SRC);
+
+    await steps.checkGoal(await assuming(), "g1");
+    const withCut = await assuming(cutG1(src, src));
+    await steps.checkGoal(withCut, "g2");
+    await steps.checkGoal(withCut, "g3");
+    expect(checker.calls[0]?.flags).toEqual(["--disable-undef-input"]);
+    // The outer half still has the arguments the run was given.
+    expect(checker.calls[1]?.flags).toEqual(["--disable-undef-input"]);
+    // The callee's parameters are values the program computed, and a program
+    // can produce undef whatever it was handed.
+    expect(checker.calls[2]?.flags).toEqual([]);
+  });
+
+  test("assumes nothing where the log stated nothing", async () => {
+    const checker = new FakeChecker(["unknown"]);
+    await new Steps(store, checker).checkGoal(await tree(), "g1");
+    expect(checker.calls[0]?.flags).toEqual([]);
   });
 
   test("reports the budgets it resolved to", () => {
