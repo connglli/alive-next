@@ -865,6 +865,156 @@ entry:
         self.bad(self.outline_tgt({"%m": "%prod", "%x": "%a"}, module=tgt), "invalid")
 
 
+class TestOutlineWindow(Case):
+    # Two bodies that differ only in how the middle value is computed, and in
+    # how many instructions that takes. Asking about that middle on its own is
+    # what a window is for, so what these check is that the rest comes out the
+    # same on both.
+    BEFORE = """define i32 @f(i32 %x) {
+entry:
+  %a = mul i32 %x, 2
+  %b = add i32 %a, 0
+  %c = add i32 %b, 1
+  ret i32 %c
+}
+"""
+    AFTER = """define i32 @f(i32 %x) {
+entry:
+  %b = shl i32 %x, 1
+  %c = add i32 %b, 1
+  ret i32 %c
+}
+"""
+
+    def window(self, module=F_SIMPLE, frm="m", to="m", callee="r"):
+        return self.good(run("outline", {"module": module, "cut": frm, "to": to, "callee": callee}))
+
+    def test_a_window_becomes_a_call_where_it_was(self):
+        r = self.window()
+        self.assertEqual(
+            self.body(r["outer"]),
+            ["%0 = call i32 @r(i32 %x, i32 %y)", "%s = add i32 %0, %x", "ret i32 %s"],
+        )
+        self.assertEqual(self.body(r["callee"]), ["%m = mul i32 %p0, %p1", "ret i32 %m"])
+        self.assertEqual(
+            r["params"],
+            [
+                {"param": "%p0", "type": "i32", "live": "%x"},
+                {"param": "%p1", "type": "i32", "live": "%y"},
+            ],
+        )
+        self.assertEqual(r["result"], {"type": "i32", "live": "%m"})
+        self.assertTrue(self.conforms(r["outer"]))
+        self.assertTrue(self.conforms(r["callee"]))
+
+    def test_a_window_of_more_than_one_instruction(self):
+        r = self.window(frm="m", to="s")
+        self.assertEqual(self.body(r["outer"]), ["%0 = call i32 @r(i32 %x, i32 %y)", "ret i32 %0"])
+        self.assertEqual(
+            self.body(r["callee"]), ["%m = mul i32 %p0, %p1", "%s = add i32 %m, %p0", "ret i32 %s"]
+        )
+
+    def test_a_window_inlines_back_to_what_it_came_from(self):
+        # This is what a checker reruns, so it is the property the whole move
+        # rests on: the outer and the callee are the body, taken apart.
+        for frm, to in (("m", "m"), ("m", "s"), ("s", "s")):
+            r = self.window(frm=frm, to=to)
+            back = self.good(
+                run("inline", {"outer": r["outer"], "callee": r["callee"], "callee_name": "r"})
+            )
+            self.assertEqual(self.canon(back["module"]), self.canon(F_SIMPLE), f"{frm}..{to}")
+
+    def test_two_bodies_that_differ_in_one_window_share_an_outer(self):
+        # Neither the instruction count nor the names line up, so what says the
+        # difference is confined to the window is the outer coming out the
+        # same, which is what makes the two small pairs the whole question.
+        before = self.window(module=self.BEFORE, frm="a", to="b")
+        after = self.window(module=self.AFTER, frm="b", to="b")
+        self.assertEqual(self.canon(before["outer"]), self.canon(after["outer"]))
+        self.assertEqual(before["params"], after["params"])
+        self.assertEqual(before["result"]["type"], after["result"]["type"])
+        for r, whole in ((before, self.BEFORE), (after, self.AFTER)):
+            back = self.good(
+                run("inline", {"outer": r["outer"], "callee": r["callee"], "callee_name": "r"})
+            )
+            self.assertEqual(self.canon(back["module"]), self.canon(whole))
+
+    def test_a_window_nothing_uses_answers_with_nothing(self):
+        r = self.window(module=F_TWO_ADDS, frm="b", to="b")
+        self.assertEqual(
+            self.body(r["outer"]),
+            ["%a = add i32 %x, %y", "call void @r(i32 %x, i32 %y)", "ret i32 %a"],
+        )
+        # The signature is in definition order, which is the argument order
+        # here, whatever order the window happens to read them in.
+        self.assertEqual(self.body(r["callee"]), ["%b = add i32 %p1, %p0", "ret void"])
+        self.assertNotIn("result", r)
+        back = self.good(
+            run("inline", {"outer": r["outer"], "callee": r["callee"], "callee_name": "r"})
+        )
+        self.assertEqual(self.canon(back["module"]), self.canon(F_TWO_ADDS))
+
+    def test_a_window_may_hold_memory(self):
+        # The store defines nothing, so it is named by its position.
+        r = self.window(module=F_MEMORY, frm="#0", to="#0")
+        self.assertEqual(self.body(r["callee"]), ["store i32 %p1, ptr %p0, align 4", "ret void"])
+        back = self.good(
+            run("inline", {"outer": r["outer"], "callee": r["callee"], "callee_name": "r"})
+        )
+        self.assertEqual(self.canon(back["module"]), self.canon(F_MEMORY))
+
+    def test_a_window_that_hands_out_two_values_is_refused(self):
+        module = """define i32 @f(i32 %x) {
+entry:
+  %a = add i32 %x, 1
+  %b = add i32 %x, 2
+  %c = mul i32 %a, %b
+  ret i32 %c
+}
+"""
+        r = self.bad(run("outline", {"module": module, "cut": "a", "to": "b", "callee": "r"}))
+        self.assertIn("%a", r["error"]["message"])
+        self.assertIn("%b", r["error"]["message"])
+
+    def test_a_window_cannot_take_the_terminator(self):
+        self.bad(
+            run("outline", {"module": F_SIMPLE, "cut": "s", "to": "#2", "callee": "r"}), "invalid"
+        )
+
+    def test_a_window_takes_no_side_and_no_map(self):
+        # What says two windows line up is their outers coming out the same, so
+        # the fields that make two cuts agree on one signature mean nothing
+        # here, and are refused rather than quietly ignored.
+        for extra in (
+            {"side": "src"},
+            {"side": "tgt", "params": [], "value_map": {}},
+            {"value_map": {"%x": "%x"}},
+        ):
+            self.bad(
+                run("outline", {"module": F_SIMPLE, "cut": "m", "to": "m", "callee": "r", **extra}),
+                "bad_request",
+            )
+
+    def test_a_cut_still_needs_its_side(self):
+        self.bad(run("outline", {"module": F_SIMPLE, "cut": "m", "callee": "r"}), "bad_request")
+
+    def test_the_window_has_to_run_forwards(self):
+        self.bad(
+            run("outline", {"module": F_SIMPLE, "cut": "s", "to": "m", "callee": "r"}), "invalid"
+        )
+
+    def test_a_window_edge_that_is_not_there(self):
+        self.bad(
+            run("outline", {"module": F_SIMPLE, "cut": "m", "to": "nope", "callee": "r"}),
+            "not_found",
+        )
+
+    def test_the_callee_name_must_be_free(self):
+        self.bad(
+            run("outline", {"module": F_SIMPLE, "cut": "m", "to": "m", "callee": "f"}), "invalid"
+        )
+
+
 class TestInline(Case):
     def roundtrip(self, module, cut, callee="g"):
         out = self.good(

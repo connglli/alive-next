@@ -19,69 +19,101 @@ namespace {
 // outline
 // ---------------------------------------------------------------------------
 
-// The values the suffix uses from the prefix or from the arguments, in
-// definition order: prefix instructions first, then arguments. The order is
-// what makes the signature reproducible from the program alone.
-std::vector<llvm::Value *> liveIn(llvm::Function &F, llvm::BasicBlock &BB, llvm::Instruction *cut) {
-  llvm::SmallPtrSet<llvm::Value *, 32> usedBySuffix;
-  bool inSuffix = false;
+// The instructions of a window, as a set: what is inside decides everything
+// else, since a value is live in when the window uses it from outside and
+// live out when something outside uses it from within.
+llvm::SmallPtrSet<llvm::Instruction *, 16> setOf(llvm::ArrayRef<llvm::Instruction *> window) {
+  return llvm::SmallPtrSet<llvm::Instruction *, 16>(window.begin(), window.end());
+}
+
+// The suffix from `cut`, terminator included: what a cut moves.
+std::vector<llvm::Instruction *> suffixFrom(llvm::BasicBlock &BB, llvm::Instruction *cut) {
+  std::vector<llvm::Instruction *> window;
+  bool started = false;
   for (auto &I : BB) {
-    inSuffix |= &I == cut;
-    if (!inSuffix)
-      continue;
-    for (const llvm::Use &U : I.operands())
-      usedBySuffix.insert(U.get());
+    started |= &I == cut;
+    if (started)
+      window.push_back(&I);
   }
+  return window;
+}
+
+// The values a window uses from outside it, in definition order: instructions
+// before it first, then arguments. The order is what makes the signature
+// reproducible from the program alone.
+std::vector<llvm::Value *> liveInto(llvm::Function &F, llvm::BasicBlock &BB,
+                                    const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside) {
+  llvm::SmallPtrSet<llvm::Value *, 32> used;
+  for (auto *I : inside)
+    for (const llvm::Use &U : I->operands())
+      used.insert(U.get());
   std::vector<llvm::Value *> live;
-  for (auto &I : BB) {
-    if (&I == cut)
-      break;
-    if (usedBySuffix.contains(&I))
+  for (auto &I : BB)
+    if (!inside.contains(&I) && used.contains(&I))
       live.push_back(&I);
-  }
   for (auto &arg : F.args())
-    if (usedBySuffix.contains(&arg))
+    if (used.contains(&arg))
       live.push_back(&arg);
   return live;
 }
 
-// Move the suffix into a fresh function and wire a call to it into F.
-llvm::Function *makeCallee(llvm::Module &M, llvm::Function &F, llvm::BasicBlock &BB,
-                           llvm::Instruction *cut, llvm::StringRef calleeName,
-                           llvm::ArrayRef<llvm::Value *> params) {
+// Move a window into a fresh function and leave a call where it was.
+//
+// A window that ends the function takes the terminator with it, so the callee
+// answers with what the function answers with and the outer needs a return of
+// its own. A window in the middle leaves the terminator where it is and hands
+// back the one value the rest of the body still uses, if there is one.
+llvm::Function *moveOut(llvm::Module &M, llvm::Function &F, llvm::BasicBlock &BB,
+                        llvm::ArrayRef<llvm::Instruction *> window,
+                        const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside,
+                        llvm::StringRef calleeName, llvm::ArrayRef<llvm::Value *> params,
+                        llvm::Instruction *result) {
+  bool takesTheEnd = window.back()->isTerminator();
   std::vector<llvm::Type *> paramTys;
   for (auto *v : params)
     paramTys.push_back(v->getType());
-  auto *FTy = llvm::FunctionType::get(F.getReturnType(), paramTys, /*isVarArg=*/false);
+  auto *retTy = takesTheEnd ? F.getReturnType()
+                : result    ? result->getType()
+                            : llvm::Type::getVoidTy(M.getContext());
+  auto *FTy = llvm::FunctionType::get(retTy, paramTys, /*isVarArg=*/false);
   auto *callee = llvm::Function::Create(FTy, llvm::Function::ExternalLinkage, calleeName, &M);
   auto *calleeBB = llvm::BasicBlock::Create(M.getContext(), "entry", callee);
 
   llvm::DenseMap<llvm::Value *, llvm::Value *> toParam;
   for (unsigned i = 0; i < params.size(); ++i)
     toParam[params[i]] = std::next(callee->arg_begin(), i);
-
-  bool inSuffix = false;
-  for (auto &I : BB) {
-    inSuffix |= &I == cut;
-    if (!inSuffix)
-      continue;
-    for (llvm::Use &U : I.operands()) {
+  for (auto *I : window)
+    for (llvm::Use &U : I->operands()) {
       auto it = toParam.find(U.get());
       if (it != toParam.end())
         U.set(it->second);
     }
+
+  // The call goes in where the window starts, and only the uses outside the
+  // window move to it: the ones inside are what the callee body still is.
+  std::vector<llvm::Value *> callArgs(params.begin(), params.end());
+  auto *call = llvm::CallInst::Create(callee, callArgs, "", window.front()->getIterator());
+  if (result) {
+    std::vector<llvm::Use *> outside;
+    for (llvm::Use &U : result->uses()) {
+      auto *user = llvm::dyn_cast<llvm::Instruction>(U.getUser());
+      if (!user || !inside.contains(user))
+        outside.push_back(&U);
+    }
+    for (auto *U : outside)
+      U->set(call);
   }
-  calleeBB->splice(calleeBB->end(), &BB, cut->getIterator(), BB.end());
+
+  calleeBB->splice(calleeBB->end(), &BB, window.front()->getIterator(),
+                   std::next(window.back()->getIterator()));
+  if (takesTheEnd)
+    llvm::ReturnInst::Create(F.getContext(), F.getReturnType()->isVoidTy() ? nullptr : call, &BB);
+  else
+    llvm::ReturnInst::Create(M.getContext(), result, calleeBB);
   // Named after the move, so that a body value of the same name is the one
   // LLVM renames rather than the parameter the response reports.
   for (unsigned i = 0; i < params.size(); ++i)
     std::next(callee->arg_begin(), i)->setName("p" + std::to_string(i));
-
-  // The outer now ends where the suffix was cut away, so it needs the call
-  // and a return of its own.
-  std::vector<llvm::Value *> callArgs(params.begin(), params.end());
-  auto *call = llvm::CallInst::Create(callee, callArgs, "", &BB);
-  llvm::ReturnInst::Create(F.getContext(), F.getReturnType()->isVoidTy() ? nullptr : call, &BB);
   return callee;
 }
 
@@ -159,7 +191,7 @@ bool readTgtParams(llvm::json::Object &args, llvm::Function &F, ValueRefs &refs,
   }
 
   // Anything the tgt suffix reads and the map does not carry has no way in.
-  for (llvm::Value *v : liveIn(F, BB, cut))
+  for (llvm::Value *v : liveInto(F, BB, setOf(suffixFrom(BB, cut))))
     if (!llvm::is_contained(params, v)) {
       err = errResponse("invalid", "the tgt suffix uses '" + refs.print(*v) +
                                        "', which the value map does not cover");
@@ -168,16 +200,58 @@ bool readTgtParams(llvm::json::Object &args, llvm::Function &F, ValueRefs &refs,
   return true;
 }
 
+// The instructions from `cut` to `to`, or nothing when `to` does not come at
+// or after `from`.
+std::vector<llvm::Instruction *> windowOf(llvm::BasicBlock &BB, llvm::Instruction *from,
+                                          llvm::Instruction *to) {
+  std::vector<llvm::Instruction *> window;
+  bool started = false;
+  for (auto &I : BB) {
+    started |= &I == from;
+    if (!started)
+      continue;
+    window.push_back(&I);
+    if (&I == to)
+      return window;
+  }
+  return {};
+}
+
+// The window values that something outside it uses. A call answers with one
+// value, so a window that hands out two cannot become one.
+std::vector<llvm::Instruction *>
+liveOutOf(llvm::ArrayRef<llvm::Instruction *> window,
+          const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside) {
+  std::vector<llvm::Instruction *> live;
+  for (auto *I : window)
+    for (const llvm::Use &U : I->uses()) {
+      auto *user = llvm::dyn_cast<llvm::Instruction>(U.getUser());
+      if (user && inside.contains(user))
+        continue;
+      live.push_back(I);
+      break;
+    }
+  return live;
+}
+
 } // namespace
 
 llvm::json::Object outlineCmd(llvm::json::Object &args) {
   auto text = args.getString("module");
   auto cut = args.getString("cut");
+  auto to = args.getString("to");
   auto calleeName = args.getString("callee");
   auto side = args.getString("side");
-  if (!text || !cut || !calleeName || !side || (*side != "src" && *side != "tgt"))
-    return errResponse("bad_request", "outline needs 'module', 'side' (src|tgt), 'cut' and "
-                                      "'callee'");
+  if (!text || !cut || !calleeName)
+    return errResponse("bad_request", "outline needs 'module', 'cut' and 'callee'");
+  // A cut is outlined differently on each side, since the two have to end up
+  // with one signature. A window is one program's own business, so it takes
+  // none of what says how two of them line up.
+  if (!to && (!side || (*side != "src" && *side != "tgt")))
+    return errResponse("bad_request", "a cut needs 'side' (src|tgt)");
+  if (to && (side || args.get("params") || args.get("value_map")))
+    return errResponse("bad_request", "a window is outlined the same way whichever side it is on, "
+                                      "so it takes no 'side', 'params' or 'value_map'");
 
   std::string parseErr;
   auto mwc = parseModule(*text, &parseErr);
@@ -198,10 +272,42 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
   if (!cutInst)
     return errResponse("not_found", "the cut point '" + cut->str() + "' does not exist");
 
+  // Without a far end the window runs to the end of the body, which is the
+  // cut every split makes; with one it stops there, which is how a local edit
+  // becomes a local question.
+  std::vector<llvm::Instruction *> window;
+  if (to) {
+    llvm::Instruction *last = refs.resolveInst(*to);
+    if (!last)
+      return errResponse("not_found", "'" + to->str() + "' does not exist");
+    window = windowOf(*BB, cutInst, last);
+    if (window.empty())
+      return errResponse("invalid",
+                         "'" + to->str() + "' does not come at or after '" + cut->str() + "'");
+    if (window.back()->isTerminator())
+      return errResponse("invalid", "a window cannot take the terminator with it; leave 'to' out "
+                                    "to cut the suffix away instead");
+  } else {
+    window = suffixFrom(*BB, cutInst);
+  }
+  llvm::SmallPtrSet<llvm::Instruction *, 16> inside = setOf(window);
+
+  // Nothing follows a suffix, so only a window can hand a value back, and it
+  // can hand back one: a call answers with one value.
+  std::vector<llvm::Instruction *> out = liveOutOf(window, inside);
+  if (out.size() > 1) {
+    std::string named;
+    for (auto *I : out)
+      named += (named.empty() ? "" : ", ") + refs.print(*I);
+    return errResponse("invalid", "the window defines " + named +
+                                      ", and the rest of the body uses them all; a call answers "
+                                      "with one value");
+  }
+
   std::vector<llvm::Value *> params;
   llvm::json::Array paramInfo;
-  if (*side == "src") {
-    params = liveIn(*F, *BB, cutInst);
+  if (!side || *side == "src") {
+    params = liveInto(*F, *BB, inside);
     for (auto *v : params) {
       llvm::json::Object p;
       std::string ty;
@@ -220,7 +326,17 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
     paramInfo = *args.getArray("params");
   }
 
-  llvm::Function *callee = makeCallee(M, *F, *BB, cutInst, *calleeName, params);
+  llvm::json::Object resultInfo;
+  if (!out.empty()) {
+    std::string ty;
+    llvm::raw_string_ostream os(ty);
+    out.front()->getType()->print(os);
+    resultInfo["type"] = std::move(ty);
+    resultInfo["live"] = refs.print(*out.front());
+  }
+
+  llvm::Function *callee =
+      moveOut(M, *F, *BB, window, inside, *calleeName, params, out.empty() ? nullptr : out.front());
   for (unsigned i = 0; i < paramInfo.size(); ++i)
     (*paramInfo[i].getAsObject())["param"] =
         "%" + std::next(callee->arg_begin(), i)->getName().str();
@@ -230,6 +346,8 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
   resp["outer"] = printWithoutBody(M, callee->getName());
   resp["callee"] = printWithoutBody(M, F->getName());
   resp["params"] = std::move(paramInfo);
+  if (!resultInfo.empty())
+    resp["result"] = std::move(resultInfo);
   return resp;
 }
 

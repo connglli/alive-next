@@ -24,7 +24,7 @@ const char *kUsage = "usage: llops <subcommand> < request.json > response.json\n
                      "  validate   check the straightline v1 invariants\n"
                      "  canon      renumber values canonically\n"
                      "  edit       apply one semantic edit op\n"
-                     "  outline    cut a function in two at a cut point\n"
+                     "  outline    move a suffix or a window into a function\n"
                      "  inline     substitute a callee back into its outer function\n"
                      "  analyze    known bits, ranges or pointer facts at a program point\n"
                      "  harness    wrap a function in a main that llubi can run\n"

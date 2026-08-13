@@ -103,7 +103,9 @@ A snippet that calls a function the module does not declare gets a declaration, 
 
 ## outline
 
-Cuts one side of a goal in two. The instructions before the cut stay in the outer function, which gains a call, and the instructions from the cut onwards become the body of a fresh function. The cut instruction itself is the first instruction of the callee.
+Moves part of a body into a fresh function and leaves a call where it was. Without a `to` the part is the suffix from the cut, which is how a goal is cut in two; with one it is the window between them, which is how a local edit is asked about locally.
+
+The instructions before the cut stay in the outer function, which gains a call, and the instructions from the cut onwards become the body of a fresh function. The cut instruction itself is the first instruction of the callee.
 
 The src side is cut on its own:
 
@@ -132,11 +134,31 @@ Both sides answer with the same `params`, so a caller can compare them. Whether 
 
 The callee is declared with no attributes. An attribute is an assumption the call site has to honour, so adding one is a proof obligation that belongs to the strengthen flow rather than to the cut.
 
+### A window rather than a suffix
+
+`to` names the far end, and the outlined instructions are the ones from `cut` to there. The terminator stays where it is, and the callee hands back the one value the rest of the body still uses:
+
+```json
+{ "module": "...", "cut": "%v1", "to": "%v2", "callee": "r" }
+```
+
+```json
+{ "ok": true, "outer": "...", "callee": "...",
+  "params": [ { "param": "%p0", "type": "i32", "live": "%p1" } ],
+  "result": { "type": "i32", "live": "%v2" } }
+```
+
+`result` is absent when nothing outside the window uses what it defines, and the callee then answers with `void`. A window that hands out two values is refused, since a call answers with one. So is one that takes the terminator with it: leaving `to` out is how a suffix is cut away.
+
+What a window is for is asking about a local edit locally. Two versions of a body that differ only inside one window come out as the same outer and two small functions, so the small pair is the whole question, and the outers being byte-identical is what says the difference is confined to the window. Neither the instruction count nor the names have to line up for that. This is one program's own business rather than an agreement between two, so a window takes no `side`, `params` or `value_map`, and is refused if it is given one.
+
+A window may hold memory. Its pair is then asked about an arbitrary entry state, which is conservative rather than unsound: the cost is that fewer such pairs prove.
+
 ## inline
 
 Request `{ "outer": ..., "callee": ..., "callee_name": "g" }`, response `{ "ok": true, "module": ... }`.
 
-The call is replaced by the callee's body in place, and the declaration that carried it is dropped once nothing uses it. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the cut point was. That roundtrip is how the certificate checker tests a split for faithfulness.
+The call is replaced by the callee's body in place, and the declaration that carried it is dropped once nothing uses it. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was. That roundtrip is how the certificate checker tests a split for faithfulness, and it is why `outline` is tier 2: what a checker reruns is the inlining, not the cutting.
 
 ## analyze
 
