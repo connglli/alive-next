@@ -7,6 +7,7 @@
 // because the model sees nothing between calls but what it is handed.
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { type GoalStanding, type Session, standings } from "../../core/session.ts";
+import type { Timeouts } from "../../core/state/steps.ts";
 import type { Hash } from "../../core/state/trajectory.ts";
 
 /**
@@ -54,6 +55,19 @@ export function toolResultFrom(
     .filter((part) => part !== "")
     .join("\n\n");
   return { ...toolResult(ok, said, details), ...(settled ? { terminate: true } : {}) };
+}
+
+/**
+ * What a run may spend, on one line. A budget is not a detail of the machine:
+ * it is what makes one move worth trying and another not, so it is read where
+ * the tree is read rather than found out by running out of it.
+ */
+export function formatBudgets(budgets: Timeouts): string {
+  return [
+    `budgets: a check ${budgets.checkDefaultMs}ms and at most ${budgets.checkCapMs}ms`,
+    `a commit ${budgets.alive2Ms}ms`,
+    `the check after a step ${budgets.eagerCheckMs}ms`,
+  ].join(", ");
 }
 
 /** The name a program goes by, which is what a caller says back to us. */

@@ -53,8 +53,18 @@ export interface CheckOptions {
   flags?: string[];
 }
 
-/** How long the process may outlive its SMT budget before it is killed. */
+/** The most a process may outlive its SMT budget before it is killed. */
 const GRACE_MS = 30_000;
+
+/**
+ * The wall clock a check runs under. The SMT budget bounds one query and a
+ * check may run several, so a process that overruns is not misbehaving and is
+ * given the budget again to finish; the grace is capped so that a check asking
+ * for three seconds cannot cost thirty.
+ */
+function wallClock(timeoutMs: number): number {
+  return timeoutMs + Math.min(timeoutMs, GRACE_MS);
+}
 
 /**
  * Thrown when alive-tv cannot be run at all. That is a broken installation
@@ -110,7 +120,12 @@ export class AliveTv {
       }
       // The SMT timeout bounds a query, not the process, so a solver that
       // wedges needs a wall clock of its own.
-      const killer = setTimeout(() => child.kill(), timeoutMs + GRACE_MS);
+      const wallMs = wallClock(timeoutMs);
+      let killed = false;
+      const killer = setTimeout(() => {
+        killed = true;
+        child.kill();
+      }, wallMs);
       const [out, err] = await Promise.all([
         new Response(child.stdout).text(),
         new Response(child.stderr).text(),
@@ -118,11 +133,22 @@ export class AliveTv {
       ]);
       clearTimeout(killer);
       const ms = Date.now() - started;
-      return { ...read(out, err), invocation, stdout: out, ms };
+      const said = read(out, err);
+      // A process we stopped ourselves said nothing because we stopped it,
+      // which is no information rather than a broken installation, and saying
+      // which of the two it was is the difference between spending more time
+      // on the pair and going to look at the toolchain.
+      const answer = killed && !said.summary ? overrun(wallMs) : said;
+      return { ...answer, invocation, stdout: out, ms };
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   }
+}
+
+/** What a check we stopped comes to: neither answer was shown. */
+function overrun(wallMs: number): Pick<CheckResult, "outcome" | "detail"> {
+  return { outcome: "unknown", detail: `killed after ${wallMs}ms without an answer` };
 }
 
 /** Read the outcome out of what alive-tv printed. */

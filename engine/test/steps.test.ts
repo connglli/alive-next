@@ -187,9 +187,21 @@ describe("checking a goal", () => {
   test("honours the agent's timeout, up to the cap", async () => {
     const checker = new FakeChecker(["unknown", "unknown"]);
     const steps = new Steps(store, checker);
-    await steps.checkGoal(await tree(), "g1", 1000);
+    const whole = await steps.checkGoal(await tree(), "g1", 1000);
     expect(checker.calls[0]?.timeoutMs).toBe(1000);
-    await steps.checkGoal(await tree(), "g1", DEFAULT_TIMEOUTS.checkCapMs * 10);
+    // Nothing was cut down, so there is no second number to report.
+    expect(whole.cappedFromMs).toBeUndefined();
+
+    const capped = await steps.checkGoal(await tree(), "g1", DEFAULT_TIMEOUTS.checkCapMs * 10);
     expect(checker.calls[1]?.timeoutMs).toBe(DEFAULT_TIMEOUTS.checkCapMs);
+    // A timeout on the cap is a different situation from a timeout on what
+    // was asked for, so the result says which one it ran on.
+    expect(capped.cappedFromMs).toBe(DEFAULT_TIMEOUTS.checkCapMs * 10);
+  });
+
+  test("reports the budgets it resolved to", () => {
+    const steps = new Steps(store, new FakeChecker([]), timeoutsFrom({ eagerCheckMs: 100 }));
+    expect(steps.budgets.eagerCheckMs).toBe(100);
+    expect(steps.budgets.alive2Ms).toBe(DEFAULT_TIMEOUTS.alive2Ms);
   });
 });

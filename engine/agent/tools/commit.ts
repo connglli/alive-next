@@ -14,10 +14,14 @@ export function createCommitTool(session: Session) {
     execute: async () => {
       const step = await session.commit();
       if (step.kind === "refused") {
+        // The budget is part of the refusal: a timeout says how much was
+        // spent failing, and a refusal that spent nothing says that instead.
+        const budgetMs = step.check.invocation.timeoutMs;
+        const budget = budgetMs > 0 ? ` on a ${budgetMs}ms budget` : "";
         return toolResultFrom(
           session,
           false,
-          `refused: ${step.check.detail || step.check.outcome}`,
+          `refused${budget}: ${step.check.detail || step.check.outcome}`,
           step,
         );
       }

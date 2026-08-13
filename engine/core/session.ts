@@ -105,6 +105,12 @@ export interface Standing {
   verdict: "verified" | "counterexample" | "unknown";
   goals: GoalStanding[];
   editing?: { gid: string; side: Side; from: Hash; ops: number };
+  /**
+   * The budgets this run resolved to. What a check may spend decides what is
+   * worth attempting, so it is read here rather than inferred from a result
+   * that already cost the time.
+   */
+  budgets: Timeouts;
 }
 
 /** What a session needs to exist: where it lives and what it can spawn. */
@@ -169,7 +175,7 @@ export class Session {
       kind: "run_start",
       src,
       tgt,
-      config: options.config ?? {},
+      config: resolved(options.config, session.steps.budgets),
       toolchain: options.toolchain,
       versions: options.versions ?? {},
     });
@@ -207,6 +213,7 @@ export class Session {
         root: tree.root,
         verdict: verdict(tree),
         goals: standings(tree),
+        budgets: this.steps.budgets,
       };
       if (open) {
         standing.editing = {
@@ -479,6 +486,15 @@ function standingOf(goal: Goal): GoalStanding {
   if (goal.role) standing.role = goal.role;
   if (goal.parent) standing.parent = goal.parent;
   return standing;
+}
+
+/**
+ * The configuration a run records: what the caller was given, with the budgets
+ * it resolved to. A file that names no timeout still produced the ones a run
+ * spent, and the snapshot is where a reader of the trajectory finds them.
+ */
+function resolved(config: unknown, timeouts: Timeouts): unknown {
+  return typeof config === "object" && config !== null ? { ...config, timeouts } : { timeouts };
 }
 
 /** A transaction result as the log keeps it: what it did, not what it holds. */

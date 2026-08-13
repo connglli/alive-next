@@ -8,7 +8,7 @@
 // After a step lands, the goal's new pair is checked once with a small budget.
 // That runs here rather than around the outside, because whether the path is
 // still alive belongs in the answer the agent reads.
-import type { CheckResult, Invocation } from "../drivers/alive2.ts";
+import type { CheckOutcome, CheckResult, Invocation } from "../drivers/alive2.ts";
 import { head, type Side, type Tree, workable } from "./goals.ts";
 import type { Store } from "./store.ts";
 import type { Effect, Hash } from "./trajectory.ts";
@@ -95,6 +95,13 @@ export interface CheckGoalResult {
   outcome: "proved" | "refuted" | "unknown";
   check: CheckResult;
   effects: Effect[];
+  /**
+   * The budget that was asked for, and only when the cap cut it down to a
+   * smaller one; absent when the check ran on what it was asked for. A timeout
+   * on the cap is a different situation from a timeout on the whole of what
+   * was wanted, and the result is where a caller tells the two apart.
+   */
+  cappedFromMs?: number;
 }
 
 export class Steps {
@@ -111,17 +118,22 @@ export class Steps {
    */
   async checkGoal(tree: Tree, gid: string, timeoutMs?: number): Promise<CheckGoalResult> {
     const goal = workable(tree, gid);
+    const askedMs = timeoutMs ?? this.timeouts.checkDefaultMs;
+    const budgetMs = this.capped(askedMs);
     const check = await this.checker.check(
       this.store.get(head(goal, "src")),
       this.store.get(head(goal, "tgt")),
-      { timeoutMs: this.capped(timeoutMs ?? this.timeouts.checkDefaultMs) },
+      { timeoutMs: budgetMs },
     );
-    if (check.outcome === "correct") {
-      return { outcome: "proved", check, effects: [{ effect: "proved", gid }] };
-    }
-    // Only execution certifies a counterexample, so nothing here marks a goal
-    // refuted; that is report_cex's business.
-    return { outcome: check.outcome === "incorrect" ? "refuted" : "unknown", check, effects: [] };
+    const result: CheckGoalResult = {
+      outcome: goalOutcome(check.outcome),
+      check,
+      // Only execution certifies a counterexample, so a refutation changes
+      // nothing here; marking a goal refuted is report_cex's business.
+      effects: check.outcome === "correct" ? [{ effect: "proved", gid }] : [],
+    };
+    if (askedMs > budgetMs) result.cappedFromMs = askedMs;
+    return result;
   }
 
   /**
@@ -144,10 +156,7 @@ export class Steps {
 
     if (afterText === before) {
       // Nothing moved, so there is nothing to certify and nothing to record.
-      return {
-        kind: "refused",
-        check: unchanged(this.timeouts.alive2Ms),
-      };
+      return { kind: "refused", check: unchanged() };
     }
 
     const { src, tgt } = orient(side, before, afterText);
@@ -178,14 +187,28 @@ export class Steps {
     return this.checkGoal(tree, gid, this.timeouts.eagerCheckMs);
   }
 
+  /** The budgets this run resolved to, which is what `status` reports. */
+  get budgets(): Timeouts {
+    return this.timeouts;
+  }
+
   private capped(timeoutMs: number): number {
     return Math.min(timeoutMs, this.timeouts.checkCapMs);
   }
 }
 
-/** A refusal that cost no solver time, shaped like one that did. */
-function unchanged(timeoutMs: number): CheckResult {
-  const invocation: Invocation = { binary: "", flags: [], timeoutMs };
+/** What a check's answer says about the goal it was asked about. */
+function goalOutcome(outcome: CheckOutcome): CheckGoalResult["outcome"] {
+  if (outcome === "correct") return "proved";
+  return outcome === "incorrect" ? "refuted" : "unknown";
+}
+
+/**
+ * A refusal that cost no solver time, shaped like one that did. Its budget is
+ * zero because none was spent, which is what tells a reader that no check ran.
+ */
+function unchanged(): CheckResult {
+  const invocation: Invocation = { binary: "", flags: [], timeoutMs: 0 };
   return {
     outcome: "error",
     detail: "the program is the one already there",

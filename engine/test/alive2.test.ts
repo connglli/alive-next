@@ -197,6 +197,27 @@ describe("running alive-tv", () => {
     }
   });
 
+  test("a process we killed is unknown, not a broken installation", async () => {
+    // The wall clock stopping a check that printed nothing says nothing about
+    // the pair, and it is not the toolchain failing either: an error here
+    // would send a reader to look at the binary instead of at the budget.
+    const dir = mkdtempSync(join(tmpdir(), "alive-next-stub-"));
+    const path = join(dir, "alive-tv");
+    // `exec` so the process we kill is the one holding the pipes, which is
+    // what alive-tv is when it is not a stub.
+    writeFileSync(path, "#!/usr/bin/env bash\nexec sleep 30\n");
+    chmodSync(path, 0o755);
+    try {
+      const result = await new AliveTv(path).check("a", "b", { timeoutMs: 100 });
+      expect(result.outcome).toBe("unknown");
+      expect(result.detail).toContain("killed after 200ms");
+      // The budget it was given is what it was given, however it ended.
+      expect(result.invocation.timeoutMs).toBe(100);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("throws when the binary is not there", async () => {
     // A missing checker is a broken installation, not a goal that failed to
     // prove: reporting it as an outcome would let a run say "unknown" when

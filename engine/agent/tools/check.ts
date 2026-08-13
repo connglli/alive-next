@@ -19,12 +19,18 @@ export function createCheckTool(session: Session) {
     execute: async (_id, { gid, timeout_ms }) => {
       const checked = await session.check(gid, timeout_ms);
       const detail = checked.check.detail ? `\n${checked.check.detail}` : "";
+      // What it ran on, because a timeout means nothing without the budget it
+      // ran out of, and asking for more than the cap is answered by the cap.
+      const budgetMs = checked.check.invocation.timeoutMs;
+      const budget = checked.cappedFromMs
+        ? `${budgetMs}ms budget, capped from the ${checked.cappedFromMs}ms asked for`
+        : `${budgetMs}ms budget`;
       // Proved is the only outcome that advanced the run; a refutation is a
       // hint and a timeout is nothing at all.
       return toolResultFrom(
         session,
         checked.outcome === "proved",
-        `${gid} ${checked.outcome}${detail}`,
+        `${gid} ${checked.outcome}, ${budget}${detail}`,
         checked,
       );
     },

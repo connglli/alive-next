@@ -113,7 +113,7 @@ const session = await Session.start({
   tgt,
   llops: new Llops(toolchain.path("llops")),
   checker: new AliveTv(toolchain.path("alive-tv"), timeouts.alive2Ms),
-  interp: new Llubi(toolchain.path("llubi")),
+  interp: new Llubi(toolchain.path("llubi"), config.timeouts.llubiMs),
   timeouts,
   config,
   toolchain: built,

@@ -8,13 +8,20 @@
   // paths are relative to the repository, and deps/ is the default.
   "toolchain": "deps",
 
-  // Milliseconds. check_default_ms is what the check tool uses when the agent
-  // names no timeout, and check_cap_ms is the most it may ask for.
+  // Milliseconds, and what a run may spend on one question. A proof is written
+  // so that every step is cheap, so these are small on purpose: a budget that
+  // has to be raised usually says the step is too big rather than the budget
+  // too small. `run_status` reports the ones a run resolved to.
   "timeouts": {
+    // What the check tool uses when the agent names no timeout.
     // "check_default_ms": 30000,
-    // "check_cap_ms": 300000,
-    // "eager_check_ms": 5000,
-    // "alive2_ms": 120000,
-    // "llubi_ms": 30000
+    // The most the agent may ask that tool for.
+    // "check_cap_ms": 60000,
+    // The check that follows every certified step.
+    // "eager_check_ms": 3000,
+    // What a commit is validated with.
+    // "alive2_ms": 30000,
+    // How long one llubi run may take before it is killed.
+    // "llubi_ms": 60000
   },
 }

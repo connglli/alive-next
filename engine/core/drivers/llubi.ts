@@ -50,7 +50,10 @@ export class LlubiCrash extends Error {
 const TIMEOUT_MS = 60_000;
 
 export class Llubi {
-  constructor(private readonly path: string = "llubi_legacy") {}
+  constructor(
+    private readonly path: string = "llubi_legacy",
+    private readonly timeoutMs: number = TIMEOUT_MS,
+  ) {}
 
   async version(): Promise<string> {
     const child = Bun.spawn([this.path, "--version"], { stdout: "pipe", stderr: "pipe" });
@@ -83,14 +86,25 @@ export class Llubi {
     } catch (error) {
       throw new LlubiCrash(this.path, (error as Error).message);
     }
-    const killer = setTimeout(() => child.kill(), TIMEOUT_MS);
+    let killed = false;
+    const killer = setTimeout(() => {
+      killed = true;
+      child.kill();
+    }, this.timeoutMs);
     const [err] = await Promise.all([
       new Response(child.stderr).text(),
       new Response(child.stdout).text(),
       child.exited,
     ]);
     clearTimeout(killer);
-    return { ...read(err), trace: err, ms: Date.now() - started };
+    const said = read(err);
+    // A run we stopped ourselves is an error like any other refusal to answer,
+    // but naming the clock is what tells a reader to raise it rather than to
+    // go looking at the module.
+    const answer = killed
+      ? { ...said, outcome: "error" as const, reason: `killed after ${this.timeoutMs}ms` }
+      : said;
+    return { ...answer, trace: err, ms: Date.now() - started };
   }
 }
 

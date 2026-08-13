@@ -33,7 +33,7 @@ export async function prove(one: Scenario, options: ProveOptions = {}): Promise<
   const built = await toolchain.insist();
   const llops = new Llops(toolchain.path("llops"));
   const checker = new AliveTv(toolchain.path("alive-tv"), timeouts.alive2Ms);
-  const interp = new Llubi(toolchain.path("llubi"));
+  const interp = new Llubi(toolchain.path("llubi"), config.timeouts.llubiMs);
 
   const dir = options.dir ?? join(repoRoot(), "sessions", `${one.name}-${stamp()}`);
   console.log(`\n${one.name}: ${one.about}\n  ${dir}`);
