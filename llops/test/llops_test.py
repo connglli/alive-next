@@ -710,6 +710,107 @@ entry:
         )
 
 
+class TestEditFlags(Case):
+    def test_add_nuw(self):
+        module = """define i32 @f(i32 %x) {
+entry:
+  %a = add i32 %x, 1
+  ret i32 %a
+}
+"""
+        r = self.good(self.edit("flags", module=module, v="a", flags={"nuw": True}))
+        self.assertIn("%a = add nuw i32 %x, 1", self.body(r["module"]))
+
+    def test_remove_nsw(self):
+        module = """define i32 @f(i32 %x) {
+entry:
+  %a = add nsw i32 %x, 1
+  ret i32 %a
+}
+"""
+        r = self.good(self.edit("flags", module=module, v="a", flags={"nsw": False}))
+        self.assertIn("%a = add i32 %x, 1", self.body(r["module"]))
+
+    def test_exact_on_a_shift(self):
+        module = """define i32 @f(i32 %x) {
+entry:
+  %a = ashr i32 %x, 1
+  ret i32 %a
+}
+"""
+        r = self.good(self.edit("flags", module=module, v="a", flags={"exact": True}))
+        self.assertIn("%a = ashr exact i32 %x, 1", self.body(r["module"]))
+
+    def test_fast_math_flags(self):
+        module = """define float @f(float %x) {
+entry:
+  %a = fadd float %x, 1.0
+  ret float %a
+}
+"""
+        r = self.good(self.edit("flags", module=module, v="a", flags={"nnan": True, "nsz": True}))
+        line = self.body(r["module"])[0]
+        self.assertIn("nnan", line)
+        self.assertIn("nsz", line)
+
+    def test_nneg_on_zext(self):
+        module = """define i32 @f(i8 %x) {
+entry:
+  %a = zext i8 %x to i32
+  ret i32 %a
+}
+"""
+        r = self.good(self.edit("flags", module=module, v="a", flags={"nneg": True}))
+        self.assertIn("%a = zext nneg i8 %x to i32", self.body(r["module"]))
+        r = self.good(self.edit("flags", module=r["module"], v="a", flags={"nneg": False}))
+        self.assertIn("%a = zext i8 %x to i32", self.body(r["module"]))
+
+    def test_nneg_on_uitofp(self):
+        module = """define float @f(i32 %x) {
+entry:
+  %a = uitofp i32 %x to float
+  ret float %a
+}
+"""
+        r = self.good(self.edit("flags", module=module, v="a", flags={"nneg": True}))
+        self.assertIn("%a = uitofp nneg i32 %x to float", self.body(r["module"]))
+
+    def test_nneg_on_an_add_is_refused(self):
+        self.bad(self.edit("flags", v="m", flags={"nneg": True}), "invalid")
+
+    def test_overflow_flag_on_a_division_is_refused(self):
+        module = """define i32 @f(i32 %x) {
+entry:
+  %a = sdiv i32 %x, 2
+  ret i32 %a
+}
+"""
+        self.bad(self.edit("flags", module=module, v="a", flags={"nuw": True}), "invalid")
+
+    def test_exact_on_an_add_is_refused(self):
+        self.bad(self.edit("flags", v="m", flags={"exact": True}), "invalid")
+
+    def test_overflow_flag_on_an_integer_add_is_kept(self):
+        # `nuw` means nothing on an fadd, and `nnan` means nothing on an add;
+        # each flag is refused where the instruction cannot carry it.
+        module = """define float @f(float %x) {
+entry:
+  %a = fadd float %x, 1.0
+  ret float %a
+}
+"""
+        self.bad(self.edit("flags", module=module, v="a", flags={"nuw": True}), "invalid")
+
+    def test_unknown_flag_is_refused(self):
+        self.bad(self.edit("flags", v="m", flags={"speedy": True}), "invalid")
+
+    def test_flag_value_must_be_a_boolean(self):
+        self.bad(self.edit("flags", v="m", flags={"nuw": 1}), "bad_request")
+
+    def test_unknown_instruction(self):
+        self.bad(self.edit("flags", v="nope", flags={"nuw": True}), "not_found")
+
+
 class TestOutline(Case):
     def outline_src(self, module=F_SIMPLE, cut="s", callee="g"):
         return self.good(

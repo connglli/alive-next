@@ -82,6 +82,29 @@ next:
     expect(result.message).toContain("commute");
   });
 
+  test("puts a flag on and takes one off", async () => {
+    const nuw = `define i32 @f(i32 %x) {
+entry:
+  %a = add i32 %x, 1
+  ret i32 %a
+}
+`;
+    const on = await llops.edit(nuw, { op: "flags", v: "%a", flags: { nuw: true } });
+    if (!on.ok) throw new Error(on.message);
+    expect(on.module).toContain("add nuw");
+
+    const off = await llops.edit(on.module, { op: "flags", v: "%a", flags: { nuw: false } });
+    if (!off.ok) throw new Error(off.message);
+    expect(off.module).toContain("add i32");
+    expect(off.module).not.toContain("add nuw");
+  });
+
+  test("refuses a flag the instruction cannot carry", async () => {
+    const result = await llops.edit(F, { op: "flags", v: "%m", flags: { exact: true } });
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.code).toBe("invalid");
+  });
+
   test("reports a parse error as a refusal too", async () => {
     const result = await llops.canon("not ir at all");
     if (result.ok) throw new Error("expected a refusal");

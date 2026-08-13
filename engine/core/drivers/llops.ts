@@ -96,7 +96,8 @@ export type EditOp =
   | { op: "retype"; v: Ref; ty: string; ext?: "zext" | "sext" }
   | { op: "dedup"; a: Ref; b: Ref }
   | { op: "set_body"; body: string }
-  | { op: "attrs"; fn: string; param: number; attrs: Record<string, unknown> };
+  | { op: "attrs"; fn: string; param: number; attrs: Record<string, unknown> }
+  | { op: "flags"; v: Ref; flags: Record<string, boolean> };
 
 /** Thrown when llops cannot be run or does not answer in JSON. */
 export class LlopsCrash extends Error {

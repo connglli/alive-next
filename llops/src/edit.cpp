@@ -9,6 +9,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Local.h"
@@ -679,6 +680,76 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       llvm::json::Object err;
       if (!addParamAttr(arg, entry.first, entry.second, err))
         return err;
+    }
+    return checked(*F, *M);
+  }
+
+  if (*op == "flags") {
+    auto v = args.getString("v");
+    auto flags = args.getObject("flags");
+    if (!v || !flags)
+      return missing("'v' and 'flags'");
+    llvm::Instruction *vi = refs.resolveInst(*v);
+    if (!vi)
+      return errResponse("not_found", "flags: unknown instruction");
+
+    for (const auto &entry : *flags) {
+      auto want = entry.second.getAsBoolean();
+      if (!want)
+        return errResponse("bad_request", "flags: '" + entry.first.str() + "' needs true or false");
+      bool on = *want;
+      llvm::StringRef kind = entry.first;
+
+      // A flag an instruction cannot carry is refused rather than ignored, so
+      // the agent never guesses what the IR will keep.
+      if (kind == "nuw" || kind == "nsw") {
+        auto *ovf = llvm::dyn_cast<llvm::OverflowingBinaryOperator>(vi);
+        if (!ovf)
+          return errResponse("invalid",
+                             "flags: '" + kind.str() + "' applies to add, sub, mul and shl");
+        if (kind == "nuw")
+          vi->setHasNoUnsignedWrap(on);
+        else
+          vi->setHasNoSignedWrap(on);
+      } else if (kind == "exact") {
+        auto *ex = llvm::dyn_cast<llvm::PossiblyExactOperator>(vi);
+        if (!ex)
+          return errResponse("invalid", "flags: 'exact' applies to the divisions and shifts");
+        vi->setIsExact(on);
+      } else if (kind == "nneg") {
+        auto *nn = llvm::dyn_cast<llvm::PossiblyNonNegInst>(vi);
+        if (!nn)
+          return errResponse("invalid", "flags: 'nneg' applies to zext and uitofp");
+        vi->setNonNeg(on);
+      } else {
+        // The fast-math flags are one word on the instruction: the named flag
+        // is set or cleared in a copy that goes back whole.
+        auto *fp = llvm::dyn_cast<llvm::FPMathOperator>(vi);
+        llvm::FastMathFlags fmf = fp ? fp->getFastMathFlags() : llvm::FastMathFlags();
+        bool known = true;
+        if (kind == "fast")
+          fmf.setFast(on);
+        else if (kind == "nnan")
+          fmf.setNoNaNs(on);
+        else if (kind == "ninf")
+          fmf.setNoInfs(on);
+        else if (kind == "nsz")
+          fmf.setNoSignedZeros(on);
+        else if (kind == "arcp")
+          fmf.setAllowReciprocal(on);
+        else if (kind == "contract")
+          fmf.setAllowContract(on);
+        else if (kind == "afn")
+          fmf.setApproxFunc(on);
+        else if (kind == "reassoc")
+          fmf.setAllowReassoc(on);
+        else
+          known = false;
+        if (!fp || !known)
+          return errResponse("invalid",
+                             "flags: '" + kind.str() + "' is not a flag of this instruction");
+        vi->setFastMathFlags(fmf);
+      }
     }
     return checked(*F, *M);
   }
