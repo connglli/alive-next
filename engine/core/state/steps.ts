@@ -11,6 +11,7 @@
 import type { CheckOutcome, CheckResult, Invocation } from "../drivers/alive2.ts";
 import { assumptionFlags } from "./arguments.ts";
 import { hasRootEntry, head, type Side, type Tree, workable } from "./goals.ts";
+import type { Narrowed } from "./narrow.ts";
 import type { Store } from "./store.ts";
 import type { Effect, Hash } from "./trajectory.ts";
 
@@ -70,6 +71,13 @@ export interface StepOptions {
   /** A rule application needs no alive2 run of its own to certify it. */
   how?: "rule" | "checked";
   /**
+   * The window the edit touched, when the caller found one. A step asks about
+   * it first, on the budget a cheap question gets, and falls back to the whole
+   * function when that settles nothing: the window is smaller but its inputs
+   * are values the program computed, so neither question is the easier one.
+   */
+  narrowed?: Narrowed;
+  /**
    * Whether to check the goal's new pair afterwards. On by default, because
    * catching a discharge early is the point of it, and off for the steps
    * inside a larger operation, whose intermediate states are not states the
@@ -86,10 +94,17 @@ export type StepResult =
       /** In order: the step, then the discharge when the eager check proved it. */
       effects: Effect[];
       check: CheckResult;
+      /** Which question settled it: the window the edit touched, or the whole. */
+      by: "window" | "whole";
       /** The check of the new pair, absent when the goal has no work left. */
       eager?: CheckResult;
     }
-  | { kind: "refused"; check: CheckResult };
+  | {
+      kind: "refused";
+      check: CheckResult;
+      /** The window's answer, when one was tried and did not settle it. */
+      narrowed?: CheckResult;
+    };
 
 /** What checking a goal's current pair came to. */
 export interface CheckGoalResult {
@@ -160,16 +175,48 @@ export class Steps {
       return { kind: "refused", check: unchanged() };
     }
 
-    const { src, tgt } = orient(side, before, afterText);
     const flags = askedUnder(tree, gid);
-    const check = await this.checker.check(src, tgt, {
-      timeoutMs: this.timeouts.alive2Ms,
-      flags,
-    });
-    if (check.outcome !== "correct") return { kind: "refused", check };
+    // The window first, on a cheap budget. Its parameters are values the
+    // program computed rather than the arguments the run was given, so it is
+    // asked under no assumption at all, exactly as a cut's callee is.
+    const narrowed = options.narrowed;
+    const local = narrowed
+      ? await this.check(orient(side, narrowed.before, narrowed.after), {
+          timeoutMs: this.timeouts.eagerCheckMs,
+          flags: [],
+        })
+      : undefined;
 
-    const effects: Effect[] = [{ effect: "step", gid, side, to: after, how }];
-    if (options.eager === false) return { kind: "certified", hash: after, effects, check };
+    // Anything but a proof falls back, a refutation included: the window is
+    // asked about inputs the body around it may never produce, so what it
+    // refutes may be the window rather than the step. Only the whole function
+    // can refuse one.
+    let check = local;
+    if (check?.outcome !== "correct") {
+      const whole = await this.check(orient(side, before, afterText), {
+        timeoutMs: this.timeouts.alive2Ms,
+        flags,
+      });
+      if (whole.outcome !== "correct") {
+        return local
+          ? { kind: "refused", check: whole, narrowed: local }
+          : { kind: "refused", check: whole };
+      }
+      check = whole;
+    }
+    const by = check === local ? "window" : "whole";
+
+    const step: Effect = { effect: "step", gid, side, to: after, how };
+    if (by === "window" && narrowed) {
+      const [outer, from, to] = await Promise.all([
+        this.store.put(narrowed.outer),
+        this.store.put(narrowed.before),
+        this.store.put(narrowed.after),
+      ]);
+      step.window = { callee: narrowed.callee, outer, from, to };
+    }
+    const effects: Effect[] = [step];
+    if (options.eager === false) return { kind: "certified", hash: after, effects, check, by };
 
     // The pair has changed, so ask cheaply whether the goal is now discharged.
     // The pair is built here rather than read from the tree, which does not
@@ -181,7 +228,15 @@ export class Steps {
     );
     if (eager.outcome === "correct") effects.push({ effect: "proved", gid });
 
-    return { kind: "certified", hash: after, effects, check, eager };
+    return { kind: "certified", hash: after, effects, check, by, eager };
+  }
+
+  /** One question to the checker, in the direction the side settled. */
+  private check(
+    pair: { src: string; tgt: string },
+    options: { timeoutMs: number; flags: string[] },
+  ): Promise<CheckResult> {
+    return this.checker.check(pair.src, pair.tgt, options);
   }
 
   /**

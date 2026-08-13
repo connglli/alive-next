@@ -23,8 +23,8 @@ alive-next/
       session.ts        a session directory and the moves that fill it
       scenario.ts       a scripted proof: a pair and the moves that prove it
       prove.ts          run one scenario to a verdict
-      state/            store, goal tree, transactions, counterexamples,
-                        trajectory
+      state/            store, goal tree, steps, transactions, narrowing,
+                        counterexamples, trajectory
       drivers/          alive-tv, llubi, llops wrappers
     agent/              the Pi agent: the model in front of the engine
       prompt.ts         the rules of the game, naming no tool
@@ -120,7 +120,7 @@ A settled run writes one, into `<session>/certificate`: `programs/` named by con
 A verified run's manifest is a version, the verdict, the root goal, the toolchain `run_start` recorded, what the run assumed about the pair's arguments, and one entry per goal:
 
 - `start` and `end`, the pairs the goal began and ended with, as hashes.
-- `steps`, in the order they happened. A `checked` step names the side it moved, the hash it moved from and to, and the alive-tv options the run passed beyond its timeout. A `strengthen` step names the pair on each end and the outer step that stands behind it.
+- `steps`, in the order they happened. A `checked` step names the side it moved, the hash it moved from and to, and the alive-tv options the run passed beyond its timeout. A `window` step is a checked step whose question was narrowed: it names the same pair and, under `window`, the outlined function and the three programs the narrowing produced, one outer and the two halves. A `strengthen` step names the pair on each end and the outer step that stands behind it.
 - `discharge`, either `checked` or a `split` naming the outlined function and the two children.
 
 check.py needs Python, alive-tv for a proof, llubi for a counterexample, and llops for the subcommands each needs. It takes their paths from the manifest, which records where the run found them and which LLVM each carried, falling back to the name on PATH and saying which it used and whether that is the LLVM the run had. It reads a program only from a file whose name is its hash. For a proof it verifies:
@@ -128,9 +128,10 @@ check.py needs Python, alive-tv for a proof, llubi for a counterexample, and llo
 1. Connectivity: each step starts at the current head, and the steps add up to `end`.
 2. Steps: rerun alive-tv in the direction the side implies, a src step forwards and a tgt step backwards. The result must be correct.
 3. Leaves: rerun alive-tv on the pair the goal ended with.
-4. Options: every rerun is made under what its goal is entitled to, which the checker works out by walking down from the root through outer halves rather than reading it off the step. A manifest naming an assumption it does not know is refused, and so is a step recording options that are not the ones its goal is asked under, which is what stops an assumption being smuggled below a cut. The verdict is printed with what it was reached under, so `verified` never stands on its own.
-5. Cuts: `llops inline` the callee's starting program into the outer's, `llops canon` it, and compare bytes against the pair the parent ended with. The declaration of the outlined function in the outer's final programs must match its definition in the callee's, parameter attributes included, which is what a `strengthen` step rests on along with the outer's chain being checked like any other.
-6. Composition: the root is verified when every goal reached under it passed.
+4. Windows: a narrowed step is rerun as the halves it was cut into. `llops inline` puts each half back into the outer they share and `llops canon` compares it against the pair the step names, which is what says the rest of the body came through untouched, and then the small pair is asked in the direction the side implies. A window is asked under no assumption whatever its goal is asked under, and one claiming otherwise is refused.
+5. Options: every rerun is made under what its goal is entitled to, which the checker works out by walking down from the root through outer halves rather than reading it off the step. A manifest naming an assumption it does not know is refused, and so is a step recording options that are not the ones its goal is asked under, which is what stops an assumption being smuggled below a cut. The verdict is printed with what it was reached under, so `verified` never stands on its own.
+6. Cuts: `llops inline` the callee's starting program into the outer's, `llops canon` it, and compare bytes against the pair the parent ended with. The declaration of the outlined function in the outer's final programs must match its definition in the callee's, parameter attributes included, which is what a `strengthen` step rests on along with the outer's chain being checked like any other.
+7. Composition: the root is verified when every goal reached under it passed.
 
 A refuted run's manifest is a version, the verdict, the root goal, the toolchain, the pair the run was asked about, the input, and what the run saw diverge. The pair is the root's first, not the one the run reached: a step may overshoot, so only the original pair is the translation. check.py wraps each side in a `llops harness` around that input, runs both under llubi, and decides for itself. It refuses a src that is free to choose what it does, `undef` or `freeze` in a straightline program, since one run of such a src is one behaviour among several and the tgt is allowed any of them. Otherwise three rules settle it. A src with UB on the input allows every target, so it settles nothing. A tgt with UB where the src returned is a refutation, and so is any observation the two disagree on. Poison needs no rule of its own: the harness stores what the entry returns and storing poison is UB, so a poison result arrives as UB on the side that produced it. It reports what it ran in the shape alive2 reports a counterexample in: the error, the input one parameter per line, and what each side observed or the UB it hit. Which error it is comes from where the tgt stopped. The harness stores what the entry returned so it can be observed, and that store is the only UB the harness itself can have, so stopping there is a poison result, `Target is more poisonous than source`, and stopping anywhere else is UB the tgt has of its own, `Source is more defined than target`.
 

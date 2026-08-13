@@ -336,6 +336,8 @@ class Check:
                     gid, what, outcome
                 )
                 head[side] = after
+            elif step["kind"] == "window":
+                head[step["side"]] = self.window(gid, step, head)
             elif step["kind"] == "strengthen":
                 # Nothing certifies this on its own. What does is the outer's
                 # chain, every step of which is checked here, and the signature
@@ -349,6 +351,53 @@ class Check:
             else:
                 self.fail(gid, "a step of kind", f"{step['kind']}, which this does not know")
         return head
+
+    def window(self, gid: str, step: dict, head: dict) -> str:
+        """A step narrowed to a window, rerun as the two halves it was cut into.
+
+        The step claims that one window of the body changed and nothing else.
+        Both halves are inlined back into the one outer they share: what comes
+        out has to be the pair the step names, which is what says the rest of
+        the body was left alone. Then the small pair is asked in the direction
+        the side implies, and that is the whole obligation.
+
+        A window is a fresh function whose parameters are values the program
+        computed, so it is asked under no assumption whatever its goal is asked
+        under, and a step claiming otherwise is refused.
+        """
+        side = step["side"]
+        if step["from"] != head[side]:
+            self.fail(gid, f"a {side} step starts", f"at {step['from'][:12]}, not the head")
+        if step.get("flags"):
+            self.fail(
+                gid, f"a {side} window's options", "are not none, which is what it is asked under"
+            )
+
+        window = step["window"]
+        for whole, half, which in (
+            (step["from"], window["from"], "from"),
+            (step["to"], window["to"], "to"),
+        ):
+            back = self.package.run_llops(
+                "inline",
+                {
+                    "outer": self.package.program(window["outer"]),
+                    "callee": self.package.program(half),
+                    "callee_name": window["callee"],
+                },
+            )["module"]
+            same = self.package.run_llops("canon", {"module": back})["module"]
+            what = f"the {which} half of a {side} window inlines back"
+            if same == self.package.program(whole):
+                self.say(gid, what, "faithful")
+            else:
+                self.fail(gid, what, "to a different program")
+
+        pair = (window["from"], window["to"]) if side == "src" else (window["to"], window["from"])
+        outcome = self.refines(*pair, [])
+        what = f"{side} window to {step['to'][:12]}"
+        self.say(gid, what, outcome) if outcome == "correct" else self.fail(gid, what, outcome)
+        return step["to"]
 
     def split(self, gid: str, goal: dict, discharge: dict, entry: bool) -> None:
         """A cut holds when it inlines back to the pair it was made on."""

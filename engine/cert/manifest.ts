@@ -28,6 +28,20 @@ export type Step =
       flags: string[];
     }
   /**
+   * A step whose check was narrowed to the window the edit touched. The two
+   * halves share one outer, and inlining each back into it is what says the
+   * rest of the body is untouched, so what a checker reruns is that and the
+   * small pair rather than the whole function.
+   */
+  | {
+      kind: "window";
+      side: "src" | "tgt";
+      from: Hash;
+      to: Hash;
+      flags: string[];
+      window: { callee: string; outer: Hash; from: Hash; to: Hash };
+    }
+  /**
    * Both sides took an attribute the caller was shown to honour. No check
    * certifies this on its own: what does is the outer's chain, which is
    * checked like any other, and the signature the two ends have to share.
@@ -175,6 +189,11 @@ function include(
   const end = { src: head(goal, "src"), tgt: head(goal, "tgt") };
   const steps = chainOf(goal, moves);
   for (const hash of [...goal.src.history, ...goal.tgt.history]) programs.add(hash);
+  // A narrowed step is replayed from its three halves, so they travel with the
+  // pairs the goal held rather than being recoverable only from the run.
+  for (const step of steps)
+    if (step.kind === "window")
+      for (const hash of [step.window.outer, step.window.from, step.window.to]) programs.add(hash);
 
   if (goal.children.length === 0) {
     goals[goal.id] = { start, steps, end, discharge: { kind: "checked" } };
@@ -217,13 +236,25 @@ function chainOf(goal: Goal, moves: Move[]): Step[] {
     const effect = move.effect;
     if (effect.gid !== goal.id) continue;
     if (effect.effect === "step" && effect.to === goal[effect.side].history[side(effect, si, ti)]) {
-      steps.push({
-        kind: "checked",
-        side: effect.side,
-        from: goal[effect.side].history[side(effect, si, ti) - 1] as Hash,
-        to: effect.to,
-        flags: move.flags ?? [],
-      });
+      const from = goal[effect.side].history[side(effect, si, ti) - 1] as Hash;
+      steps.push(
+        effect.window
+          ? {
+              kind: "window",
+              side: effect.side,
+              from,
+              to: effect.to,
+              flags: move.flags ?? [],
+              window: effect.window,
+            }
+          : {
+              kind: "checked",
+              side: effect.side,
+              from,
+              to: effect.to,
+              flags: move.flags ?? [],
+            },
+      );
       if (effect.side === "src") si += 1;
       else ti += 1;
     } else if (effect.effect === "strengthen" && effect.src === src[si] && effect.tgt === tgt[ti]) {

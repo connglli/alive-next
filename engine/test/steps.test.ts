@@ -37,6 +37,17 @@ class FakeChecker {
 }
 
 const SRC = "define i32 @f() {\nentry:\n  ret i32 1\n}\n";
+/** A narrowing, as the caller hands one over: three programs and where they were. */
+const OUTER = "define i32 @f() {\nentry:\n  %0 = call i32 @outlined_window()\n  ret i32 %0\n}\n";
+const WAS = "define i32 @outlined_window() {\nentry:\n  ret i32 1\n}\n";
+const NOW = "define i32 @outlined_window() {\nentry:\n  ret i32 3\n}\n";
+const WINDOW = {
+  outer: OUTER,
+  before: WAS,
+  after: NOW,
+  callee: "outlined_window",
+  at: { before: { from: "#0", to: "#0" }, after: { from: "#0", to: "#0" } },
+};
 const TGT = "define i32 @f() {\nentry:\n  ret i32 2\n}\n";
 const NEW = "define i32 @f() {\nentry:\n  ret i32 3\n}\n";
 
@@ -172,6 +183,66 @@ describe("stepping", () => {
     if (result.kind !== "certified") throw new Error("expected the step to land");
     expect(result.effects).toHaveLength(1);
     expect(result.eager?.outcome).toBe("unknown");
+  });
+
+  test("asks about the window first, and records what it asked", async () => {
+    const checker = new FakeChecker(["correct", "unknown"]);
+    const steps = new Steps(store, checker);
+    const result = await steps.step(await assuming(), "g1", "src", NEW, { narrowed: WINDOW });
+
+    if (result.kind !== "certified") throw new Error("expected the step to land");
+    expect(result.by).toBe("window");
+    // The small pair, on the budget a cheap question gets, and asked under no
+    // assumption: a window's parameters are values the program computed.
+    expect(checker.calls[0]).toMatchObject({ src: WAS, tgt: NOW });
+    expect(checker.calls[0]?.timeoutMs).toBe(DEFAULT_TIMEOUTS.eagerCheckMs);
+    expect(checker.calls[0]?.flags).toEqual([]);
+
+    const step = result.effects[0];
+    if (step?.effect !== "step") throw new Error("expected a step effect");
+    // The three halves are in the store, because a checker replays from them.
+    expect(step.window?.callee).toBe("outlined_window");
+    expect(store.get(step.window?.from as string)).toBe(WAS);
+    expect(store.get(step.window?.to as string)).toBe(NOW);
+    expect(store.get(step.window?.outer as string)).toBe(OUTER);
+  });
+
+  test("falls back to the whole function when the window settles nothing", async () => {
+    const checker = new FakeChecker(["unknown", "correct", "unknown"]);
+    const steps = new Steps(store, checker);
+    const result = await steps.step(await assuming(), "g1", "src", NEW, { narrowed: WINDOW });
+
+    if (result.kind !== "certified") throw new Error("expected the step to land");
+    expect(result.by).toBe("whole");
+    // The whole pair, on the step budget, under what the goal is asked under.
+    expect(checker.calls[1]).toMatchObject({ src: SRC, tgt: NEW });
+    expect(checker.calls[1]?.timeoutMs).toBe(DEFAULT_TIMEOUTS.alive2Ms);
+    expect(checker.calls[1]?.flags).toEqual(["--disable-undef-input"]);
+    const step = result.effects[0];
+    if (step?.effect !== "step") throw new Error("expected a step effect");
+    // Nothing was narrowed in the end, so the step says nothing about a window.
+    expect(step.window).toBeUndefined();
+  });
+
+  test("a refuted window refuses nothing, since its inputs are freer", async () => {
+    // The window is asked about inputs the body around it may never produce,
+    // so a counterexample there can be about the window rather than the step.
+    const checker = new FakeChecker(["incorrect", "correct", "unknown"]);
+    const steps = new Steps(store, checker);
+    const result = await steps.step(await tree(), "g1", "src", NEW, { narrowed: WINDOW });
+
+    if (result.kind !== "certified") throw new Error("expected the step to land");
+    expect(result.by).toBe("whole");
+  });
+
+  test("a refusal says whether the window was any easier", async () => {
+    const checker = new FakeChecker(["unknown", "incorrect"]);
+    const steps = new Steps(store, checker);
+    const result = await steps.step(await tree(), "g1", "src", NEW, { narrowed: WINDOW });
+
+    if (result.kind !== "refused") throw new Error("expected the step to be refused");
+    expect(result.check.outcome).toBe("incorrect");
+    expect(result.narrowed?.outcome).toBe("unknown");
   });
 
   test("refuses a step to the program that is already there", async () => {

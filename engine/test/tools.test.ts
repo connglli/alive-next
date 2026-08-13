@@ -183,7 +183,11 @@ describe.skipIf(!built)("the tool layer", () => {
 
     // The src is now the tgt, byte for byte, so it is the program the tgt
     // already had a name for, and the check that follows the step proves it.
-    expect(await call("tx_commit", {})).toContain("certified, head is p2");
+    // Which question settled the step is not in the answer: the writer has no
+    // move that depends on it, and the log and the certificate keep it.
+    const committed = await call("tx_commit", {});
+    expect(committed).toContain("certified, head is p2");
+    expect(committed).not.toContain("window");
     expect(await call("goal_show", { ref: "g1" })).toContain("(was p1)");
   });
 

@@ -14,6 +14,7 @@
 // target: the agent is editing one thing or nothing.
 import type { EditOp, Llops } from "../drivers/llops.ts";
 import { head, type Side, type Tree, workable } from "./goals.ts";
+import { narrow } from "./narrow.ts";
 import type { StepResult, Steps } from "./steps.ts";
 import type { Store } from "./store.ts";
 import type { Hash } from "./trajectory.ts";
@@ -106,7 +107,13 @@ export class Transactions {
   async commit(tree: Tree, steps: Steps): Promise<StepResult> {
     const transaction = this.require();
     this.current = undefined;
-    return steps.step(tree, transaction.gid, transaction.side, transaction.text);
+    // A commit is the step that is usually local, so it is the one that looks
+    // for the window it touched: a rewrite of two instructions should not be
+    // asked as a question about the whole function.
+    const goal = workable(tree, transaction.gid);
+    const before = this.store.get(head(goal, transaction.side));
+    const narrowed = await narrow(this.llops, before, transaction.text);
+    return steps.step(tree, transaction.gid, transaction.side, transaction.text, { narrowed });
   }
 
   /** Throw the scratch away. Nothing was certified, so nothing is undone. */

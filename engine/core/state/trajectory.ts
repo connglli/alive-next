@@ -59,7 +59,20 @@ export interface MessageEvent {
  */
 export type Effect =
   /** A side advanced to a new program, by a rule or by a checked step. */
-  | { effect: "step"; gid: string; side: "src" | "tgt"; to: Hash; how: "rule" | "checked" }
+  | {
+      effect: "step";
+      gid: string;
+      side: "src" | "tgt";
+      to: Hash;
+      how: "rule" | "checked";
+      /**
+       * The window the check was narrowed to, when that is what certified the
+       * step. The outer is shared by the two halves, which is what says the
+       * difference is confined to the window, and inlining each half back into
+       * it is what a checker reruns instead of believing any of this.
+       */
+      window?: { callee: string; outer: Hash; from: Hash; to: Hash };
+    }
   /** A goal was cut in two; the children arrive with their initial pairs. */
   | {
       effect: "split";

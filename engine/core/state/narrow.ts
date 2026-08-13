@@ -52,12 +52,18 @@ export async function narrow(
   before: Module,
   after: Module,
 ): Promise<Narrowed | undefined> {
-  const oldBody = body(before);
-  const newBody = body(after);
+  // Both sides are canonicalised first, because what the two bodies have in
+  // common is read line by line and a scratch program names its values
+  // whatever the edits called them. Two programs that differ only in names
+  // would otherwise look like two programs that differ everywhere.
+  const [was, now] = await Promise.all([llops.canon(before), llops.canon(after)]);
+  if (!was.ok || !now.ok) return undefined;
+  const oldBody = body(was.module);
+  const newBody = body(now.module);
   if (!oldBody || !newBody) return undefined;
 
   for (const [oldAt, newAt] of candidates(oldBody, newBody)) {
-    const found = await outlineBoth(llops, before, after, oldAt, newAt);
+    const found = await outlineBoth(llops, was.module, now.module, oldAt, newAt);
     if (found) return found;
   }
   return undefined;

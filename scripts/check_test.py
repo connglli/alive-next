@@ -217,6 +217,43 @@ class Case(unittest.TestCase):
         self.built.goal("g1", pair, pair, [], {"kind": "checked"})
         return self.built.write()
 
+    def windowed(self, tail: str = "  %2 = add i32 %1, 1\n  ret i32 %2\n") -> dict:
+        """A goal whose one step was narrowed to the window it changed.
+
+        The body is longer than the window on purpose: what the step claims is
+        that everything outside those lines came through untouched, and what
+        says so is the two halves inlining back into one outer.
+        """
+        head = "define i32 @f(i32 %0) {\nentry:\n"
+        was = llops("canon", {"module": f"{head}  %1 = mul i32 %0, 2\n{tail}}}\n"})["module"]
+        now = llops("canon", {"module": f"{head}  %1 = shl i32 %0, 1\n{tail}}}\n"})["module"]
+        cut = [
+            llops("outline", {"module": module, "cut": "#0", "to": "#0", "callee": "w"})
+            for module in (was, now)
+        ]
+        outer = llops("canon", {"module": cut[0]["outer"]})["module"]
+        step = {
+            "kind": "window",
+            "side": "src",
+            "from": self.built.program(was),
+            "to": self.built.program(now),
+            "flags": [],
+            "window": {
+                "callee": "w",
+                "outer": self.built.program(outer),
+                "from": self.built.program(llops("canon", {"module": cut[0]["callee"]})["module"]),
+                "to": self.built.program(llops("canon", {"module": cut[1]["callee"]})["module"]),
+            },
+        }
+        self.built.goal(
+            "g1",
+            {"src": step["from"], "tgt": step["to"]},
+            {"src": step["to"], "tgt": step["to"]},
+            [step],
+            {"kind": "checked"},
+        )
+        return step
+
     def verified(self, package: Path) -> subprocess.CompletedProcess:
         done = named(package)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -247,6 +284,15 @@ class TestGolden(Case):
 
     def test_a_cut_verifies(self):
         self.verified(self.cut())
+
+    def test_a_narrowed_step_verifies(self):
+        self.windowed()
+        done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("verified", done.stdout)
+        # Both halves go back into the outer before the small pair is asked:
+        # what the step claims about the rest of the body is checked first.
+        self.assertEqual(done.stdout.count("inlines back"), 2)
 
     def test_a_proof_is_replayed_under_the_assumption_it_names(self):
         # The same package settles either way depending on what it says the run
@@ -425,6 +471,25 @@ class TestTampered(Case):
         self.refused(
             self.built.write(assumed={"noUndef": True}),
             "are not the ones its goal is asked under",
+        )
+
+    def test_a_window_that_does_not_inline_back(self):
+        # The step claims one window changed and the rest came through. A
+        # window that puts the body back together differently is the claim
+        # this exists to catch.
+        step = self.windowed()
+        other = llops("canon", {"module": "define i32 @w(i32 %0) {\nentry:\n  ret i32 %0\n}\n"})
+        step["window"]["to"] = self.built.program(other["module"])
+        self.refused(self.built.write(), "to a different program")
+
+    def test_a_window_that_claims_an_assumption(self):
+        # A window's parameters are values the program computed, so nothing the
+        # run assumed about arguments reaches it.
+        step = self.windowed()
+        step["flags"] = ["--disable-undef-input"]
+        self.refused(
+            self.built.write(assumed={"noUndef": True}),
+            "are not none, which is what it is asked under",
         )
 
     def test_an_assumption_the_checker_does_not_know(self):

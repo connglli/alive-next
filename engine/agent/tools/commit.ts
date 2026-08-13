@@ -9,7 +9,7 @@ export function createCommitTool(session: Session) {
     name: "tx_commit",
     label: "Commit",
     description:
-      "Validate the whole of the open transaction with alive2, in the direction the side implies, and advance the head if it holds. On refusal the head does not move and the counterexample comes back as a hint. The goal's new pair is then checked once on a small budget, so a step that finishes a chain discharges the goal here.",
+      "Validate the open transaction with alive2, in the direction the side implies, and advance the head if it holds. On refusal the head does not move and the counterexample comes back as a hint. The goal's new pair is then checked once on a small budget, so a step that finishes a chain discharges the goal here.",
     parameters: Type.Object({}),
     execute: async () => {
       const step = await session.commit();
@@ -18,10 +18,19 @@ export function createCommitTool(session: Session) {
         // spent failing, and a refusal that spent nothing says that instead.
         const budgetMs = step.check.invocation.timeoutMs;
         const budget = budgetMs > 0 ? ` on a ${budgetMs}ms budget` : "";
+        // How a step was asked about is bookkeeping, and the log and the
+        // certificate are where it belongs. What a refusal owes the writer is
+        // a fact about the edit: that the part it changed is no easier on its
+        // own says the rewrite is hard rather than merely large, which is a
+        // different thing to do next.
+        const part =
+          step.narrowed && step.narrowed.outcome !== "correct"
+            ? `; the part it changed is no easier on its own`
+            : "";
         return toolResultFrom(
           session,
           false,
-          `refused${budget}: ${step.check.detail || step.check.outcome}`,
+          `refused${budget}: ${step.check.detail || step.check.outcome}${part}`,
           step,
         );
       }

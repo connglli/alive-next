@@ -64,6 +64,17 @@ const noRun: Interpreter = {
   },
 };
 
+/** A body long enough that an edit to one line of it is a window. */
+const WIDE = `define i32 @f(i32 %x, i32 %y) {
+entry:
+  %h = lshr i32 %x, 4
+  %g = add i32 %h, %y
+  %s = mul i32 %g, 2
+  %t = add i32 %s, 1
+  ret i32 %t
+}
+`;
+
 /** Counts the runs the stand-in interpreter was asked for, src then tgt. */
 let diverging = 0;
 
@@ -114,14 +125,14 @@ describe.skipIf(!built)("the manifest", () => {
       let src = goal.start.src;
       let tgt = goal.start.tgt;
       for (const step of goal.steps) {
-        if (step.kind === "checked") {
-          expect(step.from).toBe(step.side === "src" ? src : tgt);
-          if (step.side === "src") src = step.to;
-          else tgt = step.to;
-        } else {
+        if (step.kind === "strengthen") {
           expect(step.from).toEqual({ src, tgt });
           src = step.to.src;
           tgt = step.to.tgt;
+        } else {
+          expect(step.from).toBe(step.side === "src" ? src : tgt);
+          if (step.side === "src") src = step.to;
+          else tgt = step.to;
         }
       }
       expect({ src, tgt }).toEqual(goal.end);
@@ -159,6 +170,39 @@ describe.skipIf(!built)("the manifest", () => {
       }
     }
     expect(checked).toBeGreaterThan(0);
+  });
+
+  test("records a narrowed step as the three halves it was cut into", async () => {
+    // The commit below touches one instruction of a longer body, so it is
+    // certified from the window and the manifest has to say so: a checker that
+    // reran the whole pair instead would be asking a different question.
+    const session = await Session.start({
+      dir: join(dir, "narrowed"),
+      src: WIDE,
+      tgt: WIDE.replace("mul i32 %g, 2", "shl i32 %g, 1"),
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+    });
+    await session.begin("g1", "src");
+    // The same value in and the same value out, so the window is one line.
+    await session.edit({ op: "replace", v: "%4", insts: ["%s = shl i32 %3, 1"] });
+    const step = await session.commit();
+    if (step.kind !== "certified") throw new Error("expected the commit to land");
+    expect(step.by).toBe("window");
+    expect(session.finish()).toBe("verified");
+
+    const out = certify(session.dir, join(dir, "certificate"));
+    const manifest = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) as Proof;
+    const [only] = manifest.goals.g1?.steps ?? [];
+    if (only?.kind !== "window") throw new Error("expected a window step");
+    expect(only.window.callee).toBe("outlined_window");
+    // A window is asked under no assumption, whatever its goal is asked under.
+    expect(only.flags).toEqual([]);
+    // Its three halves travel with the package, since a replay reads them.
+    for (const hash of [only.window.outer, only.window.from, only.window.to]) {
+      expect(readFileSync(join(out, "programs", `${hash}.ll`), "utf8").length).toBeGreaterThan(0);
+    }
   });
 
   test("copies every program the proof names", async () => {

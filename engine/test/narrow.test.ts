@@ -46,7 +46,7 @@ const TAIL = `  %v3 = add nsw i32 %v0, 1
   ret i32 %v5
 }
 `;
-/** The rewrite examples/failure/1 needs, which is two instructions of ten. */
+/** A masked bitfield extraction, rewritten: two instructions of a longer body. */
 const BEFORE = `${HEAD}  %v1 = and i32 %p1, 4190208
   %v2 = ashr i32 %v1, 12
 ${TAIL}`;
