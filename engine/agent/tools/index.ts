@@ -17,6 +17,7 @@ import { createCheckTool } from "./check.ts";
 import { createCommitTool } from "./commit.ts";
 import { createEditTool } from "./edit.ts";
 import { createGiveUpTool } from "./give-up.ts";
+import { createOptTool } from "./opt.ts";
 import { createReportCexTool } from "./report-cex.ts";
 import { createRevertTool } from "./revert.ts";
 import { createSandboxTools, SANDBOX_TOOLS } from "./sandbox.ts";
@@ -48,6 +49,7 @@ export function createProofAssistantTools(
     createCheckTool(session),
     createBeginTool(session),
     createEditTool(session),
+    createOptTool(session),
     createCommitTool(session),
     createAbortTool(session),
     createRevertTool(session),

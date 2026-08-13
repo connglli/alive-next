@@ -1,6 +1,6 @@
 // tx_edit: one rewrite of the open transaction's scratch program.
 //
-// The eleven operations are one tool taking an `op` rather than eleven tools,
+// The operations are one tool taking an `op` rather than a tool per op,
 // because the choice between them is a smaller decision than the choice
 // between editing and cutting, and llops validates the arguments either way.
 import { defineTool } from "@earendil-works/pi-coding-agent";
@@ -40,11 +40,18 @@ export const Op = Type.Union(
       param: Type.Integer(),
       attrs: Type.Record(Type.String(), Type.Unknown()),
     }),
+    Type.Object({
+      op: Type.Literal("flags"),
+      v: Ref,
+      flags: Type.Record(Type.String(), Type.Boolean(), {
+        description: "The flags to put or remove, e.g. { 'nuw': true, 'nsw': false }.",
+      }),
+    }),
   ],
   // Every branch is an object, but a union alone says so only branch by
   // branch, and a provider that validates a tool's schema reads the top level:
   // a bare `anyOf` there is refused before the run has said anything. Saying
-  // it once here keeps the eleven operations described one at a time.
+  // it once here keeps the operations described one at a time.
   { type: "object" },
 );
 

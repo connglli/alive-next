@@ -191,6 +191,28 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(await call("goal_show", { ref: "g1" })).toContain("(was p1)");
   });
 
+  test("an optimizer pass rewrites the scratch like an edit", async () => {
+    await call("tx_begin", { gid: "g1", side: "src" });
+    await call("tx_edit", { op: "replace", v: "%1", insts: ["%1 = add i32 %0, 0"] });
+    const folded = await call("tx_opt", { what: "simplify", v: "%1" });
+    expect(folded).toContain("applied, 2 so far");
+    expect(folded).toContain("mul i32 %0, 8");
+    expect(folded).not.toContain("add i32 %0, 0");
+    await call("tx_abort", {});
+  });
+
+  test("a flag edit reaches the scratch and the refusals stay loud", async () => {
+    await call("tx_begin", { gid: "g1", side: "src" });
+    const flagged = await call("tx_edit", { op: "flags", v: "%2", flags: { nuw: true } });
+    expect(flagged).toContain("applied, 1 so far");
+    expect(flagged).toContain("nuw");
+
+    const refused = await call("tx_edit", { op: "flags", v: "%1", flags: { exact: true } });
+    expect(refused).toContain("refused");
+    expect(refused).toContain("exact");
+    await call("tx_abort", {});
+  });
+
   test("a step can be walked back", async () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     await call("tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
