@@ -40,6 +40,8 @@ export interface OutlineResult {
   outer: Module;
   callee: Module;
   params: OutlineParam[];
+  /** The one value a window hands back, absent when nothing outside uses it. */
+  result?: { type: string; live: Ref };
 }
 
 export type AnalyzeKind = "knownbits" | "ranges" | "pointer" | "defined";
@@ -143,6 +145,21 @@ export class Llops {
       params,
       value_map: valueMap,
     });
+  }
+
+  /**
+   * Outline the window from `from` to `to`, leaving the rest where it is. A
+   * window belongs to one program rather than to a pair of them, so it takes
+   * no side and no value map: what says two of them line up is their outers
+   * coming out the same.
+   */
+  outlineWindow(
+    module: Module,
+    from: Ref,
+    to: Ref,
+    callee: string,
+  ): Promise<LlopsResult<OutlineResult>> {
+    return this.run("outline", { module, cut: from, to, callee });
   }
 
   inline(outer: Module, callee: Module, calleeName: string): Promise<LlopsResult<ModuleResult>> {
