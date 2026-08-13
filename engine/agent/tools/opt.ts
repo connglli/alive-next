@@ -32,6 +32,9 @@ export function createOptTool(session: Session) {
           edited,
         );
       }
+      if (edited.kind === "unchanged") {
+        return toolResult(true, formatProgram(`unchanged, nothing to fold`, edited.text), edited);
+      }
       return toolResult(true, formatProgram(`applied, ${edited.ops} so far`, edited.text), {
         kind: edited.kind,
         ops: edited.ops,

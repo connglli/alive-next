@@ -337,4 +337,34 @@ llvm::json::Object checkedResponse(llvm::Function &F, llvm::Module &M) {
   return moduleResponse(M);
 }
 
+bool parseCmdShape(llvm::json::Object &args, llvm::StringRef cmd, CmdShape &out,
+                   llvm::json::Object &err) {
+  auto text = args.getString("module");
+  if (!text) {
+    err = errResponse("bad_request", cmd.str() + " needs 'module'");
+    return false;
+  }
+  std::string parseErr;
+  auto mwc = parseModule(*text, &parseErr);
+  if (!mwc) {
+    err = errResponse("parse_error", parseErr);
+    return false;
+  }
+  out.mwc = std::move(mwc);
+  out.M = out.mwc->mod.get();
+  out.F = singleFunction(*out.M);
+  if (!out.F) {
+    err =
+        errResponse("shape_error", cmd.str() + " needs the v1 shape: exactly one defined function");
+    return false;
+  }
+  out.BB = singleBlock(*out.F);
+  if (!out.BB) {
+    err = errResponse("shape_error", cmd.str() + " needs a single basic block");
+    return false;
+  }
+  out.refs = std::make_unique<ValueRefs>(*out.F);
+  return true;
+}
+
 } // namespace llops

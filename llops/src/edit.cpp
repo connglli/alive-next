@@ -337,23 +337,17 @@ bool addParamAttr(llvm::Argument &arg, llvm::StringRef kind, const llvm::json::V
 // ---------------------------------------------------------------------------
 
 llvm::json::Object editCmd(llvm::json::Object &args) {
-  auto text = args.getString("module");
   auto op = args.getString("op");
-  if (!text || !op)
-    return errResponse("bad_request", "edit needs 'module' and 'op'");
+  if (!op)
+    return errResponse("bad_request", "edit needs 'op'");
 
-  std::string parseErr;
-  auto mwc = parseModule(*text, &parseErr);
-  if (!mwc)
-    return errResponse("parse_error", parseErr);
-  llvm::Module *M = mwc->mod.get();
-
-  llvm::Function *F = singleFunction(*M);
-  if (!F)
-    return errResponse("shape_error", "edits need the v1 shape: exactly one defined function");
-  llvm::BasicBlock *BB = singleBlock(*F);
-  if (!BB)
-    return errResponse("shape_error", "edits need a single basic block");
+  CmdShape shape;
+  llvm::json::Object shapeErr;
+  if (!parseCmdShape(args, "edit", shape, shapeErr))
+    return shapeErr;
+  llvm::Module *M = shape.M;
+  llvm::Function *F = shape.F;
+  llvm::BasicBlock *BB = shape.BB;
   ValueRefs refs(*F);
 
   auto missing = [&](llvm::StringRef what) {
@@ -692,10 +686,11 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       // A flag an instruction cannot carry is refused rather than ignored, so
       // the agent never guesses what the IR will keep.
       if (kind == "nuw" || kind == "nsw") {
+        auto *trunc = llvm::dyn_cast<llvm::TruncInst>(vi);
         auto *ovf = llvm::dyn_cast<llvm::OverflowingBinaryOperator>(vi);
-        if (!ovf)
+        if (!ovf && !trunc)
           return errResponse("invalid",
-                             "flags: '" + kind.str() + "' applies to add, sub, mul and shl");
+                             "flags: '" + kind.str() + "' applies to add, sub, mul, shl and trunc");
         if (kind == "nuw")
           vi->setHasNoUnsignedWrap(on);
         else
@@ -710,11 +705,19 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
         if (!nn)
           return errResponse("invalid", "flags: 'nneg' applies to zext and uitofp");
         vi->setNonNeg(on);
+      } else if (kind == "disjoint") {
+        auto *dj = llvm::dyn_cast<llvm::PossiblyDisjointInst>(vi);
+        if (!dj)
+          return errResponse("invalid", "flags: 'disjoint' applies to or");
+        dj->setIsDisjoint(on);
       } else {
         // The fast-math flags are one word on the instruction: the named flag
         // is set or cleared in a copy that goes back whole.
         auto *fp = llvm::dyn_cast<llvm::FPMathOperator>(vi);
-        llvm::FastMathFlags fmf = fp ? fp->getFastMathFlags() : llvm::FastMathFlags();
+        if (!fp)
+          return errResponse("invalid",
+                             "flags: '" + kind.str() + "' is not a flag of this instruction");
+        llvm::FastMathFlags fmf = fp->getFastMathFlags();
         bool known = true;
         if (kind == "fast")
           fmf.setFast(on);
@@ -734,7 +737,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
           fmf.setAllowReassoc(on);
         else
           known = false;
-        if (!fp || !known)
+        if (!known)
           return errResponse("invalid",
                              "flags: '" + kind.str() + "' is not a flag of this instruction");
         vi->setFastMathFlags(fmf);

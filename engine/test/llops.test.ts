@@ -119,6 +119,30 @@ entry:
     expect(result.module).not.toContain("add i32 %x, 0");
   });
 
+  test("flags: nuw on trunc", async () => {
+    const module = `define i16 @f(i32 %x) {
+entry:
+  %a = trunc i32 %x to i16
+  ret i16 %a
+}
+`;
+    const result = await llops.edit(module, { op: "flags", v: "%a", flags: { nuw: true } });
+    if (!result.ok) throw new Error(result.message);
+    expect(result.module).toContain("trunc nuw");
+  });
+
+  test("flags: disjoint on or", async () => {
+    const module = `define i32 @f(i32 %x, i32 %y) {
+entry:
+  %a = or i32 %x, %y
+  ret i32 %a
+}
+`;
+    const result = await llops.edit(module, { op: "flags", v: "%a", flags: { disjoint: true } });
+    if (!result.ok) throw new Error(result.message);
+    expect(result.module).toContain("or disjoint");
+  });
+
   test("reports a parse error as a refusal too", async () => {
     const result = await llops.canon("not ir at all");
     if (result.ok) throw new Error("expected a refusal");

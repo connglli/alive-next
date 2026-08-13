@@ -110,4 +110,21 @@ llvm::json::Object moduleResponse(llvm::Module &M);
 // ends here, so a broken edit is reported rather than handed back as text.
 llvm::json::Object checkedResponse(llvm::Function &F, llvm::Module &M);
 
+// The v1 shape that every mutating subcommand needs: one module, one function,
+// one block, and the value references into it. The context that owns the types
+// and constants has to outlive the pointers that use them, so it rides along.
+struct CmdShape {
+  std::unique_ptr<ModuleWithCtx> mwc;
+  llvm::Module *M = nullptr;
+  llvm::Function *F = nullptr;
+  llvm::BasicBlock *BB = nullptr;
+  std::unique_ptr<ValueRefs> refs;
+};
+
+// Parse the "module" key of a JSON request into the v1 shape. `cmd` names the
+// subcommand for error messages ("edit", "opt", …). Returns true on success;
+// on failure fills `err` and leaves `out` in a moved-from state.
+bool parseCmdShape(llvm::json::Object &args, llvm::StringRef cmd, CmdShape &out,
+                   llvm::json::Object &err);
+
 } // namespace llops

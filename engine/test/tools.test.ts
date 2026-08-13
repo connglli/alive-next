@@ -201,6 +201,17 @@ describe.skipIf(!built)("the tool layer", () => {
     await call("tx_abort", {});
   });
 
+  test("an optimizer pass that folds nothing says unchanged", async () => {
+    await call("tx_begin", { gid: "g1", side: "src" });
+    const unchanged = await call("tx_opt", { what: "simplify", v: "%1" });
+    expect(unchanged).toContain("unchanged");
+    expect(unchanged).toContain("nothing to fold");
+    // The ops counter should not have advanced: a no-op is not an op.
+    const edited = await call("tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
+    expect(edited).toContain("applied, 1 so far");
+    await call("tx_abort", {});
+  });
+
   test("a flag edit reaches the scratch and the refusals stay loud", async () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     const flagged = await call("tx_edit", { op: "flags", v: "%2", flags: { nuw: true } });

@@ -813,6 +813,39 @@ entry:
     def test_unknown_instruction(self):
         self.bad(self.edit("flags", v="nope", flags={"nuw": True}), "not_found")
 
+    def test_nuw_on_trunc(self):
+        module = """define i16 @f(i32 %x) {
+entry:
+  %a = trunc i32 %x to i16
+  ret i16 %a
+}
+"""
+        r = self.good(self.edit("flags", module=module, v="a", flags={"nuw": True}))
+        self.assertIn("%a = trunc nuw i32 %x to i16", self.body(r["module"]))
+
+    def test_nsw_on_trunc(self):
+        module = """define i16 @f(i32 %x) {
+entry:
+  %a = trunc i32 %x to i16
+  ret i16 %a
+}
+"""
+        r = self.good(self.edit("flags", module=module, v="a", flags={"nsw": True}))
+        self.assertIn("%a = trunc nsw i32 %x to i16", self.body(r["module"]))
+
+    def test_disjoint_on_or(self):
+        module = """define i32 @f(i32 %x, i32 %y) {
+entry:
+  %a = or i32 %x, %y
+  ret i32 %a
+}
+"""
+        r = self.good(self.edit("flags", module=module, v="a", flags={"disjoint": True}))
+        self.assertIn("%a = or disjoint i32 %x, %y", self.body(r["module"]))
+
+    def test_disjoint_on_an_add_is_refused(self):
+        self.bad(self.edit("flags", v="m", flags={"disjoint": True}), "invalid")
+
 
 class TestOpt(Case):
     def test_simplify_folds_an_instruction_away(self):

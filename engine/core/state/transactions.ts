@@ -39,6 +39,7 @@ export interface Transaction {
  */
 export type EditResult =
   | { kind: "applied"; text: string; ops: number }
+  | { kind: "unchanged"; text: string; ops: number }
   | { kind: "refused"; code: string; message: string; text: string };
 
 /** Thrown when the agent asks for something the session cannot mean. */
@@ -113,6 +114,9 @@ export class Transactions {
         message: result.message,
         text: transaction.text,
       };
+    }
+    if (result.module === transaction.text) {
+      return { kind: "unchanged", text: transaction.text, ops: transaction.ops.length };
     }
     transaction.text = result.module;
     transaction.ops.push(op);
