@@ -9,6 +9,7 @@ import { reassociate } from "./reassociate.ts";
 import { rewrite } from "./rewrite.ts";
 import { strengthReduce } from "./strength-reduce.ts";
 import { strengthen } from "./strengthen.ts";
+import { vectorize } from "./vectorize.ts";
 import { widen } from "./widen.ts";
 
 export const scenarios: Scenario[] = [
@@ -17,6 +18,7 @@ export const scenarios: Scenario[] = [
   cut,
   strengthen,
   reassociate,
+  vectorize,
   miscompile,
   poison,
   widen,
