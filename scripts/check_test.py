@@ -294,6 +294,107 @@ class TestGolden(Case):
         # what the step claims about the rest of the body is checked first.
         self.assertEqual(done.stdout.count("inlines back"), 2)
 
+    def test_a_conditioned_window_step_verifies(self):
+        head = "define i32 @f(i32 noundef %0) {\nentry:\n  %1 = and i32 %0, 255\n"
+        tail = "  ret i32 %2\n"
+        was = llops("canon", {"module": f"{head}  %2 = add nuw i32 %1, 1\n{tail}}}\n"})["module"]
+        now = llops("canon", {"module": f"{head}  %2 = add i32 %1, 1\n{tail}}}\n"})["module"]
+        cut = [
+            llops("outline", {"module": module, "cut": "#1", "to": "#1", "callee": "w"})
+            for module in (was, now)
+        ]
+        outer = llops("canon", {"module": cut[0]["outer"]})["module"]
+        step = {
+            "kind": "window",
+            "side": "src",
+            "from": self.built.program(was),
+            "to": self.built.program(now),
+            "flags": [],
+            "window": {
+                "callee": "w",
+                "outer": self.built.program(outer),
+                "from": self.built.program(llops("canon", {"module": cut[0]["callee"]})["module"]),
+                "to": self.built.program(llops("canon", {"module": cut[1]["callee"]})["module"]),
+                "preconditions": {0: {"noundef": True, "range": {"min": 0, "max": 256}}},
+            },
+        }
+        self.built.goal(
+            "g1",
+            {"src": step["from"], "tgt": step["to"]},
+            {"src": step["to"], "tgt": step["to"]},
+            [step],
+            {"kind": "checked"},
+        )
+        done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("verified", done.stdout)
+        self.assertEqual(done.stdout.count("inlines back"), 2)
+
+    def test_a_conditioned_window_step_is_asked_about_the_side_it_replaces(self):
+        # A tgt step's obligation runs backward (before refines after), so the
+        # facts only have to hold where the AFTER whole is defined. Here the
+        # after window drops into a division by zero outside the range, so it
+        # is defined exactly where the facts hold, and the before window is
+        # defined everywhere; asking the before whole instead would refuse the
+        # step, and asking it is the mistake this pins.
+        was = llops(
+            "canon",
+            {
+                "module": (
+                    "define i32 @f(i32 noundef %0) {\n"
+                    "entry:\n"
+                    "  %1 = add i32 %0, 1\n"
+                    "  ret i32 %1\n"
+                    "}\n"
+                )
+            },
+        )["module"]
+        now = llops(
+            "canon",
+            {
+                "module": (
+                    "define i32 @f(i32 noundef %0) {\n"
+                    "entry:\n"
+                    "  %1 = icmp ult i32 %0, 50\n"
+                    "  %2 = udiv i32 %0, 0\n"
+                    "  %3 = add i32 %0, 1\n"
+                    "  %4 = select i1 %1, i32 %3, i32 %2\n"
+                    "  ret i32 %4\n"
+                    "}\n"
+                )
+            },
+        )["module"]
+        cut = [
+            llops("outline", {"module": module, "cut": "#0", "to": to, "callee": "w"})
+            for module, to in ((was, "#0"), (now, "#3"))
+        ]
+        outer = llops("canon", {"module": cut[0]["outer"]})["module"]
+        step = {
+            "kind": "window",
+            "side": "tgt",
+            "from": self.built.program(was),
+            "to": self.built.program(now),
+            "flags": [],
+            "window": {
+                "callee": "w",
+                "outer": self.built.program(outer),
+                "from": self.built.program(llops("canon", {"module": cut[0]["callee"]})["module"]),
+                "to": self.built.program(llops("canon", {"module": cut[1]["callee"]})["module"]),
+                "preconditions": {0: {"noundef": True, "range": {"min": 0, "max": 50}}},
+            },
+        }
+        self.built.goal(
+            "g1",
+            {"src": step["to"], "tgt": step["from"]},
+            {"src": step["to"], "tgt": step["to"]},
+            [step],
+            {"kind": "checked"},
+        )
+        done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("verified", done.stdout)
+        self.assertEqual(done.stdout.count("inlines back"), 2)
+
     def test_a_proof_is_replayed_under_the_assumption_it_names(self):
         # The same package settles either way depending on what it says the run
         # was allowed to assume, which is how a replay shows the assumption

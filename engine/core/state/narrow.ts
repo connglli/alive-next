@@ -18,8 +18,8 @@
 // from that first disagreement to the end of the body, which is what a change
 // in length leaves, and is still smaller than the whole function by the prefix
 // they share.
-import type { Llops, Module } from "../drivers/llops.ts";
-import type { Ref } from "../refs.ts";
+import { type Llops, type Module, moduleLines, type OutlineParam } from "../drivers/llops.ts";
+import { type Ref, resolveRef } from "../refs.ts";
 
 /** The name the outlined window has in both halves. */
 const CALLEE = "outlined_window";
@@ -35,6 +35,8 @@ export interface Narrowed {
   callee: string;
   /** Where the window sits on each side, as the references llops was given. */
   at: { before: Window; after: Window };
+  /** The parameters of the outlined window callee. */
+  params: OutlineParam[];
 }
 
 export interface Window {
@@ -58,8 +60,8 @@ export async function narrow(
   // would otherwise look like two programs that differ everywhere.
   const [was, now] = await Promise.all([llops.canon(before), llops.canon(after)]);
   if (!was.ok || !now.ok) return undefined;
-  const oldBody = body(was.module);
-  const newBody = body(now.module);
+  const oldBody = moduleLines(was.module);
+  const newBody = moduleLines(now.module);
   if (!oldBody || !newBody) return undefined;
 
   for (const [oldAt, newAt] of candidates(oldBody, newBody)) {
@@ -67,6 +69,46 @@ export async function narrow(
     if (found) return found;
   }
   return undefined;
+}
+
+/**
+ * Outline an explicit window given by `userWindow` in `before`.
+ */
+export async function narrowAt(
+  llops: Llops,
+  before: Module,
+  after: Module,
+  userWindow: Window,
+): Promise<Narrowed | undefined> {
+  const rawBody = moduleLines(before);
+  if (!rawBody) return undefined;
+  const resolved = resolveWindow(rawBody, userWindow);
+  if (!resolved) return undefined;
+
+  const [was, now] = await Promise.all([llops.canon(before), llops.canon(after)]);
+  if (!was.ok || !now.ok) return undefined;
+  const oldBody = moduleLines(was.module);
+  const newBody = moduleLines(now.module);
+  if (!oldBody || !newBody) return undefined;
+
+  const oldLast = oldBody.length - 2;
+  const newLast = newBody.length - 2;
+  if (oldLast < 0 || newLast < 0) return undefined;
+
+  const suffix = oldLast - resolved.toIdx;
+  const newAt: Window = at(resolved.fromIdx, newLast - suffix);
+
+  return outlineBoth(llops, was.module, now.module, resolved.window, newAt);
+}
+
+function resolveWindow(
+  bodyLines: string[],
+  w: Window,
+): { window: Window; fromIdx: number; toIdx: number } | undefined {
+  const fromIdx = resolveRef(bodyLines, w.from);
+  const toIdx = resolveRef(bodyLines, w.to);
+  if (fromIdx < 0 || toIdx < 0 || toIdx < fromIdx) return undefined;
+  return { window: { from: `#${fromIdx}`, to: `#${toIdx}` }, fromIdx, toIdx };
 }
 
 /**
@@ -142,20 +184,6 @@ async function outlineBoth(
     after: now.callee,
     callee: CALLEE,
     at: { before: oldAt, after: newAt },
+    params: was.params,
   };
-}
-
-/**
- * The instruction lines of a program's one body, terminator included. The
- * store holds canonical text, so this is a scan rather than a parse; a
- * program it cannot read is one this declines to narrow.
- */
-function body(module: Module): string[] | undefined {
-  const lines = module.split("\n");
-  const entry = lines.indexOf("entry:");
-  if (entry < 0) return undefined;
-  const end = lines.indexOf("}", entry);
-  if (end < 0) return undefined;
-  const found = lines.slice(entry + 1, end).map((line) => line.trim());
-  return found.length >= 2 ? found : undefined;
 }

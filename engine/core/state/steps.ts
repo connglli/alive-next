@@ -9,6 +9,8 @@
 // That runs here rather than around the outside, because whether the path is
 // still alive belongs in the answer the agent reads.
 import type { CheckOutcome, CheckResult, Invocation } from "../drivers/alive2.ts";
+import { type Llops, moduleLines } from "../drivers/llops.ts";
+import { definedRefAt, named, resolveRef } from "../refs.ts";
 import { assumptionFlags } from "./arguments.ts";
 import { hasRootEntry, head, type Side, type Tree, workable } from "./goals.ts";
 import type { Narrowed } from "./narrow.ts";
@@ -78,6 +80,11 @@ export interface StepOptions {
    */
   narrowed?: Narrowed;
   /**
+   * Preconditions on live-in values of the window, named as in the program the
+   * step opens on (e.g. { "%1": { "noundef": true } }).
+   */
+  preconditions?: Record<string, Record<string, unknown>>;
+  /**
    * Whether to check the goal's new pair afterwards. On by default, because
    * catching a discharge early is the point of it, and off for the steps
    * inside a larger operation, whose intermediate states are not states the
@@ -125,6 +132,7 @@ export class Steps {
     private readonly store: Store,
     private readonly checker: Checker,
     private readonly timeouts: Timeouts = DEFAULT_TIMEOUTS,
+    private readonly llops?: Llops,
   ) {}
 
   /**
@@ -180,12 +188,31 @@ export class Steps {
     // program computed rather than the arguments the run was given, so it is
     // asked under no assumption at all, exactly as a cut's callee is.
     const narrowed = options.narrowed;
-    const local = narrowed
-      ? await this.check(orient(side, narrowed.before, narrowed.after), {
-          timeoutMs: this.timeouts.eagerCheckMs,
-          flags: [],
-        })
-      : undefined;
+
+    let local: CheckResult | undefined;
+    let usedPreconditions: Record<string, Record<string, unknown>> | undefined;
+
+    if (narrowed && options.preconditions && this.llops) {
+      const condResult = await this.tryConditionedWindow(
+        before,
+        afterText,
+        narrowed,
+        options.preconditions,
+        side,
+        flags,
+      );
+      if (condResult?.check.outcome === "correct") {
+        local = condResult.check;
+        usedPreconditions = condResult.preconditions;
+      }
+    }
+
+    if (!local && narrowed) {
+      local = await this.check(orient(side, narrowed.before, narrowed.after), {
+        timeoutMs: this.timeouts.eagerCheckMs,
+        flags: [],
+      });
+    }
 
     // Anything but a proof falls back, a refutation included: the window is
     // asked about inputs the body around it may never produce, so what it
@@ -213,7 +240,15 @@ export class Steps {
         this.store.put(narrowed.before),
         this.store.put(narrowed.after),
       ]);
-      step.window = { callee: narrowed.callee, outer, from, to };
+      step.window = {
+        callee: narrowed.callee,
+        outer,
+        from,
+        to,
+        ...(usedPreconditions && Object.keys(usedPreconditions).length > 0
+          ? { preconditions: usedPreconditions }
+          : {}),
+      };
     }
     const effects: Effect[] = [step];
     if (options.eager === false) return { kind: "certified", hash: after, effects, check, by };
@@ -229,6 +264,97 @@ export class Steps {
     if (eager.outcome === "correct") effects.push({ effect: "proved", gid });
 
     return { kind: "certified", hash: after, effects, check, by, eager };
+  }
+
+  private async tryConditionedWindow(
+    before: string,
+    after: string,
+    narrowed: Narrowed,
+    preconditions: Record<string, Record<string, unknown>>,
+    side: Side,
+    flags: string[],
+  ): Promise<
+    { check: CheckResult; preconditions: Record<string, Record<string, unknown>> } | undefined
+  > {
+    if (!this.llops) return undefined;
+
+    const mappedFacts: Record<string, Record<string, unknown>> = {};
+    const rawLines = moduleLines(before);
+    // A precondition names a value as the step opens on it, and the window's
+    // parameters are that same program's values. Either the name is the
+    // parameter's own, or the line that defines it is shared with the outer,
+    // whose value at that line is the canonical one the parameter carries.
+    for (const [ref, fact] of Object.entries(preconditions)) {
+      const clean = named(ref);
+      const rawIdx = rawLines ? resolveRef(rawLines, ref) : -1;
+      const outerLines = moduleLines(narrowed.outer);
+      const outerVal = rawIdx >= 0 && outerLines ? definedRefAt(outerLines, rawIdx) : undefined;
+
+      const idx = narrowed.params.findIndex((p) => p.live === clean || p.live === outerVal);
+      if (idx >= 0) {
+        mappedFacts[idx] = fact;
+      }
+    }
+    // A fact that maps to nothing would certify something other than what the
+    // caller asked for, and two facts collapsing onto one parameter would
+    // overwrite one of them, so the attempt is refused rather than trimmed.
+    if (Object.keys(mappedFacts).length !== Object.keys(preconditions).length) return undefined;
+
+    // Phase 1: Insert assumes before call in outer and verify whole-function
+    let outerAssumed = narrowed.outer;
+    for (const [argIdxStr, fact] of Object.entries(mappedFacts)) {
+      const argIdx = Number(argIdxStr);
+      const res = await this.llops.assume(outerAssumed, {
+        before_call: narrowed.callee,
+        arg: argIdx,
+        fact,
+      });
+      if (!res.ok) return undefined;
+      outerAssumed = res.module;
+    }
+
+    // Phase 1: wherever the whole being replaced is defined, the facts hold at
+    // the call site. Which whole that is follows the step's direction: on the
+    // src side the obligation runs forward (after refines before), so the from
+    // half is asked about the before whole; on the tgt side it runs backward
+    // (before refines after), so the to half is asked about the after whole.
+    // Asking the wrong side would either prove nothing or refuse a step whose
+    // facts only have to hold where the more defined side is.
+    const half = side === "src" ? narrowed.before : narrowed.after;
+    const whole = side === "src" ? before : after;
+    const inlined = await this.llops.inline(outerAssumed, half, narrowed.callee);
+    if (!inlined.ok) return undefined;
+
+    const assumeCheck = await this.check(
+      { src: whole, tgt: inlined.module },
+      {
+        timeoutMs: this.timeouts.alive2Ms,
+        flags,
+      },
+    );
+    if (assumeCheck.outcome !== "correct") return undefined;
+
+    // Phase 2: Add attributes to both window halves and check small pair
+    let condBefore = narrowed.before;
+    let condAfter = narrowed.after;
+    for (const [argIdxStr, fact] of Object.entries(mappedFacts)) {
+      const argIdx = Number(argIdxStr);
+      const op = { op: "attrs" as const, fn: narrowed.callee, param: argIdx, attrs: fact };
+      const [resFrom, resTo] = await Promise.all([
+        this.llops.edit(condBefore, op),
+        this.llops.edit(condAfter, op),
+      ]);
+      if (!resFrom.ok || !resTo.ok) return undefined;
+      condBefore = resFrom.module;
+      condAfter = resTo.module;
+    }
+
+    const condCheck = await this.check(orient(side, condBefore, condAfter), {
+      timeoutMs: this.timeouts.eagerCheckMs,
+      flags: [],
+    });
+
+    return { check: condCheck, preconditions: mappedFacts };
   }
 
   /** One question to the checker, in the direction the side settled. */

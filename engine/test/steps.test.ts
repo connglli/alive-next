@@ -8,11 +8,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckOutcome, CheckResult } from "../core/drivers/alive2.ts";
+import { Llops } from "../core/drivers/llops.ts";
 import { DEFAULT_ASSUMPTION } from "../core/state/arguments.ts";
 import { derive } from "../core/state/goals.ts";
+import { narrow } from "../core/state/narrow.ts";
 import { DEFAULT_TIMEOUTS, orient, Steps, timeoutsFrom } from "../core/state/steps.ts";
 import { Store } from "../core/state/store.ts";
 import type { Entry, Event } from "../core/state/trajectory.ts";
+import { toolchain } from "./toolchain-under-test.ts";
+
+const llops = new Llops(toolchain.path("llops"));
 
 /** Remembers every call, and answers whatever the test lined up. */
 class FakeChecker {
@@ -47,6 +52,7 @@ const WINDOW = {
   after: NOW,
   callee: "outlined_window",
   at: { before: { from: "#0", to: "#0" }, after: { from: "#0", to: "#0" } },
+  params: [{ param: "%p0", type: "i32", live: "%v1" }],
 };
 const TGT = "define i32 @f() {\nentry:\n  ret i32 2\n}\n";
 const NEW = "define i32 @f() {\nentry:\n  ret i32 3\n}\n";
@@ -243,6 +249,43 @@ describe("stepping", () => {
     if (result.kind !== "refused") throw new Error("expected the step to be refused");
     expect(result.check.outcome).toBe("incorrect");
     expect(result.narrowed?.outcome).toBe("unknown");
+  });
+
+  test("records preconditions when conditioned window succeeds", async () => {
+    const before =
+      "define i32 @f(i32 %x) {\nentry:\n  %v1 = mul i32 %x, 2\n  %v2 = add i32 %v1, 1\n  ret i32 %v2\n}\n";
+    const after =
+      "define i32 @f(i32 %x) {\nentry:\n  %v1 = mul i32 %x, 2\n  %v2 = add i32 %v1, 2\n  ret i32 %v2\n}\n";
+    const srcHash = await store.put(before);
+    const tgtHash = await store.put(after);
+    const customTree = derive([
+      {
+        kind: "run_start",
+        src: srcHash,
+        tgt: tgtHash,
+        assumed: DEFAULT_ASSUMPTION,
+        config: {},
+        versions: {},
+        time: 0,
+        prev: "",
+      } as Entry,
+    ]);
+
+    const narrowed = await narrow(llops, before, after);
+    if (!narrowed) throw new Error("expected narrowing to succeed");
+
+    const checker = new FakeChecker(["correct", "correct", "unknown"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops);
+    const result = await steps.step(customTree, "g1", "src", after, {
+      narrowed,
+      preconditions: { "%v1": { noundef: true } },
+    });
+
+    if (result.kind !== "certified") throw new Error("expected the step to land");
+    expect(result.by).toBe("window");
+    const step = result.effects[0];
+    if (step?.effect !== "step") throw new Error("expected a step effect");
+    expect(step.window?.preconditions).toEqual({ 0: { noundef: true } });
   });
 
   test("refuses a step to the program that is already there", async () => {

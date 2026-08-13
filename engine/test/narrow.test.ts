@@ -5,7 +5,7 @@
 // nothing verifies is worth nothing.
 import { describe, expect, test } from "bun:test";
 import { Llops } from "../core/drivers/llops.ts";
-import { narrow } from "../core/state/narrow.ts";
+import { narrow, narrowAt } from "../core/state/narrow.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 const llops = new Llops(toolchain.path("llops"));
@@ -139,5 +139,21 @@ entry:
     const before = "define i32 @f(i32 %x) {\nentry:\n  ret i32 %x\n}\n";
     const after = "define i32 @f(i32 %x) {\nentry:\n  ret i32 0\n}\n";
     expect(await narrow(llops, before, after)).toBeUndefined();
+  });
+
+  test("outlines an explicit user-supplied window with narrowAt", async () => {
+    const before = `define i32 @f(i32 %x, i32 %y) {
+entry:
+  %a = mul i32 %x, 2
+  %b = add i32 %a, 1
+  %c = add i32 %b, %y
+  ret i32 %c
+}
+`;
+    const after = before.replace("add i32 %a, 1", "add i32 %a, 2");
+    const found = await narrowAt(llops, before, after, { from: "%b", to: "%b" });
+    if (!found) throw new Error("expected narrowAt to succeed");
+    expect(found.callee).toBe("outlined_window");
+    expect(found.params.length).toBeGreaterThan(0);
   });
 });

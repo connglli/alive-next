@@ -39,7 +39,13 @@ export type Step =
       from: Hash;
       to: Hash;
       flags: string[];
-      window: { callee: string; outer: Hash; from: Hash; to: Hash };
+      window: {
+        callee: string;
+        outer: Hash;
+        from: Hash;
+        to: Hash;
+        preconditions?: Record<string, Record<string, unknown>>;
+      };
     }
   /**
    * Both sides took an attribute the caller was shown to honour. No check
@@ -244,7 +250,7 @@ function chainOf(goal: Goal, moves: Move[]): Step[] {
               side: effect.side,
               from,
               to: effect.to,
-              flags: move.flags ?? [],
+              flags: [],
               window: effect.window,
             }
           : {

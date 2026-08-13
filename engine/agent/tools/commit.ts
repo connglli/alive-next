@@ -10,9 +10,22 @@ export function createCommitTool(session: Session) {
     label: "Commit",
     description:
       "Validate the open transaction with alive2, in the direction the side implies, and advance the head if it holds. On refusal the head does not move and the counterexample comes back as a hint. The goal's new pair is then checked once on a small budget, so a step that finishes a chain discharges the goal here.",
-    parameters: Type.Object({}),
-    execute: async () => {
-      const step = await session.commit();
+    parameters: Type.Object({
+      window: Type.Optional(
+        Type.Object({
+          from: Type.String({ description: "Reference to the start instruction of the window." }),
+          to: Type.String({ description: "Reference to the end instruction of the window." }),
+        }),
+      ),
+      preconditions: Type.Optional(
+        Type.Record(Type.String(), Type.Any(), {
+          description:
+            "Preconditions on live-in values of the window (e.g. { '%v1': { 'noundef': true } }).",
+        }),
+      ),
+    }),
+    execute: async (_id, args) => {
+      const step = await session.commit(args);
       if (step.kind === "refused") {
         // The budget is part of the refusal: a timeout says how much was
         // spent failing, and a refusal that spent nothing says that instead.

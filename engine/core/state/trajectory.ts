@@ -71,7 +71,13 @@ export type Effect =
        * difference is confined to the window, and inlining each half back into
        * it is what a checker reruns instead of believing any of this.
        */
-      window?: { callee: string; outer: Hash; from: Hash; to: Hash };
+      window?: {
+        callee: string;
+        outer: Hash;
+        from: Hash;
+        to: Hash;
+        preconditions?: Record<string, Record<string, unknown>>;
+      };
     }
   /** A goal was cut in two; the children arrive with their initial pairs. */
   | {

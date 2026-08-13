@@ -4,6 +4,7 @@
 import type { Scenario } from "../core/scenario.ts";
 import { cut } from "./cut.ts";
 import { miscompile } from "./miscompile.ts";
+import { nuw } from "./nuw.ts";
 import { poison } from "./poison.ts";
 import { reassociate } from "./reassociate.ts";
 import { rewrite } from "./rewrite.ts";
@@ -17,6 +18,7 @@ export const scenarios: Scenario[] = [
   rewrite,
   cut,
   strengthen,
+  nuw,
   reassociate,
   vectorize,
   miscompile,

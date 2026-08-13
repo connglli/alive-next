@@ -14,7 +14,7 @@
 // target: the agent is editing one thing or nothing.
 import type { EditOp, Llops } from "../drivers/llops.ts";
 import { head, type Side, type Tree, workable } from "./goals.ts";
-import { narrow } from "./narrow.ts";
+import { narrow, narrowAt, type Window } from "./narrow.ts";
 import type { StepResult, Steps } from "./steps.ts";
 import type { Store } from "./store.ts";
 import type { Hash } from "./trajectory.ts";
@@ -104,7 +104,14 @@ export class Transactions {
    * agrees; either way the transaction is over, because a failed commit is an
    * answer about the pair rather than a state to keep editing from.
    */
-  async commit(tree: Tree, steps: Steps): Promise<StepResult> {
+  async commit(
+    tree: Tree,
+    steps: Steps,
+    options?: {
+      window?: Window;
+      preconditions?: Record<string, Record<string, unknown>>;
+    },
+  ): Promise<StepResult> {
     const transaction = this.require();
     this.current = undefined;
     // A commit is the step that is usually local, so it is the one that looks
@@ -112,8 +119,30 @@ export class Transactions {
     // asked as a question about the whole function.
     const goal = workable(tree, transaction.gid);
     const before = this.store.get(head(goal, transaction.side));
-    const narrowed = await narrow(this.llops, before, transaction.text);
-    return steps.step(tree, transaction.gid, transaction.side, transaction.text, { narrowed });
+    const narrowed = options?.window
+      ? await narrowAt(this.llops, before, transaction.text, options.window)
+      : await narrow(this.llops, before, transaction.text);
+    // An agent-named window is a request, not a hint: when the search finds no
+    // window it is right to fall back to the whole function, but a window the
+    // caller named and that will not outline means the caller asked for
+    // something this pair cannot express, which is worth saying rather than
+    // silently proving something larger.
+    if (options?.window && !narrowed) {
+      return {
+        kind: "refused",
+        check: {
+          outcome: "error",
+          detail: "the window it was asked to outline does not resolve",
+          invocation: { binary: "", flags: [], timeoutMs: 0 },
+          stdout: "",
+          ms: 0,
+        },
+      };
+    }
+    return steps.step(tree, transaction.gid, transaction.side, transaction.text, {
+      narrowed,
+      preconditions: options?.preconditions,
+    });
   }
 
   /** Throw the scratch away. Nothing was certified, so nothing is undone. */

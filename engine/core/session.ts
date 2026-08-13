@@ -39,6 +39,7 @@ import {
   verdict,
   workable,
 } from "./state/goals.ts";
+import type { Window } from "./state/narrow.ts";
 import { type SplitResult, Splits } from "./state/splits.ts";
 import {
   type Checker,
@@ -165,7 +166,12 @@ export class Session {
     this.llops = options.llops;
     this.store = new Store(join(dir, "store"), canonWith(options.llops));
     this.log = new Trajectory(join(dir, "trajectory.jsonl"));
-    this.steps = new Steps(this.store, options.checker, options.timeouts ?? DEFAULT_TIMEOUTS);
+    this.steps = new Steps(
+      this.store,
+      options.checker,
+      options.timeouts ?? DEFAULT_TIMEOUTS,
+      options.llops,
+    );
     this.splits = new Splits(this.store, options.llops);
     this.strengthening = new Strengthen(this.store, options.llops, this.steps);
     this.editing = new Transactions(this.store, options.llops);
@@ -345,8 +351,13 @@ export class Session {
   }
 
   /** Certify the open transaction as one step. */
-  commit(): Promise<StepResult> {
-    return this.act("commit", {}, (tree) => this.editing.commit(tree, this.steps));
+  commit(options?: {
+    window?: Window;
+    preconditions?: Record<string, Record<string, unknown>>;
+  }): Promise<StepResult> {
+    return this.act("commit", { ...options }, (tree) =>
+      this.editing.commit(tree, this.steps, options),
+    );
   }
 
   abort(): Promise<Transaction> {

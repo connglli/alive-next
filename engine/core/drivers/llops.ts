@@ -235,3 +235,21 @@ export class Llops {
     return { ok: false, code: error.code, message: String(error.message ?? "") };
   }
 }
+
+/**
+ * The instruction lines of a program's body block, terminator included.
+ * Scans for entry: and closing brace. A body too small to be worth narrowing
+ * is returned as-is: it is the callers, who know what they can outline, that
+ * decline it.
+ */
+export function moduleLines(module: Module): string[] | undefined {
+  const lines = module.split("\n");
+  const entry = lines.indexOf("entry:");
+  if (entry < 0) return undefined;
+  const end = lines.indexOf("}", entry);
+  if (end < 0) return undefined;
+  return lines
+    .slice(entry + 1, end)
+    .map((l) => l.trim())
+    .filter(Boolean);
+}

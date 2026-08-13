@@ -129,9 +129,12 @@ class Package:
         """Ask alive-tv whether the second program refines the first."""
         with tempfile.TemporaryDirectory() as scratch:
             paths = []
-            for name, digest in (("src.ll", src), ("tgt.ll", tgt)):
+            for name, item in (("src.ll", src), ("tgt.ll", tgt)):
                 path = Path(scratch) / name
-                path.write_text(self.program(digest))
+                # A digest is exactly a sha256 name; anything else is the
+                # program itself, which is what a replayed window carries.
+                text = self.program(item) if re.fullmatch(r"[0-9a-f]{64}", item) else item
+                path.write_text(text)
                 paths.append(str(path))
             started = time.monotonic()
             done = subprocess.run(
@@ -337,7 +340,7 @@ class Check:
                 )
                 head[side] = after
             elif step["kind"] == "window":
-                head[step["side"]] = self.window(gid, step, head)
+                head[step["side"]] = self.window(gid, step, head, flags)
             elif step["kind"] == "strengthen":
                 # Nothing certifies this on its own. What does is the outer's
                 # chain, every step of which is checked here, and the signature
@@ -352,18 +355,16 @@ class Check:
                 self.fail(gid, "a step of kind", f"{step['kind']}, which this does not know")
         return head
 
-    def window(self, gid: str, step: dict, head: dict) -> str:
-        """A step narrowed to a window, rerun as the two halves it was cut into.
+    def window(self, gid: str, step: dict, head: dict, flags: list[str] = None) -> str:
+        """A step narrowed to a window, optionally with proved preconditions.
 
-        The step claims that one window of the body changed and nothing else.
-        Both halves are inlined back into the one outer they share: what comes
-        out has to be the pair the step names, which is what says the rest of
-        the body was left alone. Then the small pair is asked in the direction
-        the side implies, and that is the whole obligation.
-
-        A window is a fresh function whose parameters are values the program
-        computed, so it is asked under no assumption whatever its goal is asked
-        under, and a step claiming otherwise is refused.
+        Both halves are inlined back into the outer program to verify faithfulness.
+        If preconditions are present:
+        Phase 1: Prove whole-function that outer + llvm.assume refines the whole
+        being replaced, which is the before whole for a src step and the after
+        whole for a tgt step. That is the side whose definedness the step's
+        obligation starts from, so it is the one the facts must hold on.
+        Phase 2: Add attributes to parameters of both window halves and check small pair.
         """
         side = step["side"]
         if step["from"] != head[side]:
@@ -374,6 +375,8 @@ class Check:
             )
 
         window = step["window"]
+        preconditions = window.get("preconditions", {})
+
         for whole, half, which in (
             (step["from"], window["from"], "from"),
             (step["to"], window["to"], "to"),
@@ -393,7 +396,83 @@ class Check:
             else:
                 self.fail(gid, what, "to a different program")
 
-        pair = (window["from"], window["to"]) if side == "src" else (window["to"], window["from"])
+        if preconditions:
+            # Phase 1: Insert assumes before call in outer and verify whole-function
+            outer_assumed = self.package.program(window["outer"])
+            for arg_str, fact in preconditions.items():
+                try:
+                    arg = int(arg_str)
+                except ValueError:
+                    self.fail(gid, "precondition arg", f"invalid integer {arg_str}")
+                    return step["to"]
+                res = self.package.run_llops(
+                    "assume",
+                    {
+                        "module": outer_assumed,
+                        "before_call": window["callee"],
+                        "arg": arg,
+                        "fact": fact,
+                    },
+                )
+                outer_assumed = res["module"]
+
+            # Phase 1: which whole the step replaces decides which half is
+            # asked about it: a src step's obligation starts at the before
+            # whole and a tgt step's at the after whole, and the facts are what
+            # must hold there.
+            half = window["from"] if side == "src" else window["to"]
+            whole = step["from"] if side == "src" else step["to"]
+            inlined_assumed = self.package.run_llops(
+                "inline",
+                {
+                    "outer": outer_assumed,
+                    "callee": self.package.program(half),
+                    "callee_name": window["callee"],
+                },
+            )["module"]
+
+            # Asking the assumed program to refine the whole it was cut from is
+            # what says the facts hold wherever that whole is defined: where the
+            # assume is false the assumed program is UB, so any defined execution
+            # of the whole forces the facts true.
+            assume_outcome = self.refines(self.package.program(whole), inlined_assumed, flags or [])
+            if assume_outcome != "correct":
+                self.fail(gid, "conditioned window precondition", f"failed: {assume_outcome}")
+
+            # Phase 2: Add attrs to both callee halves and check small pair
+            c_from = self.package.program(window["from"])
+            c_to = self.package.program(window["to"])
+            for arg_str, fact in preconditions.items():
+                arg = int(arg_str)
+                res_from = self.package.run_llops(
+                    "edit",
+                    {
+                        "module": c_from,
+                        "op": "attrs",
+                        "fn": window["callee"],
+                        "param": arg,
+                        "attrs": fact,
+                    },
+                )
+                res_to = self.package.run_llops(
+                    "edit",
+                    {
+                        "module": c_to,
+                        "op": "attrs",
+                        "fn": window["callee"],
+                        "param": arg,
+                        "attrs": fact,
+                    },
+                )
+                c_from = res_from["module"]
+                c_to = res_to["module"]
+
+            pair = (c_from, c_to) if side == "src" else (c_to, c_from)
+        else:
+            pair = (
+                (window["from"], window["to"]) if side == "src" else (window["to"], window["from"])
+            )
+
         outcome = self.refines(*pair, [])
         what = f"{side} window to {step['to'][:12]}"
         self.say(gid, what, outcome) if outcome == "correct" else self.fail(gid, what, outcome)
