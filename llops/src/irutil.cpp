@@ -328,4 +328,13 @@ llvm::json::Object moduleResponse(llvm::Module &M) {
   return resp;
 }
 
+llvm::json::Object checkedResponse(llvm::Function &F, llvm::Module &M) {
+  auto diags = checkFunction(F);
+  if (diags.empty())
+    diags = checkModule(M);
+  if (!diags.empty())
+    return errResponse(diags.front().code, diags.front().message);
+  return moduleResponse(M);
+}
+
 } // namespace llops

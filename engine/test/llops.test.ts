@@ -105,6 +105,20 @@ entry:
     expect(result.code).toBe("invalid");
   });
 
+  test("opt simplifies one instruction", async () => {
+    const module = `define i32 @f(i32 %x) {
+entry:
+  %a = add i32 %x, 0
+  %r = mul i32 %a, 3
+  ret i32 %r
+}
+`;
+    const result = await llops.opt(module, "simplify", "%a");
+    if (!result.ok) throw new Error(result.message);
+    expect(result.module).toContain("mul i32 %x, 3");
+    expect(result.module).not.toContain("add i32 %x, 0");
+  });
+
   test("reports a parse error as a refusal too", async () => {
     const result = await llops.canon("not ir at all");
     if (result.ok) throw new Error("expected a refusal");

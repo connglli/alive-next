@@ -12,7 +12,7 @@
 //
 // One transaction at a time, which is what lets edit, commit and abort take no
 // target: the agent is editing one thing or nothing.
-import type { EditOp, Llops } from "../drivers/llops.ts";
+import type { EditOp, Llops, OptOp } from "../drivers/llops.ts";
 import { head, type Side, type Tree, workable } from "./goals.ts";
 import { narrow, narrowAt, type Window } from "./narrow.ts";
 import type { StepResult, Steps } from "./steps.ts";
@@ -27,7 +27,7 @@ export interface Transaction {
   /** The scratch program as it stands. */
   text: string;
   /** The ops applied so far, in order. */
-  ops: EditOp[];
+  ops: (EditOp | OptOp)[];
 }
 
 /**
@@ -86,6 +86,26 @@ export class Transactions {
   async edit(op: EditOp): Promise<EditResult> {
     const transaction = this.require();
     const result = await this.llops.edit(transaction.text, op);
+    if (!result.ok) {
+      return {
+        kind: "refused",
+        code: result.code,
+        message: result.message,
+        text: transaction.text,
+      };
+    }
+    transaction.text = result.module;
+    transaction.ops.push(op);
+    return { kind: "applied", text: result.module, ops: transaction.ops.length };
+  }
+
+  /**
+   * Apply one structural optimizer pass to the scratch program. A refusal
+   * leaves the scratch as it was, exactly as a refused edit does.
+   */
+  async opt(op: OptOp): Promise<EditResult> {
+    const transaction = this.require();
+    const result = await this.llops.opt(transaction.text, op.what, op.v);
     if (!result.ok) {
       return {
         kind: "refused",

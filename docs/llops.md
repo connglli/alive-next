@@ -104,6 +104,16 @@ A snippet that calls a function the module does not declare gets a declaration, 
 
 `flags` names instruction flags with `true` or `false`, so the same op puts and removes: `{ "nuw": true }` puts `nuw` on and `{ "nsw": false }` takes `nsw` off. `nuw` and `nsw` apply to `add`, `sub`, `mul` and `shl`, `exact` to the divisions and shifts that carry it, `nneg` to `zext` and `uitofp`, and `fast`, `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn` and `reassoc` to floating-point instructions. A flag the instruction cannot carry is refused rather than ignored, so the agent never guesses what the IR keeps.
 
+## opt
+
+Request `{ "module": ..., "what": "<op>", ... }`, response `{ "ok": true, "module": ... }`. One op per call, each one LLVM's own machinery, so a simplification is the same algebra alive2 reasons about rather than a second set of rules that could drift. An opt is still a proposal: the agent certifies the result with alive2 like any other edit.
+
+| op | arguments | effect |
+| --- | --- | --- |
+| `simplify` | `v` | fold one instruction with `simplifyInstruction` |
+
+`simplify` rewrites the instruction's uses to the simplified value and erases the instruction; nothing else in the body moves, so the step stays as small as it was asked to be, and an instruction with nothing to fold comes back unchanged. The terminator cannot be simplified.
+
 ## outline
 
 Moves part of a body into a fresh function and leaves a call where it was. Without a `to` the part is the suffix from the cut, which is how a goal is cut in two; with one it is the window between them, which is how a local edit is asked about locally.

@@ -100,6 +100,9 @@ class Case(unittest.TestCase):
     def edit(self, op, module=F_SIMPLE, **kw):
         return run("edit", {"module": module, "op": op, **kw})
 
+    def opt(self, what, module=F_SIMPLE, **kw):
+        return run("opt", {"module": module, "what": what, **kw})
+
     def canon(self, module):
         return self.good(run("canon", {"module": module}))["module"]
 
@@ -809,6 +812,64 @@ entry:
 
     def test_unknown_instruction(self):
         self.bad(self.edit("flags", v="nope", flags={"nuw": True}), "not_found")
+
+
+class TestOpt(Case):
+    def test_simplify_folds_an_instruction_away(self):
+        module = """define i32 @f(i32 %x) {
+entry:
+  %a = add i32 %x, 0
+  %r = mul i32 %a, 3
+  ret i32 %r
+}
+"""
+        r = self.good(self.opt("simplify", module=module, v="a"))
+        body = self.body(r["module"])
+        self.assertNotIn("add i32 %x, 0", body)
+        self.assertIn("%r = mul i32 %x, 3", body)
+
+    def test_simplify_folds_constants(self):
+        module = """define i32 @f() {
+entry:
+  %a = add i32 2, 3
+  ret i32 %a
+}
+"""
+        r = self.good(self.opt("simplify", module=module, v="a"))
+        self.assertIn("ret i32 5", self.body(r["module"]))
+
+    def test_simplify_an_identity(self):
+        module = """define i32 @f(i32 %x) {
+entry:
+  %a = sub i32 %x, %x
+  ret i32 %a
+}
+"""
+        r = self.good(self.opt("simplify", module=module, v="a"))
+        self.assertIn("ret i32 0", self.body(r["module"]))
+
+    def test_simplify_leaves_what_it_cannot_fold(self):
+        r = self.good(self.opt("simplify", v="m"))
+        self.assertEqual(self.body(r["module"])[0], "%m = mul i32 %x, %y")
+
+    def test_simplify_reaches_the_terminator(self):
+        module = """define i32 @f(i32 %x) {
+entry:
+  %a = mul i32 %x, 1
+  ret i32 %a
+}
+"""
+        r = self.good(self.opt("simplify", module=module, v="a"))
+        self.assertIn("ret i32 %x", self.body(r["module"]))
+
+    def test_simplify_the_terminator_is_refused(self):
+        self.bad(self.opt("simplify", v="#2"), "invalid")
+
+    def test_simplify_unknown_instruction(self):
+        self.bad(self.opt("simplify", v="nope"), "not_found")
+
+    def test_unknown_opt(self):
+        self.bad(self.opt("nope"), "bad_request")
 
 
 class TestOutline(Case):

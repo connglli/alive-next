@@ -24,6 +24,7 @@ import type {
   HarnessArg,
   Llops,
   LlopsResult,
+  OptOp,
 } from "./drivers/llops.ts";
 import type { Ref } from "./refs.ts";
 import { type ArgumentAssumption, DEFAULT_ASSUMPTION } from "./state/arguments.ts";
@@ -348,6 +349,11 @@ export class Session {
 
   edit(op: EditOp): Promise<EditResult> {
     return this.act("edit", op, () => this.editing.edit(op), scratch);
+  }
+
+  /** Fold one instruction of the scratch with llops' own simplifier. */
+  opt(op: OptOp): Promise<EditResult> {
+    return this.act("opt", op, () => this.editing.opt(op), scratch);
   }
 
   /** Certify the open transaction as one step. */

@@ -105,4 +105,9 @@ llvm::json::Object errResponse(llvm::StringRef code, llvm::StringRef message);
 // A successful response carrying one module: { "ok": true, "module": ... }.
 llvm::json::Object moduleResponse(llvm::Module &M);
 
+// The response of an edit that must come out well formed: the v1 shape check,
+// then the LLVM verifier, and only then the module. Every mutating subcommand
+// ends here, so a broken edit is reported rather than handed back as text.
+llvm::json::Object checkedResponse(llvm::Function &F, llvm::Module &M);
+
 } // namespace llops

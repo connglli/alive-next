@@ -259,17 +259,6 @@ bool precedes(llvm::BasicBlock &BB, llvm::Instruction *earlier, llvm::Instructio
   return false;
 }
 
-// Every edit ends here: the result is rechecked so a broken edit is reported
-// rather than handed back as text.
-llvm::json::Object checked(llvm::Function &F, llvm::Module &M) {
-  auto diags = checkFunction(F);
-  if (diags.empty())
-    diags = checkModule(M);
-  if (!diags.empty())
-    return errResponse(diags.front().code, diags.front().message);
-  return moduleResponse(M);
-}
-
 // ---------------------------------------------------------------------------
 // Attributes
 // ---------------------------------------------------------------------------
@@ -391,7 +380,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     auto afterSecond = std::next(second->getIterator());
     BB->splice(first->getIterator(), BB, second->getIterator());
     BB->splice(afterSecond, BB, first->getIterator());
-    return checked(*F, *M);
+    return checkedResponse(*F, *M);
   }
 
   if (*op == "move") {
@@ -412,7 +401,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       return errResponse("invalid", "move: nothing comes after the terminator");
     BB->splice(*where == "before" ? wi->getIterator() : std::next(wi->getIterator()), BB,
                vi->getIterator());
-    return checked(*F, *M);
+    return checkedResponse(*F, *M);
   }
 
   if (*op == "substitute") {
@@ -438,7 +427,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
                                                 "' does not reach every use of '" +
                                                 refs.print(*va) + "'");
     va->replaceAllUsesWith(vb);
-    return checked(*F, *M);
+    return checkedResponse(*F, *M);
   }
 
   if (*op == "replace") {
@@ -477,7 +466,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     oldDef->eraseFromParent();
     if (last->getName().empty())
       last->setName(oldName);
-    return checked(*F, *M);
+    return checkedResponse(*F, *M);
   }
 
   if (*op == "insert") {
@@ -501,7 +490,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     auto pos = *where == "before" ? wi->getIterator() : std::next(wi->getIterator());
     for (auto *inst : s.insts)
       inst->insertInto(BB, pos);
-    return checked(*F, *M);
+    return checkedResponse(*F, *M);
   }
 
   if (*op == "erase") {
@@ -524,7 +513,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     } else {
       vi->eraseFromParent();
     }
-    return checked(*F, *M);
+    return checkedResponse(*F, *M);
   }
 
   if (*op == "commute") {
@@ -545,7 +534,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     } else {
       return errResponse("invalid", "commute: the operation is not commutative");
     }
-    return checked(*F, *M);
+    return checkedResponse(*F, *M);
   }
 
   if (*op == "retype") {
@@ -593,7 +582,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       back->insertInto(BB, user->getIterator());
       use->set(back);
     }
-    return checked(*F, *M);
+    return checkedResponse(*F, *M);
   }
 
   if (*op == "dedup") {
@@ -619,7 +608,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
                                               "'");
     bi->replaceAllUsesWith(ai);
     bi->eraseFromParent();
-    return checked(*F, *M);
+    return checkedResponse(*F, *M);
   }
 
   if (*op == "set_body") {
@@ -661,7 +650,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     if (!newF)
       return errResponse("shape_error", "set_body: the new module must define exactly one "
                                         "function");
-    return checked(*newF, *newMwc->mod);
+    return checkedResponse(*newF, *newMwc->mod);
   }
 
   if (*op == "attrs") {
@@ -681,7 +670,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       if (!addParamAttr(arg, entry.first, entry.second, err))
         return err;
     }
-    return checked(*F, *M);
+    return checkedResponse(*F, *M);
   }
 
   if (*op == "flags") {
@@ -751,7 +740,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
         vi->setFastMathFlags(fmf);
       }
     }
-    return checked(*F, *M);
+    return checkedResponse(*F, *M);
   }
 
   return errResponse("bad_request", "unknown edit op '" + op->str() + "'");

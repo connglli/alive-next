@@ -7,6 +7,7 @@
 #include "edit.h"
 #include "harness.h"
 #include "irutil.h"
+#include "opt.h"
 #include "outline.h"
 #include "validate.h"
 
@@ -24,6 +25,7 @@ const char *kUsage = "usage: llops <subcommand> < request.json > response.json\n
                      "  validate   check the straightline v1 invariants\n"
                      "  canon      renumber values canonically\n"
                      "  edit       apply one semantic edit op\n"
+                     "  opt        apply one structural optimizer op\n"
                      "  outline    move a suffix or a window into a function\n"
                      "  inline     substitute a callee back into its outer function\n"
                      "  analyze    known bits, ranges or pointer facts at a program point\n"
@@ -77,6 +79,8 @@ int main(int argc, char **argv) {
     return respond(llops::canonCmd(*args));
   if (cmd == "edit")
     return respond(llops::editCmd(*args));
+  if (cmd == "opt")
+    return respond(llops::optCmd(*args));
   if (cmd == "outline")
     return respond(llops::outlineCmd(*args));
   if (cmd == "inline")
