@@ -17,7 +17,7 @@ import {
   listToolNames,
   SANDBOX_TOOLS,
 } from "../agent/tools/index.ts";
-import type { CheckResult } from "../core/drivers/alive2.ts";
+import type { CheckOptions, CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
@@ -394,7 +394,7 @@ describe.skipIf(!built)("the tool layer", () => {
       insts: ["%s = shl i32 %1, 3"],
     });
     const res = await callFrom(eagerTools, "tx_commit", {});
-    expect(res).toContain("certified, head is p2, the pair is unknown (7ms, 3000ms budget)");
+    expect(res).toContain("certified, head is p2, the new pair is unknown (7ms, 3000ms budget)");
   });
 
   test("tx_commit surfaces counterexample detail when eager check is refuted", async () => {
@@ -428,8 +428,70 @@ describe.skipIf(!built)("the tool layer", () => {
       insts: ["%s = shl i32 %1, 3"],
     });
     const res = await callFrom(eagerTools, "tx_commit", {});
-    expect(res).toContain("certified, head is p2, the pair is refuted (12ms, 3000ms budget)");
+    expect(res).toContain("certified, head is p2, the new pair is refuted (12ms, 3000ms budget)");
     expect(res).toContain("Example:\ni32 %x = 42");
+  });
+
+  test("tx_commit surfaces fallback reason on whole-function fallback", async () => {
+    class FallbackChecker implements Checker {
+      constructor(private outcomes: ("correct" | "incorrect" | "unknown")[]) {}
+      async check(_src: string, _tgt: string, options: CheckOptions = {}): Promise<CheckResult> {
+        const outcome = this.outcomes.shift() ?? "unknown";
+        return {
+          outcome,
+          detail: "",
+          invocation: { binary: "fb-checker", flags: [], timeoutMs: options.timeoutMs ?? 3000 },
+          stdout: "",
+          ms: 12,
+        };
+      }
+    }
+    const fbSession = await Session.start({
+      dir: join(dir, "fb-session"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new FallbackChecker(["unknown", "correct", "unknown"]),
+      interp: noRun,
+    });
+    const fbTools = createProofAssistantTools(fbSession);
+
+    await callFrom(fbTools, "tx_begin", { gid: "g1", side: "src" });
+    await callFrom(fbTools, "tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
+    const res = await callFrom(fbTools, "tx_commit", {});
+    expect(res).toContain("whole-function fallback: window check was unknown in 12ms");
+  });
+
+  test("tx_commit surfaces fallback reason on refused step", async () => {
+    class RefusedFallbackChecker implements Checker {
+      constructor(private outcomes: ("correct" | "incorrect" | "unknown")[]) {}
+      async check(_src: string, _tgt: string, options: CheckOptions = {}): Promise<CheckResult> {
+        const outcome = this.outcomes.shift() ?? "unknown";
+        return {
+          outcome,
+          detail: "",
+          invocation: { binary: "rfb-checker", flags: [], timeoutMs: options.timeoutMs ?? 3000 },
+          stdout: "",
+          ms: 15,
+        };
+      }
+    }
+    const rfbSession = await Session.start({
+      dir: join(dir, "rfb-session"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new RefusedFallbackChecker(["unknown", "unknown"]),
+      interp: noRun,
+    });
+    const rfbTools = createProofAssistantTools(rfbSession);
+
+    await callFrom(rfbTools, "tx_begin", { gid: "g1", side: "src" });
+    await callFrom(rfbTools, "tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
+    const res = await callFrom(rfbTools, "tx_commit", {});
+    expect(res).toContain(
+      "refused on a 30000ms budget: unknown (whole-function fallback: window check was unknown in 15ms); transaction remains open",
+    );
   });
 });
 

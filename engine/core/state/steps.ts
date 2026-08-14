@@ -99,6 +99,14 @@ export interface CheckHistoryEntry {
   ms: number;
 }
 
+export type FallbackReason = "no_window" | "window_unproved";
+
+export interface Fallback {
+  reason: FallbackReason;
+  /** The window's answer, when one was tried and did not settle it. */
+  narrowed?: CheckResult;
+}
+
 /** A step that landed, or the reason it did not. */
 export type StepResult =
   | {
@@ -109,6 +117,8 @@ export type StepResult =
       check: CheckResult;
       /** Which question settled it: the window the edit touched, or the whole. */
       by: "window" | "whole";
+      /** Why whole-function validation was used instead of a local window. */
+      fallback?: Fallback;
       /** The check of the new pair, absent when the goal has no work left. */
       eager?: CheckResult;
     }
@@ -117,6 +127,8 @@ export type StepResult =
       check: CheckResult;
       /** The window's answer, when one was tried and did not settle it. */
       narrowed?: CheckResult;
+      /** Why whole-function validation was used instead of a local window. */
+      fallback?: Fallback;
     };
 
 /** What checking a goal's current pair came to. */
@@ -241,15 +253,20 @@ export class Steps {
     // refutes may be the window rather than the step. Only the whole function
     // can refuse one.
     let check = local;
+    let fallback: Fallback | undefined;
     if (check?.outcome !== "correct") {
+      fallback = local ? { reason: "window_unproved", narrowed: local } : { reason: "no_window" };
       const whole = await this.check(orient(side, beforeText, afterText), {
         timeoutMs: this.timeouts.alive2Ms,
         flags,
       });
       if (whole.outcome !== "correct") {
-        return local
-          ? { kind: "refused", check: whole, narrowed: local }
-          : { kind: "refused", check: whole };
+        return {
+          kind: "refused",
+          check: whole,
+          narrowed: local,
+          fallback,
+        };
       }
       check = whole;
     }
@@ -273,7 +290,16 @@ export class Steps {
       };
     }
     const effects: Effect[] = [step];
-    if (options.eager === false) return { kind: "certified", hash: after, effects, check, by };
+    if (options.eager === false) {
+      return {
+        kind: "certified",
+        hash: after,
+        effects,
+        check,
+        by,
+        fallback,
+      };
+    }
 
     // The pair has changed, so ask cheaply whether the goal is now discharged.
     // The pair is built here rather than read from the tree, which does not
@@ -293,7 +319,15 @@ export class Steps {
     });
     if (eager.outcome === "correct") effects.push({ effect: "proved", gid });
 
-    return { kind: "certified", hash: after, effects, check, by, eager };
+    return {
+      kind: "certified",
+      hash: after,
+      effects,
+      check,
+      by,
+      fallback,
+      eager,
+    };
   }
 
   private async tryConditionedWindow(

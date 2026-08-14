@@ -2,6 +2,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
+import type { Fallback } from "../../core/state/steps.ts";
 import { nameFor, toolResultFrom } from "./format.ts";
 
 export function createCommitTool(session: Session) {
@@ -31,22 +32,15 @@ export function createCommitTool(session: Session) {
         // spent failing, and a refusal that spent nothing says that instead.
         const budgetMs = step.check.invocation.timeoutMs;
         const budget = budgetMs > 0 ? ` on a ${budgetMs}ms budget` : "";
-        // How a step was asked about is bookkeeping, and the log and the
-        // certificate are where it belongs. What a refusal owes the writer is
-        // a fact about the edit: that the part it changed is no easier on its
-        // own says the rewrite is hard rather than merely large, which is a
-        // different thing to do next.
-        const part =
-          step.narrowed && step.narrowed.outcome !== "correct"
-            ? `; the part it changed is no easier on its own`
-            : "";
+        const fallback = fallbackSummary(step.fallback);
         return toolResultFrom(
           session,
           false,
-          `refused${budget}: ${step.check.detail || step.check.outcome}${part}; transaction remains open`,
+          `refused${budget}: ${step.check.detail || step.check.outcome}${fallback}; transaction remains open`,
           step,
         );
       }
+      const fallback = fallbackSummary(step.fallback);
       let eager = "";
       if (step.eager) {
         const eagerOutcome =
@@ -61,15 +55,27 @@ export function createCommitTool(session: Session) {
           step.eager.outcome === "incorrect" && step.eager.detail ? `\n${step.eager.detail}` : "";
         eager =
           eagerOutcome === "proved"
-            ? `, the pair is proved in ${eagerMs}ms (${eagerBudget}ms budget)`
-            : `, the pair is ${eagerOutcome} (${eagerMs}ms, ${eagerBudget}ms budget)${eagerDetail}`;
+            ? `, the new pair is proved in ${eagerMs}ms (${eagerBudget}ms budget)`
+            : `, the new pair is ${eagerOutcome} (${eagerMs}ms, ${eagerBudget}ms budget)${eagerDetail}`;
       }
       return toolResultFrom(
         session,
         true,
-        `certified, head is ${nameFor(session, step.hash)}${eager}`,
+        `certified${fallback}, head is ${nameFor(session, step.hash)}${eager}`,
         step,
       );
     },
   });
+}
+
+function fallbackSummary(fallback?: Fallback): string {
+  if (fallback?.reason === "window_unproved" && fallback.narrowed) {
+    const narrowOutcome =
+      fallback.narrowed.outcome === "incorrect" ? "refuted" : fallback.narrowed.outcome;
+    return ` (whole-function fallback: window check was ${narrowOutcome} in ${fallback.narrowed.ms}ms)`;
+  }
+  if (fallback?.reason === "no_window") {
+    return ` (whole-function fallback: no local window (edit covered the body))`;
+  }
+  return "";
 }
