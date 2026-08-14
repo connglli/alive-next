@@ -493,6 +493,60 @@ describe.skipIf(!built)("the tool layer", () => {
       "refused on a 30000ms budget: unknown (whole-function fallback: window check was unknown in 15ms); transaction remains open",
     );
   });
+
+  test("tree_split_preview discovers live-ins and validates candidate cuts without mutating tree", async () => {
+    const previewSession = await Session.start({
+      dir: join(dir, "preview-session"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: {
+        check: async () => ({
+          outcome: "unknown",
+          detail: "",
+          invocation: { binary: "stub", flags: [], timeoutMs: 3000 },
+          stdout: "",
+          ms: 5,
+        }),
+      },
+      interp: noRun,
+    });
+    const previewTools = createProofAssistantTools(previewSession);
+
+    // 1. Preview without value_map -> discovers signature
+    const sigRes = await callFrom(previewTools, "tree_split_preview", {
+      gid: "g1",
+      src_cut: "%2",
+      tgt_cut: "%2",
+    });
+    expect(sigRes).toContain("Preview of cut on g1 at src %2, tgt %2:");
+    expect(sigRes).toContain("parameters:");
+    expect(sigRes).toContain("the src's %1");
+    expect(sigRes).toContain("Provide value_map");
+    // Ensure goal tree was NOT modified
+    expect(previewSession.tree.goals.get("g1")?.status).toBe("open");
+
+    // 2. Preview with valid value_map
+    const validRes = await callFrom(previewTools, "tree_split_preview", {
+      gid: "g1",
+      src_cut: "%2",
+      tgt_cut: "%2",
+      value_map: { "%0": "%0", "%1": "%1" },
+    });
+    expect(validRes).toContain("value_map is valid. Both sides outline cleanly.");
+    expect(previewSession.tree.goals.get("g1")?.status).toBe("open");
+
+    // 3. Preview with invalid value_map -> refused
+    const invalidRes = await callFrom(previewTools, "tree_split_preview", {
+      gid: "g1",
+      src_cut: "%2",
+      tgt_cut: "%2",
+      value_map: { "%nonexistent": "%1" },
+    });
+    expect(invalidRes).toContain("FAILURE");
+    expect(invalidRes).toContain("refused");
+    expect(previewSession.tree.goals.get("g1")?.status).toBe("open");
+  });
 });
 
 /**

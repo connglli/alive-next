@@ -23,6 +23,7 @@ import { createRevertTool } from "./revert.ts";
 import { createSandboxTools, SANDBOX_TOOLS } from "./sandbox.ts";
 import { createShowTool } from "./show.ts";
 import { createSplitTool } from "./split.ts";
+import { createSplitPreviewTool } from "./split-preview.ts";
 import { createStatusTool } from "./status.ts";
 import { createStrengthenTool } from "./strengthen.ts";
 import { createUnsplitTool } from "./unsplit.ts";
@@ -53,6 +54,7 @@ export function createProofAssistantTools(
     createCommitTool(session),
     createAbortTool(session),
     createRevertTool(session),
+    createSplitPreviewTool(session),
     createSplitTool(session),
     createUnsplitTool(session),
     createStrengthenTool(session),

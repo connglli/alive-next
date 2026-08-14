@@ -20,6 +20,22 @@ import { type GoalId, head, nextGoalIds, type Tree, workable } from "./goals.ts"
 import type { Store } from "./store.ts";
 import type { Effect } from "./trajectory.ts";
 
+export type SplitPreviewResult =
+  | {
+      kind: "preview";
+      /** The signature both sides share if cut. */
+      params: OutlineParam[];
+      callee: string;
+      /** Outlined programs if value_map was provided and valid. */
+      programs?: {
+        outerSrc: string;
+        outerTgt: string;
+        calleeSrc: string;
+        calleeTgt: string;
+      };
+    }
+  | { kind: "refused"; side: "src" | "tgt"; code: string; message: string };
+
 export type SplitResult =
   | {
       kind: "split";
@@ -39,16 +55,17 @@ export class Splits {
   ) {}
 
   /**
-   * Cut `gid` at `srcCut` on its src side and `tgtCut` on its tgt side, with
-   * `valueMap` naming the tgt value that stands in for each src live value.
+   * Preview cutting `gid` at `srcCut` on its src side and `tgtCut` on its tgt side.
+   * If `valueMap` is omitted, computes and returns the src live-in signature.
+   * If `valueMap` is provided, validates that the tgt suffix lines up with that signature.
    */
-  async split(
+  async preview(
     tree: Tree,
     gid: string,
     srcCut: Ref,
     tgtCut: Ref,
-    valueMap: Record<Ref, Ref>,
-  ): Promise<SplitResult> {
+    valueMap?: Record<Ref, Ref>,
+  ): Promise<SplitPreviewResult> {
     const goal = workable(tree, gid);
 
     const children = nextGoalIds(tree);
@@ -59,6 +76,10 @@ export class Splits {
     const src = await this.llops.outlineSrc(this.store.get(head(goal, "src")), srcCut, callee);
     if (!src.ok) return { kind: "refused", side: "src", code: src.code, message: src.message };
 
+    if (!valueMap) {
+      return { kind: "preview", params: src.params, callee };
+    }
+
     const tgt = await this.llops.outlineTgt(
       this.store.get(head(goal, "tgt")),
       tgtCut,
@@ -68,18 +89,55 @@ export class Splits {
     );
     if (!tgt.ok) return { kind: "refused", side: "tgt", code: tgt.code, message: tgt.message };
 
-    // Nothing is stored until both sides have been cut, so a refusal leaves
-    // the store as it was.
-    const [outerSrc, outerTgt, calleeSrc, calleeTgt] = await Promise.all([
-      this.store.put(src.outer),
-      this.store.put(tgt.outer),
-      this.store.put(src.callee),
-      this.store.put(tgt.callee),
+    return {
+      kind: "preview",
+      params: src.params,
+      callee,
+      programs: {
+        outerSrc: src.outer,
+        outerTgt: tgt.outer,
+        calleeSrc: src.callee,
+        calleeTgt: tgt.callee,
+      },
+    };
+  }
+
+  /**
+   * Cut `gid` at `srcCut` on its src side and `tgtCut` on its tgt side, with
+   * `valueMap` naming the tgt value that stands in for each src live value.
+   */
+  async split(
+    tree: Tree,
+    gid: string,
+    srcCut: Ref,
+    tgtCut: Ref,
+    valueMap: Record<Ref, Ref>,
+  ): Promise<SplitResult> {
+    const preview = await this.preview(tree, gid, srcCut, tgtCut, valueMap);
+    if (preview.kind === "refused") return preview;
+    if (!preview.programs) {
+      return {
+        kind: "refused",
+        side: "tgt",
+        code: "missing_programs",
+        message: "split preview produced no programs",
+      };
+    }
+
+    const children = nextGoalIds(tree);
+    const callee = preview.callee;
+
+    const { outerSrc, outerTgt, calleeSrc, calleeTgt } = preview.programs;
+    const [outerSrcHash, outerTgtHash, calleeSrcHash, calleeTgtHash] = await Promise.all([
+      this.store.put(outerSrc),
+      this.store.put(outerTgt),
+      this.store.put(calleeSrc),
+      this.store.put(calleeTgt),
     ]);
 
     return {
       kind: "split",
-      params: src.params,
+      params: preview.params,
       children,
       callee,
       effects: [
@@ -87,8 +145,8 @@ export class Splits {
           effect: "split",
           gid,
           name: callee,
-          outer: { gid: children.outer, src: outerSrc, tgt: outerTgt },
-          callee: { gid: children.callee, src: calleeSrc, tgt: calleeTgt },
+          outer: { gid: children.outer, src: outerSrcHash, tgt: outerTgtHash },
+          callee: { gid: children.callee, src: calleeSrcHash, tgt: calleeTgtHash },
         },
       ],
     };

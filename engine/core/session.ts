@@ -41,7 +41,7 @@ import {
   workable,
 } from "./state/goals.ts";
 import type { Window } from "./state/narrow.ts";
-import { type SplitResult, Splits } from "./state/splits.ts";
+import { type SplitPreviewResult, type SplitResult, Splits } from "./state/splits.ts";
 import {
   type Checker,
   type CheckGoalResult,
@@ -347,6 +347,7 @@ export class Session {
     );
   }
 
+  /** Apply one edit to the open transaction, which is how every rewrite continues. */
   edit(op: EditOp): Promise<EditResult> {
     return this.act("edit", op, () => this.editing.edit(op), scratch);
   }
@@ -364,6 +365,7 @@ export class Session {
     );
   }
 
+  /** Abandon the open transaction, which leaves the goal unchanged. */
   abort(): Promise<Transaction> {
     return this.act("abort", {}, async () => this.editing.abort(), scratch);
   }
@@ -373,6 +375,25 @@ export class Session {
     return this.act("opt", op, () => this.editing.opt(op), scratch);
   }
 
+  /**
+   * Preview cutting a goal in two without modifying the goal tree or store.
+   * If valueMap is omitted, returns the src live-in parameter signature.
+   * If valueMap is provided, validates that the tgt cut lines up with that signature.
+   */
+  splitPreview(
+    gid: string,
+    srcCut: Ref,
+    tgtCut: Ref,
+    valueMap?: Record<Ref, Ref>,
+  ): Promise<SplitPreviewResult> {
+    return this.act(
+      "split_preview",
+      { gid, src_cut: srcCut, tgt_cut: tgtCut, value_map: valueMap },
+      (tree) => this.splits.preview(tree, gid, srcCut, tgtCut, valueMap),
+    );
+  }
+
+  /** Cut a goal in two, which adds the two children to the tree. */
   split(gid: string, srcCut: Ref, tgtCut: Ref, valueMap: Record<Ref, Ref>): Promise<SplitResult> {
     return this.act(
       "split",
@@ -381,6 +402,7 @@ export class Session {
     );
   }
 
+  /** Undo a split, which discards the two children and their subtrees. */
   unsplit(gid: string): Promise<{ effects: Effect[] }> {
     return this.act("unsplit", { gid }, async (tree) => ({
       effects: this.splits.unsplit(tree, gid),
