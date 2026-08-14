@@ -511,6 +511,19 @@ class TestEditSnippets(Case):
     def test_replace_type_mismatch(self):
         self.bad(self.edit("replace", v="m", insts=["%t = trunc i32 %x to i16"]), "type_mismatch")
 
+    def test_replace_rejects_a_terminator(self):
+        # A snippet may not end the block; the block's own terminator stays.
+        self.bad(
+            self.edit("replace", v="m", insts=["  %g = mul i32 %x, %y", "  ret i32 %g"]),
+            "snippet_terminator",
+        )
+
+    def test_insert_rejects_a_terminator(self):
+        self.bad(
+            self.edit("insert", where="before", w="s", insts=["unreachable"]),
+            "snippet_terminator",
+        )
+
     def test_replace_on_canonical_text_by_slot(self):
         canon = self.canon(F_SIMPLE)
         r = self.good(self.edit("replace", module=canon, v="%2", insts=["%t = shl i32 %0, 1"]))
@@ -629,6 +642,31 @@ entry:
 
     def test_set_body_that_does_not_parse(self):
         self.bad(self.edit("set_body", body="  %n = mul i32 %x"), "snippet_parse_error")
+
+    def test_set_body_rejects_a_define_header(self):
+        # set_body takes only the instructions after 'entry:', not the header.
+        self.bad(
+            self.edit(
+                "set_body",
+                body="define i32 @f(i32 %x, i32 %y) {\nentry:\n"
+                "  %n = mul i32 %x, %y\n  ret i32 %n\n}\n",
+            ),
+            "set_body_contract",
+        )
+
+    def test_set_body_rejects_a_declare_header(self):
+        # A body that opens with a declaration is the same mistake; the lexer
+        # classifies it even though no instruction ever starts with "declare".
+        self.bad(self.edit("set_body", body="declare i32 @h(i32)\n"), "set_body_contract")
+
+    def test_set_body_rejects_a_global(self):
+        self.bad(self.edit("set_body", body="@g = global i32 7\n"), "set_body_contract")
+
+    def test_set_body_rejects_a_type_definition(self):
+        self.bad(self.edit("set_body", body="%pair = type { i32, i32 }\n"), "set_body_contract")
+
+    def test_set_body_rejects_an_attribute_group(self):
+        self.bad(self.edit("set_body", body="#0 = { nounwind }\n"), "set_body_contract")
 
     def test_set_body_must_stay_straightline(self):
         self.bad(self.edit("set_body", body="  unreachable"), "unsupported_terminator")

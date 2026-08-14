@@ -234,6 +234,29 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(await callFrom(refusingTools, "tx_abort", {})).toContain("dropped 2 ops");
   });
 
+  test("a set_body that pastes a whole define is refused by the contract", async () => {
+    await call("tx_begin", { gid: "g1", side: "src" });
+    const refused = await call("tx_edit", {
+      op: "set_body",
+      body: "define i32 @f(i32 noundef %x) {\nentry:\n  %a = add i32 %x, 1\n  ret i32 %a\n}\n",
+    });
+    expect(refused).toContain("set_body_contract");
+    expect(refused).toContain("instructions after 'entry:'");
+    await call("tx_abort", {});
+  });
+
+  test("a replace whose snippet ends the block is refused by the contract", async () => {
+    await call("tx_begin", { gid: "g1", side: "src" });
+    const refused = await call("tx_edit", {
+      op: "replace",
+      v: "%1",
+      insts: ["  %g = add i32 %0, 1", "  ret i32 %g"],
+    });
+    expect(refused).toContain("snippet_terminator");
+    expect(refused).toContain("stays in place");
+    await call("tx_abort", {});
+  });
+
   test("an optimizer pass rewrites the scratch like an edit", async () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     await call("tx_edit", { op: "replace", v: "%1", insts: ["%1 = add i32 %0, 0"] });

@@ -3,6 +3,7 @@
 #include "irutil.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/AsmParser/LLLexer.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/ConstantRange.h"
@@ -10,6 +11,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Local.h"
@@ -100,11 +102,50 @@ std::vector<Token> scanTokens(llvm::StringRef text) {
   return tokens;
 }
 
+// A lexer over caller-provided text, run exactly as the assembly parser runs
+// one. Its kind stream is the parser's own classification, so a diagnostic
+// about what a body or a snippet says is the same judgment parsing it would
+// make, and the buffer it reads is owned by its own SourceMgr.
+struct TextLexer {
+  llvm::SourceMgr sm;
+  llvm::SMDiagnostic diag;
+  llvm::LLLexer lexer;
+
+  TextLexer(llvm::StringRef text, llvm::LLVMContext &ctx) : lexer(text, sm, diag, ctx) {
+    sm.AddNewSourceBuffer(llvm::MemoryBuffer::getMemBuffer(text), llvm::SMLoc());
+  }
+
+  llvm::lltok::Kind next() { return lexer.Lex(); }
+};
+
 // Parse `text` against the values of F. `replacing`, when set, is the
 // definition the caller is about to erase: the snippet may take its name back
 // but may not use it, which would turn the replacement into a use of itself.
 bool parseSnippet(llvm::Function &F, ValueRefs &refs, llvm::StringRef text, llvm::Value *replacing,
                   Snippet &out, llvm::json::Object &err) {
+  // A snippet is instructions only: the block's own terminator stays, so a
+  // snippet that carries one is a mistake before it is a parse. The terminator
+  // keywords are reserved words, so one anywhere in the text is a terminator
+  // instruction: a value name, comment or string cannot lex as one. Naming it
+  // here beats the parser error it would otherwise produce, which reads as if
+  // the whole function returned something else.
+  {
+    static constexpr llvm::lltok::Kind kTerminators[] = {
+        llvm::lltok::kw_ret,        llvm::lltok::kw_br,          llvm::lltok::kw_switch,
+        llvm::lltok::kw_indirectbr, llvm::lltok::kw_invoke,      llvm::lltok::kw_callbr,
+        llvm::lltok::kw_resume,     llvm::lltok::kw_catchswitch, llvm::lltok::kw_catchret,
+        llvm::lltok::kw_cleanupret, llvm::lltok::kw_unreachable,
+    };
+    TextLexer lexer(text, F.getContext());
+    for (llvm::lltok::Kind kind = lexer.next(); kind != llvm::lltok::Eof; kind = lexer.next())
+      if (llvm::is_contained(kTerminators, kind)) {
+        err = errResponse("snippet_terminator",
+                          "a snippet is instructions only: a terminator keyword would end the "
+                          "block, whose own terminator stays in place");
+        return false;
+      }
+  }
+
   std::vector<Token> tokens = scanTokens(text);
 
   std::vector<std::string> defs;
@@ -609,6 +650,45 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     auto body = args.getString("body");
     if (!body)
       return missing("'body'");
+    // A body that opens with a module-level construct is the whole module
+    // rather than the instructions after "entry:". An entry-block instruction
+    // opens with '%' or an instruction opcode, so any other first token is
+    // the lexer's own judgment that the text is not an instruction list;
+    // "%name = type ..." is the one instruction-shaped module element, so its
+    // second token is looked at too. Saying so before the parse turns a
+    // confusing parser error into the contract itself.
+    {
+      TextLexer lexer(*body, M->getContext());
+      auto moduleLike = [&](llvm::lltok::Kind kind) {
+        switch (kind) {
+        case llvm::lltok::GlobalVar:
+        case llvm::lltok::GlobalID:
+        case llvm::lltok::ComdatVar:
+        case llvm::lltok::MetadataVar:
+        case llvm::lltok::AttrGrpID:
+        case llvm::lltok::hash:
+        case llvm::lltok::kw_define:
+        case llvm::lltok::kw_declare:
+        case llvm::lltok::kw_source_filename:
+        case llvm::lltok::kw_target:
+        case llvm::lltok::kw_module:
+        case llvm::lltok::kw_attributes:
+          return true;
+        default:
+          return false;
+        }
+      };
+      llvm::lltok::Kind first = lexer.next();
+      if (moduleLike(first) ||
+          (first == llvm::lltok::LocalVar && lexer.next() == llvm::lltok::equal &&
+           lexer.next() == llvm::lltok::kw_type)) {
+        return errResponse(
+            "set_body_contract",
+            "set_body takes the instructions after 'entry:', the final 'ret' included; the "
+            "'define' header, braces, declarations, globals, types and attributes stay with "
+            "the module");
+      }
+    }
     // Splice the new body into printed text and reparse the whole module, so
     // the result is an ordinary parse rather than surgery on a live module.
     // The search runs over our own output, where a definition opens with

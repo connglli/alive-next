@@ -14,7 +14,12 @@ const Ref = Type.String({
 });
 const Where = Type.Union([Type.Literal("before"), Type.Literal("after")]);
 const Insts = Type.Array(Type.String(), {
-  description: "Instruction text, as it would be written in the body.",
+  description:
+    "Instruction text, as it would be written in the body. Instructions only: a snippet may not carry a terminator, since the block's own stays in place.",
+});
+const Body = Type.String({
+  description:
+    'The instruction lines of the body, one per line as they follow "entry:", the final "ret" included. Nothing else: no "define" header, no label, no braces, no declarations, globals or attributes; the signature and the rest of the module stay. Example: "  %n = mul i32 %x, %y\\n  ret i32 %n".',
 });
 
 export const Op = Type.Union(
@@ -22,7 +27,13 @@ export const Op = Type.Union(
     Type.Object({ op: Type.Literal("swap"), a: Ref, b: Ref }),
     Type.Object({ op: Type.Literal("move"), v: Ref, where: Where, w: Ref }),
     Type.Object({ op: Type.Literal("substitute"), a: Ref, b: Ref }),
-    Type.Object({ op: Type.Literal("replace"), v: Ref, insts: Insts }),
+    Type.Object(
+      { op: Type.Literal("replace"), v: Ref, insts: Insts },
+      {
+        description:
+          "Replace one non-terminator definition with these instructions. The value's uses are rewired to the last of them, which must have the value's type.",
+      },
+    ),
     Type.Object({ op: Type.Literal("insert"), where: Where, w: Ref, insts: Insts }),
     Type.Object({ op: Type.Literal("erase"), v: Ref, cascade: Type.Optional(Type.Boolean()) }),
     Type.Object({ op: Type.Literal("commute"), v: Ref }),
@@ -33,7 +44,13 @@ export const Op = Type.Union(
       ext: Type.Optional(Type.Union([Type.Literal("zext"), Type.Literal("sext")])),
     }),
     Type.Object({ op: Type.Literal("dedup"), a: Ref, b: Ref }),
-    Type.Object({ op: Type.Literal("set_body"), body: Type.String() }),
+    Type.Object(
+      { op: Type.Literal("set_body"), body: Body },
+      {
+        description:
+          "Replace the whole body (everything between the 'entry:' label and the closing brace), and nothing else.",
+      },
+    ),
     Type.Object({
       op: Type.Literal("attrs"),
       fn: Type.String(),

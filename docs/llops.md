@@ -242,6 +242,8 @@ A request that asks for a condition and a bundle at once produces two assumes, b
 | `named_type` | a snippet names a type it cannot declare |
 | `snippet_parse_error` | the snippet or the new body does not parse |
 | `empty_snippet` | the snippet defines no instructions |
+| `snippet_terminator` | a snippet carries a terminator; the block's own stays |
+| `set_body_contract` | a set_body body is module text, not the body's instructions |
 
 ## Building and testing
 
