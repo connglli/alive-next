@@ -1,10 +1,18 @@
 # AGENTS.md — the documentation standard
 
-How to write the prose that stays: the documents under `docs/`, the header comments that explain a design, the notes under [.agents/notes/](../.agents/notes/README.md), and the commit messages that record a change. [AGENTS.md](../AGENTS.md) owns the engineering rules; this file owns the writing.
+How to write the prose that stays: the documents under `docs/`, the header comments that explain a design, the notes under [.agents/notes/](../.agents/notes/), and the commit messages that record a change. [AGENTS.md](../AGENTS.md) owns the engineering rules; this file owns the writing.
 
 ## Where a fact belongs
 
 One fact, one home. A second copy is how the two drift apart.
+
+* [docs/design.md](./design.md) holds the conceptual model and semantic mechanisms: what a program, goal, step, transaction, and certificate are; the core principle that the untrusted agent proposes while sound checkers certify; decomposition via outlining and step narrowing; interface strengthening; and argument assumptions.
+* [docs/implementation.md](./implementation.md) holds the physical architecture and execution details: the TypeScript/C++ language split; toolchain layout and external checkers (alive-tv, llubi); state on disk under `sessions/<id>/` and `trajectory.jsonl`; the certificate package format and replay algorithm in `check.py`; the visualizer; configuration precedence; and build targets in Makefile.
+* [docs/llops.md](./llops.md) holds the contract for the native C++ LLVM binary: the JSON-over-stdin/stdout protocol, exit codes, supported straightline program shape, value reference syntax (`%slot`, `%name`, `#index`), and every subcommand (`validate`, `canon`, `analyze`, `outline`, `inline`, `harness`, `edit`, `opt`).
+* [docs/agent.md](./agent.md) holds the Pi agent wiring and runtime: custom tool registration and name prefixes (`run_`, `goal_`, `tx_`, `tree_`), sandbox confinement, execution model, session lifecycle, budget enforcement, system prompt, and provider or model configuration.
+* [config.example.jsonc](../config.example.jsonc) holds the template for machine-local settings: toolchain locations, timeouts, and solver options.
+* [.agents/notes/](../.agents/notes/) holds ephemeral rationale and design explorations: trade-off analyses in `designs/`, implementation plans in `implementations/`, and change records in `commits/` that do not belong in durable documentation.
+* Source files and tests hold the live implementation, type definitions, and invariants: code comments explain why rather than what, and test suites define executable contracts for components.
 
 ## Writing rules
 
@@ -40,7 +48,7 @@ Sentence case headers. Plain `*` bullets, no emoji (unless in the top-level READ
 
 No `* **Header:** description` lists. Tables only where the data is tabular: two facts are a sentence.
 
-Code blocks carry RefractIR, a shell invocation, or a pipeline sketch, and have to be true. A `.sir` snippet is something a reader will paste into `symiri`.
+Code blocks carry LLVM IR, JSON payloads, a shell invocation, or a pipeline sketch, and have to be true. An IR snippet is something a reader will paste into `llops` or `alive-tv`.
 
 Link with relative paths that resolve, as [docs/design.md](./design.md), never a bare filename.
 

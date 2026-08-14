@@ -13,7 +13,6 @@ DEPS := scripts/depman.sh
 # and the agent reads the same two places. Asking it here rather than repeating
 # the rule is what keeps a build and a run pointed at one directory.
 TOOLCHAIN := $(shell $(DEPS) toolchain)
-PRECOMMIT := $(CURDIR)/.venv/bin/pre-commit
 export TOOLCHAIN JOBS
 # bun and uv are installed by their own installers, which put them here and
 # leave PATH to the shell profile; a make run right after one of them installs
@@ -24,7 +23,7 @@ LLOPS_BUILD := $(TOOLCHAIN)/llops/build
 
 .PHONY: help install-deps deps-status deps-llvm deps-alive2 deps-llubi deps-bun \
         deps-js deps-uv deps-py deps-dev llops test-llops engine test-engine test examples \
-        cert visualize test-scripts check clean agent
+        cert test-scripts clean
 
 help:
 	@echo "dependencies"
@@ -42,10 +41,7 @@ help:
 	@echo "  test           run every test suite"
 	@echo "  examples       prove the example scenarios, into sessions/"
 	@echo "                 (SCENARIO=<name> runs one of them)"
-	@echo "  visualize      render SESSION=sessions/<id> as one HTML page"
-	@echo "  agent          prove SRC=a.ll TGT=b.ll with the configured model"
 	@echo "  cert           write the certificate SESSION=sessions/<id> earned"
-	@echo "  check          run every hook over every file"
 	@echo ""
 	@echo "cleaning"
 	@echo "  clean          remove the llops build tree"
@@ -95,23 +91,12 @@ test-engine: deps-js
 examples: deps-js
 	cd engine && bun run examples $(SCENARIO)
 
-# One pair, proved by the model the configuration names.
-agent: deps-js
-	@test -n "$(SRC)" -a -n "$(TGT)" || { echo "usage: make agent SRC=a.ll TGT=b.ll"; exit 2; }
-	cd engine && bun run agent $(abspath $(SRC)) $(abspath $(TGT))
-
 # The certificate a verified session earned, written into the session.
 cert: deps-js
 	@test -n "$(SESSION)" || { echo "usage: make cert SESSION=sessions/<id>"; exit 2; }
 	cd engine && bun run cert ../$(SESSION)
 
 # --- scripts -----------------------------------------------------------------
-# SESSION names a directory under sessions/; the page lands beside its
-# trajectory.
-visualize:
-	@test -n "$(SESSION)" || { echo "usage: make visualize SESSION=sessions/<id>"; exit 2; }
-	python3 scripts/visualize.py $(SESSION)
-
 # check.py replays a certificate with alive-tv and llops and nothing of ours,
 # so its tests build packages and bend them rather than running the framework.
 test-scripts:
@@ -123,7 +108,7 @@ test: test-llops test-engine test-scripts
 
 # .pre-commit-config.yaml is the one place that says what is checked and with
 # which upstream tool. The hook sees staged files; this sweeps the whole tree.
-check: deps-dev engine
+precommit-check: deps-dev engine
 	@$(PRECOMMIT) run --all-files
 
 clean:

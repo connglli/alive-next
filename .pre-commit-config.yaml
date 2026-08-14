@@ -1,4 +1,4 @@
-# What runs before a commit, and what `make check` runs over the whole tree.
+# What runs before a commit, and what pre-commit runs over the whole tree.
 # Every hook comes from upstream at a pinned revision, so this file is the one
 # place that says what is checked; `pre-commit autoupdate` bumps the pins in a
 # reviewed diff.

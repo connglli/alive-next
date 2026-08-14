@@ -103,13 +103,13 @@ Event kinds:
 
 ## The agent
 
-`engine/agent/` is the one part of the engine that drives a model, and nothing verification-critical is in it: a bug here spends tokens and produces no proof, and cannot produce a wrong one. `make agent SRC=a.ll TGT=b.ll` proves one pair with the configured model, writing the session directory an example writes.
+`engine/agent/` is the one part of the engine that drives a model, and nothing verification-critical is in it: a bug here spends tokens and produces no proof, and cannot produce a wrong one. `bun run agent a.ll b.ll` proves one pair with the configured model, writing the session directory an example writes.
 
 The tool surface is stated rather than discovered. Pi's defaults are dropped, the allowlist names every tool that exists, ours arrive as custom tools, and the resource loader is told to read no extensions, skills, prompts, themes or context files from the machine, so what a run can do is what `agent.ts` says and not what is installed beside it. Tools run sequentially, because they mutate one goal tree. The shell and the file tools are built for the run's scratch directory and confined to it (`tools/sandbox.ts`).
 
 The loop stops on a verdict or on the budget. A tool that settles the root sets Pi's `terminate` hint, and the same test runs again after the turn, since Pi honours the hint only when every result in a batch carries it. The budget is `--max-steps` and `--max-seconds`, unbounded when neither is given, and running out is not a failure: "unknown" is one of the three outputs.
 
-`make agent` opens Pi's TUI, which is also where the model and the thinking level are steered from, and it is the only way a run is drawn. Drawing belongs to the entry point rather than to `agent.ts`, which builds a session runtime and stays quiet, so a caller with a screen of its own can draw the same events differently, and one with no screen drives `createAgent`'s `prove` instead.
+`bun run agent` opens Pi's TUI, which is also where the model and the thinking level are steered from, and it is the only way a run is drawn. Drawing belongs to the entry point rather than to `agent.ts`, which builds a session runtime and stays quiet, so a caller with a screen of its own can draw the same events differently, and one with no screen drives `createAgent`'s `prove` instead.
 
 What the model said reaches `trajectory.jsonl` as `message` entries and compaction as an `auto` entry. Its tool calls are already there, since every tool of ours writes itself through the session and Pi's own arrive inside the assistant message.
 
@@ -139,7 +139,7 @@ A refuted run's manifest is a version, the verdict, the root goal, the toolchain
 
 ## visualize.py
 
-`scripts/visualize.py`, Python standard library only. `make visualize SESSION=sessions/<id>` reads a session directory and writes `session.html` beside its trajectory: no server, and the trajectory, every program a goal held and where each goal stood after each event are embedded in the page.
+`scripts/visualize.py`, Python standard library only. `python3 scripts/visualize.py sessions/<id>` reads a session directory and writes `session.html` beside its trajectory: no server, and the trajectory, every program a goal held and where each goal stood after each event are embedded in the page.
 
 The timeline runs down the side, one line per move, with a tool call and its result on the same line. A switch per tool and per other event kind hides what is not being read, and arrow keys, a click or the scrubber move through it. Moving to a line selects the pair it is about: the one that move produced, or the one held by the goal it names.
 
@@ -163,7 +163,7 @@ This split is purely ergonomic, never a correctness question: `run_start` snapsh
 
 ## Build system
 
-The `Makefile` is the entry point and owns nothing else: it names targets and delegates. One component, one pair of targets, so `make llops` builds llops and `make test-llops` tests it, and a component added later brings its own pair. `make test` runs every suite, `make check` runs every hook over every file, and `make help` lists the lot.
+The `Makefile` is the entry point and owns nothing else: it names targets and delegates. One component, one pair of targets, so `make llops` builds llops and `make test-llops` tests it, and a component added later brings its own pair. `make test` runs every suite, and `make help` lists the lot.
 
 - `llops/`: CMake with `find_package(LLVM)`. `make llops` configures into `<toolchain>/llops/build` against the toolchain's LLVM and builds there, so which LLVM a binary belongs to is visible from where it sits.
 - `engine/`: bun throughout: `bun install`, `bun run`, `bun test`. Bun runs TypeScript directly, so there is no build step and `make engine` is the typecheck, `tsc --noEmit`.
@@ -175,7 +175,7 @@ The `Makefile` is the entry point and owns nothing else: it names targets and de
 
 The checks are not ours. [pre-commit](https://pre-commit.com) runs them, and `.pre-commit-config.yaml` is the one place that says which upstream tool checks what, each pinned to a revision that `pre-commit autoupdate` bumps in a reviewed diff: clang-format for C++, biome for TypeScript and JSON, ruff for Python, shellcheck and shfmt for shell, whitespace and syntax hooks for the rest, and gitlint for commit messages against the rules in [CLAUDE.md](../CLAUDE.md), with `.gitlint` holding the settings. The clang-format is the one that ships with the LLVM version we pin, so the formatter and the compiler agree.
 
-The hooks are part of the dev environment, so `make deps-dev` provisions both: the tools, from `uv.lock`, and the hooks in this clone. A hook that rewrites a file fails the commit with the fix already applied, so the loop is review, stage, commit again. The hooks see staged files only; `make check` is the same set over the whole tree, which is what CI runs.
+The hooks are part of the dev environment, so `make deps-dev` provisions both: the tools, from `uv.lock`, and the hooks in this clone. A hook that rewrites a file fails the commit with the fix already applied, so the loop is review, stage, commit again. The hooks see staged files only; `pre-commit run --all-files` is the same set over the whole tree, which is what CI runs.
 
 ### Dependencies
 

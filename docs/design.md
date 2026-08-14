@@ -4,25 +4,25 @@ Agent-driven, alive2-certified translation validation for large LLVM IR programs
 
 ## Problem
 
-Translation validation checks that a target program (RHS) is a refinement of a source program (LHS). alive2 is the standard tool for LLVM, but it sends the whole problem to an SMT solver in one query, so it does not scale to large programs. alive-next keeps alive2 as the checker but uses an agent to break the problem into pieces that alive2 can handle.
+Translation validation checks that a target program (RHS) is a refinement of a source program (LHS). alive2 is the standard tool for LLVM, but it sends the whole problem to an SMT solver in one query, so it does not scale to large programs. alive-next keeps alive2 as the trusted checker and builds an **interactive translation validation** framework, analogous to interactive theorem proving, where a proof writer searches for a proof and the framework emits an independently replayable certificate.
 
 ## Insight
 
-The approach rests on two observations. Each one turns a single big validation problem into many small ones, and they attack orthogonal dimensions of "big".
+The approach structures translation validation as an interactive proof search over three complementary dimensions:
 
-**1. Compositional reasoning shrinks the *size* of each check.** A large program can be cut into components, each validated separately. For the pieces to compose back into a whole-program result, the interface between adjacent components must line up: whatever the first component guarantees at the cut (its post-condition) is exactly what the second component may assume (its pre-condition). If every component pair is validated and every interface is justified, the whole program is validated. Each check now covers a fragment instead of the whole program, which is exactly what the SMT solver needs.
+**1. Compositional/Hoare-style reasoning shrinks the *size* of each check.** A large program can be cut into components, each validated separately. For the pieces to compose back into a whole-program result, the interface between adjacent components must line up: whatever the first component guarantees at the cut (its post-condition) is exactly what the second component may assume (its pre-condition). If every component pair is validated and every interface is justified, the whole program is validated. Each check now covers a fragment instead of the whole program, which is exactly what the SMT solver needs.
 
 **2. Refinement is transitive, so a *chain of small rewrites* shrinks the semantic gap.** Instead of proving LHS refines to RHS in one step, we transform LHS step by step, the same way a compiler applies a sequence of local, semantics-preserving transformations, until it becomes RHS. If every step in the chain is a refinement, the composition is a refinement. Each step is a small, local change, so validating one step is far easier than validating the end-to-end translation. Analyses (known bits, ranges, aliasing) supply the facts that justify individual steps, just as they do inside a compiler.
 
 The two combine naturally: decomposition cuts the program into chunks small enough to check, and rewriting closes the semantic distance within and across chunks, including massaging LHS until cut points that match RHS exist at all. What makes the combination hard in practice is search: where to cut, which rewrite to apply next, which facts to establish first. That search problem is what we hand to an agent. The correctness problem stays with the checkers, which is the subject of the next section.
 
-## Core principle: agent proposes, checker certifies
+## Core principle: proof writer proposes, checker certifies
 
-The agent is entirely untrusted. It decides *what* to try: where to cut the program, which rewrites to apply, which interface facts to add, which counterexample candidates to test. Nothing the agent does can break soundness, because every step must pass through a certifying check before it counts:
+The proof writer (human or agents) is entirely untrusted. It decides *what* to try: where to cut the program, which rewrites to apply, which interface facts to add, which counterexample candidates to test. Nothing the proof writer does can break soundness, because the framework strictly verifies every decomposition step, subproof, and rewrite against LLVM's operational semantics before it counts:
 
-- Rewrite steps are validated by alive2 (or applied via pre-proved rules).
-- Interface facts are validated by alive2 as annotation steps.
-- Counterexamples are validated by concrete execution replay.
+* Rewrite steps are validated by alive2 (or applied via pre-proved rules).
+* Decomposition and interface facts are validated by alive2 through faithful outlining and call-site assertions.
+* Counterexamples are validated by concrete execution replay under llubi.
 
 A wrong proposal wastes time; it never produces a wrong certificate. Since refinement is transitive, a chain of certified steps from LHS to RHS certifies the whole translation.
 
