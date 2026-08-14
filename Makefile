@@ -13,6 +13,7 @@ DEPS := scripts/depman.sh
 # and the agent reads the same two places. Asking it here rather than repeating
 # the rule is what keeps a build and a run pointed at one directory.
 TOOLCHAIN := $(shell $(DEPS) toolchain)
+PRECOMMIT := $(CURDIR)/.venv/bin/pre-commit
 export TOOLCHAIN JOBS
 # bun and uv are installed by their own installers, which put them here and
 # leave PATH to the shell profile; a make run right after one of them installs

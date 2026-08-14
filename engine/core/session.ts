@@ -531,5 +531,6 @@ function scratch(result: Transaction | EditResult): unknown {
     return { gid: result.gid, side: result.side, from: result.from, ops: result.ops.length };
   }
   if (result.kind === "applied") return { kind: "applied", ops: result.ops };
+  if (result.kind === "unchanged") return { kind: "unchanged", ops: result.ops };
   return { kind: "refused", code: result.code, message: result.message };
 }

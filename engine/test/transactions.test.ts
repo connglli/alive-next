@@ -96,7 +96,9 @@ describe.skipIf(!built)("transactions", () => {
     transactions.begin(goals, "g1", "src");
 
     const edited = await transactions.edit({ op: "commute", v: "%2" });
-    if (edited.kind !== "applied") throw new Error(edited.message);
+    if (edited.kind !== "applied") {
+      throw new Error(edited.kind === "refused" ? edited.message : "edit unchanged");
+    }
     expect(edited.text).toContain("mul i32 %1, %0");
     // The store still holds only what it held: scratch is not a program yet.
     expect(store.has(before)).toBe(true);
