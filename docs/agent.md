@@ -18,7 +18,7 @@ The prefixes stop at this layer. The session's moves keep design.md's bare names
 
 The eleven edit operations are one `tx_edit` tool taking an `op` field rather than eleven tools, so they do not crowd out the tools that move a proof forward. llops validates the op and its arguments, so the tool passes them through. The op union is declared with a top-level `type: "object"` beside it: every branch is an object already, but a provider that validates a tool's schema reads the top level and refuses a bare `anyOf` before the run has said anything.
 
-A tool that fails throws, and Pi reports a thrown error to the model as a tool error, so a failure carries the diagnostic the agent needs to try something else. A rejected commit, a failed check and a refused edit are ordinary results, not errors: they say what happened and the run continues.
+A tool that fails throws, and Pi reports a thrown error to the model as a tool error, so a failure carries the diagnostic the agent needs to try something else. A rejected commit, a failed check and a refused edit are ordinary results, not errors: they say what happened and the run continues. A rejected commit by default aborts the transaction, when not (`imm_abort=False`), it leaves its transaction open on the same scratch program, where `tx_edit` may refine it and `tx_abort` discards it.
 
 A tool result is the whole of what the agent knows, since there is no state it can see between calls. Two rules follow, and they are the same rule about what a result is worth carrying.
 

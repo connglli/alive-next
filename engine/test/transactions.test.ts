@@ -138,7 +138,7 @@ describe.skipIf(!built)("transactions", () => {
     expect(transactions.open()).toBeUndefined();
   });
 
-  test("a refused commit leaves the head alone and closes the session", async () => {
+  test("a refused commit leaves the head alone and closes by default", async () => {
     const steps = new Steps(store, new FakeChecker(["incorrect"]));
     const transactions = new Transactions(store, llops);
     const goals = await tree();
@@ -150,8 +150,23 @@ describe.skipIf(!built)("transactions", () => {
 
     expect(result.kind).toBe("refused");
     expect(head(goal(goals, "g1"), "src")).toBe(before);
-    // The answer is about the pair, so there is nothing to keep editing from.
     expect(transactions.open()).toBeUndefined();
+  });
+
+  test("a refused commit can keep the scratch open", async () => {
+    const steps = new Steps(store, new FakeChecker(["incorrect"]));
+    const transactions = new Transactions(store, llops);
+    const goals = await tree();
+
+    transactions.begin(goals, "g1", "src");
+    await transactions.edit({ op: "commute", v: "%2" });
+    const result = await transactions.commit(goals, steps, {}, false);
+
+    expect(result.kind).toBe("refused");
+    expect(transactions.open()).toMatchObject({ gid: "g1", side: "src", ops: [{ op: "commute" }] });
+    const edited = await transactions.edit({ op: "commute", v: "%3" });
+    expect(edited).toMatchObject({ kind: "applied", ops: 2 });
+    expect(transactions.abort().ops).toHaveLength(2);
   });
 
   test("committing with no edits is refused without a solver", async () => {
@@ -164,6 +179,7 @@ describe.skipIf(!built)("transactions", () => {
 
     expect(result.kind).toBe("refused");
     expect(checker.calls).toHaveLength(0);
+    expect(transactions.open()).toBeUndefined();
   });
 
   test("aborting throws the scratch away", async () => {

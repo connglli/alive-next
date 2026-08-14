@@ -44,6 +44,19 @@ class YesMan implements Checker {
   }
 }
 
+/** A checker that rejects every candidate, for transaction refusal paths. */
+class NoMan implements Checker {
+  async check(): Promise<CheckResult> {
+    return {
+      outcome: "incorrect",
+      detail: "counterexample",
+      invocation: { binary: "no-man", flags: [], timeoutMs: 0 },
+      stdout: "",
+      ms: 0,
+    };
+  }
+}
+
 /** The two values the cut's suffix uses, each crossing as itself. */
 const SAME = { "%0": "%0", "%1": "%1" };
 
@@ -76,7 +89,12 @@ afterEach(() => {
 
 /** Call one tool the way Pi does, schema first. */
 async function call(name: string, args: unknown): Promise<string> {
-  const tool = surface.find((candidate) => candidate.name === name);
+  return callFrom(surface, name, args);
+}
+
+/** Call through a supplied tool surface, after checking the public schema. */
+async function callFrom(tools: ToolDefinition[], name: string, args: unknown): Promise<string> {
+  const tool = tools.find((candidate) => candidate.name === name);
   if (!tool) throw new Error(`no tool ${name}`);
   expect(Check(tool.parameters, args)).toBe(true);
   const result = await tool.execute(`t-${name}`, args, undefined, undefined, undefined as never);
@@ -189,6 +207,31 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(committed).toContain("certified, head is p2");
     expect(committed).not.toContain("window");
     expect(await call("goal_show", { ref: "g1" })).toContain("(was p1)");
+  });
+
+  test("a refused commit keeps its scratch open", async () => {
+    const refusing = await Session.start({
+      dir: join(dir, "refusing"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new NoMan(),
+      interp: noRun,
+    });
+    const refusingTools = createProofAssistantTools(refusing);
+
+    await callFrom(refusingTools, "tx_begin", { gid: "g1", side: "src" });
+    await callFrom(refusingTools, "tx_edit", { op: "commute", v: "%2" });
+    const refused = await callFrom(refusingTools, "tx_commit", {});
+
+    expect(refused).toContain("transaction remains open");
+    expect(await callFrom(refusingTools, "run_status", {})).toContain(
+      "editing g1 src, 1 ops so far",
+    );
+    expect(await callFrom(refusingTools, "tx_edit", { op: "commute", v: "%2" })).toContain(
+      "applied, 2 so far",
+    );
+    expect(await callFrom(refusingTools, "tx_abort", {})).toContain("dropped 2 ops");
   });
 
   test("an optimizer pass rewrites the scratch like an edit", async () => {

@@ -9,7 +9,7 @@ export function createCommitTool(session: Session) {
     name: "tx_commit",
     label: "Commit",
     description:
-      "Validate the open transaction with alive2, in the direction the side implies, and advance the head if it holds. On refusal the head does not move and the counterexample comes back as a hint. The goal's new pair is then checked once on a small budget, so a step that finishes a chain discharges the goal here.",
+      "Validate the open transaction with alive2, in the direction the side implies, and advance the head if it holds. On refusal the head does not move and the scratch stays open, so edit it further or discard it with tx_abort. A counterexample comes back as a hint. The goal's new pair is then checked once on a small budget, so a step that finishes a chain discharges the goal here.",
     parameters: Type.Object({
       window: Type.Optional(
         Type.Object({
@@ -25,7 +25,7 @@ export function createCommitTool(session: Session) {
       ),
     }),
     execute: async (_id, args) => {
-      const step = await session.commit(args);
+      const step = await session.commit(args, /*imm_abort=*/ false);
       if (step.kind === "refused") {
         // The budget is part of the refusal: a timeout says how much was
         // spent failing, and a refusal that spent nothing says that instead.
@@ -43,7 +43,7 @@ export function createCommitTool(session: Session) {
         return toolResultFrom(
           session,
           false,
-          `refused${budget}: ${step.check.detail || step.check.outcome}${part}`,
+          `refused${budget}: ${step.check.detail || step.check.outcome}${part}; transaction remains open`,
           step,
         );
       }

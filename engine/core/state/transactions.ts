@@ -5,9 +5,9 @@
 // after pair is certified as a single step, which is why a checked rewrite
 // needs no concept of its own: it is a transaction with one edit.
 //
-// The scratch never reaches the store. It is held here until commit, so a
-// program only becomes something the certificate can refer to once alive2 has
-// agreed to it. A run resumed from its trajectory therefore starts with no
+// The scratch never reaches the store. A caller chooses whether a rejected
+// commit discards it; certification is always the only way it reaches the
+// store. A run resumed from its trajectory therefore starts with no
 // transaction open, and the log says one was.
 //
 // One transaction at a time, which is what lets edit, commit and abort take no
@@ -124,9 +124,9 @@ export class Transactions {
   }
 
   /**
-   * Certify the whole session as one step. The head advances only if alive2
-   * agrees; either way the transaction is over, because a failed commit is an
-   * answer about the pair rather than a state to keep editing from.
+   * Certify the scratch program as one step. `imm_abort` keeps the core's
+   * one-shot behavior by discarding scratch before validation; callers that
+   * set it false retain rejected candidates for further edits.
    */
   async commit(
     tree: Tree,
@@ -135,9 +135,10 @@ export class Transactions {
       window?: Window;
       preconditions?: Record<string, Record<string, unknown>>;
     },
+    imm_abort: boolean = true,
   ): Promise<StepResult> {
     const transaction = this.require();
-    this.current = undefined;
+    if (imm_abort) this.current = undefined;
     // A commit is the step that is usually local, so it is the one that looks
     // for the window it touched: a rewrite of two instructions should not be
     // asked as a question about the whole function.
@@ -163,10 +164,12 @@ export class Transactions {
         },
       };
     }
-    return steps.step(tree, transaction.gid, transaction.side, transaction.text, {
+    const result = await steps.step(tree, transaction.gid, transaction.side, transaction.text, {
       narrowed,
       preconditions: options?.preconditions,
     });
+    if (!imm_abort && result.kind === "certified") this.current = undefined;
+    return result;
   }
 
   /** Throw the scratch away. Nothing was certified, so nothing is undone. */

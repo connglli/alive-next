@@ -351,23 +351,26 @@ export class Session {
     return this.act("edit", op, () => this.editing.edit(op), scratch);
   }
 
-  /** Fold one instruction of the scratch with llops' own simplifier. */
-  opt(op: OptOp): Promise<EditResult> {
-    return this.act("opt", op, () => this.editing.opt(op), scratch);
-  }
-
   /** Certify the open transaction as one step. */
-  commit(options?: {
-    window?: Window;
-    preconditions?: Record<string, Record<string, unknown>>;
-  }): Promise<StepResult> {
-    return this.act("commit", { ...options }, (tree) =>
-      this.editing.commit(tree, this.steps, options),
+  commit(
+    options?: {
+      window?: Window;
+      preconditions?: Record<string, Record<string, unknown>>;
+    },
+    imm_abort: boolean = true,
+  ): Promise<StepResult> {
+    return this.act("commit", { ...options, imm_abort }, (tree) =>
+      this.editing.commit(tree, this.steps, options, imm_abort),
     );
   }
 
   abort(): Promise<Transaction> {
     return this.act("abort", {}, async () => this.editing.abort(), scratch);
+  }
+
+  /** Fold one instruction of the scratch with llops' own simplifier. */
+  opt(op: OptOp): Promise<EditResult> {
+    return this.act("opt", op, () => this.editing.opt(op), scratch);
   }
 
   split(gid: string, srcCut: Ref, tgtCut: Ref, valueMap: Record<Ref, Ref>): Promise<SplitResult> {
