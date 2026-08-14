@@ -9,7 +9,7 @@ export function createCommitTool(session: Session) {
     name: "tx_commit",
     label: "Commit",
     description:
-      "Validate the open transaction with alive2, in the direction the side implies, and advance the head if it holds. On refusal the head does not move and the scratch stays open, so edit it further or discard it with tx_abort. A counterexample comes back as a hint. The goal's new pair is then checked once on a small budget, so a step that finishes a chain discharges the goal here.",
+      "Validate the open transaction with alive2, in the direction the side implies, and advance the head if it holds. On refusal the head does not move and the scratch stays open, so edit it further or discard it with tx_abort. A counterexample comes back as a hint. The goal's new pair is then eagerly checked once on a small budget, so a step that finishes a chain discharges the goal here.",
     parameters: Type.Object({
       window: Type.Optional(
         Type.Object({
@@ -47,7 +47,23 @@ export function createCommitTool(session: Session) {
           step,
         );
       }
-      const eager = step.eager ? `, the pair is ${step.eager.outcome}` : "";
+      let eager = "";
+      if (step.eager) {
+        const eagerOutcome =
+          step.eager.outcome === "correct"
+            ? "proved"
+            : step.eager.outcome === "incorrect"
+              ? "refuted"
+              : "unknown";
+        const eagerBudget = step.eager.invocation.timeoutMs;
+        const eagerMs = step.eager.ms;
+        const eagerDetail =
+          step.eager.outcome === "incorrect" && step.eager.detail ? `\n${step.eager.detail}` : "";
+        eager =
+          eagerOutcome === "proved"
+            ? `, the pair is proved in ${eagerMs}ms (${eagerBudget}ms budget)`
+            : `, the pair is ${eagerOutcome} (${eagerMs}ms, ${eagerBudget}ms budget)${eagerDetail}`;
+      }
       return toolResultFrom(
         session,
         true,

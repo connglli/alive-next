@@ -93,6 +93,12 @@ export interface StepOptions {
   eager?: boolean;
 }
 
+export interface CheckHistoryEntry {
+  outcome: "proved" | "refuted" | "unknown";
+  budgetMs: number;
+  ms: number;
+}
+
 /** A step that landed, or the reason it did not. */
 export type StepResult =
   | {
@@ -119,6 +125,11 @@ export interface CheckGoalResult {
   check: CheckResult;
   effects: Effect[];
   /**
+   * The most recent check recorded for this exact (src, tgt, flags) pair before
+   * this query ran, present when the pair has been checked earlier in the session.
+   */
+  prior?: CheckHistoryEntry;
+  /**
    * The budget that was asked for, and only when the cap cut it down to a
    * smaller one; absent when the check ran on what it was asked for. A timeout
    * on the cap is a different situation from a timeout on the whole of what
@@ -128,6 +139,8 @@ export interface CheckGoalResult {
 }
 
 export class Steps {
+  private readonly history = new Map<string, CheckHistoryEntry>();
+
   constructor(
     private readonly store: Store,
     private readonly checker: Checker,
@@ -142,20 +155,29 @@ export class Steps {
    */
   async checkGoal(tree: Tree, gid: string, timeoutMs?: number): Promise<CheckGoalResult> {
     const goal = workable(tree, gid);
+    const srcHash = head(goal, "src");
+    const tgtHash = head(goal, "tgt");
+    const flags = askedUnder(tree, gid);
+    const key = historyKey(srcHash, tgtHash, flags);
+    const prior = this.history.get(key);
+
     const askedMs = timeoutMs ?? this.timeouts.checkDefaultMs;
     const budgetMs = this.capped(askedMs);
-    const check = await this.checker.check(
-      this.store.get(head(goal, "src")),
-      this.store.get(head(goal, "tgt")),
-      { timeoutMs: budgetMs, flags: askedUnder(tree, gid) },
-    );
+    const check = await this.checker.check(this.store.get(srcHash), this.store.get(tgtHash), {
+      timeoutMs: budgetMs,
+      flags,
+    });
+    const outcome = goalOutcome(check.outcome);
+    this.history.set(key, { outcome, budgetMs, ms: check.ms });
+
     const result: CheckGoalResult = {
-      outcome: goalOutcome(check.outcome),
+      outcome,
       check,
       // Only execution certifies a counterexample, so a refutation changes
       // nothing here; marking a goal refuted is report_cex's business.
       effects: check.outcome === "correct" ? [{ effect: "proved", gid }] : [],
     };
+    if (prior) result.prior = prior;
     if (askedMs > budgetMs) result.cappedFromMs = askedMs;
     return result;
   }
@@ -174,11 +196,11 @@ export class Steps {
   ): Promise<StepResult> {
     const how = options.how ?? "checked";
     const goal = workable(tree, gid);
-    const before = this.store.get(head(goal, side));
+    const beforeText = this.store.get(head(goal, side));
     const after = await this.store.put(text);
     const afterText = this.store.get(after);
 
-    if (afterText === before) {
+    if (afterText === beforeText) {
       // Nothing moved, so there is nothing to certify and nothing to record.
       return { kind: "refused", check: unchanged() };
     }
@@ -194,7 +216,7 @@ export class Steps {
 
     if (narrowed && options.preconditions && this.llops) {
       const condResult = await this.tryConditionedWindow(
-        before,
+        beforeText,
         afterText,
         narrowed,
         options.preconditions,
@@ -220,7 +242,7 @@ export class Steps {
     // can refuse one.
     let check = local;
     if (check?.outcome !== "correct") {
-      const whole = await this.check(orient(side, before, afterText), {
+      const whole = await this.check(orient(side, beforeText, afterText), {
         timeoutMs: this.timeouts.alive2Ms,
         flags,
       });
@@ -256,11 +278,19 @@ export class Steps {
     // The pair has changed, so ask cheaply whether the goal is now discharged.
     // The pair is built here rather than read from the tree, which does not
     // know about this step until its effect is recorded.
+    const eagerSrcHash = side === "src" ? after : head(goal, "src");
+    const eagerTgtHash = side === "tgt" ? after : head(goal, "tgt");
+    const eagerKey = historyKey(eagerSrcHash, eagerTgtHash, flags);
     const eager = await this.checker.check(
-      side === "src" ? afterText : this.store.get(head(goal, "src")),
-      side === "tgt" ? afterText : this.store.get(head(goal, "tgt")),
+      this.store.get(eagerSrcHash),
+      this.store.get(eagerTgtHash),
       { timeoutMs: this.timeouts.eagerCheckMs, flags },
     );
+    this.history.set(eagerKey, {
+      outcome: goalOutcome(eager.outcome),
+      budgetMs: this.timeouts.eagerCheckMs,
+      ms: eager.ms,
+    });
     if (eager.outcome === "correct") effects.push({ effect: "proved", gid });
 
     return { kind: "certified", hash: after, effects, check, by, eager };
@@ -411,4 +441,8 @@ function unchanged(): CheckResult {
     stdout: "",
     ms: 0,
   };
+}
+
+function historyKey(src: Hash, tgt: Hash, flags: string[]): string {
+  return `${src}\0${tgt}\0${flags.join("\0")}`;
 }

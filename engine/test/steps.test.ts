@@ -376,4 +376,97 @@ describe("checking a goal", () => {
     expect(steps.budgets.eagerCheckMs).toBe(100);
     expect(steps.budgets.alive2Ms).toBe(DEFAULT_TIMEOUTS.alive2Ms);
   });
+
+  test("repeated checks on the same pair receive earlier check history", async () => {
+    const checker = new FakeChecker(["unknown", "correct"]);
+    const steps = new Steps(store, checker);
+    const t = await tree();
+
+    const first = await steps.checkGoal(t, "g1", 1000);
+    expect(first.outcome).toBe("unknown");
+    expect(first.prior).toBeUndefined();
+
+    const second = await steps.checkGoal(t, "g1", 5000);
+    expect(second.outcome).toBe("proved");
+    expect(second.prior).toEqual({
+      outcome: "unknown",
+      budgetMs: 1000,
+      ms: 1,
+    });
+  });
+
+  test("check history is invalidated when either program hash changes", async () => {
+    const checker = new FakeChecker(["unknown", "correct", "unknown"]);
+    const steps = new Steps(store, checker);
+    const t = await tree();
+
+    await steps.checkGoal(t, "g1", 1000);
+
+    // After stepping g1 src without eager check, g1 has a new src hash that has never been checked
+    const stepResult = await steps.step(t, "g1", "src", NEW, { eager: false });
+    if (stepResult.kind !== "certified") throw new Error("step failed");
+
+    // The new tree has the new head for g1 src
+    const newT = derive(
+      [
+        {
+          kind: "run_start",
+          src: await store.put(SRC),
+          tgt: await store.put(TGT),
+          config: {},
+          versions: {},
+        },
+        ...stepResult.effects.map((effect) => ({
+          kind: "tool_result",
+          id: "t1",
+          tool: "commit",
+          effects: [effect],
+          result: null,
+          ms: 1,
+        })),
+      ].map((e) => ({ ...e, time: 0, prev: "" }) as Entry),
+    );
+
+    const checkAfterStep = await steps.checkGoal(newT, "g1", 2000);
+    expect(checkAfterStep.prior).toBeUndefined();
+  });
+
+  test("an eager check records into history for subsequent direct checks", async () => {
+    const checker = new FakeChecker(["correct", "unknown", "correct"]);
+    const steps = new Steps(store, checker);
+    const t = await tree();
+
+    // Step g1 src to NEW. The eager check runs on (NEW, TGT) with outcome "unknown"
+    const stepResult = await steps.step(t, "g1", "src", NEW);
+    if (stepResult.kind !== "certified") throw new Error("step failed");
+
+    const newT = derive(
+      [
+        {
+          kind: "run_start",
+          src: await store.put(SRC),
+          tgt: await store.put(TGT),
+          config: {},
+          versions: {},
+        },
+        ...stepResult.effects.map((effect) => ({
+          kind: "tool_result",
+          id: "t1",
+          tool: "commit",
+          effects: [effect],
+          result: null,
+          ms: 1,
+        })),
+      ].map((e) => ({ ...e, time: 0, prev: "" }) as Entry),
+    );
+
+    // Direct check of g1 with the new pair should find the eager check in history
+    const directCheck = await steps.checkGoal(newT, "g1", 10000);
+    expect(directCheck.outcome).toBe("proved");
+    expect(directCheck.prior).toEqual({
+      outcome: "unknown",
+      budgetMs: DEFAULT_TIMEOUTS.eagerCheckMs,
+      ms: 1,
+    });
+  });
 });

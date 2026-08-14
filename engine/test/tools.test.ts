@@ -326,6 +326,111 @@ describe.skipIf(!built)("the tool layer", () => {
     // It settles nothing: the verdict still comes from the tree.
     expect(session.verdict).toBe("unknown");
   });
+
+  test("goal_check reports earlier check history on retry", async () => {
+    class SequenceChecker implements Checker {
+      constructor(private outcomes: ("correct" | "incorrect" | "unknown")[]) {}
+      async check(): Promise<CheckResult> {
+        const outcome = this.outcomes.shift() ?? "unknown";
+        return {
+          outcome,
+          detail: "",
+          invocation: {
+            binary: "seq-checker",
+            flags: [],
+            timeoutMs: outcome === "correct" ? 5000 : 1000,
+          },
+          stdout: "",
+          ms: 5,
+        };
+      }
+    }
+    const seqSession = await Session.start({
+      dir: join(dir, "seq-session"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new SequenceChecker(["unknown", "correct"]),
+      interp: noRun,
+    });
+    const seqTools = createProofAssistantTools(seqSession);
+
+    const first = await callFrom(seqTools, "goal_check", { gid: "g1", timeout_ms: 1000 });
+    expect(first).toContain("g1 unknown, 1000ms budget");
+    expect(first).not.toContain("earlier check");
+
+    const second = await callFrom(seqTools, "goal_check", { gid: "g1", timeout_ms: 5000 });
+    expect(second).toContain("earlier check: unknown on a 1000ms budget; g1 proved, 5000ms budget");
+  });
+
+  test("tx_commit surfaces eager check outcome with budget and elapsed time", async () => {
+    class EagerSeqChecker implements Checker {
+      constructor(private outcomes: ("correct" | "incorrect" | "unknown")[]) {}
+      async check(): Promise<CheckResult> {
+        const outcome = this.outcomes.shift() ?? "unknown";
+        return {
+          outcome,
+          detail: "",
+          invocation: { binary: "seq-checker", flags: [], timeoutMs: 3000 },
+          stdout: "",
+          ms: 7,
+        };
+      }
+    }
+    const eagerSession = await Session.start({
+      dir: join(dir, "eager-seq-session"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new EagerSeqChecker(["correct", "unknown"]),
+      interp: noRun,
+    });
+    const eagerTools = createProofAssistantTools(eagerSession);
+
+    await callFrom(eagerTools, "tx_begin", { gid: "g1", side: "src" });
+    await callFrom(eagerTools, "tx_edit", {
+      op: "replace",
+      v: "%2",
+      insts: ["%s = shl i32 %1, 3"],
+    });
+    const res = await callFrom(eagerTools, "tx_commit", {});
+    expect(res).toContain("certified, head is p2, the pair is unknown (7ms, 3000ms budget)");
+  });
+
+  test("tx_commit surfaces counterexample detail when eager check is refuted", async () => {
+    class EagerCexChecker implements Checker {
+      constructor(private outcomes: ("correct" | "incorrect" | "unknown")[]) {}
+      async check(): Promise<CheckResult> {
+        const outcome = this.outcomes.shift() ?? "unknown";
+        return {
+          outcome,
+          detail: outcome === "incorrect" ? "Example:\ni32 %x = 42" : "",
+          invocation: { binary: "seq-checker", flags: [], timeoutMs: 3000 },
+          stdout: "",
+          ms: 12,
+        };
+      }
+    }
+    const eagerSession = await Session.start({
+      dir: join(dir, "eager-cex-session"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new EagerCexChecker(["correct", "incorrect"]),
+      interp: noRun,
+    });
+    const eagerTools = createProofAssistantTools(eagerSession);
+
+    await callFrom(eagerTools, "tx_begin", { gid: "g1", side: "src" });
+    await callFrom(eagerTools, "tx_edit", {
+      op: "replace",
+      v: "%2",
+      insts: ["%s = shl i32 %1, 3"],
+    });
+    const res = await callFrom(eagerTools, "tx_commit", {});
+    expect(res).toContain("certified, head is p2, the pair is refuted (12ms, 3000ms budget)");
+    expect(res).toContain("Example:\ni32 %x = 42");
+  });
 });
 
 /**

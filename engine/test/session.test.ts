@@ -247,4 +247,44 @@ describe.skipIf(!built)("reading a session", () => {
     if (last?.kind !== "tool_result") throw new Error("no result was logged");
     expect(last.result).toEqual({ kind: "refused", code: refused.code, message: refused.message });
   });
+
+  test("session check surfaces check history on repeated checks", async () => {
+    class SeqChecker implements Checker {
+      private calls = 0;
+      async check(): Promise<CheckResult> {
+        this.calls++;
+        return {
+          outcome: this.calls === 1 ? "unknown" : "correct",
+          detail: "",
+          invocation: {
+            binary: "seq-checker",
+            flags: [],
+            timeoutMs: this.calls === 1 ? 1000 : 5000,
+          },
+          stdout: "",
+          ms: 10,
+        };
+      }
+    }
+    const run = await Session.start({
+      dir: join(dir, "session-check-hist"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new SeqChecker(),
+      interp: noRun,
+    });
+
+    const first = await run.check("g1", 1000);
+    expect(first.outcome).toBe("unknown");
+    expect(first.prior).toBeUndefined();
+
+    const second = await run.check("g1", 5000);
+    expect(second.outcome).toBe("proved");
+    expect(second.prior).toEqual({
+      outcome: "unknown",
+      budgetMs: 1000,
+      ms: 10,
+    });
+  });
 });

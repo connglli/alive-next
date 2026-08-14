@@ -25,12 +25,15 @@ export function createCheckTool(session: Session) {
       const budget = checked.cappedFromMs
         ? `${budgetMs}ms budget, capped from the ${checked.cappedFromMs}ms asked for`
         : `${budgetMs}ms budget`;
+      const prior = checked.prior
+        ? `earlier check: ${checked.prior.outcome} on a ${checked.prior.budgetMs}ms budget; `
+        : "";
       // Proved is the only outcome that advanced the run; a refutation is a
       // hint and a timeout is nothing at all.
       return toolResultFrom(
         session,
         checked.outcome === "proved",
-        `${gid} ${checked.outcome}, ${budget}${detail}`,
+        `${prior}${gid} ${checked.outcome}, ${budget}${detail}`,
         checked,
       );
     },
