@@ -21,6 +21,9 @@ export function createSplitTool(session: Session) {
     }),
     execute: async (_id, { gid, src_cut, tgt_cut, value_map }) => {
       const split = await session.split(gid, src_cut, tgt_cut, value_map);
+      if (split.kind === "editing") {
+        return toolResultFrom(session, false, `refused: ${split.message}`, split);
+      }
       if (split.kind === "refused") {
         return toolResultFrom(session, false, `refused, ${split.code}: ${split.message}`, split);
       }

@@ -231,6 +231,52 @@ describe.skipIf(!built)("reading a session", () => {
     expect(refused.message).toContain("a transaction is open");
   });
 
+  test("split refuses while the goal is being edited", async () => {
+    const run = await session();
+    await run.begin("g1", "src");
+    await run.edit({ op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
+
+    const refused = await run.split("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
+    expect(refused).toMatchObject({ kind: "editing" });
+    if (refused.kind !== "editing") throw new Error("unreachable");
+    expect(refused.message).toContain("a transaction is open on g1 src");
+    expect(run.tree.goals.get("g1")?.status).toBe("open");
+    expect((await run.status()).editing).toMatchObject({ gid: "g1", side: "src", ops: 1 });
+
+    const results = log(run).filter((entry) => entry.kind === "tool_result");
+    const splitResult = [...results].reverse().find((entry) => entry.tool === "split");
+    expect(splitResult).toMatchObject({ tool: "split", result: refused, effects: [] });
+  });
+
+  test("unsplit refuses while it would discard an edited child", async () => {
+    const run = await session();
+    const split = await run.split("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
+    if (split.kind !== "split") throw new Error(split.message);
+    await run.begin(split.children.callee, "tgt");
+
+    const refused = await run.unsplit("g1");
+    expect(refused).toMatchObject({ kind: "editing" });
+    if (refused.kind !== "editing") throw new Error("unreachable");
+    expect(refused.message).toContain(`a transaction is open on ${split.children.callee} tgt`);
+    expect(run.tree.goals.get("g1")?.status).toBe("split");
+    expect(run.tree.goals.has(split.children.callee)).toBe(true);
+  });
+
+  test("strengthen refuses while it would move an edited child", async () => {
+    const run = await session();
+    const split = await run.split("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
+    if (split.kind !== "split") throw new Error(split.message);
+    const before = await run.show(split.children.outer);
+    await run.begin(split.children.outer, "src");
+
+    const refused = await run.strengthen("g1", { 0: { noundef: true } });
+    expect(refused).toMatchObject({ kind: "editing" });
+    if (refused.kind !== "editing") throw new Error("unreachable");
+    expect(refused.message).toContain(`a transaction is open on ${split.children.outer} src`);
+    expect((await run.show(split.children.outer)).src.hash).toBe(before.src.hash);
+    expect((await run.status()).editing).toMatchObject({ gid: split.children.outer, side: "src" });
+  });
+
   test("a refused edit answers with the program it refused", async () => {
     const run = await session();
     await run.begin("g1", "src");

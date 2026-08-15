@@ -30,6 +30,12 @@ export interface Transaction {
   ops: (EditOp | OptOp)[];
 }
 
+/** A tree move cannot proceed until the open scratch is committed or aborted. */
+export interface EditingRefusal {
+  kind: "editing";
+  message: string;
+}
+
 /**
  * An edit that took, or the diagnostic llops refused it with.
  *
@@ -63,9 +69,19 @@ export class Transactions {
     return this.current;
   }
 
-  /** Whether a goal side is being edited, and so closed to other tools. */
-  isEditing(gid: string, side: Side): boolean {
-    return this.current?.gid === gid && this.current.side === side;
+  /** Whether a goal, or one side of it, is being edited and closed to other tools. */
+  isEditing(gid: string, side?: Side): boolean {
+    return this.current?.gid === gid && (side === undefined || this.current.side === side);
+  }
+
+  /** Whether undoing `gid`'s subtree would discard the open transaction. */
+  isEditingBelow(tree: Tree, gid: string): boolean {
+    if (!this.current) return false;
+    for (let goal = tree.goals.get(this.current.gid); goal; ) {
+      if (goal.id === gid) return true;
+      goal = goal.parent === undefined ? undefined : tree.goals.get(goal.parent);
+    }
+    return false;
   }
 
   begin(tree: Tree, gid: string, side: Side): Transaction {

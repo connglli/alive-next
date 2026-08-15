@@ -46,6 +46,7 @@ export type SplitResult =
       /** The name the outlined function has in both modules. */
       callee: string;
     }
+  /** A structural refusal from llops while outlining one side. */
   | { kind: "refused"; side: "src" | "tgt"; code: string; message: string };
 
 export class Splits {

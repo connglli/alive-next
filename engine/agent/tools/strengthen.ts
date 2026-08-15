@@ -20,6 +20,9 @@ export function createStrengthenTool(session: Session) {
     }),
     execute: async (_id, { gid, facts }) => {
       const stronger = await session.strengthen(gid, facts as Facts);
+      if (stronger.kind === "editing") {
+        return toolResultFrom(session, false, `refused: ${stronger.message}`, stronger);
+      }
       if (stronger.kind === "refused") {
         const said = stronger.explanation
           ? `\n\n${stronger.explanation}`

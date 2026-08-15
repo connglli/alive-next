@@ -38,7 +38,7 @@ export type StrengthenResult =
   | { kind: "strengthened"; effects: Effect[]; checks: CheckResult[] }
   | {
       kind: "refused";
-      /** Which half gave up, so the agent knows what it is looking at. */
+      /** Which validation phase gave up, so the agent knows what it is looking at. */
       phase: "assume" | "attribute";
       reason: string;
       /** Detailed diagnostic explanation for humans and agents. */

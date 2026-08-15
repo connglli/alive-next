@@ -53,7 +53,12 @@ import {
 import { canonWith, Store } from "./state/store.ts";
 import { type Facts, Strengthen, type StrengthenResult } from "./state/strengthen.ts";
 import { type Effect, type Entry, type Event, type Hash, Trajectory } from "./state/trajectory.ts";
-import { type EditResult, type Transaction, Transactions } from "./state/transactions.ts";
+import {
+  type EditingRefusal,
+  type EditResult,
+  type Transaction,
+  Transactions,
+} from "./state/transactions.ts";
 
 /** One side of a goal, as a reader needs it: what it is called and what it says. */
 export interface SideView {
@@ -76,6 +81,13 @@ export interface ProgramView {
 export type RevertResult =
   | { kind: "reverted"; effects: Effect[]; to: ProgramView }
   | { kind: "refused"; message: string };
+
+/** The cut was restored, or preserved because an open transaction needs a child. */
+export type UnsplitResult = { kind: "unsplit"; effects: Effect[] } | EditingRefusal;
+
+export type SessionSplitResult = SplitResult | EditingRefusal;
+
+export type SessionStrengthenResult = StrengthenResult | EditingRefusal;
 
 /** A goal as a reader needs it before deciding what to do to it. */
 export interface GoalView {
@@ -394,26 +406,46 @@ export class Session {
   }
 
   /** Cut a goal in two, which adds the two children to the tree. */
-  split(gid: string, srcCut: Ref, tgtCut: Ref, valueMap: Record<Ref, Ref>): Promise<SplitResult> {
+  split(
+    gid: string,
+    srcCut: Ref,
+    tgtCut: Ref,
+    valueMap: Record<Ref, Ref>,
+  ): Promise<SessionSplitResult> {
     return this.act(
       "split",
       { gid, src_cut: srcCut, tgt_cut: tgtCut, value_map: valueMap },
-      (tree) => this.splits.split(tree, gid, srcCut, tgtCut, valueMap),
+      async (tree): Promise<SessionSplitResult> => {
+        const editing = this.editing.open();
+        if (editing && this.editing.isEditing(gid)) {
+          return { kind: "editing", message: transactionMessage(editing) };
+        }
+        return this.splits.split(tree, gid, srcCut, tgtCut, valueMap);
+      },
     );
   }
 
   /** Undo a split, which discards the two children and their subtrees. */
-  unsplit(gid: string): Promise<{ effects: Effect[] }> {
-    return this.act("unsplit", { gid }, async (tree) => ({
-      effects: this.splits.unsplit(tree, gid),
-    }));
+  unsplit(gid: string): Promise<UnsplitResult> {
+    return this.act("unsplit", { gid }, async (tree) => {
+      const editing = this.editing.open();
+      if (editing && this.editing.isEditingBelow(tree, gid)) {
+        return { kind: "editing", message: transactionMessage(editing) };
+      }
+      return { kind: "unsplit", effects: this.splits.unsplit(tree, gid) };
+    });
   }
 
   /** State facts about a cut's parameters, one interface at a time. */
-  strengthen(gid: string, facts: Facts): Promise<StrengthenResult> {
-    return this.act("strengthen", { gid, facts }, (tree) =>
-      this.strengthening.strengthen(tree, gid, facts),
-    );
+  strengthen(gid: string, facts: Facts): Promise<SessionStrengthenResult> {
+    return this.act("strengthen", { gid, facts }, async (tree) => {
+      const parent = goalOf(tree, gid);
+      const editing = this.editing.open();
+      if (editing && [parent.id, ...parent.children].some((id) => this.editing.isEditing(id))) {
+        return { kind: "editing", message: transactionMessage(editing) };
+      }
+      return this.strengthening.strengthen(tree, gid, facts);
+    });
   }
 
   /**
@@ -521,6 +553,10 @@ function goalOf(tree: Tree, gid: string): Goal {
   const goal = tree.goals.get(gid);
   if (!goal) throw new Error(`no goal ${gid}`);
   return goal;
+}
+
+function transactionMessage(transaction: Transaction): string {
+  return `a transaction is open on ${transaction.gid} ${transaction.side}`;
 }
 
 /** Every goal without its programs, which is the tree as a reader sees it. */

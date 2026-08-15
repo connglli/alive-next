@@ -13,6 +13,9 @@ export function createUnsplitTool(session: Session) {
     parameters: Type.Object({ gid: Type.String({ description: "The goal that was cut." }) }),
     execute: async (_id, { gid }) => {
       const undone = await session.unsplit(gid);
+      if (undone.kind === "editing") {
+        return toolResultFrom(session, false, `refused: ${undone.message}`, undone);
+      }
       return toolResultFrom(session, true, `${gid} is open again`, undone);
     },
   });
