@@ -12,7 +12,7 @@ export function createAnalyzeTool(session: Session) {
     name: "goal_analyze",
     label: "Analyze",
     description:
-      "Run an analysis over one side of a goal and report what it found about each value. The facts are proposals: one counts only once a certified step has put it in a program, which is what tree_strengthen does at a cut.",
+      "Run an analysis over one side of a goal and report what it found about each value. The facts are proposals: one counts only once a certified step has put it in a program, which is what tree_strengthen does at a cut. Note: 'ranges' reports inclusive bounds; when converting to a tree_strengthen range attribute, remember range there is half-open [min, max) with exclusive max.",
     parameters: Type.Object({
       gid: Type.String(),
       side: Type.Union([Type.Literal("src"), Type.Literal("tgt")]),

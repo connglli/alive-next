@@ -9,7 +9,7 @@ export function createSplitPreviewTool(session: Session) {
     name: "tree_split_preview",
     label: "Split Preview",
     description:
-      'Preview cutting a goal at a value on each side without modifying the goal tree. If value_map is omitted, discovers and returns the src live-in parameters required across the cut. If value_map (formatted as {"<src_value>": "<tgt_value>"}) is provided, validates whether the tgt suffix lines up cleanly with the signature.',
+      "Preview cutting a goal at a value on each side without modifying the goal tree. If value_map is omitted, discovers and returns the src live-in parameters required across the cut. If value_map is provided, validates whether the tgt suffix lines up cleanly with the signature.",
     parameters: Type.Object({
       gid: Type.String(),
       src_cut: Type.String({ description: "The src value the suffix starts at." }),

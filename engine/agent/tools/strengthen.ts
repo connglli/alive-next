@@ -10,7 +10,7 @@ export function createStrengthenTool(session: Session) {
     name: "tree_strengthen",
     label: "Strengthen",
     description:
-      "Put facts on the parameters of the function a cut made. Each is first proved where the evidence is, as an assume before the call in the outer src that alive2 has to certify, and only then attributed to the parameter. Give the whole interface at once: the cost is the same for one parameter or for all of them. A fact that does not hold is refused, and a value that can be undef or poison fails, which is what noundef is for.",
+      'Put facts on the parameters of the function a cut made. Each is first proved where the evidence is, as an assume before the call in the outer src that alive2 has to certify, and only then attributed to the parameter. Give the whole interface at once: the cost is the same for one parameter or for all of them. Facts include noundef, pointer attributes (nonnull, align, dereferenceable), and range: {"min": n, "max": m}. Note: range is the half-open interval [min, max) where min is inclusive and max is exclusive (e.g. min: 0, max: 256 covers values 0..255). A fact that does not hold is refused, and a value that can be undef or poison fails, which is what noundef is for.',
     parameters: Type.Object({
       gid: Type.String({ description: "The goal that was cut, not one of its children." }),
       facts: Type.Record(Type.String(), Type.Record(Type.String(), Type.Unknown()), {
