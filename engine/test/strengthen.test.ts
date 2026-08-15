@@ -16,7 +16,7 @@ import { applyEffect, derive, head } from "../core/state/goals.ts";
 import { Splits } from "../core/state/splits.ts";
 import { Steps } from "../core/state/steps.ts";
 import { Store } from "../core/state/store.ts";
-import { Strengthen } from "../core/state/strengthen.ts";
+import { explainAssumeRefusal, Strengthen } from "../core/state/strengthen.ts";
 import type { Effect, Entry, Event } from "../core/state/trajectory.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
@@ -315,6 +315,148 @@ describe.skipIf(!built)("strengthening", () => {
     const strengthen = new Strengthen(store, llops, new Steps(store, new FakeChecker([])));
     await expect(strengthen.strengthen(replay(), "g1", { 0: RANGE })).rejects.toThrow(
       /g1 is open, not split/,
+    );
+  });
+
+  test("explainAssumeRefusal produces clear diagnostic on noundef poison failure", () => {
+    const detail = `ERROR: Source is more defined than target
+
+Example:
+i32 %1 = poison
+
+Source:
+...
+Target:
+...
+`;
+    const check: CheckResult = {
+      outcome: "incorrect",
+      detail,
+      invocation: { binary: "alive-tv", flags: [], timeoutMs: 1000 },
+      stdout: "",
+      ms: 10,
+    };
+    const explanation = explainAssumeRefusal([1], { 1: { noundef: true } }, check, "g2");
+    expect(explanation).toContain("The assumption on parameter 1 does not hold in the caller.");
+    expect(explanation).toContain("Caller counterexample: i32 %1 = poison");
+    // The value kind comes from the example, not the whole dump: the assume
+    // itself mentions "noundef", which must not turn the poison into an undef.
+    expect(explanation).toContain("a parameter evaluates to poison, which triggers");
+    expect(explanation).not.toContain("poison or undef");
+    expect(explanation).toContain('kind: "defined"');
+  });
+
+  test("explainAssumeRefusal names the range analysis for a failed range fact", () => {
+    const detail = `ERROR: Source is more defined than target
+
+Example:
+i32 %0 = 5
+
+Source:
+...
+Target:
+...
+`;
+    const check: CheckResult = {
+      outcome: "incorrect",
+      detail,
+      invocation: { binary: "alive-tv", flags: [], timeoutMs: 1000 },
+      stdout: "",
+      ms: 10,
+    };
+    const explanation = explainAssumeRefusal(
+      [0],
+      { 0: { range: { min: 0, max: 4 } } },
+      check,
+      "g2",
+    );
+    expect(explanation).toContain("Caller counterexample: i32 %0 = 5");
+    expect(explanation).not.toContain("poison");
+    expect(explanation).toContain('kind: "ranges"');
+  });
+
+  test("explainAssumeRefusal sends pointer facts to the pointer analysis", () => {
+    const explanation = explainAssumeRefusal([2], { 2: { align: 8 } }, undefined, "g2");
+    expect(explanation).toContain("The assumption on parameter 2 does not hold in the caller.");
+    expect(explanation).toContain('kind: "pointer"');
+  });
+
+  test("explainAssumeRefusal reads the arrow style alive2 sometimes prints", () => {
+    const detail = `ERROR: Source is more defined than target
+
+Example:
+i32 %1 -> poison
+
+Source:
+...
+Target:
+...
+`;
+    const check: CheckResult = {
+      outcome: "incorrect",
+      detail,
+      invocation: { binary: "alive-tv", flags: [], timeoutMs: 1000 },
+      stdout: "",
+      ms: 10,
+    };
+    const explanation = explainAssumeRefusal([1], { 1: { noundef: true } }, check, "g2");
+    expect(explanation).toContain("Caller counterexample: i32 %1 -> poison");
+    expect(explanation).toContain("a parameter evaluates to poison");
+  });
+
+  test("explainAssumeRefusal says all the parameters when several were asked", () => {
+    const detail = `ERROR: Source is more defined than target
+
+Example:
+i32 %0 = 1
+i32 %1 = poison
+
+Source:
+...
+Target:
+...
+`;
+    const check: CheckResult = {
+      outcome: "incorrect",
+      detail,
+      invocation: { binary: "alive-tv", flags: [], timeoutMs: 1000 },
+      stdout: "",
+      ms: 10,
+    };
+    const explanation = explainAssumeRefusal(
+      [0, 1],
+      { 0: { noundef: true }, 1: { noundef: true } },
+      check,
+      "g2",
+    );
+    expect(explanation).toContain(
+      "The assumptions on parameter(s) 0, 1 do not hold in the caller.",
+    );
+    expect(explanation).toContain("Caller counterexample: i32 %0 = 1, i32 %1 = poison");
+    expect(explanation).toContain("a parameter evaluates to poison");
+  });
+
+  test("explainAssumeRefusal tells a killed check from one the solver gave up on", () => {
+    const killed: CheckResult = {
+      outcome: "unknown",
+      detail: "killed after 150000ms without an answer",
+      invocation: { binary: "alive-tv", flags: [], timeoutMs: 120000 },
+      stdout: "",
+      ms: 150001,
+    };
+    expect(explainAssumeRefusal([0], { 0: { noundef: true } }, killed)).toContain(
+      "ran out of time in the solver",
+    );
+
+    const gaveUp: CheckResult = {
+      outcome: "unknown",
+      detail: "failed-to-prove transformations: 1",
+      invocation: { binary: "alive-tv", flags: [], timeoutMs: 120000 },
+      stdout: "",
+      ms: 900,
+    };
+    expect(explainAssumeRefusal([0], { 0: { noundef: true } }, gaveUp)).toContain(
+      "could not settle whether the assumptions hold",
     );
   });
 });

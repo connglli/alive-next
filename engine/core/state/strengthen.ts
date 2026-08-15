@@ -41,6 +41,8 @@ export type StrengthenResult =
       /** Which half gave up, so the agent knows what it is looking at. */
       phase: "assume" | "attribute";
       reason: string;
+      /** Detailed diagnostic explanation for humans and agents. */
+      explanation?: string;
       /** What alive2 said, when it was alive2 that refused. */
       check?: CheckResult;
       /** What did land before the refusal, which the head already reflects. */
@@ -127,10 +129,13 @@ export class Strengthen {
     const proof = await this.steps.step(tree, outer.id, "src", assumed, { eager: false });
     if (proof.kind !== "certified") {
       // A fact does not hold, or nothing here shows that it does.
+      const explanation = explainAssumeRefusal(params, facts, proof.check, outer.id);
+
       return {
         kind: "refused",
         phase: "assume",
         reason: "the assumes were not certified",
+        explanation,
         check: proof.check,
         effects: landed,
       };
@@ -233,4 +238,67 @@ function child(tree: Tree, parent: Goal, role: "outer" | "callee"): Goal {
     if (goal?.role === role) return goal;
   }
   throw new Error(`${parent.id} has no ${role} child`);
+}
+
+/**
+ * Diagnostic explanation when an assume step fails verification.
+ */
+export function explainAssumeRefusal(
+  params: number[],
+  facts: Facts,
+  check?: CheckResult,
+  outerGid?: string,
+): string {
+  const header =
+    params.length === 1
+      ? `The assumption on parameter ${params[0]} does not hold in the caller.`
+      : `The assumptions on parameter(s) ${params.join(", ")} do not hold in the caller.`;
+
+  const lines: string[] = [header];
+
+  if (check?.outcome === "unknown") {
+    lines.push(
+      check.detail.startsWith("killed after")
+        ? "Checking the assumptions ran out of time in the solver."
+        : "The solver could not settle whether the assumptions hold.",
+    );
+    return lines.join("\n");
+  }
+
+  // Extract the example alive2 printed, which assigns a value to each input.
+  // The value follows '=', or the arrow alive2 uses in some of its dumps.
+  const exampleMatch = check?.detail?.match(/Example:\s*([\s\S]*?)(?:\n\s*\n|Source:|$)/i);
+  const exampleLines = (exampleMatch?.[1] ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.includes("=") || line.includes("->"));
+  const exampleStr = exampleLines.join(", ");
+
+  if (exampleStr) {
+    lines.push(`Caller counterexample: ${exampleStr}`);
+  }
+
+  // What the example says the input values are. Scanning the whole dump would
+  // also match "noundef" in the echoed IR, which is a fact here, not a value.
+  const values = exampleLines.map(
+    (line) => (line.includes("=") ? line.split("=").pop() : line.split("->").pop())?.trim() ?? "",
+  );
+  const isPoison = values.some((value) => value.includes("poison"));
+  const isUndef = values.some((value) => value.includes("undef"));
+  if (isPoison || isUndef) {
+    const valKind = isPoison && isUndef ? "poison or undef" : isPoison ? "poison" : "undef";
+    lines.push(
+      `On caller input ${exampleStr}, a parameter evaluates to ${valKind}, which triggers undefined behavior under llvm.assume.`,
+    );
+  }
+
+  if (outerGid) {
+    const firstFact = facts[params[0] ?? 0] ?? {};
+    const kind = firstFact.noundef ? "defined" : firstFact.range ? "ranges" : "pointer";
+    lines.push(
+      `Hint: run goal_analyze on outer goal '${outerGid}' with kind: "${kind}" to inspect what facts the caller actually guarantees before strengthening.`,
+    );
+  }
+
+  return lines.join("\n");
 }

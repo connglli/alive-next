@@ -352,6 +352,11 @@ export class Session {
     return this.act("edit", op, () => this.editing.edit(op), scratch);
   }
 
+  /** Fold one instruction of the scratch with llops' own simplifier. */
+  opt(op: OptOp): Promise<EditResult> {
+    return this.act("opt", op, () => this.editing.opt(op), scratch);
+  }
+
   /** Certify the open transaction as one step. */
   commit(
     options?: {
@@ -368,11 +373,6 @@ export class Session {
   /** Abandon the open transaction, which leaves the goal unchanged. */
   abort(): Promise<Transaction> {
     return this.act("abort", {}, async () => this.editing.abort(), scratch);
-  }
-
-  /** Fold one instruction of the scratch with llops' own simplifier. */
-  opt(op: OptOp): Promise<EditResult> {
-    return this.act("opt", op, () => this.editing.opt(op), scratch);
   }
 
   /**

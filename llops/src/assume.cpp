@@ -148,14 +148,15 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
       continue;
     }
 
-    if (!value->getType()->isPointerTy())
-      return errResponse("invalid", "'" + kind.str() + "' applies to a pointer");
-
     if (kind == "nonnull") {
+      if (!value->getType()->isPointerTy())
+        return errResponse("invalid", "'nonnull' applies to a pointer");
       bundles.emplace_back("nonnull", llvm::ArrayRef<llvm::Value *>{value});
       continue;
     }
     if (kind == "align" || kind == "dereferenceable") {
+      if (!value->getType()->isPointerTy())
+        return errResponse("invalid", "'" + kind.str() + "' applies to a pointer");
       uint64_t bytes = 0;
       if (!positive(spec, kind == "align", kind, bytes, err))
         return err;

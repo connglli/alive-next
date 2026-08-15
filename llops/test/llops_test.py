@@ -1608,7 +1608,10 @@ entry:
         self.bad(self.assume(module=self.P, before="%v", value="%p", fact={"align": 3}), "invalid")
 
     def test_an_unknown_fact(self):
-        self.bad(self.assume(fact={"speedy": True}), "invalid")
+        r = self.bad(self.assume(fact={"speedy": True}), "invalid")
+        self.assertIn("unknown fact 'speedy'", r["error"]["message"])
+        r2 = self.bad(self.assume(fact={"not_undef": True}), "invalid")
+        self.assertIn("unknown fact 'not_undef'", r2["error"]["message"])
 
     def test_no_facts_at_all(self):
         self.bad(self.assume(fact={}), "bad_request")
