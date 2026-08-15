@@ -1652,6 +1652,27 @@ declare i32 @g(i32)
             "not_found",
         )
 
+    def test_a_call_anchor_needs_a_single_basic_block(self):
+        module = """declare void @g(i32)
+
+define void @f(i32 %x) {
+entry:
+  br label %call
+
+call:
+  call void @g(i32 %x)
+  ret void
+}
+"""
+        r = self.bad(
+            run(
+                "assume",
+                {"module": module, "before_call": "g", "arg": 0, "fact": {"noundef": True}},
+            ),
+            "shape_error",
+        )
+        self.assertEqual(r["error"]["message"], "assume needs a single basic block")
+
     def test_an_argument_index_out_of_range(self):
         module = """define i32 @f(i32 %n) {
 entry:

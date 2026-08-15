@@ -71,6 +71,9 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
   llvm::Function *F = singleFunction(M);
   if (!F)
     return errResponse("shape_error", "assume needs the v1 shape: exactly one defined function");
+  llvm::BasicBlock *BB = singleBlock(*F);
+  if (!BB)
+    return errResponse("shape_error", "assume needs a single basic block");
   ValueRefs refs(*F);
   llvm::Instruction *before = nullptr;
   llvm::Value *value = nullptr;
@@ -85,7 +88,7 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
     // Anchoring on the call is what strengthening needs, because the fact is
     // about what a call passes and the refs around it move with every edit.
     llvm::CallInst *call = nullptr;
-    for (auto &I : *singleBlock(*F)) {
+    for (auto &I : *BB) {
       auto *candidate = llvm::dyn_cast<llvm::CallInst>(&I);
       if (!candidate || !candidate->getCalledFunction())
         continue;
