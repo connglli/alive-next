@@ -99,8 +99,14 @@ export interface CheckHistoryEntry {
   ms: number;
 }
 
-export type FallbackReason = "no_window" | "window_unproved";
+export type FallbackReason = "no_window" | "window_unproved" | "preconditions_refused";
 
+/**
+ * Why the step was not certified by a preconditioned window. The whole
+ * function is asked instead when no window was found or the window did not
+ * settle it; the plain window is what certifies when the preconditions could
+ * not be used, and `conditioning` says why.
+ */
 export interface Fallback {
   reason: FallbackReason;
   /** The window's answer, when one was tried and did not settle it. */
@@ -136,7 +142,11 @@ export type StepResult =
       check: CheckResult;
       /** Which question settled it: the window the edit touched, or the whole. */
       by: "window" | "whole";
-      /** Why whole-function validation was used instead of a local window. */
+      /**
+       * Why the step holds without a preconditioned window: the whole was
+       * asked instead, or the preconditions were refused and the plain
+       * window proved.
+       */
       fallback?: Fallback;
       /** The check of the new pair, absent when the goal has no work left. */
       eager?: CheckResult;
@@ -308,6 +318,13 @@ export class Steps {
       check = whole;
     }
     const by = check === local ? "window" : "whole";
+    // A refused preconditioned attempt and a step the plain window certified
+    // mean the facts the caller asked for were dropped, and the whole-function
+    // fallback that would have said so never ran. The refusal is its own
+    // fallback, so the caller can say what the step holds without.
+    if (conditioned?.kind === "refused" && by === "window") {
+      fallback = { reason: "preconditions_refused", conditioning: conditioned.reason };
+    }
 
     const step: Effect = { effect: "step", gid, side, to: after, how };
     if (by === "window" && narrowed) {
@@ -410,7 +427,10 @@ export class Steps {
         fact,
       });
       if (!res.ok)
-        return { kind: "refused", reason: `llops refused to assume a fact: ${res.message}` };
+        return {
+          kind: "refused",
+          reason: `a fact could not be assumed at the call site: ${res.message}`,
+        };
       outerAssumed = res.module;
     }
 
@@ -424,7 +444,8 @@ export class Steps {
     const half = side === "src" ? narrowed.before : narrowed.after;
     const whole = side === "src" ? before : after;
     const inlined = await this.llops.inline(outerAssumed, half, narrowed.callee);
-    if (!inlined.ok) return undefined;
+    if (!inlined.ok)
+      return { kind: "refused", reason: `the window could not be inlined: ${inlined.message}` };
 
     const assumeCheck = await this.check(
       { src: whole, tgt: inlined.module },
@@ -434,7 +455,7 @@ export class Steps {
       },
     );
     if (assumeCheck.outcome !== "correct")
-      return { kind: "refused", reason: "the preconditions do not hold at the call site" };
+      return { kind: "refused", reason: "the facts do not hold at the call site" };
 
     // Phase 2: Add attributes to both window halves and check small pair
     let condBefore = narrowed.before;
@@ -447,7 +468,7 @@ export class Steps {
         this.llops.edit(condAfter, op),
       ]);
       if (!resFrom.ok || !resTo.ok)
-        return { kind: "refused", reason: "llops refused to attribute a fact" };
+        return { kind: "refused", reason: "a fact could not be attributed" };
       condBefore = resFrom.module;
       condAfter = resTo.module;
     }

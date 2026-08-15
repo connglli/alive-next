@@ -496,6 +496,38 @@ describe.skipIf(!built)("the tool layer", () => {
     );
   });
 
+  test("tx_commit says why the preconditions were not used", async () => {
+    class DroppedChecker implements Checker {
+      async check(_src: string, _tgt: string, options: CheckOptions = {}): Promise<CheckResult> {
+        return {
+          outcome: "correct",
+          detail: "",
+          invocation: { binary: "drop-checker", flags: [], timeoutMs: options.timeoutMs ?? 3000 },
+          stdout: "",
+          ms: 7,
+        };
+      }
+    }
+    const dropSession = await Session.start({
+      dir: join(dir, "drop-session"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new DroppedChecker(),
+      interp: noRun,
+    });
+    const dropTools = createProofAssistantTools(dropSession);
+
+    await callFrom(dropTools, "tx_begin", { gid: "g1", side: "src" });
+    await callFrom(dropTools, "tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
+    const res = await callFrom(dropTools, "tx_commit", {
+      preconditions: { "%nope": { noundef: true } },
+    });
+    expect(res).toContain(
+      "certified (the preconditions were not used: some preconditions do not name a value of the window), head is p2",
+    );
+  });
+
   test("tree_split_preview discovers live-ins and validates candidate cuts without mutating tree", async () => {
     const previewSession = await Session.start({
       dir: join(dir, "preview-session"),

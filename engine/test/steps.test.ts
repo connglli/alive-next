@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckOutcome, CheckResult } from "../core/drivers/alive2.ts";
-import { Llops } from "../core/drivers/llops.ts";
+import { Llops, type LlopsResult, type ModuleResult } from "../core/drivers/llops.ts";
 import { DEFAULT_ASSUMPTION } from "../core/state/arguments.ts";
 import { derive } from "../core/state/goals.ts";
 import { narrow } from "../core/state/narrow.ts";
@@ -370,7 +370,50 @@ describe("stepping", () => {
     if (result.kind !== "refused") throw new Error("expected the step to be refused");
     expect(result.fallback?.narrowed?.outcome).toBe("unknown");
     expect(result.fallback?.preconditions).toBeUndefined();
-    expect(result.fallback?.conditioning).toBe("the preconditions do not hold at the call site");
+    expect(result.fallback?.conditioning).toBe("the facts do not hold at the call site");
+  });
+
+  test("a conditioning refusal is said when the plain window still certifies", async () => {
+    // The precondition names no value of the window, so the conditioned
+    // attempt is refused before any check; the plain window then certifies,
+    // and the step must say it holds without the facts it was asked for.
+    const checker = new FakeChecker(["correct"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops);
+    const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
+      narrowed: await preconditionedNarrow(),
+      preconditions: { "%nope": { noundef: true } },
+      eager: false,
+    });
+
+    if (result.kind !== "certified") throw new Error("expected the step to be certified");
+    expect(result.by).toBe("window");
+    expect(result.fallback).toMatchObject({
+      reason: "preconditions_refused",
+      conditioning: "some preconditions do not name a value of the window",
+    });
+  });
+
+  test("an inline refusal is reported, not swallowed", async () => {
+    class InlineRefusing extends Llops {
+      override async inline(): Promise<LlopsResult<ModuleResult>> {
+        return { ok: false, code: "not_found", message: "no call to '@outlined_window'" };
+      }
+    }
+    const checker = new FakeChecker(["correct"]);
+    const steps = new Steps(
+      store,
+      checker,
+      DEFAULT_TIMEOUTS,
+      new InlineRefusing(toolchain.path("llops")),
+    );
+    const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
+      narrowed: await preconditionedNarrow(),
+      preconditions: { "%v1": { noundef: true } },
+      eager: false,
+    });
+
+    if (result.kind !== "certified") throw new Error("expected the step to be certified");
+    expect(result.fallback?.conditioning).toContain("the window could not be inlined");
   });
 
   test("refuses a step to the program that is already there", async () => {

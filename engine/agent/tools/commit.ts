@@ -81,6 +81,9 @@ export function createCommitTool(session: Session) {
 }
 
 function fallbackSummary(fallback?: Fallback): string {
+  if (fallback?.reason === "preconditions_refused") {
+    return ` (the preconditions were not used: ${fallback.conditioning})`;
+  }
   if (fallback?.reason === "window_unproved" && fallback.narrowed) {
     const narrowOutcome =
       fallback.narrowed.outcome === "incorrect" ? "refuted" : fallback.narrowed.outcome;
@@ -95,7 +98,7 @@ function fallbackSummary(fallback?: Fallback): string {
         ? ` with preconditions ${JSON.stringify(fallback.preconditions)}`
         : "";
     const conditioning = fallback.conditioning
-      ? `; the preconditioned attempt was refused: ${fallback.conditioning}`
+      ? `; the preconditions were not used: ${fallback.conditioning}`
       : "";
     return ` (whole-function fallback: window check${bounds}${pre} was ${narrowOutcome} in ${ms}ms${budget}${conditioning})`;
   }
