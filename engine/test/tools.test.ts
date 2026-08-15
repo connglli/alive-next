@@ -541,7 +541,7 @@ describe.skipIf(!built)("the tool layer", () => {
       gid: "g1",
       src_cut: "%2",
       tgt_cut: "%2",
-      value_map: { "%nonexistent": "%1" },
+      value_map: { "%0": "%nonexistent", "%1": "%1" },
     });
     expect(invalidRes).toContain("FAILURE");
     expect(invalidRes).toContain("refused");

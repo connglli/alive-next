@@ -9,13 +9,14 @@ export function createSplitTool(session: Session) {
     name: "tree_split",
     label: "Split",
     description:
-      "Cut a goal at a value on each side, making an outer goal that calls an outlined function and a callee goal that is its body. The value map says which tgt value each src value crosses the cut as. The callee's parameters are undef-capable until tree_strengthen says otherwise, so a cut is usually followed by one.",
+      'Cut a goal at a value on each side, making an outer goal that calls an outlined function and a callee goal that is its body. The value_map assigns a tgt value to each src live-in value crossing the cut: {"<src_value>": "<tgt_value>"}. The callee\'s parameters are undef-capable until tree_strengthen says otherwise, so a cut is usually followed by one.',
     parameters: Type.Object({
       gid: Type.String(),
       src_cut: Type.String({ description: "The src value the suffix starts at." }),
       tgt_cut: Type.String({ description: "The tgt value the suffix starts at." }),
       value_map: Type.Record(Type.String(), Type.String(), {
-        description: "Each tgt value crossing the cut, to the src value it stands for.",
+        description:
+          'Map from each src live-in value (key) to the corresponding tgt value (value) crossing the cut, formatted as { "<src_value>": "<tgt_value>" }.',
       }),
     }),
     execute: async (_id, { gid, src_cut, tgt_cut, value_map }) => {
