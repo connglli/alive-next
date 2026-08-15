@@ -288,9 +288,10 @@ export function explainAssumeRefusal(
 
   // What the example says the input values are. Scanning the whole dump would
   // also match "noundef" in the echoed IR, which is a fact here, not a value.
-  const values = exampleLines.map(
-    (line) => (line.includes("=") ? line.split("=").pop() : line.split("->").pop())?.trim() ?? "",
-  );
+  // The value follows the first '=' or '->': a pointer prints as
+  // "pointer(non-local, block_id=1, offset=0) / Address=#x04", whose later
+  // '=' signs are inside the value rather than the assignment.
+  const values = exampleLines.map(assignedValue);
   const isPoison = values.some((value) => value.includes("poison"));
   const isUndef = values.some((value) => value.includes("undef"));
   if (isPoison || isUndef) {
@@ -309,4 +310,13 @@ export function explainAssumeRefusal(
   }
 
   return lines.join("\n");
+}
+
+/** The value an example line assigns, which is what follows the first '=' or '->'. */
+function assignedValue(line: string): string {
+  const eq = line.indexOf("=");
+  const arrow = line.indexOf("->");
+  const at = eq >= 0 && (arrow < 0 || eq < arrow) ? eq : arrow;
+  if (at < 0) return "";
+  return line.slice(line[at] === "=" ? at + 1 : at + 2).trim();
 }

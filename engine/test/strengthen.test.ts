@@ -415,6 +415,30 @@ Target:
     expect(explanation).toContain("a parameter evaluates to poison");
   });
 
+  test("explainAssumeRefusal reads a value that contains its own '='", () => {
+    const detail = `ERROR: Source is more defined than target
+
+Example:
+ptr %0 = poison, block_id=1
+
+Source:
+...
+Target:
+...
+`;
+    const check: CheckResult = {
+      outcome: "incorrect",
+      detail,
+      invocation: { binary: "alive-tv", flags: [], timeoutMs: 1000 },
+      stdout: "",
+      ms: 10,
+    };
+    const explanation = explainAssumeRefusal([0], { 0: { nonnull: true } }, check, "g2");
+    // The first '=' is the assignment; the second belongs to the value, so
+    // the poison after it must still be seen.
+    expect(explanation).toContain("a parameter evaluates to poison");
+  });
+
   test("explainAssumeRefusal says all the parameters when several were asked", () => {
     const detail = `ERROR: Source is more defined than target
 
