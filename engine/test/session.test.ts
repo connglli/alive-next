@@ -277,6 +277,21 @@ describe.skipIf(!built)("reading a session", () => {
     expect((await run.status()).editing).toMatchObject({ gid: split.children.outer, side: "src" });
   });
 
+  test("a split preview logs what it found, not the programs it outlined", async () => {
+    const run = await session();
+    const preview = await run.splitPreview("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
+    if (preview.kind !== "preview") throw new Error(preview.message);
+
+    const results = log(run).filter((entry) => entry.kind === "tool_result");
+    const previewResult = [...results].reverse().find((entry) => entry.tool === "split_preview");
+    expect(previewResult).toBeDefined();
+    if (!previewResult) throw new Error("no split_preview was logged");
+    const kept = previewResult.result as Record<string, unknown>;
+    expect(kept.kind).toBe("preview");
+    expect(kept.callee).toBe(preview.callee);
+    expect(kept.programs).toBeUndefined();
+  });
+
   test("a refused edit answers with the program it refused", async () => {
     const run = await session();
     await run.begin("g1", "src");

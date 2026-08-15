@@ -402,6 +402,7 @@ export class Session {
       "split_preview",
       { gid, src_cut: srcCut, tgt_cut: tgtCut, value_map: valueMap },
       (tree) => this.splits.preview(tree, gid, srcCut, tgtCut, valueMap),
+      previewed,
     );
   }
 
@@ -584,6 +585,17 @@ function standingOf(goal: Goal): GoalStanding {
  */
 function resolved(config: unknown, timeouts: Timeouts): unknown {
   return typeof config === "object" && config !== null ? { ...config, timeouts } : { timeouts };
+}
+
+/**
+ * A preview as the log keeps it: what it found, not the four programs it
+ * outlined. The programs are recomputable by the same call and answer nothing
+ * the log is asked, so a log that repeats them per preview is a log nobody
+ * reads.
+ */
+function previewed(result: SplitPreviewResult): unknown {
+  if (result.kind === "refused") return result;
+  return { kind: result.kind, params: result.params, callee: result.callee };
 }
 
 /** A transaction result as the log keeps it: what it did, not what it holds. */
