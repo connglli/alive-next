@@ -459,7 +459,9 @@ describe.skipIf(!built)("the tool layer", () => {
     await callFrom(fbTools, "tx_begin", { gid: "g1", side: "src" });
     await callFrom(fbTools, "tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
     const res = await callFrom(fbTools, "tx_commit", {});
-    expect(res).toContain("whole-function fallback: window check was unknown in 12ms");
+    expect(res).toContain(
+      "whole-function fallback: window check (before: #1..#1, after: #1..#1) was unknown in 12ms on a 3000ms budget",
+    );
   });
 
   test("tx_commit surfaces fallback reason on refused step", async () => {
@@ -490,7 +492,7 @@ describe.skipIf(!built)("the tool layer", () => {
     await callFrom(rfbTools, "tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
     const res = await callFrom(rfbTools, "tx_commit", {});
     expect(res).toContain(
-      "refused on a 30000ms budget: unknown (whole-function fallback: window check was unknown in 15ms); transaction remains open",
+      "refused on a 30000ms budget: unknown (whole-function fallback: window check (before: #1..#1, after: #1..#1) was unknown in 15ms on a 3000ms budget); transaction remains open",
     );
   });
 

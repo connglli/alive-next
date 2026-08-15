@@ -56,6 +56,11 @@ const WINDOW = {
 };
 const TGT = "define i32 @f() {\nentry:\n  ret i32 2\n}\n";
 const NEW = "define i32 @f() {\nentry:\n  ret i32 3\n}\n";
+/** The pair a preconditioned window is exercised on: one live-in, one edit. */
+const BEFORE =
+  "define i32 @f(i32 %x) {\nentry:\n  %v1 = mul i32 %x, 2\n  %v2 = add i32 %v1, 1\n  ret i32 %v2\n}\n";
+const AFTER =
+  "define i32 @f(i32 %x) {\nentry:\n  %v1 = mul i32 %x, 2\n  %v2 = add i32 %v1, 2\n  ret i32 %v2\n}\n";
 
 let dir: string;
 let store: Store;
@@ -104,6 +109,31 @@ function cutG1(src: string, tgt: string): Event {
     result: null,
     ms: 1,
   };
+}
+
+/** An open goal on the pair the preconditioned window tests edit. */
+async function preconditionedTree() {
+  const src = await store.put(BEFORE);
+  const tgt = await store.put(AFTER);
+  return derive([
+    {
+      kind: "run_start",
+      src,
+      tgt,
+      assumed: DEFAULT_ASSUMPTION,
+      config: {},
+      versions: {},
+      time: 0,
+      prev: "",
+    } as Entry,
+  ]);
+}
+
+/** The window the pair narrows to, which the preconditioned tests step on. */
+async function preconditionedNarrow() {
+  const narrowed = await narrow(llops, BEFORE, AFTER);
+  if (!narrowed) throw new Error("expected narrowing to succeed");
+  return narrowed;
 }
 
 describe("timeouts", () => {
@@ -252,32 +282,10 @@ describe("stepping", () => {
   });
 
   test("records preconditions when conditioned window succeeds", async () => {
-    const before =
-      "define i32 @f(i32 %x) {\nentry:\n  %v1 = mul i32 %x, 2\n  %v2 = add i32 %v1, 1\n  ret i32 %v2\n}\n";
-    const after =
-      "define i32 @f(i32 %x) {\nentry:\n  %v1 = mul i32 %x, 2\n  %v2 = add i32 %v1, 2\n  ret i32 %v2\n}\n";
-    const srcHash = await store.put(before);
-    const tgtHash = await store.put(after);
-    const customTree = derive([
-      {
-        kind: "run_start",
-        src: srcHash,
-        tgt: tgtHash,
-        assumed: DEFAULT_ASSUMPTION,
-        config: {},
-        versions: {},
-        time: 0,
-        prev: "",
-      } as Entry,
-    ]);
-
-    const narrowed = await narrow(llops, before, after);
-    if (!narrowed) throw new Error("expected narrowing to succeed");
-
     const checker = new FakeChecker(["correct", "correct", "unknown"]);
     const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops);
-    const result = await steps.step(customTree, "g1", "src", after, {
-      narrowed,
+    const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
+      narrowed: await preconditionedNarrow(),
       preconditions: { "%v1": { noundef: true } },
     });
 
@@ -286,6 +294,41 @@ describe("stepping", () => {
     const step = result.effects[0];
     if (step?.effect !== "step") throw new Error("expected a step effect");
     expect(step.window?.preconditions).toEqual({ 0: { noundef: true } });
+  });
+
+  test("a preconditioned window that did not certify is what the fallback reports", async () => {
+    // Check order: the whole-function assume check, the conditioned window,
+    // the plain window, the whole function. The plain window is refuted, so
+    // the fallback's check has to be the conditioned one that the reported
+    // preconditions ran under.
+    const checker = new FakeChecker(["correct", "unknown", "incorrect", "incorrect"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops);
+    const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
+      narrowed: await preconditionedNarrow(),
+      preconditions: { "%v1": { noundef: true } },
+    });
+
+    if (result.kind !== "refused") throw new Error("expected the step to be refused");
+    expect(result.fallback?.narrowed?.outcome).toBe("unknown");
+    expect(result.fallback?.preconditions).toEqual({ 0: { noundef: true } });
+    expect(result.fallback?.conditioning).toBeUndefined();
+  });
+
+  test("a conditioning refusal is reported without claiming the check used it", async () => {
+    // The assume check refuses, so only the plain window and the whole
+    // function are asked; the fallback must not attach preconditions to a
+    // check that never ran under them.
+    const checker = new FakeChecker(["incorrect", "unknown", "incorrect"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops);
+    const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
+      narrowed: await preconditionedNarrow(),
+      preconditions: { "%v1": { noundef: true } },
+    });
+
+    if (result.kind !== "refused") throw new Error("expected the step to be refused");
+    expect(result.fallback?.narrowed?.outcome).toBe("unknown");
+    expect(result.fallback?.preconditions).toBeUndefined();
+    expect(result.fallback?.conditioning).toBe("the preconditions do not hold at the call site");
   });
 
   test("refuses a step to the program that is already there", async () => {

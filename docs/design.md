@@ -87,6 +87,8 @@ Two things make it hold, and neither is the search that found the window. The ou
 
 A window is not simply cheaper. Its parameters are values the program computed, so it is asked under no input assumption at all, exactly as a cut's callee is, while the whole function keeps whatever the goal is asked under. Neither question is the easier one in general, so a commit asks the window first on a small budget and falls back to the whole function on the step's own budget. The vector rewrite in that same example is the other way round: unprovable as a window, and a tenth of a second whole.
 
+Automatic narrowing tries two window candidates: a tight window from the first instruction line the canonicalized bodies disagree on to the last (effective when the edit preserves instruction count), and a wide window extending from the first disagreement to the end of the body (effective when length changes renumber downstream instructions). When an explicit window `[from, to]` is specified, references are resolved in the pre-edit program. Because insertions or deletions change the number of instructions inside the window, the post-edit window is mapped using the surrounding shared context: the post-edit start is `fromIdx`, the unchanged suffix length is `suffix = oldLast - toIdx`, and the post-edit end is `newLast - suffix`. Outlining extracts both slices and verifies that their shared outer frames are byte-identical.
+
 ## Interface facts are proved where the evidence lives
 
 To make a callee goal provable, it may need facts about its inputs: `noundef`, `align`, `dereferenceable`, value ranges, known bits, aliasing facts. These are expressed as attributes on `g`'s parameters, assumed by the callee goal and enforced at the call site.

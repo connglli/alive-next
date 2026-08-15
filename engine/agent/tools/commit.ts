@@ -10,18 +10,30 @@ export function createCommitTool(session: Session) {
     name: "tx_commit",
     label: "Commit",
     description:
-      "Validate the open transaction with alive2, in the direction the side implies, and advance the head if it holds. On refusal the head does not move and the scratch stays open, so edit it further or discard it with tx_abort. A counterexample comes back as a hint. The goal's new pair is then eagerly checked once on a small budget, so a step that finishes a chain discharges the goal here.",
+      "Validate the open transaction with alive2, in the direction the side implies, and advance the head if it holds. Local step narrowing is attempted automatically over the changed instructions; an explicit window can optionally be given in the PRE-EDIT (before) program. On refusal the head does not move and the scratch stays open, so edit it further or discard it with tx_abort. A counterexample comes back as a hint. The goal's new pair is then eagerly checked once on a small budget, so a step that finishes a chain discharges the goal here.",
     parameters: Type.Object({
       window: Type.Optional(
-        Type.Object({
-          from: Type.String({ description: "Reference to the start instruction of the window." }),
-          to: Type.String({ description: "Reference to the end instruction of the window." }),
-        }),
+        Type.Object(
+          {
+            from: Type.String({
+              description:
+                "Reference to start instruction of the window in the PRE-EDIT (before/head) program.",
+            }),
+            to: Type.String({
+              description:
+                "Reference to end instruction of the window in the PRE-EDIT (before/head) program.",
+            }),
+          },
+          {
+            description:
+              "Optional explicit window in the PRE-EDIT (before/head) program. The corresponding window in the post-edit scratch is derived automatically.",
+          },
+        ),
       ),
       preconditions: Type.Optional(
         Type.Record(Type.String(), Type.Any(), {
           description:
-            "Preconditions on live-in values of the window (e.g. { '%v1': { 'noundef': true } }).",
+            "Preconditions on live-in values of the window named in the PRE-EDIT (before/head) program (e.g. { '%v1': { 'noundef': true } }).",
         }),
       ),
     }),
@@ -72,10 +84,23 @@ function fallbackSummary(fallback?: Fallback): string {
   if (fallback?.reason === "window_unproved" && fallback.narrowed) {
     const narrowOutcome =
       fallback.narrowed.outcome === "incorrect" ? "refuted" : fallback.narrowed.outcome;
-    return ` (whole-function fallback: window check was ${narrowOutcome} in ${fallback.narrowed.ms}ms)`;
+    const ms = fallback.narrowed.ms;
+    const budgetMs = fallback.narrowed.invocation.timeoutMs;
+    const budget = budgetMs > 0 ? ` on a ${budgetMs}ms budget` : "";
+    const bounds = fallback.window
+      ? ` (before: ${fallback.window.before.from}..${fallback.window.before.to}, after: ${fallback.window.after.from}..${fallback.window.after.to})`
+      : "";
+    const pre =
+      fallback.preconditions && Object.keys(fallback.preconditions).length > 0
+        ? ` with preconditions ${JSON.stringify(fallback.preconditions)}`
+        : "";
+    const conditioning = fallback.conditioning
+      ? `; the preconditioned attempt was refused: ${fallback.conditioning}`
+      : "";
+    return ` (whole-function fallback: window check${bounds}${pre} was ${narrowOutcome} in ${ms}ms${budget}${conditioning})`;
   }
   if (fallback?.reason === "no_window") {
-    return ` (whole-function fallback: no local window (edit covered the body))`;
+    return " (whole-function fallback: no local window found across edits)";
   }
   return "";
 }

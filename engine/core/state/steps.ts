@@ -13,7 +13,7 @@ import { type Llops, moduleLines } from "../drivers/llops.ts";
 import { definedRefAt, named, resolveRef } from "../refs.ts";
 import { assumptionFlags } from "./arguments.ts";
 import { hasRootEntry, head, type Side, type Tree, workable } from "./goals.ts";
-import type { Narrowed } from "./narrow.ts";
+import type { Narrowed, Window } from "./narrow.ts";
 import type { Store } from "./store.ts";
 import type { Effect, Hash } from "./trajectory.ts";
 
@@ -105,7 +105,26 @@ export interface Fallback {
   reason: FallbackReason;
   /** The window's answer, when one was tried and did not settle it. */
   narrowed?: CheckResult;
+  /** The window bounds that were tried, if any. */
+  window?: { before: Window; after: Window };
+  /** The preconditions the reported window check actually ran under. */
+  preconditions?: Record<string, Record<string, unknown>>;
+  /** Why a preconditioned window attempt did not run to a check, if one was asked for. */
+  conditioning?: string;
 }
+
+/**
+ * A window check under preconditions, or why it never ran. The check and the
+ * preconditions belong together: reporting one without the other would let a
+ * fallback claim facts a check never used.
+ */
+type Conditioned =
+  | {
+      kind: "checked";
+      check: CheckResult;
+      preconditions: Record<string, Record<string, unknown>>;
+    }
+  | { kind: "refused"; reason: string };
 
 /** A step that landed, or the reason it did not. */
 export type StepResult =
@@ -225,9 +244,10 @@ export class Steps {
 
     let local: CheckResult | undefined;
     let usedPreconditions: Record<string, Record<string, unknown>> | undefined;
+    let conditioned: Conditioned | undefined;
 
     if (narrowed && options.preconditions && this.llops) {
-      const condResult = await this.tryConditionedWindow(
+      conditioned = await this.tryConditionedWindow(
         beforeText,
         afterText,
         narrowed,
@@ -235,9 +255,9 @@ export class Steps {
         side,
         flags,
       );
-      if (condResult?.check.outcome === "correct") {
-        local = condResult.check;
-        usedPreconditions = condResult.preconditions;
+      if (conditioned?.kind === "checked" && conditioned.check.outcome === "correct") {
+        local = conditioned.check;
+        usedPreconditions = conditioned.preconditions;
       }
     }
 
@@ -255,7 +275,18 @@ export class Steps {
     let check = local;
     let fallback: Fallback | undefined;
     if (check?.outcome !== "correct") {
-      fallback = local ? { reason: "window_unproved", narrowed: local } : { reason: "no_window" };
+      fallback = local
+        ? {
+            reason: "window_unproved",
+            // The conditioned check is the one whose preconditions the summary
+            // prints, so it is the one the fallback reports when it ran; the
+            // plain window check is only the fallback's evidence otherwise.
+            narrowed: conditioned?.kind === "checked" ? conditioned.check : local,
+            window: narrowed ? { before: narrowed.at.before, after: narrowed.at.after } : undefined,
+            preconditions: conditioned?.kind === "checked" ? conditioned.preconditions : undefined,
+            conditioning: conditioned?.kind === "refused" ? conditioned.reason : undefined,
+          }
+        : { reason: "no_window" };
       const whole = await this.check(orient(side, beforeText, afterText), {
         timeoutMs: this.timeouts.alive2Ms,
         flags,
@@ -337,9 +368,7 @@ export class Steps {
     preconditions: Record<string, Record<string, unknown>>,
     side: Side,
     flags: string[],
-  ): Promise<
-    { check: CheckResult; preconditions: Record<string, Record<string, unknown>> } | undefined
-  > {
+  ): Promise<Conditioned | undefined> {
     if (!this.llops) return undefined;
 
     const mappedFacts: Record<string, Record<string, unknown>> = {};
@@ -362,7 +391,8 @@ export class Steps {
     // A fact that maps to nothing would certify something other than what the
     // caller asked for, and two facts collapsing onto one parameter would
     // overwrite one of them, so the attempt is refused rather than trimmed.
-    if (Object.keys(mappedFacts).length !== Object.keys(preconditions).length) return undefined;
+    if (Object.keys(mappedFacts).length !== Object.keys(preconditions).length)
+      return { kind: "refused", reason: "some preconditions do not name a value of the window" };
 
     // Phase 1: Insert assumes before call in outer and verify whole-function
     let outerAssumed = narrowed.outer;
@@ -373,7 +403,8 @@ export class Steps {
         arg: argIdx,
         fact,
       });
-      if (!res.ok) return undefined;
+      if (!res.ok)
+        return { kind: "refused", reason: `llops refused to assume a fact: ${res.message}` };
       outerAssumed = res.module;
     }
 
@@ -396,7 +427,8 @@ export class Steps {
         flags,
       },
     );
-    if (assumeCheck.outcome !== "correct") return undefined;
+    if (assumeCheck.outcome !== "correct")
+      return { kind: "refused", reason: "the preconditions do not hold at the call site" };
 
     // Phase 2: Add attributes to both window halves and check small pair
     let condBefore = narrowed.before;
@@ -408,7 +440,8 @@ export class Steps {
         this.llops.edit(condBefore, op),
         this.llops.edit(condAfter, op),
       ]);
-      if (!resFrom.ok || !resTo.ok) return undefined;
+      if (!resFrom.ok || !resTo.ok)
+        return { kind: "refused", reason: "llops refused to attribute a fact" };
       condBefore = resFrom.module;
       condAfter = resTo.module;
     }
@@ -418,7 +451,7 @@ export class Steps {
       flags: [],
     });
 
-    return { check: condCheck, preconditions: mappedFacts };
+    return { kind: "checked", check: condCheck, preconditions: mappedFacts };
   }
 
   /** One question to the checker, in the direction the side settled. */
