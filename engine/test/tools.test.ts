@@ -528,6 +528,46 @@ describe.skipIf(!built)("the tool layer", () => {
     );
   });
 
+  test("tx_commit fallback echoes the window the caller named", async () => {
+    class NamedWindowChecker implements Checker {
+      private calls = 0;
+      async check(_src: string, _tgt: string, options: CheckOptions = {}): Promise<CheckResult> {
+        this.calls += 1;
+        // The preconditioned window's first half holds, its check is refuted,
+        // and so is the whole: the refused step reports what the window was.
+        return {
+          outcome: this.calls === 1 ? "correct" : "incorrect",
+          detail: "counterexample",
+          invocation: { binary: "named-window", flags: [], timeoutMs: options.timeoutMs ?? 3000 },
+          stdout: "",
+          ms: 4,
+        };
+      }
+    }
+    const namedSession = await Session.start({
+      dir: join(dir, "named-window-session"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new NamedWindowChecker(),
+      interp: noRun,
+    });
+    const namedTools = createProofAssistantTools(namedSession);
+
+    await callFrom(namedTools, "tx_begin", { gid: "g1", side: "src" });
+    await callFrom(namedTools, "tx_edit", {
+      op: "replace",
+      v: "%2",
+      insts: ["%s = shl i32 %1, 3"],
+    });
+    const res = await callFrom(namedTools, "tx_commit", {
+      window: { from: "%2", to: "%2" },
+      preconditions: { "%1": { noundef: true } },
+    });
+    expect(res).toContain("(before: %2..%2");
+    expect(res).toContain("with preconditions (parameter 0: noundef)");
+  });
+
   test("tree_split_preview discovers live-ins and validates candidate cuts without mutating tree", async () => {
     const previewSession = await Session.start({
       dir: join(dir, "preview-session"),

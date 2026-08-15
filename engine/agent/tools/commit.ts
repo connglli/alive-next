@@ -95,7 +95,7 @@ function fallbackSummary(fallback?: Fallback): string {
       : "";
     const pre =
       fallback.preconditions && Object.keys(fallback.preconditions).length > 0
-        ? ` with preconditions ${JSON.stringify(fallback.preconditions)}`
+        ? ` with preconditions (${factsOf(fallback.preconditions)})`
         : "";
     const conditioning = fallback.conditioning
       ? `; the preconditions were not used: ${fallback.conditioning}`
@@ -106,4 +106,16 @@ function fallbackSummary(fallback?: Fallback): string {
     return " (whole-function fallback: no local window found across edits)";
   }
   return "";
+}
+
+/** The facts of a conditioned window, as a reader can act on them. */
+function factsOf(preconditions: Record<string, Record<string, unknown>>): string {
+  return Object.entries(preconditions)
+    .map(
+      ([param, facts]) =>
+        `parameter ${param}: ${Object.entries(facts)
+          .map(([kind, spec]) => (spec === true ? kind : `${kind} ${JSON.stringify(spec)}`))
+          .join(", ")}`,
+    )
+    .join("; ");
 }

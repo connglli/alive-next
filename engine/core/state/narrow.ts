@@ -33,7 +33,10 @@ export interface Narrowed {
   after: Module;
   /** The name the window carries in both. */
   callee: string;
-  /** Where the window sits on each side, as the references llops was given. */
+  /**
+   * Where the window sits on each side: the refs the caller named when it
+   * named one, and the positions the search found otherwise.
+   */
   at: { before: Window; after: Window };
   /** The parameters of the outlined window callee. */
   params: OutlineParam[];
@@ -98,7 +101,11 @@ export async function narrowAt(
   const suffix = oldLast - resolved.toIdx;
   const newAt: Window = at(resolved.fromIdx, newLast - suffix);
 
-  return outlineBoth(llops, was.module, now.module, resolved.window, newAt);
+  const found = await outlineBoth(llops, was.module, now.module, resolved.window, newAt);
+  if (!found) return undefined;
+  // The before bounds echo the window the caller named, which is the one it
+  // will look for in a summary; the after bounds stay the mapped positions.
+  return { ...found, at: { ...found.at, before: userWindow } };
 }
 
 function resolveWindow(
