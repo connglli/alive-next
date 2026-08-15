@@ -296,6 +296,28 @@ describe("stepping", () => {
     expect(step.window?.preconditions).toEqual({ 0: { noundef: true } });
   });
 
+  test("an incorrect conditioned window skips the plain retry", async () => {
+    const checker = new FakeChecker(["correct", "incorrect", "correct"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops);
+    const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
+      narrowed: await preconditionedNarrow(),
+      preconditions: { "%v1": { noundef: true } },
+      eager: false,
+    });
+
+    if (result.kind !== "certified") throw new Error("expected the whole step to land");
+    expect(result.by).toBe("whole");
+    expect(result.fallback?.narrowed?.outcome).toBe("incorrect");
+    expect(result.fallback?.preconditions).toEqual({ 0: { noundef: true } });
+    // The third query is the whole step; the plain window is known to fail.
+    expect(checker.calls).toHaveLength(3);
+    expect(checker.calls[2]).toMatchObject({
+      src: BEFORE,
+      tgt: AFTER,
+      timeoutMs: DEFAULT_TIMEOUTS.alive2Ms,
+    });
+  });
+
   test("a preconditioned window that did not certify is what the fallback reports", async () => {
     // Check order: the whole-function assume check, the conditioned window,
     // the plain window, the whole function. The plain window is refuted, so
@@ -312,6 +334,26 @@ describe("stepping", () => {
     expect(result.fallback?.narrowed?.outcome).toBe("unknown");
     expect(result.fallback?.preconditions).toEqual({ 0: { noundef: true } });
     expect(result.fallback?.conditioning).toBeUndefined();
+  });
+
+  test("an errored conditioned window still tries the plain window", async () => {
+    const checker = new FakeChecker(["correct", "error", "incorrect", "incorrect"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops);
+    const narrowed = await preconditionedNarrow();
+    const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
+      narrowed,
+      preconditions: { "%v1": { noundef: true } },
+      eager: false,
+    });
+
+    if (result.kind !== "refused") throw new Error("expected the step to be refused");
+    expect(result.fallback?.narrowed?.outcome).toBe("error");
+    expect(checker.calls).toHaveLength(4);
+    expect(checker.calls[2]).toMatchObject({
+      src: narrowed.before,
+      tgt: narrowed.after,
+      timeoutMs: DEFAULT_TIMEOUTS.eagerCheckMs,
+    });
   });
 
   test("a conditioning refusal is reported without claiming the check used it", async () => {

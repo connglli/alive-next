@@ -255,9 +255,15 @@ export class Steps {
         side,
         flags,
       );
-      if (conditioned?.kind === "checked" && conditioned.check.outcome === "correct") {
-        local = conditioned.check;
-        usedPreconditions = conditioned.preconditions;
+      if (conditioned?.kind === "checked") {
+        if (conditioned.check.outcome === "correct") {
+          local = conditioned.check;
+          usedPreconditions = conditioned.preconditions;
+        } else if (conditioned.check.outcome === "incorrect") {
+          // The same attributes are on both window halves. Its failing input
+          // satisfies them, so it also refutes the plain window query.
+          local = conditioned.check;
+        }
       }
     }
 
