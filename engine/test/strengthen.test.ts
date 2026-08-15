@@ -16,7 +16,7 @@ import { applyEffect, derive, head } from "../core/state/goals.ts";
 import { Splits } from "../core/state/splits.ts";
 import { Steps } from "../core/state/steps.ts";
 import { Store } from "../core/state/store.ts";
-import { explainAssumeRefusal, Strengthen } from "../core/state/strengthen.ts";
+import { explainAssumeRefusal, type Facts, Strengthen } from "../core/state/strengthen.ts";
 import type { Effect, Entry, Event } from "../core/state/trajectory.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
@@ -316,6 +316,17 @@ describe.skipIf(!built)("strengthening", () => {
     await expect(strengthen.strengthen(replay(), "g1", { 0: RANGE })).rejects.toThrow(
       /g1 is open, not split/,
     );
+  });
+
+  test("facts are keyed by parameter position", async () => {
+    const tree = await cut();
+    const strengthen = new Strengthen(store, llops, new Steps(store, new FakeChecker([])));
+    for (const bad of ["%0", "-1", "1.5", "0x1"]) {
+      await expect(
+        strengthen.strengthen(tree, "g1", { [bad]: { noundef: true } } as unknown as Facts),
+      ).rejects.toThrow(new RegExp(`'${bad}' is not a parameter position`));
+    }
+    expect(tree.goals.get("g1")?.status).toBe("split");
   });
 
   test("explainAssumeRefusal produces clear diagnostic on noundef poison failure", () => {

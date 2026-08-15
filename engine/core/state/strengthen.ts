@@ -70,9 +70,17 @@ export class Strengthen {
    * checked once at the end instead.
    */
   async strengthen(tree: Tree, gid: string, facts: Facts): Promise<StrengthenResult> {
-    const params = Object.keys(facts)
-      .map(Number)
-      .sort((a, b) => a - b);
+    const keys = Object.keys(facts);
+    // A fact names the parameter it is about by position. Any other key (a
+    // "%" name, a negative index) would become NaN below and reach llops as
+    // a null argument, failing where it is confusing, so the request is
+    // refused as written.
+    const bad = keys.find((key) => !/^(?:0|[1-9]\d*)$/.test(key));
+    if (bad !== undefined)
+      throw new Error(
+        `${gid}: '${bad}' is not a parameter position; facts are keyed by parameter index (0, 1, ...)`,
+      );
+    const params = keys.map(Number).sort((a, b) => a - b);
     if (params.length === 0) throw new Error(`${gid}: no facts to state`);
     const parent = tree.goals.get(gid);
     if (!parent) throw new Error(`no goal ${gid}`);
