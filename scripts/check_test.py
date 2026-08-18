@@ -549,10 +549,46 @@ class TestTampered(Case):
             "g1",
             pair,
             pair,
-            [{"kind": "strengthen", "from": pair, "to": pair, "by": {"gid": "g2", "hash": "x"}}],
+            [
+                {
+                    "kind": "strengthen",
+                    "from": pair,
+                    "to": pair,
+                    "facts": {"0": {"noundef": True}},
+                    "by": {"gid": "g2", "hash": "x"},
+                }
+            ],
             {"kind": "checked"},
         )
         self.refused(self.built.write(), "not a callee")
+
+    def test_a_strengthen_step_cannot_rewrite_the_callee_body(self):
+        package = TestGolden.cut(self)
+        inner = self.built.goals["g3"]["start"]
+        fake = self.built.program(
+            llops(
+                "canon",
+                {"module": "define i32 @g(i32 %0) {\nentry:\n  ret i32 0\n}\n"},
+            )["module"]
+        )
+        forged = {"src": fake, "tgt": fake}
+        self.built.goal(
+            "g3",
+            inner,
+            forged,
+            [
+                {
+                    "kind": "strengthen",
+                    "from": inner,
+                    "to": forged,
+                    "facts": {"0": {"noundef": True}},
+                    "by": {"gid": "g2", "hash": "bogus"},
+                }
+            ],
+            {"kind": "checked"},
+        )
+        self.built.write()
+        self.refused(package, "attributes on src replay")
 
     def test_an_assumption_on_a_goal_below_a_cut(self):
         # A callee's parameters are values the program computed, so nothing the

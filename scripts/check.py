@@ -284,7 +284,13 @@ class Check:
         self.say(gid, what, outcome)
         self.failures.append(f"{gid}: {what}: {outcome}")
 
-    def goal(self, gid: str, role: str | None = None, entry: bool = True) -> None:
+    def goal(
+        self,
+        gid: str,
+        role: str | None = None,
+        entry: bool = True,
+        callee: str | None = None,
+    ) -> None:
         """Check one goal: its chain, then how it was discharged.
 
         `entry` is whether the goal still has the pair's own entry, which is
@@ -297,7 +303,7 @@ class Check:
         """
         goal = self.package.goal(gid)
         flags = self.package.assumed if entry else []
-        head = self.chain(gid, goal, role, flags)
+        head = self.chain(gid, goal, role, flags, callee)
         for side in ("src", "tgt"):
             if head[side] != goal["end"][side]:
                 self.fail(gid, f"the {side} chain ends", f"at {head[side][:12]}, not the end pair")
@@ -313,7 +319,14 @@ class Check:
         else:
             self.fail(gid, "discharged by", f"{discharge['kind']}, which this does not know")
 
-    def chain(self, gid: str, goal: dict, role: str | None, flags: list[str]) -> dict:
+    def chain(
+        self,
+        gid: str,
+        goal: dict,
+        role: str | None,
+        flags: list[str],
+        callee: str | None,
+    ) -> dict:
         """Walk the steps, checking each one in the direction its side implies."""
         head = dict(goal["start"])
         for step in goal["steps"]:
@@ -342,18 +355,53 @@ class Check:
             elif step["kind"] == "window":
                 head[step["side"]] = self.window(gid, step, head, flags)
             elif step["kind"] == "strengthen":
-                # Nothing certifies this on its own. What does is the outer's
-                # chain, every step of which is checked here, and the signature
-                # the two halves have to share, which the cut checks below.
-                if role != "callee":
-                    self.fail(gid, "an attribute", "on a goal that is not a callee")
-                for side in ("src", "tgt"):
-                    if step["from"][side] != head[side]:
-                        self.fail(gid, f"an attribute on {side} starts", "away from the head")
-                    head[side] = step["to"][side]
+                self.strengthen(gid, step, head, role, callee)
             else:
                 self.fail(gid, "a step of kind", f"{step['kind']}, which this does not know")
         return head
+
+    def strengthen(
+        self, gid: str, step: dict, head: dict, role: str | None, callee: str | None
+    ) -> None:
+        """Replay the exact parameter attributes a callee claims to have gained."""
+        if role != "callee":
+            self.fail(gid, "an attribute", "on a goal that is not a callee")
+        if callee is None:
+            self.fail(gid, "an attribute", "has no outlined function")
+
+        facts = step.get("facts")
+        if not isinstance(facts, dict) or not facts:
+            raise Refused("a strengthen step has no facts")
+        try:
+            replayable = [(int(param), fact) for param, fact in facts.items()]
+        except (TypeError, ValueError) as error:
+            raise Refused("a strengthen parameter is not an integer") from error
+        replayable.sort(key=lambda item: item[0])
+
+        for side in ("src", "tgt"):
+            if step["from"][side] != head[side]:
+                self.fail(gid, f"an attribute on {side} starts", "away from the head")
+            attributed = self.package.program(step["from"][side])
+            for param, fact in replayable:
+                if callee is None:
+                    continue
+                attributed = self.package.run_llops(
+                    "edit",
+                    {
+                        "module": attributed,
+                        "op": "attrs",
+                        "fn": callee,
+                        "param": param,
+                        "attrs": fact,
+                    },
+                )["module"]
+            same = self.package.run_llops("canon", {"module": attributed})["module"]
+            what = f"the attributes on {side} replay"
+            if same == self.package.program(step["to"][side]):
+                self.say(gid, what, "matches")
+            else:
+                self.fail(gid, what, "to a different program")
+            head[side] = step["to"][side]
 
     def window(self, gid: str, step: dict, head: dict, flags: list[str] = None) -> str:
         """A step narrowed to a window, optionally with proved preconditions.
@@ -517,7 +565,7 @@ class Check:
         # parameters are values computed before it, so it is asked about them
         # under no assumption at all.
         self.goal(discharge["outer"], "outer", entry)
-        self.goal(discharge["inner"], "callee", False)
+        self.goal(discharge["inner"], "callee", False, name)
 
     def refines(self, src: str, tgt: str, flags: list[str]) -> str:
         return "correct" if self.package.refines(src, tgt, flags) else "not correct"
