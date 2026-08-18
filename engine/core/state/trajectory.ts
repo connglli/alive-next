@@ -95,7 +95,14 @@ export type Effect =
    * direction of a refinement check would certify it. What makes it sound is
    * the assume at the call site, and `by` names the step that put it there.
    */
-  | { effect: "strengthen"; gid: string; src: Hash; tgt: Hash; by: { gid: string; hash: Hash } }
+  | {
+      effect: "strengthen";
+      gid: string;
+      src: Hash;
+      tgt: Hash;
+      facts: Record<number, Record<string, unknown>>;
+      by: { gid: string; hash: Hash };
+    }
   /** A split was undone, discarding both children and their subtrees. */
   | { effect: "unsplit"; gid: string }
   /** A side went back to an earlier program of its own history. */

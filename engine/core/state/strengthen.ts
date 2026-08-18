@@ -188,6 +188,7 @@ export class Strengthen {
         gid: callee.id,
         src: await this.store.put(src),
         tgt: await this.store.put(tgt),
+        facts,
         by,
       },
     ]);

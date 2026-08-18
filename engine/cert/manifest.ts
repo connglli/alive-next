@@ -52,7 +52,13 @@ export type Step =
    * certifies this on its own: what does is the outer's chain, which is
    * checked like any other, and the signature the two ends have to share.
    */
-  | { kind: "strengthen"; from: Pair; to: Pair; by: { gid: string; hash: Hash } };
+  | {
+      kind: "strengthen";
+      from: Pair;
+      to: Pair;
+      facts: Record<number, Record<string, unknown>>;
+      by: { gid: string; hash: Hash };
+    };
 
 export interface Pair {
   src: Hash;
@@ -268,6 +274,7 @@ function chainOf(goal: Goal, moves: Move[]): Step[] {
         kind: "strengthen",
         from: { src: src[si - 1] as Hash, tgt: tgt[ti - 1] as Hash },
         to: { src: effect.src, tgt: effect.tgt },
+        facts: effect.facts,
         by: effect.by,
       });
       si += 1;
