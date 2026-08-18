@@ -38,7 +38,9 @@ It cannot be written into the IR. LLVM's `noundef` forbids poison as well as und
 
 The assumption belongs to the entry the run was asked about. The root goal has it, and so does the outer half of every cut under it, since outlining a suffix leaves the entry where it was. A callee has an entry of its own, and its parameters are values the program computed: a function can produce undef whatever it was handed, through a load of uninitialised memory, an `undef` constant, or a call to a function nobody has the body of. So a callee assumes nothing, and what it needs it proves at the call site by strengthening. `check.py` works out which goals are which for itself rather than believing what a manifest records.
 
-## Conceptual model
+## Conceptual model of interactive translation validation
+
+> The "game board": you see goals and hypotheses, then apply moves (tactics). Each tactic transforms the goal until nothing remains. The kernel checks the final proof term. --- [The Lean Team](https://leodemoura.github.io/static/aws-june-2026/#/2)
 
 The framework state has two parts: an immutable **program store** and a **goal tree**. Every tool reads or evolves this state; the agent can only act on it through the tools.
 

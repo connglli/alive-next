@@ -1,5 +1,7 @@
 # alive-next
 
+> The bottleneck for using AI to create strategies and make conjectures is we have to rely on human experts and the test of time to validate whether something is plausible or not. --- Terence Tao, Dwarkesh Patel interview
+
 Interactive translation validation framework with agent-driven, alive2-certified proofs for large LLVM IR programs.
 
 `alive-next` builds an interactive translation validation framework analogous to interactive theorem proving. [alive2](https://github.com/AliveToolkit/alive2) decides whether one function refines another by sending the whole pair to an SMT solver in one query, so it stops answering as programs grow. alive-next keeps alive2 as the trusted formal checker and puts a proof writer (an untrusted autonomous agent or scripted proof) in front of it to search for proofs using decomposition, Hoare-style reasoning, and stepwise certified rewriting.
