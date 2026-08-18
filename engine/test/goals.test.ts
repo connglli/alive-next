@@ -177,6 +177,7 @@ describe("derive", () => {
           gid: "g3",
           src: "h3s-attr",
           tgt: "h3t-attr",
+          facts: { 0: { noundef: true } },
           by: { gid: "g2", hash: "h2s-assume" },
         }),
       ),

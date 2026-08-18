@@ -146,6 +146,7 @@ describe.skipIf(!built)("the manifest", () => {
     expect(attributed).toHaveLength(1);
     const [only] = attributed;
     if (only?.kind !== "strengthen") throw new Error("a strengthen step");
+    expect(only.facts).toEqual({ 0: { noundef: true, range: { min: 0, max: 256 } } });
     // The step it names is a step of the outer's chain, which is checked.
     expect(only.by.gid).toBe("g2");
     const outer = manifest.goals.g2?.steps ?? [];
