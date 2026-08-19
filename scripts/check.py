@@ -372,10 +372,15 @@ class Check:
         facts = step.get("facts")
         if not isinstance(facts, dict) or not facts:
             raise Refused("a strengthen step has no facts")
-        try:
-            replayable = [(int(param), fact) for param, fact in facts.items()]
-        except (TypeError, ValueError) as error:
-            raise Refused("a strengthen parameter is not an integer") from error
+
+        replayable: list[tuple[int, dict]] = []
+        for key, fact in facts.items():
+            # JSON object keys are always strings; require the exact format the engine emits.
+            if not isinstance(key, str) or not re.fullmatch(r"(?:0|[1-9]\d*)", key):
+                raise Refused(f"a strengthen parameter is not a non-negative integer index: {key!r}")
+            if not isinstance(fact, dict):
+                raise Refused(f"a strengthen fact for parameter {key} is not an object")
+            replayable.append((int(key), fact))
         replayable.sort(key=lambda item: item[0])
 
         for side in ("src", "tgt"):
