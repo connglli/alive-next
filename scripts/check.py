@@ -27,7 +27,7 @@ import tempfile
 import time
 from pathlib import Path
 
-VERSION = 1
+VERSION = 2
 
 # What an input assumption is stated to alive-tv as, and the only options this
 # knows. An option it does not know could weaken what alive-tv was asked, so a

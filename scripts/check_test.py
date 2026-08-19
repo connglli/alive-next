@@ -150,7 +150,7 @@ class Built:
     def write(
         self,
         root: str = "g1",
-        version: int = 1,
+        version: int = 2,
         verdict: str = "verified",
         assumed: dict | None = None,
     ) -> Path:
@@ -168,7 +168,7 @@ class Built:
     def refutation(self, src: str, tgt: str, input: list[dict]) -> Path:
         """A counterexample package: the pair, and the input it is run on."""
         manifest = {
-            "version": 1,
+            "version": 2,
             "verdict": "counterexample",
             "root": "g1",
             "toolchain": {},
@@ -641,8 +641,8 @@ class TestTampered(Case):
 
     def test_a_manifest_from_another_version(self):
         self.leaf()
-        self.built.write(version=2)
-        self.refused(self.built.root, "manifest version 2")
+        self.built.write(version=1)
+        self.refused(self.built.root, "manifest version 1")
 
     def test_a_certificate_for_something_that_is_not_a_proof(self):
         self.leaf()
