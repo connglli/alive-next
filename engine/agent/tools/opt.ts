@@ -32,24 +32,22 @@ export function createOptTool(session: Session) {
       ),
     }),
     execute: async (_id, params) => {
-      const apply = async (): Promise<EditResult> => {
-        if (params.what === "instcombine") {
-          return session.opt({
-            what: params.what,
-            max_iterations: params.max_iterations,
-          });
-        }
+      let edited: EditResult;
+      if (params.what === "instcombine") {
+        edited = await session.opt({
+          what: params.what,
+          max_iterations: params.max_iterations,
+        });
+      } else {
         if (params.v === undefined) {
-          return {
+          return toolResult(false, "refused, bad_request: simplify needs 'v'", {
             kind: "refused",
             code: "bad_request",
             message: "simplify needs 'v'",
-            text: "",
-          };
+          });
         }
-        return session.opt({ what: params.what, v: params.v });
-      };
-      const edited = await apply();
+        edited = await session.opt({ what: params.what, v: params.v });
+      }
       if (edited.kind === "refused") {
         return toolResult(
           false,

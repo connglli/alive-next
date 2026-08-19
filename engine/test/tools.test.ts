@@ -278,6 +278,12 @@ describe.skipIf(!built)("the tool layer", () => {
     await call("tx_abort", {});
   });
 
+  test("simplify without a value fails without inventing a program", async () => {
+    const refused = await call("tx_opt", { what: "simplify" });
+    expect(refused).toContain("simplify needs 'v'");
+    expect(refused).not.toContain("```llvm");
+  });
+
   test("a flag edit reaches the scratch and the refusals stay loud", async () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     const flagged = await call("tx_edit", { op: "flags", v: "%2", flags: { nuw: true } });
