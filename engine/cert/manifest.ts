@@ -15,7 +15,7 @@ import type { ArgumentAssumption } from "../core/state/arguments.ts";
 import { type Goal, head, type Tree } from "../core/state/goals.ts";
 import type { Effect, Entry, Hash } from "../core/state/trajectory.ts";
 
-export const VERSION = 1;
+export const VERSION = 2;
 
 /** One move along a goal's chain. */
 export type Step =
