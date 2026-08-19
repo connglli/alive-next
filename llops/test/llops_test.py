@@ -939,6 +939,23 @@ entry:
     def test_simplify_unknown_instruction(self):
         self.bad(self.opt("simplify", v="nope"), "not_found")
 
+    def test_instcombine_combines_the_function(self):
+        module = """define i32 @f(i32 %x) {
+entry:
+  %a = add i32 %x, 1
+  %b = add i32 %a, 1
+  ret i32 %b
+}
+"""
+        r = self.good(self.opt("instcombine", module=module, max_iterations=1))
+        body = self.body(r["module"])
+        self.assertNotIn("%a = add i32 %x, 1", body)
+        self.assertIn("%b = add i32 %x, 2", body)
+
+    def test_instcombine_rejects_invalid_max_iterations(self):
+        self.bad(self.opt("instcombine", max_iterations=0), "bad_request")
+        self.bad(self.opt("instcombine", max_iterations="one"), "bad_request")
+
     def test_unknown_opt(self):
         self.bad(self.opt("nope"), "bad_request")
 

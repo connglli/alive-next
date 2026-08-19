@@ -113,7 +113,7 @@ entry:
   ret i32 %r
 }
 `;
-    const result = await llops.opt(module, "simplify", "%a");
+    const result = await llops.opt(module, { what: "simplify", v: "%a" });
     if (!result.ok) throw new Error(result.message);
     expect(result.module).toContain("mul i32 %x, 3");
     expect(result.module).not.toContain("add i32 %x, 0");

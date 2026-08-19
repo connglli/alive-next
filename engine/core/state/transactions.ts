@@ -122,7 +122,7 @@ export class Transactions {
    */
   async opt(op: OptOp): Promise<EditResult> {
     const transaction = this.require();
-    const result = await this.llops.opt(transaction.text, op.what, op.v);
+    const result = await this.llops.opt(transaction.text, op);
     if (!result.ok) {
       return {
         kind: "refused",

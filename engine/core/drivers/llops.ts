@@ -100,7 +100,7 @@ export type EditOp =
   | { op: "flags"; v: Ref; flags: Record<string, boolean> };
 
 /** One structural optimizer pass, as the `opt` subcommand takes it. */
-export type OptOp = { what: "simplify"; v: Ref };
+export type OptOp = { what: "simplify"; v: Ref } | { what: "instcombine"; max_iterations?: number };
 
 /** Thrown when llops cannot be run or does not answer in JSON. */
 export class LlopsCrash extends Error {
@@ -174,14 +174,9 @@ export class Llops {
     return this.run("analyze", point ? { module, kind, point } : { module, kind });
   }
 
-  /**
-   * Apply one structural optimizer op. `simplify` folds one instruction with
-   * LLVM's own simplifier, which is the same algebra alive2 reasons about;
-   * the uses are rewritten and the instruction erased, or the module comes
-   * back unchanged when there is nothing to fold.
-   */
-  opt(module: Module, what: "simplify", v: Ref): Promise<LlopsResult<ModuleResult>> {
-    return this.run("opt", { module, what, v });
+  /** Apply one structural optimizer op to an instruction or the whole function. */
+  opt(module: Module, op: OptOp): Promise<LlopsResult<ModuleResult>> {
+    return this.run("opt", { module, ...op });
   }
 
   /**
