@@ -6,6 +6,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
+import type { EditResult } from "../../core/state/transactions.ts";
 import { formatProgram, toolResult } from "./format.ts";
 
 export function createOptTool(session: Session) {
@@ -13,18 +14,42 @@ export function createOptTool(session: Session) {
     name: "tx_opt",
     label: "Optimize",
     description:
-      "Apply one structural optimizer pass to the open transaction's program. simplify folds one instruction with LLVM's own simplifier and erases it, or leaves the program unchanged when there is nothing to fold. Answers with the body as it now stands, or, when the pass is refused, with the body it was refused on.",
+      "Apply one structural optimizer pass to the open transaction's program. simplify folds one instruction; instcombine combines instructions across the function. Answers with the body as it now stands, or, when the pass is refused, with the body it was refused on.",
     parameters: Type.Object({
-      what: Type.Literal("simplify", {
-        description: "Fold one instruction with LLVM's own simplifier.",
+      what: Type.Union([Type.Literal("simplify"), Type.Literal("instcombine")], {
+        description: "Fold one instruction, or combine instructions across the function.",
       }),
-      v: Type.String({
-        description:
-          "A value as the program prints it, %3 or %x, or #7 for the instruction at index 7.",
-      }),
+      v: Type.Optional(
+        Type.String({
+          description: "The instruction for simplify, as %3, %x, or #7. Omit it for instcombine.",
+        }),
+      ),
+      max_iterations: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          description: "Maximum InstCombine iterations; defaults to LLVM's default of 1.",
+        }),
+      ),
     }),
     execute: async (_id, params) => {
-      const edited = await session.opt({ what: params.what, v: params.v });
+      const apply = async (): Promise<EditResult> => {
+        if (params.what === "instcombine") {
+          return session.opt({
+            what: params.what,
+            max_iterations: params.max_iterations,
+          });
+        }
+        if (params.v === undefined) {
+          return {
+            kind: "refused",
+            code: "bad_request",
+            message: "simplify needs 'v'",
+            text: "",
+          };
+        }
+        return session.opt({ what: params.what, v: params.v });
+      };
+      const edited = await apply();
       if (edited.kind === "refused") {
         return toolResult(
           false,

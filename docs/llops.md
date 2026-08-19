@@ -111,8 +111,11 @@ Request `{ "module": ..., "what": "<op>", ... }`, response `{ "ok": true, "modul
 | op | arguments | effect |
 | --- | --- | --- |
 | `simplify` | `v` | fold one instruction with `simplifyInstruction` |
+| `instcombine` | optional `max_iterations` | run LLVM's InstCombine pass over the function |
 
 `simplify` rewrites the instruction's uses to the simplified value and erases the instruction; nothing else in the body moves, so the step stays as small as it was asked to be, and an instruction with nothing to fold comes back unchanged. The terminator cannot be simplified.
+
+`instcombine` combines instructions across the function. `max_iterations` is a positive integer and defaults to LLVM's default of one; invalid values are refused.
 
 ## outline
 

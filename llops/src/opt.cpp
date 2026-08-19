@@ -5,7 +5,11 @@
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+
+#include <limits>
 
 namespace llops {
 
@@ -43,6 +47,38 @@ llvm::json::Object simplify(llvm::json::Object &args, CmdShape &shape) {
   return checkedResponse(*shape.F, *shape.M);
 }
 
+llvm::json::Object instcombine(llvm::json::Object &args, CmdShape &shape) {
+  unsigned maxIterations = llvm::InstCombineDefaultMaxIterations;
+  if (auto *value = args.get("max_iterations")) {
+    auto parsed = value->getAsInteger();
+    if (!parsed || *parsed <= 0 ||
+        static_cast<uint64_t>(*parsed) > std::numeric_limits<unsigned>::max())
+      return errResponse("bad_request",
+                         "opt instcombine: 'max_iterations' must be a positive integer");
+    maxIterations = static_cast<unsigned>(*parsed);
+  }
+
+  llvm::LoopAnalysisManager LAM;
+  llvm::FunctionAnalysisManager FAM;
+  llvm::CGSCCAnalysisManager CGAM;
+  llvm::ModuleAnalysisManager MAM;
+
+  llvm::PassBuilder PB;
+  PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerFunctionAnalyses(FAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+  llvm::InstCombineOptions options;
+  options.setMaxIterations(maxIterations);
+  llvm::FunctionPassManager FPM;
+  FPM.addPass(llvm::InstCombinePass(options));
+  FPM.run(*shape.F, FAM);
+
+  return checkedResponse(*shape.F, *shape.M);
+}
+
 } // namespace
 
 llvm::json::Object optCmd(llvm::json::Object &args) {
@@ -57,6 +93,8 @@ llvm::json::Object optCmd(llvm::json::Object &args) {
 
   if (*what == "simplify")
     return simplify(args, shape);
+  if (*what == "instcombine")
+    return instcombine(args, shape);
 
   return errResponse("bad_request", "unknown opt op '" + what->str() + "'");
 }

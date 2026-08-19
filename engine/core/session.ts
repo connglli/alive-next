@@ -364,7 +364,7 @@ export class Session {
     return this.act("edit", op, () => this.editing.edit(op), scratch);
   }
 
-  /** Fold one instruction of the scratch with llops' own simplifier. */
+  /** Apply one llops structural optimizer op to the scratch program. */
   opt(op: OptOp): Promise<EditResult> {
     return this.act("opt", op, () => this.editing.opt(op), scratch);
   }

@@ -43,7 +43,7 @@ set(LLOPS_SOURCES
 # TransformUtils provides CloneModule, the value mapper and the dead code
 # helper that `erase --cascade` reuses.
 llvm_map_components_to_libnames(llops_libs core support asmparser irreader
-                                analysis transformutils)
+                                analysis transformutils passes instcombine)
 add_executable(llops ${LLOPS_SOURCES})
 target_compile_options(llops PRIVATE -Wall -Wextra)
 target_link_libraries(llops PRIVATE ${llops_libs})
