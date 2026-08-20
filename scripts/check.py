@@ -27,7 +27,7 @@ import tempfile
 import time
 from pathlib import Path
 
-VERSION = 2
+VERSION = 1
 
 # What an input assumption is stated to alive-tv as, and the only options this
 # knows. An option it does not know could weaken what alive-tv was asked, so a
@@ -289,7 +289,6 @@ class Check:
         gid: str,
         role: str | None = None,
         entry: bool = True,
-        callee: str | None = None,
     ) -> None:
         """Check one goal: its chain, then how it was discharged.
 
@@ -303,7 +302,7 @@ class Check:
         """
         goal = self.package.goal(gid)
         flags = self.package.assumed if entry else []
-        head = self.chain(gid, goal, role, flags, callee)
+        head = self.chain(gid, goal, role, flags)
         for side in ("src", "tgt"):
             if head[side] != goal["end"][side]:
                 self.fail(gid, f"the {side} chain ends", f"at {head[side][:12]}, not the end pair")
@@ -325,7 +324,6 @@ class Check:
         goal: dict,
         role: str | None,
         flags: list[str],
-        callee: str | None,
     ) -> dict:
         """Walk the steps, checking each one in the direction its side implies."""
         head = dict(goal["start"])
@@ -355,19 +353,16 @@ class Check:
             elif step["kind"] == "window":
                 head[step["side"]] = self.window(gid, step, head, flags)
             elif step["kind"] == "strengthen":
-                self.strengthen(gid, step, head, role, callee)
+                self.strengthen(gid, step, head, role)
             else:
                 self.fail(gid, "a step of kind", f"{step['kind']}, which this does not know")
         return head
 
-    def strengthen(
-        self, gid: str, step: dict, head: dict, role: str | None, callee: str | None
-    ) -> None:
+    def strengthen(self, gid: str, step: dict, head: dict, role: str | None) -> None:
         """Replay the exact parameter attributes a callee claims to have gained."""
-        if role != "callee":
+        if role is None or role == "outer":
             self.fail(gid, "an attribute", "on a goal that is not a callee")
-        if callee is None:
-            self.fail(gid, "an attribute", "has no outlined function")
+            return
 
         facts = step.get("facts")
         if not isinstance(facts, dict) or not facts:
@@ -383,14 +378,12 @@ class Check:
                 self.fail(gid, f"an attribute on {side} starts", "away from the head")
             attributed = self.package.program(step["from"][side])
             for param, fact in replayable:
-                if callee is None:
-                    continue
                 attributed = self.package.run_llops(
                     "edit",
                     {
                         "module": attributed,
                         "op": "attrs",
-                        "fn": callee,
+                        "fn": role,
                         "param": param,
                         "attrs": fact,
                     },
@@ -565,7 +558,7 @@ class Check:
         # parameters are values computed before it, so it is asked about them
         # under no assumption at all.
         self.goal(discharge["outer"], "outer", entry)
-        self.goal(discharge["inner"], "callee", False, name)
+        self.goal(discharge["inner"], name, False)
 
     def refines(self, src: str, tgt: str, flags: list[str]) -> str:
         return "correct" if self.package.refines(src, tgt, flags) else "not correct"
