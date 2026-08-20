@@ -100,7 +100,9 @@ export type EditOp =
   | { op: "flags"; v: Ref; flags: Record<string, boolean> };
 
 /** One structural optimizer pass, as the `opt` subcommand takes it. */
-export type OptOp = { what: "simplify"; v: Ref } | { what: "instcombine"; max_iterations?: number };
+export type OptOp =
+  | { what: "simplify"; v: Ref }
+  | { what: "instcombine"; max_iterations?: number; debug_counter?: number };
 
 /** Thrown when llops cannot be run or does not answer in JSON. */
 export class LlopsCrash extends Error {
