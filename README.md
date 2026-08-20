@@ -12,7 +12,15 @@ Straightline code for now, memory operations included. Conditionals and loops ne
 
 ## Build
 
-Needs git, cmake, ninja, curl, a C++ compiler, and Z3's development headers. Everything else, LLVM included, is built from source against one pinned revision, which takes about an hour.
+Needs git, cmake, ninja, curl, a C++ compiler, and Z3's development headers to be installed.
+
+On Linux distributions where unprivileged user namespaces are restricted by default (e.g. Ubuntu 24.04+ with AppArmor), enable them so the shell sandbox (`bwrap`) can create namespaces:
+
+```sh
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+```
+
+Everything else, LLVM included, is built from source against one pinned revision, which takes about an hour.
 
 ```sh
 make install-deps
