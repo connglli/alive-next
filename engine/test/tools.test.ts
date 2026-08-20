@@ -267,6 +267,18 @@ describe.skipIf(!built)("the tool layer", () => {
     await call("tx_abort", {});
   });
 
+  test("instcombine can select one debug-counter visit", async () => {
+    await call("tx_begin", { gid: "g1", side: "src" });
+    await call("tx_edit", {
+      op: "set_body",
+      body: "  %a = add i32 %0, 0\n  %b = mul i32 %a, 1\n  ret i32 %b",
+    });
+    const combined = await call("tx_opt", { what: "instcombine", debug_counter: 1 });
+    expect(combined).toContain("%a = add i32 %0, 0");
+    expect(combined).not.toContain("mul i32");
+    await call("tx_abort", {});
+  });
+
   test("an optimizer pass that folds nothing says unchanged", async () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     const unchanged = await call("tx_opt", { what: "simplify", v: "%1" });

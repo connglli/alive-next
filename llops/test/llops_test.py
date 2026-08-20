@@ -956,6 +956,25 @@ entry:
         self.bad(self.opt("instcombine", max_iterations=0), "bad_request")
         self.bad(self.opt("instcombine", max_iterations="one"), "bad_request")
 
+    def test_instcombine_selects_one_debug_counter_visit(self):
+        module = (
+            "define i32 @f(i32 %x) {\n"
+            "entry:\n"
+            "  %a = add i32 %x, 0\n"
+            "  %b = mul i32 %a, 1\n"
+            "  ret i32 %b\n"
+            "}\n"
+        )
+        first = self.good(self.opt("instcombine", module=module, debug_counter=0))
+        self.assertEqual(self.body(first["module"]), ["%b = mul i32 %x, 1", "ret i32 %b"])
+
+        second = self.good(self.opt("instcombine", module=module, debug_counter=1))
+        self.assertEqual(self.body(second["module"]), ["%a = add i32 %x, 0", "ret i32 %a"])
+
+    def test_instcombine_rejects_invalid_debug_counter(self):
+        self.bad(self.opt("instcombine", debug_counter=-1), "bad_request")
+        self.bad(self.opt("instcombine", debug_counter="one"), "bad_request")
+
     def test_unknown_opt(self):
         self.bad(self.opt("nope"), "bad_request")
 

@@ -6,10 +6,12 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/DebugCounter.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 
 #include <limits>
+#include <string>
 
 namespace llops {
 
@@ -56,6 +58,21 @@ llvm::json::Object instcombine(llvm::json::Object &args, CmdShape &shape) {
       return errResponse("bad_request",
                          "opt instcombine: 'max_iterations' must be a positive integer");
     maxIterations = static_cast<unsigned>(*parsed);
+  }
+
+  if (auto *value = args.get("debug_counter")) {
+    auto parsed = value->getAsInteger();
+    if (!parsed || *parsed < 0)
+      return errResponse("bad_request",
+                         "opt instcombine: 'debug_counter' must be a non-negative integer");
+
+    // InstCombine consults this counter immediately before visiting an
+    // instruction. A single-number chunk executes only that zero-based visit,
+    // which keeps the requested transformation as small as LLVM exposes it.
+    auto &counters = llvm::DebugCounter::instance();
+    if (!counters.getCounterInfo("instcombine-visit"))
+      return errResponse("internal", "opt instcombine: LLVM did not register its visit counter");
+    counters.push_back("instcombine-visit=" + std::to_string(*parsed));
   }
 
   llvm::LoopAnalysisManager LAM;

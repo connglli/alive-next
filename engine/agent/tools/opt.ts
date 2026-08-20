@@ -30,6 +30,13 @@ export function createOptTool(session: Session) {
           description: "Maximum InstCombine iterations; defaults to LLVM's default of 1.",
         }),
       ),
+      debug_counter: Type.Optional(
+        Type.Integer({
+          minimum: 0,
+          description:
+            "Run only the selected zero-based InstCombine instruction visit; omit it to run every visit.",
+        }),
+      ),
     }),
     execute: async (_id, params) => {
       let edited: EditResult;
@@ -37,6 +44,7 @@ export function createOptTool(session: Session) {
         edited = await session.opt({
           what: params.what,
           max_iterations: params.max_iterations,
+          debug_counter: params.debug_counter,
         });
       } else {
         if (params.v === undefined) {
