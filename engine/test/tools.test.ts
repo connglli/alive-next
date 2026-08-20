@@ -290,10 +290,13 @@ describe.skipIf(!built)("the tool layer", () => {
     await call("tx_abort", {});
   });
 
-  test("simplify without a value fails without inventing a program", async () => {
-    const refused = await call("tx_opt", { what: "simplify" });
-    expect(refused).toContain("simplify needs 'v'");
-    expect(refused).not.toContain("```llvm");
+  test("the optimizer schema rejects parameters for the other operation", () => {
+    const tool = surface.find((candidate) => candidate.name === "tx_opt");
+    expect(tool).toBeDefined();
+    expect(Check(tool!.parameters, { what: "simplify" })).toBe(false);
+    expect(Check(tool!.parameters, { what: "simplify", v: "%1", debug_counter: 0 })).toBe(false);
+    expect(Check(tool!.parameters, { what: "simplify", v: "%1", max_iterations: 1 })).toBe(false);
+    expect(Check(tool!.parameters, { what: "instcombine", v: "%1" })).toBe(false);
   });
 
   test("a flag edit reaches the scratch and the refusals stay loud", async () => {
