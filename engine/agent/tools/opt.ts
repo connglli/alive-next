@@ -9,35 +9,49 @@ import type { Session } from "../../core/session.ts";
 import type { EditResult } from "../../core/state/transactions.ts";
 import { formatProgram, toolResult } from "./format.ts";
 
+const OptParams = Type.Union(
+  [
+    Type.Object(
+      {
+        what: Type.Literal("simplify", { description: "Fold one instruction." }),
+        v: Type.String({
+          description: "The instruction to fold, as %3, %x, or #7.",
+        }),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        what: Type.Literal("instcombine", {
+          description: "Combine instructions across the function.",
+        }),
+        max_iterations: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            description: "Maximum InstCombine iterations; defaults to LLVM's default of 1.",
+          }),
+        ),
+        debug_counter: Type.Optional(
+          Type.Integer({
+            minimum: 0,
+            description:
+              "Run only the selected zero-based InstCombine instruction visit; omit it to run every visit.",
+          }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+  ],
+  { type: "object" },
+);
+
 export function createOptTool(session: Session) {
   return defineTool({
     name: "tx_opt",
     label: "Optimize",
     description:
       "Apply one structural optimizer pass to the open transaction's program. simplify folds one instruction; instcombine combines instructions across the function. Answers with the body as it now stands, or, when the pass is refused, with the body it was refused on.",
-    parameters: Type.Object({
-      what: Type.Union([Type.Literal("simplify"), Type.Literal("instcombine")], {
-        description: "Fold one instruction, or combine instructions across the function.",
-      }),
-      v: Type.Optional(
-        Type.String({
-          description: "The instruction for simplify, as %3, %x, or #7. Omit it for instcombine.",
-        }),
-      ),
-      max_iterations: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          description: "Maximum InstCombine iterations; defaults to LLVM's default of 1.",
-        }),
-      ),
-      debug_counter: Type.Optional(
-        Type.Integer({
-          minimum: 0,
-          description:
-            "Run only the selected zero-based InstCombine instruction visit; omit it to run every visit.",
-        }),
-      ),
-    }),
+    parameters: OptParams,
     execute: async (_id, params) => {
       let edited: EditResult;
       if (params.what === "instcombine") {
@@ -47,13 +61,6 @@ export function createOptTool(session: Session) {
           debug_counter: params.debug_counter,
         });
       } else {
-        if (params.v === undefined) {
-          return toolResult(false, "refused, bad_request: simplify needs 'v'", {
-            kind: "refused",
-            code: "bad_request",
-            message: "simplify needs 'v'",
-          });
-        }
         edited = await session.opt({ what: params.what, v: params.v });
       }
       if (edited.kind === "refused") {
