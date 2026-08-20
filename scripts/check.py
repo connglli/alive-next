@@ -284,12 +284,7 @@ class Check:
         self.say(gid, what, outcome)
         self.failures.append(f"{gid}: {what}: {outcome}")
 
-    def goal(
-        self,
-        gid: str,
-        role: str | None = None,
-        entry: bool = True,
-    ) -> None:
+    def goal(self, gid: str, role: str | None = None, entry: bool = True) -> None:
         """Check one goal: its chain, then how it was discharged.
 
         `entry` is whether the goal still has the pair's own entry, which is
@@ -299,6 +294,10 @@ class Check:
         parameters are values the program computed and the run's assumption
         about arguments says nothing about them. This is worked out here rather
         than read from the manifest, which is free to claim anything.
+
+        `role` identifies the goal's role in a split: None means neither caller
+        nor callee, "outer" means the caller, and any other value is the
+        callee's name.
         """
         goal = self.package.goal(gid)
         flags = self.package.assumed if entry else []
@@ -318,13 +317,7 @@ class Check:
         else:
             self.fail(gid, "discharged by", f"{discharge['kind']}, which this does not know")
 
-    def chain(
-        self,
-        gid: str,
-        goal: dict,
-        role: str | None,
-        flags: list[str],
-    ) -> dict:
+    def chain(self, gid: str, goal: dict, role: str | None, flags: list[str]) -> dict:
         """Walk the steps, checking each one in the direction its side implies."""
         head = dict(goal["start"])
         for step in goal["steps"]:
@@ -372,7 +365,9 @@ class Check:
         for key, fact in facts.items():
             # JSON object keys are always strings; require the exact format the engine emits.
             if not isinstance(key, str) or not re.fullmatch(r"(?:0|[1-9]\d*)", key):
-                raise Refused(f"a strengthen parameter is not a non-negative integer index: {key!r}")
+                raise Refused(
+                    f"a strengthen parameter is not a non-negative integer index: {key!r}"
+                )
             if not isinstance(fact, dict):
                 raise Refused(f"a strengthen fact for parameter {key} is not an object")
             replayable.append((int(key), fact))
