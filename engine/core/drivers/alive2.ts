@@ -10,9 +10,9 @@
 // prints is what says how the check went. `--quiet` is deliberately not passed:
 // the counterexample is the point.
 //
-// No flag here weakens what alive2 is asked, `--disable-undef-input` least of
-// all: for a callee goal it assumes what the cut has to prove. Definedness is
-// stated in the IR instead, as docs/implementation.md sets out.
+// The flags come from the caller and are passed on verbatim: this driver
+// decides nothing about what a check is asked. What the framework asks is
+// documented in docs/implementation.md.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

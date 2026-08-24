@@ -292,11 +292,11 @@ describe.skipIf(!built)("the tool layer", () => {
 
   test("the optimizer schema rejects parameters for the other operation", () => {
     const tool = surface.find((candidate) => candidate.name === "tx_opt");
-    expect(tool).toBeDefined();
-    expect(Check(tool!.parameters, { what: "simplify" })).toBe(false);
-    expect(Check(tool!.parameters, { what: "simplify", v: "%1", debug_counter: 0 })).toBe(false);
-    expect(Check(tool!.parameters, { what: "simplify", v: "%1", max_iterations: 1 })).toBe(false);
-    expect(Check(tool!.parameters, { what: "instcombine", v: "%1" })).toBe(false);
+    if (!tool) throw new Error("expected tx_opt tool");
+    expect(Check(tool.parameters, { what: "simplify" })).toBe(false);
+    expect(Check(tool.parameters, { what: "simplify", v: "%1", debug_counter: 0 })).toBe(false);
+    expect(Check(tool.parameters, { what: "simplify", v: "%1", max_iterations: 1 })).toBe(false);
+    expect(Check(tool.parameters, { what: "instcombine", v: "%1" })).toBe(false);
   });
 
   test("a flag edit reaches the scratch and the refusals stay loud", async () => {

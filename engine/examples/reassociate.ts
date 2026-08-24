@@ -16,12 +16,12 @@
 // queries, under a second together.
 //
 // Every cut also has to pay for itself first. A callee's parameters are fresh,
-// and a question about undef-capable inputs is one alive2 does not answer, so
+// and without parameter attributes, the callee's inputs could be poison, so
 // each interface is proved defined before the goal behind it is asked about:
 // the caller's values are defined, an assume says so, and the attribute
-// carries it across. That is why the flags come off the src inside the callee
-// before the second cut, since a value an `nsw` could poison is not one the
-// caller can promise.
+// carries it across. That is why the `nsw`/`nuw` instruction flags come off
+// the src inside the callee before the second cut, since a value an `nsw`
+// could poison is not one the caller can promise.
 //
 // The store holds canonical text, so a script names values by slot, and slots
 // move as a body is edited. The comments track what each slot is where it is

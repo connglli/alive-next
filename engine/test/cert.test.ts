@@ -15,7 +15,6 @@ import { Llops } from "../core/drivers/llops.ts";
 import type { RunResult } from "../core/drivers/llubi.ts";
 import type { Scenario } from "../core/scenario.ts";
 import { Session } from "../core/session.ts";
-import { DEFAULT_ASSUMPTION } from "../core/state/arguments.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { derive } from "../core/state/goals.ts";
 import type { Checker } from "../core/state/steps.ts";
@@ -153,26 +152,6 @@ describe.skipIf(!built)("the manifest", () => {
     expect(outer.some((step) => step.kind === "checked" && step.to === only.by.hash)).toBe(true);
   });
 
-  test("states what the run assumed, and what each check was run under", async () => {
-    const manifest = manifestFrom(await prove(strengthen));
-    // A proof means what it means only under this, so it is part of what the
-    // certificate says rather than something a replay has to be told.
-    expect(manifest.assumed).toEqual(DEFAULT_ASSUMPTION);
-
-    let checked = 0;
-    for (const [gid, goal] of Object.entries(manifest.goals)) {
-      for (const step of goal.steps) {
-        if (step.kind !== "checked") continue;
-        checked += 1;
-        // The outer half keeps the pair's entry and is asked under the run's
-        // assumption; a callee's parameters are values the program computed.
-        expect(step.flags).toEqual(gid === "g3" ? [] : ["--disable-undef-input"]);
-        expect(step.flags.some((flag) => flag.startsWith("--smt-to"))).toBe(false);
-      }
-    }
-    expect(checked).toBeGreaterThan(0);
-  });
-
   test("records a narrowed step as the three halves it was cut into", async () => {
     // The commit below touches one instruction of a longer body, so it is
     // certified from the window and the manifest has to say so: a checker that
@@ -198,8 +177,6 @@ describe.skipIf(!built)("the manifest", () => {
     const [only] = manifest.goals.g1?.steps ?? [];
     if (only?.kind !== "window") throw new Error("expected a window step");
     expect(only.window.callee).toBe("outlined_window");
-    // A window is asked under no assumption, whatever its goal is asked under.
-    expect(only.flags).toEqual([]);
     // Its three halves travel with the package, since a replay reads them.
     for (const hash of [only.window.outer, only.window.from, only.window.to]) {
       expect(readFileSync(join(out, "programs", `${hash}.ll`), "utf8").length).toBeGreaterThan(0);

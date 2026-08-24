@@ -9,7 +9,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckOutcome, CheckResult } from "../core/drivers/alive2.ts";
 import { Llops, type LlopsResult, type ModuleResult } from "../core/drivers/llops.ts";
-import { DEFAULT_ASSUMPTION } from "../core/state/arguments.ts";
 import { derive } from "../core/state/goals.ts";
 import { narrow } from "../core/state/narrow.ts";
 import { DEFAULT_TIMEOUTS, orient, Steps, timeoutsFrom } from "../core/state/steps.ts";
@@ -81,16 +80,6 @@ async function tree(...events: Event[]) {
   return derive([...start, ...events].map((event) => ({ ...event, time: 0, prev: "" }) as Entry));
 }
 
-/** The same run, told that its arguments are defined but may be poison. */
-async function assuming(...events: Event[]) {
-  const src = await store.put(SRC);
-  const tgt = await store.put(TGT);
-  const start: Event[] = [
-    { kind: "run_start", src, tgt, assumed: DEFAULT_ASSUMPTION, config: {}, versions: {} },
-  ];
-  return derive([...start, ...events].map((event) => ({ ...event, time: 0, prev: "" }) as Entry));
-}
-
 /** A cut of the root, which is what puts a goal below one. */
 function cutG1(src: string, tgt: string): Event {
   return {
@@ -120,7 +109,6 @@ async function preconditionedTree() {
       kind: "run_start",
       src,
       tgt,
-      assumed: DEFAULT_ASSUMPTION,
       config: {},
       versions: {},
       time: 0,
@@ -224,7 +212,7 @@ describe("stepping", () => {
   test("asks about the window first, and records what it asked", async () => {
     const checker = new FakeChecker(["correct", "unknown"]);
     const steps = new Steps(store, checker);
-    const result = await steps.step(await assuming(), "g1", "src", NEW, { narrowed: WINDOW });
+    const result = await steps.step(await tree(), "g1", "src", NEW, { narrowed: WINDOW });
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
     expect(result.by).toBe("window");
@@ -232,7 +220,7 @@ describe("stepping", () => {
     // assumption: a window's parameters are values the program computed.
     expect(checker.calls[0]).toMatchObject({ src: WAS, tgt: NOW });
     expect(checker.calls[0]?.timeoutMs).toBe(DEFAULT_TIMEOUTS.eagerCheckMs);
-    expect(checker.calls[0]?.flags).toEqual([]);
+    expect(checker.calls[0]?.flags).toEqual(["--disable-undef-input"]);
 
     const step = result.effects[0];
     if (step?.effect !== "step") throw new Error("expected a step effect");
@@ -246,7 +234,7 @@ describe("stepping", () => {
   test("falls back to the whole function when the window settles nothing", async () => {
     const checker = new FakeChecker(["unknown", "correct", "unknown"]);
     const steps = new Steps(store, checker);
-    const result = await steps.step(await assuming(), "g1", "src", NEW, { narrowed: WINDOW });
+    const result = await steps.step(await tree(), "g1", "src", NEW, { narrowed: WINDOW });
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
     expect(result.by).toBe("whole");
@@ -476,27 +464,18 @@ describe("checking a goal", () => {
     expect(capped.cappedFromMs).toBe(DEFAULT_TIMEOUTS.checkCapMs * 10);
   });
 
-  test("carries the run's assumption, and stops at a cut", async () => {
+  test("always passes --disable-undef-input to goal checks", async () => {
     const checker = new FakeChecker(["unknown", "unknown", "unknown"]);
     const steps = new Steps(store, checker);
     const src = await store.put(SRC);
 
-    await steps.checkGoal(await assuming(), "g1");
-    const withCut = await assuming(cutG1(src, src));
+    await steps.checkGoal(await tree(), "g1");
+    const withCut = await tree(cutG1(src, src));
     await steps.checkGoal(withCut, "g2");
     await steps.checkGoal(withCut, "g3");
     expect(checker.calls[0]?.flags).toEqual(["--disable-undef-input"]);
-    // The outer half still has the arguments the run was given.
     expect(checker.calls[1]?.flags).toEqual(["--disable-undef-input"]);
-    // The callee's parameters are values the program computed, and a program
-    // can produce undef whatever it was handed.
-    expect(checker.calls[2]?.flags).toEqual([]);
-  });
-
-  test("assumes nothing where the log stated nothing", async () => {
-    const checker = new FakeChecker(["unknown"]);
-    await new Steps(store, checker).checkGoal(await tree(), "g1");
-    expect(checker.calls[0]?.flags).toEqual([]);
+    expect(checker.calls[2]?.flags).toEqual(["--disable-undef-input"]);
   });
 
   test("reports the budgets it resolved to", () => {

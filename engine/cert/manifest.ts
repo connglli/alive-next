@@ -11,7 +11,6 @@
 // pair it started with to the pair it ended with, which is what the goal tree
 // holds after reverts have truncated it.
 import type { HarnessArg } from "../core/drivers/llops.ts";
-import type { ArgumentAssumption } from "../core/state/arguments.ts";
 import { type Goal, head, type Tree } from "../core/state/goals.ts";
 import type { Effect, Entry, Hash } from "../core/state/trajectory.ts";
 
@@ -24,8 +23,6 @@ export type Step =
       side: "src" | "tgt";
       from: Hash;
       to: Hash;
-      /** Options the run passed alive-tv beyond its timeout. */
-      flags: string[];
     }
   /**
    * A step whose check was narrowed to the window the edit touched. The two
@@ -38,7 +35,6 @@ export type Step =
       side: "src" | "tgt";
       from: Hash;
       to: Hash;
-      flags: string[];
       window: {
         callee: string;
         outer: Hash;
@@ -70,6 +66,7 @@ export type Discharge =
   | { kind: "checked" }
   | { kind: "split"; callee: string; outer: string; inner: string };
 
+/** One goal in a proof, from the pair it started with to the one it proved. */
 export interface ManifestGoal {
   /** The pair the goal started with, which is what it proves about. */
   start: Pair;
@@ -79,19 +76,13 @@ export interface ManifestGoal {
   discharge: Discharge;
 }
 
+/** A whole proof: every goal that was proved, and the moves that proved it. */
 export interface Proof {
   version: number;
   verdict: "verified";
   root: string;
   /** The binaries the run used, as `run_start` recorded them. */
   toolchain: unknown;
-  /**
-   * What the run assumed about the pair's arguments. A proof means what it
-   * means only under this, so a checker states it beside the verdict and works
-   * out for itself which goals it reaches, rather than believing the flags a
-   * step claims to have run with.
-   */
-  assumed: ArgumentAssumption;
   goals: Record<string, ManifestGoal>;
 }
 
@@ -130,17 +121,16 @@ export function manifestOf(entries: Entry[], tree: Tree): [Manifest, Set<Hash>] 
   if (root.status !== "proved") {
     throw new NotCertifiable(`the root is ${root.status}, so there is nothing to certify`);
   }
-  const moves = movesOf(entries);
+  const effects = effectsOf(entries);
   const goals: Record<string, ManifestGoal> = {};
   const programs = new Set<Hash>();
-  include(tree, root, moves, goals, programs);
+  include(tree, root, effects, goals, programs);
   return [
     {
       version: VERSION,
       verdict: "verified" as const,
       root: tree.root,
       toolchain: toolchainOf(entries),
-      assumed: tree.assumed,
       goals,
     },
     programs,
@@ -193,13 +183,13 @@ function reportOf(entries: Entry[], gid: string): { input: HarnessArg[]; diverge
 function include(
   tree: Tree,
   goal: Goal,
-  moves: Move[],
+  effects: Effect[],
   goals: Record<string, ManifestGoal>,
   programs: Set<Hash>,
 ): void {
   const start = { src: first(goal, "src"), tgt: first(goal, "tgt") };
   const end = { src: head(goal, "src"), tgt: head(goal, "tgt") };
-  const steps = chainOf(goal, moves);
+  const steps = chainOf(goal, effects);
   for (const hash of [...goal.src.history, ...goal.tgt.history]) programs.add(hash);
   // A narrowed step is replayed from its three halves, so they travel with the
   // pairs the goal held rather than being recoverable only from the run.
@@ -227,8 +217,8 @@ function include(
       inner: inner.id,
     },
   };
-  include(tree, outer, moves, goals, programs);
-  include(tree, inner, moves, goals, programs);
+  include(tree, outer, effects, goals, programs);
+  include(tree, inner, effects, goals, programs);
 }
 
 /**
@@ -238,14 +228,13 @@ function include(
  * goal holds the pairs that survived. Walking the log and taking each move
  * that lands on the next surviving pair is what leaves the path.
  */
-function chainOf(goal: Goal, moves: Move[]): Step[] {
+function chainOf(goal: Goal, effects: Effect[]): Step[] {
   const steps: Step[] = [];
   const src = goal.src.history;
   const tgt = goal.tgt.history;
   let si = 1;
   let ti = 1;
-  for (const move of moves) {
-    const effect = move.effect;
+  for (const effect of effects) {
     if (effect.gid !== goal.id) continue;
     if (effect.effect === "step" && effect.to === goal[effect.side].history[side(effect, si, ti)]) {
       const from = goal[effect.side].history[side(effect, si, ti) - 1] as Hash;
@@ -256,7 +245,6 @@ function chainOf(goal: Goal, moves: Move[]): Step[] {
               side: effect.side,
               from,
               to: effect.to,
-              flags: [],
               window: effect.window,
             }
           : {
@@ -264,7 +252,6 @@ function chainOf(goal: Goal, moves: Move[]): Step[] {
               side: effect.side,
               from,
               to: effect.to,
-              flags: move.flags ?? [],
             },
       );
       if (effect.side === "src") si += 1;
@@ -306,41 +293,16 @@ function childOf(tree: Tree, parent: Goal, role: "outer" | "callee"): Goal {
   throw new NotCertifiable(`${parent.id} has no ${role} child`);
 }
 
-/** A move the log recorded, with the options that certified it. */
-interface Move {
-  effect: Effect;
-  flags?: string[];
-}
-
-/**
- * Every move the log holds, in order.
- *
- * A result carries its checks in the order its effects landed, so the steps
- * and the checks line up by counting, and the timeout is left behind: what a
- * replay allows the solver is its own business.
- */
-function movesOf(entries: Entry[]): Move[] {
-  const moves: Move[] = [];
+/** Every effect the log recorded, in order. */
+function effectsOf(entries: Entry[]): Effect[] {
+  const effects: Effect[] = [];
   for (const entry of entries) {
     if (entry.kind !== "tool_result") continue;
-    const result = entry.result as { check?: Checked; checks?: Checked[] } | null;
-    const checks = result?.checks ?? (result?.check ? [result.check] : []);
-    let index = 0;
     for (const effect of entry.effects ?? []) {
-      if (effect.effect === "step") {
-        const flags = checks[index]?.invocation?.flags ?? [];
-        moves.push({ effect, flags: flags.filter((flag) => !flag.startsWith("--smt-to")) });
-        index += 1;
-      } else {
-        moves.push({ effect });
-      }
+      effects.push(effect);
     }
   }
-  return moves;
-}
-
-interface Checked {
-  invocation?: { flags?: string[] };
+  return effects;
 }
 
 function toolchainOf(entries: Entry[]): unknown {

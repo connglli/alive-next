@@ -24,6 +24,7 @@ A flawed proposal wastes search budget, but can never compromise soundness or yi
 
 ### Conceptual Model
 
+* **No `undef` Model:** The framework assumes that LLVM has completely eliminated `undef` values. Consequently, neither inputs nor any program state can ever contain `undef`. However, `poison` values remain possible.
 * **Program Store:** Content-addressed, immutable LLVM IR modules stored by SHA-256 (`store/<sha256>.ll`). Every transformation produces a fresh module ID (`p1`, `p2`, ...); programs are never mutated in place.
 * **Goal Tree:** Proof obligations represented as `(src, tgt)` pairs asserting that `tgt` refines `src`. The root goal is the input pair `(LHS, RHS)`. The goal tree settles when all leaves are discharged or the root is refuted.
 * **Steps and Validation Direction:** A transformation on the `src` side moves forward (proving $S' \sqsubseteq S$), while a transformation on the `tgt` side moves backward (proving $T \sqsubseteq T'$). Both preserve transitivity toward $T \sqsubseteq S$.

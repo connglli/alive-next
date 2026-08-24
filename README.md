@@ -1,6 +1,11 @@
-# alive-next
+<h1 align="center">alive-next</h1>
 
-> The bottleneck for using AI to create strategies and make conjectures is we have to rely on human experts and the test of time to validate whether something is plausible or not. --- Terence Tao, Dwarkesh Patel interview
+<p align="center">
+  <em>The bottleneck for using AI to create strategies and make conjectures is we have to rely on human experts and the test of time to validate whether something is plausible or not.</em> --- Terence Tao, Dwarkesh Patel interview
+</p>
+
+> [!WARNING]
+> This project assumes the total removal of `undef` from the middle-end of LLVM. See [LLVM IR Undefined Behavior (UB) Manual](https://llvm.org/docs/UndefinedBehavior.html).
 
 Interactive translation validation framework with agent-driven, alive2-certified proofs for large LLVM IR programs.
 

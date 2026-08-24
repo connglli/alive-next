@@ -30,13 +30,13 @@ A wrong proposal wastes time; it never produces a wrong certificate. Since refin
 
 Straightline code (no conditionals, no loops), but **all** features alive2 supports, including memory operations. Target size: >1000 lines. Conditionals and loops are future work and need further design.
 
-## What a run assumes about its arguments
+## Parameter definedness and the no-undef model
 
-A function's arguments come from callers it cannot see, so which values it may be handed is part of the question rather than part of the answer. A run states it once. By default the arguments are defined but may be poison, which is what a caller of a real function can produce: poison travels through arguments, while undef is on its way out of LLVM and a question about undef-capable arguments is one alive2 answers for almost nothing. Nothing proves this, so it is recorded beside the pair and `check.py` prints it with the verdict, and a proof is never read as more than it is.
+The framework assumes that `undef` does not exist anywhere in LLVM IR inputs or runtime state. Every alive2 query receives `--disable-undef-input` at the driver level.
 
-It cannot be written into the IR. LLVM's `noundef` forbids poison as well as undef and there is nothing in between, so the assumption reaches alive2 as `--disable-undef-input` and `--disable-poison-input` rather than as an attribute on the parameters. That is the one thing the framework passes alive2 beyond a timeout.
+Function parameters may be `poison` unless constrained. Parameter definedness is expressed strictly in-band: an input carrying `noundef` is guaranteed not to be `poison`, while an unannotated input may be `poison`.
 
-The assumption belongs to the entry the run was asked about. The root goal has it, and so does the outer half of every cut under it, since outlining a suffix leaves the entry where it was. A callee has an entry of its own, and its parameters are values the program computed: a function can produce undef whatever it was handed, through a load of uninitialised memory, an `undef` constant, or a call to a function nobody has the body of. So a callee assumes nothing, and what it needs it proves at the call site by strengthening. `check.py` works out which goals are which for itself rather than believing what a manifest records.
+A cut creates fresh callee parameters that are unconstrained by default. When values crossing a cut are guaranteed non-poison (for example, derived from `freeze` or non-overflowing operations), the interface is strengthened by formally proving `noundef` in the caller before attributing it to the callee parameter.
 
 ## Conceptual model of interactive translation validation
 
@@ -75,7 +75,7 @@ The declared `g` must have one signature shared by both sides. The signature is 
 
 The only trusted glue is that the outlining transformation itself is faithful (the outer program plus the callee really is the original program). That is mechanical and small.
 
-A cut leaves the callee's parameters undef-capable, since nothing about a fresh function says its arguments are defined. `strengthen(gid, {param: {noundef}})` is what states otherwise, proved at the call site. The proof fails where the value at the cut can be undef or poison, and then the cut has to move or the program has to be made defined there.
+A cut leaves the callee's parameters poison-capable, since nothing about a fresh function says its arguments are defined. `strengthen(gid, {param: {noundef}})` is what states otherwise, proved at the call site. The proof fails where the value at the cut can be poison, and then the cut has to move or the program has to be made defined there.
 
 Known cost: alive2 is conservative at function entry (arbitrary memory, arbitrary aliasing) and around unknown calls (code cannot move across the cut). So a bad cut placement produces spurious failures. That is fine: cut placement is the agent's job, and a local failure is feedback to the agent, never a bug report. When a cut fails because facts established before the cut are lost, the fix is interface strengthening (below).
 
@@ -87,7 +87,7 @@ A cut shrinks a goal; narrowing shrinks a step. They are the same move over diff
 
 Two things make it hold, and neither is the search that found the window. The outers coming out byte-identical is what says the difference is confined to the window, since the rest of the body is then literally the same program on both sides. And `inline` puts each half back where it came from, so a checker recovers the pair the step names rather than believing the halves it was handed. What is left is refinement through a call, which is the same property a cut rests on: if the callee refines the callee, the caller refines the caller.
 
-A window is not simply cheaper. Its parameters are values the program computed, so it is asked under no input assumption at all, exactly as a cut's callee is, while the whole function keeps whatever the goal is asked under. Neither question is the easier one in general, so a commit asks the window first on a small budget and falls back to the whole function on the step's own budget. The vector rewrite in that same example is the other way round: unprovable as a window, and a tenth of a second whole.
+A window is not simply cheaper. Its parameters are values the program computed, and under the no-`undef` model they cannot be `undef`, so it is asked with `--disable-undef-input` exactly as every other query is. Neither question is the easier one in general, so a commit asks the window first on a small budget and falls back to the whole function on the step's own budget. The vector rewrite in that same example is the other way round: unprovable as a window, and a tenth of a second whole.
 
 Automatic narrowing tries two window candidates: a tight window from the first instruction line the canonicalized bodies disagree on to the last (effective when the edit preserves instruction count), and a wide window extending from the first disagreement to the end of the body (effective when length changes renumber downstream instructions). When an explicit window `[from, to]` is specified, references are resolved in the pre-edit program. Because insertions or deletions change the number of instructions inside the window, the post-edit window is mapped using the surrounding shared context: the post-edit start is `fromIdx`, the unchanged suffix length is `suffix = oldLast - toIdx`, and the post-edit end is `newLast - suffix`. Outlining extracts both slices and verifies that their shared outer frames are byte-identical.
 
@@ -114,7 +114,7 @@ A local validation failure gives a counterexample for a chunk, but the chunk's e
 
 Instead, a counterexample is certified by replay: a concrete whole-program input on which LHS and RHS are run under a UB/poison-aware interpreter (llubi), and RHS shows a behavior LHS does not allow. That check is cheap, independent of program size, and replayable by anyone.
 
-The search for that input is fully untrusted, so the agent gets full flexibility: infer candidate values from analyses, run chunks forward concretely with `interp`, solve chunk-local inversion queries with `solve`, compute in `bash`, or guess. Prefer inputs on which LHS runs deterministically (no undef in play), so that "divergence" is crisp.
+The search for that input is fully untrusted, so the agent gets full flexibility: infer candidate values from analyses, run chunks forward concretely with `interp`, solve chunk-local inversion queries with `solve`, compute in `bash`, or guess.
 
 For programs with memory operations, an input means argument values plus the initial contents of the memory the pointer arguments point to; divergence compares the return value, the final observable memory, and UB events.
 
@@ -126,7 +126,7 @@ A certified step shows the step is valid; it says nothing about whether the path
 - Timeout: no information, continue.
 - Refuted with a concrete counterexample: the current pair can never be proved, so the framework marks the path dead, forcing a revert or an unsplit, and returns the counterexample as a hint.
 
-Interpreting a refutation depends on where it happens. On a goal whose sides have been rewritten, it may blame only the path: a valid step can overshoot. Example: S returns `undef`, a valid step refines it to S' returning `0`, and T returns `1`. T refines S, and S' refines S, but T does not refine S'; the translation is fine and only the path is dead. On a callee goal, it may instead mean the interface is too weak (strengthen it) or the cut is misplaced (unsplit and cut elsewhere), since the callee's entry is conservative. None of these refute the translation by themselves.
+Interpreting a refutation depends on where it happens. On a goal whose sides have been rewritten, it may blame only the path: a valid step can overshoot. Example: S returns `poison`, a valid step refines it to S' returning `0`, and T returns `1`. T refines S, and S' refines S, but T does not refine S'; the translation is fine and only the path is dead. On a callee goal, it may instead mean the interface is too weak (strengthen it) or the cut is misplaced (unsplit and cut elsewhere), since the callee's entry is conservative. None of these refute the translation by themselves.
 
 A refutation on the root goal is special, because its counterexample speaks the root input language whether or not steps have been applied. The framework therefore auto-replays it against the original LHS/RHS pair under llubi. If the replay confirms divergence, the run ends with a certified counterexample; this is the common way a real miscompilation surfaces early, and with zero steps applied the replay nearly always confirms. If the replay does not confirm, the counterexample was an artifact of the path and remains a hint. Either way the verdict comes only from the llubi replay, never from alive2's refutation directly, keeping one uniform rule: counterexamples are certified by execution. For callee goals the counterexample speaks the cut language, and lifting it to a root input remains the agent's search problem.
 
@@ -182,7 +182,7 @@ A step may move a goal that has already been proved. The goal reopens, and every
 
 - `strengthen(gid, facts)`: the two-phase recipe as one tool; `gid` must be a split goal, and `facts` gives one fact per parameter position. Phase 1: insert an `llvm.assume(fact)` per parameter before the call in the outer src and validate the lot with alive2 as one step (this is where the proof cost lives). Phase 2: add the corresponding attributes to `g`'s declaration in the outer goal and the callee goal. Fails cleanly at phase 1 if a fact does not hold.
 
-A fact includes the value being defined, since an attribute a caller has to honour is violated by a poison argument as much as by an out of range one. Phase 1 fails for a value that can be undef or poison: the assume is UB the program did not have, and alive2 refuses the step.
+A fact includes the value being defined, since an attribute a caller has to honour is violated by a poison argument as much as by an out of range one. Phase 1 fails for a value that can be poison: the assume is UB the program did not have, and alive2 refuses the step.
 
 An interface is strengthened as a whole rather than one parameter at a time, so the solver cost is the same whether the call carries one fact or all of them: three certified steps and the two cross-checks below.
 

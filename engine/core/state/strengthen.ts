@@ -294,11 +294,9 @@ export function explainAssumeRefusal(
   // '=' signs are inside the value rather than the assignment.
   const values = exampleLines.map(assignedValue);
   const isPoison = values.some((value) => value.includes("poison"));
-  const isUndef = values.some((value) => value.includes("undef"));
-  if (isPoison || isUndef) {
-    const valKind = isPoison && isUndef ? "poison or undef" : isPoison ? "poison" : "undef";
+  if (isPoison) {
     lines.push(
-      `On caller input ${exampleStr}, a parameter evaluates to ${valKind}, which triggers undefined behavior under llvm.assume.`,
+      `On caller input ${exampleStr}, a parameter evaluates to poison, which triggers undefined behavior under llvm.assume.`,
     );
   }
 

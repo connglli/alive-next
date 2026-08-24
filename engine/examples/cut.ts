@@ -6,12 +6,11 @@
 // difference is alone in the callee.
 //
 // Cutting costs something the root did not have to pay. The root's parameter
-// is `noundef`, but the callee's are fresh, and nothing about a function says
-// its arguments are defined; asked about undef-capable inputs alive2 does not
-// answer a multiply by eight inside thirty seconds. So the first thing after a
-// cut is to prove the interface defined, which is what the caller's own
-// definedness gives: an assume before the call, then the attribute, and the
-// callee is a question with an answer.
+// is `noundef`, but the callee's are fresh, and without parameter attributes,
+// the callee's inputs could be poison. So the first thing after a cut is to
+// prove the interface defined, which is what the caller's own definedness gives:
+// an assume before the call, then the attribute, and the callee is a question
+// with an answer.
 //
 // Canonically `%0` is the parameter, `%1` the add and `%2` the multiply, which
 // is where both sides are cut.
@@ -53,7 +52,9 @@ entry:
     const facts = await session.analyze(split.children.outer, "src", "defined");
     expect("ask what the caller has", facts.ok, facts);
     if (!facts.ok) return;
-    const defined = new Set(facts.facts.filter((fact) => fact.noundef).map((fact) => fact.value));
+    const defined = new Set(
+      facts.facts.filter((fact) => fact.not_poison).map((fact) => fact.value),
+    );
 
     // An interface is strengthened as a whole, so the facts go in one call.
     const wanted: Facts = {};

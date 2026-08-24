@@ -152,14 +152,12 @@ class Built:
         root: str = "g1",
         version: int = 1,
         verdict: str = "verified",
-        assumed: dict | None = None,
     ) -> Path:
         manifest = {
             "version": version,
             "verdict": verdict,
             "root": root,
             "toolchain": {},
-            "assumed": assumed or {},
             "goals": self.goals,
         }
         (self.root / "manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -237,7 +235,6 @@ class Case(unittest.TestCase):
             "side": "src",
             "from": self.built.program(was),
             "to": self.built.program(now),
-            "flags": [],
             "window": {
                 "callee": "w",
                 "outer": self.built.program(outer),
@@ -277,7 +274,7 @@ class TestGolden(Case):
             "g1",
             {"src": nsw, "tgt": wraps},
             {"src": wraps, "tgt": wraps},
-            [{"kind": "checked", "side": "src", "from": nsw, "to": wraps, "flags": []}],
+            [{"kind": "checked", "side": "src", "from": nsw, "to": wraps}],
             {"kind": "checked"},
         )
         self.verified(self.built.write())
@@ -309,7 +306,6 @@ class TestGolden(Case):
             "side": "src",
             "from": self.built.program(was),
             "to": self.built.program(now),
-            "flags": [],
             "window": {
                 "callee": "w",
                 "outer": self.built.program(outer),
@@ -374,7 +370,6 @@ class TestGolden(Case):
             "side": "tgt",
             "from": self.built.program(was),
             "to": self.built.program(now),
-            "flags": [],
             "window": {
                 "callee": "w",
                 "outer": self.built.program(outer),
@@ -394,16 +389,6 @@ class TestGolden(Case):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn("verified", done.stdout)
         self.assertEqual(done.stdout.count("inlines back"), 2)
-
-    def test_a_proof_is_replayed_under_the_assumption_it_names(self):
-        # The same package settles either way depending on what it says the run
-        # was allowed to assume, which is how a replay shows the assumption
-        # reached alive-tv rather than having been written down and forgotten.
-        pair = {"src": self.built.program(FROZEN), "tgt": self.built.program(RAW)}
-        self.built.goal("g1", pair, pair, [], {"kind": "checked"})
-        done = self.verified(self.built.write(assumed={"noUndef": True, "noPoison": True}))
-        self.assertIn("assuming no argument is undef and no argument is poison", done.stdout)
-        self.refused(self.built.write(assumed={"noUndef": True}), "not correct")
 
     def test_the_binaries_come_from_the_manifest(self):
         # A package is replayed by someone who was not there, so where the run
@@ -476,6 +461,15 @@ class TestTampered(Case):
         (package / "programs" / f"{self.src}.ll").write_text(SRC.replace("mul", "add"))
         self.refused(package, "is not the program its name claims")
 
+    def test_a_program_that_holds_an_undef_value(self):
+        # A certificate is replayed under the no-undef model, so a program with
+        # an undef value is refused rather than checked under a model it is not
+        # part of, whatever the manifest claims.
+        bad = self.built.program(SRC.replace("ret i32 %1", "ret i32 undef"))
+        pair = {"src": bad, "tgt": self.tgt}
+        self.built.goal("g1", pair, pair, [], {"kind": "checked"})
+        self.refused(self.built.write(), "holds an undef value")
+
     def test_a_program_that_is_not_there(self):
         package = self.leaf()
         (package / "programs" / f"{self.tgt}.ll").unlink()
@@ -496,7 +490,7 @@ class TestTampered(Case):
             "g1",
             {"src": nsw, "tgt": wraps},
             {"src": wraps, "tgt": wraps},
-            [{"kind": "checked", "side": "src", "from": nsw, "to": wraps, "flags": []}],
+            [{"kind": "checked", "side": "src", "from": nsw, "to": wraps}],
             {"kind": "checked"},
         )
         self.built.write()
@@ -509,7 +503,7 @@ class TestTampered(Case):
             "g1",
             {"src": nsw, "tgt": wraps},
             {"src": wraps, "tgt": wraps},
-            [{"kind": "checked", "side": "src", "from": wraps, "to": wraps, "flags": []}],
+            [{"kind": "checked", "side": "src", "from": wraps, "to": wraps}],
             {"kind": "checked"},
         )
         self.refused(self.built.write(), "not the head")
@@ -590,26 +584,6 @@ class TestTampered(Case):
         self.built.write()
         self.refused(package, "attributes on src replay")
 
-    def test_an_assumption_on_a_goal_below_a_cut(self):
-        # A callee's parameters are values the program computed, so nothing the
-        # run assumed about arguments reaches it, however the manifest is
-        # written. The step below is otherwise sound: the options are the only
-        # thing wrong with it.
-        TestGolden.cut(self)
-        inner = self.built.goals["g3"]["start"]
-        step = {
-            "kind": "checked",
-            "side": "src",
-            "from": inner["src"],
-            "to": inner["src"],
-            "flags": ["--disable-undef-input"],
-        }
-        self.built.goal("g3", inner, inner, [step], {"kind": "checked"})
-        self.refused(
-            self.built.write(assumed={"noUndef": True}),
-            "are not the ones its goal is asked under",
-        )
-
     def test_a_window_that_does_not_inline_back(self):
         # The step claims one window changed and the rest came through. A
         # window that puts the body back together differently is the claim
@@ -618,21 +592,6 @@ class TestTampered(Case):
         other = llops("canon", {"module": "define i32 @w(i32 %0) {\nentry:\n  ret i32 %0\n}\n"})
         step["window"]["to"] = self.built.program(other["module"])
         self.refused(self.built.write(), "to a different program")
-
-    def test_a_window_that_claims_an_assumption(self):
-        # A window's parameters are values the program computed, so nothing the
-        # run assumed about arguments reaches it.
-        step = self.windowed()
-        step["flags"] = ["--disable-undef-input"]
-        self.refused(
-            self.built.write(assumed={"noUndef": True}),
-            "are not none, which is what it is asked under",
-        )
-
-    def test_an_assumption_the_checker_does_not_know(self):
-        self.leaf()
-        self.built.bend(lambda m: m.update({"assumed": {"noWrapping": True}}))
-        self.refused(self.built.root, "does not know")
 
     def test_a_step_of_a_kind_the_checker_does_not_know(self):
         pair = {"src": self.src, "tgt": self.tgt}

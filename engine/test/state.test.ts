@@ -6,8 +6,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Llops } from "../core/drivers/llops.ts";
 import { sha256 } from "../core/state/hash.ts";
-import { Store, StoreCorrupt } from "../core/state/store.ts";
+import { canonWith, Store, StoreCorrupt } from "../core/state/store.ts";
 import { parse, Trajectory, TrajectoryBroken } from "../core/state/trajectory.ts";
 
 let dir: string;
@@ -51,6 +52,28 @@ describe("the store", () => {
     const hash = await store.put("define void @f() {}");
     expect(store.has(hash)).toBe(true);
     expect(store.has(sha256("something else"))).toBe(false);
+  });
+});
+
+describe("canonWith", () => {
+  /** Stands in for `llops canon`: the text is already canonical. */
+  const canon = async (text: string) => ({ ok: true, module: text });
+
+  test("passes a program with no undef value", async () => {
+    const put = canonWith({ canon } as unknown as Llops);
+    expect(await put("define i32 @f() { ret i32 0 }")).toBe("define i32 @f() { ret i32 0 }");
+  });
+
+  test("refuses an undef value wherever it appears", async () => {
+    const put = canonWith({ canon } as unknown as Llops);
+    await expect(put("define i32 @f() { ret i32 undef }")).rejects.toThrow(/no-undef/);
+  });
+
+  test("does not mistake a noundef attribute for an undef value", async () => {
+    const put = canonWith({ canon } as unknown as Llops);
+    await expect(put("define i32 @f(i32 noundef %x) { ret i32 %x }")).resolves.toBe(
+      "define i32 @f(i32 noundef %x) { ret i32 %x }",
+    );
   });
 });
 

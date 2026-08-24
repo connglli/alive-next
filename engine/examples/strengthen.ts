@@ -8,13 +8,13 @@
 // which point both halves hold.
 //
 // A fact is about a value being defined as much as about its range. An
-// attribute a caller has to honour is violated by a poison or undef argument
-// as surely as by an out of range one, and the assume that proves it says so:
-// its condition is poison exactly when the value is, and an assume on a poison
-// condition is UB the program did not have, so alive2 refuses the step. Here
-// the parameter is `noundef` and the mask cannot make poison, so both facts
-// hold; a parameter that could be poison would have to be frozen first, which
-// is what LLVM does when it needs the same guarantee.
+// attribute a caller has to honour is violated by a poison argument as surely
+// as by an out of range one, and the assume that proves it says so: its condition
+// is poison exactly when the value is, and an assume on a poison condition is UB
+// the program did not have, so alive2 refuses the step. Here the parameter is
+// `noundef` and the mask cannot make poison, so both facts hold; a parameter that
+// could be poison would have to be frozen first, which is what LLVM does when it
+// needs the same guarantee.
 //
 // So the two facts travel together in one call. The range is what the callee
 // needs, and being defined is what the callee needs before any question about

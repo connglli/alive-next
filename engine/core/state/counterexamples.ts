@@ -179,12 +179,12 @@ export function returnedPoison(run: RunResult): boolean {
  *
  * The comparison below reads one run of the src as everything the src allows,
  * which holds only where the input settles what it does. In a straightline
- * program the two constructs that do not are `undef`, which takes a fresh
- * value at every use, and `freeze`, which takes an arbitrary one. The tgt is
- * under no such condition: whatever it was seen to do is something it does.
+ * program the one construct that does not is `freeze`, which takes an arbitrary
+ * defined value. The tgt is under no such condition: whatever it was seen to
+ * do is something it does.
  */
 export function choosing(module: string): string | undefined {
-  return module.match(/\b(undef|freeze)\b/)?.[1];
+  return module.match(/\bfreeze\b/)?.[0];
 }
 
 /** The one function a program defines, which is what a harness wraps. */

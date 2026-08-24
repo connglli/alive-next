@@ -9,7 +9,7 @@ export function createSplitTool(session: Session) {
     name: "tree_split",
     label: "Split",
     description:
-      "Cut a goal at a value on each side, making an outer goal that calls an outlined function and a callee goal that is its body. The value_map assigns a tgt value to each src live-in value crossing the cut. The callee's parameters are undef-capable until tree_strengthen says otherwise, so a cut is usually followed by one.",
+      "Cut a goal at a value on each side, making an outer goal that calls an outlined function and a callee goal that is its body. The value_map assigns a tgt value to each src live-in value crossing the cut. Under the no-`undef` model, callee parameters cannot be `undef`. However, callee parameters may be `poison` until tree_strengthen proves `noundef`, so a cut is usually followed by one.",
     parameters: Type.Object({
       gid: Type.String(),
       src_cut: Type.String({ description: "The src value the suffix starts at." }),

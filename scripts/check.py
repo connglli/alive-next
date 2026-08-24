@@ -29,14 +29,6 @@ from pathlib import Path
 
 VERSION = 1
 
-# What an input assumption is stated to alive-tv as, and the only options this
-# knows. An option it does not know could weaken what alive-tv was asked, so a
-# step that recorded one is refused rather than replayed with it.
-ASSUMPTION_FLAGS = {
-    "noUndef": "--disable-undef-input",
-    "noPoison": "--disable-poison-input",
-}
-
 
 class Refused(Exception):
     """The certificate does not hold, saying where."""
@@ -55,28 +47,11 @@ class Package:
         self.verdict = self.manifest.get("verdict")
         if self.verdict not in ("verified", "counterexample"):
             raise Refused(f"a certificate for {self.verdict} is not a proof or a counterexample")
-        self.assumed = self.assumption()
         self.alive_tv = self.tool("alive-tv", tools.get("alive-tv"))
         self.llops = self.tool("llops", tools.get("llops"))
         self.llubi = self.tool("llubi", tools.get("llubi"))
         self.queries = 0
         self.seconds = 0.0
-
-    def assumption(self) -> list[str]:
-        """The options the run's assumption about the pair's arguments is made of.
-
-        A proof holds only under what the run was allowed to take for granted,
-        so this is read from the manifest and stated with the verdict. A
-        manifest naming an assumption this does not know is refused: replaying
-        it would prove something other than what it says.
-        """
-        stated = self.manifest.get("assumed") or {}
-        unknown = set(stated) - set(ASSUMPTION_FLAGS)
-        if unknown:
-            raise Refused(
-                f"the manifest assumes {', '.join(sorted(unknown))}, which this does not know"
-            )
-        return [flag for name, flag in ASSUMPTION_FLAGS.items() if stated.get(name)]
 
     def tool(self, name: str, chosen: str | None) -> str:
         """Where to find a binary: the option, then the manifest, then PATH."""
@@ -117,6 +92,12 @@ class Package:
         text = path.read_text()
         if hashlib.sha256(text.encode()).hexdigest() != digest:
             raise Refused(f"{path.name} is not the program its name claims")
+        # The no-undef model: a program holding an `undef` value has states the
+        # model does not cover, and a certificate replay asks about none of
+        # them, so one is refused rather than replayed under the wrong model.
+        # `(?<![\w@%"])` excludes `noundef`, `%undef`, `@undef` and `!"undef"`.
+        if re.search(r'(?<![\w@%"])undef\b', text):
+            raise Refused(f"{path.name} holds an undef value, which the no-undef model excludes")
         return text
 
     def goal(self, gid: str) -> dict:
@@ -125,7 +106,7 @@ class Package:
             raise Refused(f"the manifest has no goal {gid}")
         return found
 
-    def refines(self, src: str, tgt: str, flags: list[str]) -> bool:
+    def refines(self, src: str, tgt: str) -> bool:
         """Ask alive-tv whether the second program refines the first."""
         with tempfile.TemporaryDirectory() as scratch:
             paths = []
@@ -138,7 +119,7 @@ class Package:
                 paths.append(str(path))
             started = time.monotonic()
             done = subprocess.run(
-                [self.alive_tv, *paths, f"--smt-to={self.smt_to}", *flags],
+                [self.alive_tv, *paths, f"--smt-to={self.smt_to}", "--disable-undef-input"],
                 capture_output=True,
                 text=True,
             )
@@ -284,40 +265,31 @@ class Check:
         self.say(gid, what, outcome)
         self.failures.append(f"{gid}: {what}: {outcome}")
 
-    def goal(self, gid: str, role: str | None = None, entry: bool = True) -> None:
+    def goal(self, gid: str, role: str | None = None) -> None:
         """Check one goal: its chain, then how it was discharged.
-
-        `entry` is whether the goal still has the pair's own entry, which is
-        what decides the options its checks are replayed with. The root has it
-        and an outer half keeps it, since outlining a suffix leaves the entry
-        where it was; everything under a callee loses it, because a callee's
-        parameters are values the program computed and the run's assumption
-        about arguments says nothing about them. This is worked out here rather
-        than read from the manifest, which is free to claim anything.
 
         `role` identifies the goal's role in a split: None means neither caller
         nor callee, "outer" means the caller, and any other value is the
         callee's name.
         """
         goal = self.package.goal(gid)
-        flags = self.package.assumed if entry else []
-        head = self.chain(gid, goal, role, flags)
+        head = self.chain(gid, goal, role)
         for side in ("src", "tgt"):
             if head[side] != goal["end"][side]:
                 self.fail(gid, f"the {side} chain ends", f"at {head[side][:12]}, not the end pair")
 
         discharge = goal["discharge"]
         if discharge["kind"] == "checked":
-            outcome = self.refines(goal["end"]["src"], goal["end"]["tgt"], flags)
+            outcome = self.refines(goal["end"]["src"], goal["end"]["tgt"])
             self.say(gid, "the pair it was left with", outcome) if outcome == "correct" else (
                 self.fail(gid, "the pair it was left with", outcome)
             )
         elif discharge["kind"] == "split":
-            self.split(gid, goal, discharge, entry)
+            self.split(gid, goal, discharge)
         else:
             self.fail(gid, "discharged by", f"{discharge['kind']}, which this does not know")
 
-    def chain(self, gid: str, goal: dict, role: str | None, flags: list[str]) -> dict:
+    def chain(self, gid: str, goal: dict, role: str | None) -> dict:
         """Walk the steps, checking each one in the direction its side implies."""
         head = dict(goal["start"])
         for step in goal["steps"]:
@@ -325,26 +297,19 @@ class Check:
                 side = step["side"]
                 if step["from"] != head[side]:
                     self.fail(gid, f"a {side} step starts", f"at {step['from'][:12]}, not the head")
-                # A step is rerun under what its goal is asked under, whatever
-                # it recorded. Recording anything else is a claim about the
-                # question rather than about the step, so it is refused.
-                if sorted(step.get("flags", [])) != sorted(flags):
-                    self.fail(
-                        gid, f"a {side} step's options", "are not the ones its goal is asked under"
-                    )
                 # A src step optimises forward, so the new program has to refine
                 # the old; a tgt step deoptimises backward, so the old refines
                 # the new.
                 before, after = step["from"], step["to"]
                 pair = (before, after) if side == "src" else (after, before)
-                outcome = self.refines(*pair, flags)
+                outcome = self.refines(*pair)
                 what = f"{side} step to {after[:12]}"
                 self.say(gid, what, outcome) if outcome == "correct" else self.fail(
                     gid, what, outcome
                 )
                 head[side] = after
             elif step["kind"] == "window":
-                head[step["side"]] = self.window(gid, step, head, flags)
+                head[step["side"]] = self.window(gid, step, head)
             elif step["kind"] == "strengthen":
                 self.strengthen(gid, step, head, role)
             else:
@@ -396,7 +361,7 @@ class Check:
                 self.fail(gid, what, "to a different program")
             head[side] = step["to"][side]
 
-    def window(self, gid: str, step: dict, head: dict, flags: list[str] = None) -> str:
+    def window(self, gid: str, step: dict, head: dict) -> str:
         """A step narrowed to a window, optionally with proved preconditions.
 
         Both halves are inlined back into the outer program to verify faithfulness.
@@ -410,10 +375,6 @@ class Check:
         side = step["side"]
         if step["from"] != head[side]:
             self.fail(gid, f"a {side} step starts", f"at {step['from'][:12]}, not the head")
-        if step.get("flags"):
-            self.fail(
-                gid, f"a {side} window's options", "are not none, which is what it is asked under"
-            )
 
         window = step["window"]
         preconditions = window.get("preconditions", {})
@@ -476,7 +437,7 @@ class Check:
             # what says the facts hold wherever that whole is defined: where the
             # assume is false the assumed program is UB, so any defined execution
             # of the whole forces the facts true.
-            assume_outcome = self.refines(self.package.program(whole), inlined_assumed, flags or [])
+            assume_outcome = self.refines(self.package.program(whole), inlined_assumed)
             if assume_outcome != "correct":
                 self.fail(gid, "conditioned window precondition", f"failed: {assume_outcome}")
 
@@ -514,12 +475,12 @@ class Check:
                 (window["from"], window["to"]) if side == "src" else (window["to"], window["from"])
             )
 
-        outcome = self.refines(*pair, [])
+        outcome = self.refines(*pair)
         what = f"{side} window to {step['to'][:12]}"
         self.say(gid, what, outcome) if outcome == "correct" else self.fail(gid, what, outcome)
         return step["to"]
 
-    def split(self, gid: str, goal: dict, discharge: dict, entry: bool) -> None:
+    def split(self, gid: str, goal: dict, discharge: dict) -> None:
         """A cut holds when it inlines back to the pair it was made on."""
         outer = self.package.goal(discharge["outer"])
         inner = self.package.goal(discharge["inner"])
@@ -557,11 +518,11 @@ class Check:
         # The outer half keeps the entry the cut was made in; the callee's
         # parameters are values computed before it, so it is asked about them
         # under no assumption at all.
-        self.goal(discharge["outer"], "outer", entry)
-        self.goal(discharge["inner"], name, False)
+        self.goal(discharge["outer"], "outer")
+        self.goal(discharge["inner"], name)
 
-    def refines(self, src: str, tgt: str, flags: list[str]) -> str:
-        return "correct" if self.package.refines(src, tgt, flags) else "not correct"
+    def refines(self, src: str, tgt: str) -> str:
+        return "correct" if self.package.refines(src, tgt) else "not correct"
 
 
 # --- the counterexample ------------------------------------------------------
@@ -591,12 +552,12 @@ def choosing(module: str) -> str | None:
 
     The comparison below reads one run of the src as everything the src allows,
     which holds only where the input settles what it does. In a straightline
-    program the two constructs that do not are `undef`, which takes a fresh
-    value at every use, and `freeze`, which takes an arbitrary one. The tgt is
-    under no such condition: whatever it was seen to do is something it does.
+    program the one construct that does not is `freeze`, which takes an arbitrary
+    defined value. The tgt is under no such condition: whatever it was seen to do
+    is something it does.
     """
-    found = re.search(r"\b(undef|freeze)\b", module)
-    return found.group(1) if found else None
+    found = re.search(r"\bfreeze\b", module)
+    return found.group(0) if found else None
 
 
 def read_run(trace: str) -> dict:
@@ -757,17 +718,6 @@ class Replay:
         return confirmed
 
 
-def under(flags: list[str]) -> str:
-    """What the verdict was reached under, for the line that states it."""
-    if not flags:
-        return ""
-    said = {
-        "--disable-undef-input": "no argument is undef",
-        "--disable-poison-input": "no argument is poison",
-    }
-    return f", assuming {' and '.join(said[flag] for flag in flags)}"
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("package", nargs="?", type=Path, default=Path(__file__).resolve().parent)
@@ -801,9 +751,7 @@ def main() -> int:
     if not confirmed:
         print(f"NOT verified: {len(check.failures)} of them did not hold")
         return 1
-    # A proof means what it means only under what the run was allowed to take
-    # for granted, so the verdict never stands on its own.
-    print(f"verified{under(package.assumed)}")
+    print("verified")
     return 0
 
 

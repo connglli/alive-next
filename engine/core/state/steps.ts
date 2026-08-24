@@ -11,8 +11,7 @@
 import type { CheckOutcome, CheckResult, Invocation } from "../drivers/alive2.ts";
 import { type Llops, moduleLines } from "../drivers/llops.ts";
 import { definedRefAt, named, resolveRef } from "../refs.ts";
-import { assumptionFlags } from "./arguments.ts";
-import { hasRootEntry, head, type Side, type Tree, workable } from "./goals.ts";
+import { head, type Side, type Tree, workable } from "./goals.ts";
 import type { Narrowed, Window } from "./narrow.ts";
 import type { Store } from "./store.ts";
 import type { Effect, Hash } from "./trajectory.ts";
@@ -198,16 +197,15 @@ export class Steps {
     const goal = workable(tree, gid);
     const srcHash = head(goal, "src");
     const tgtHash = head(goal, "tgt");
-    const flags = askedUnder(tree, gid);
-    const key = historyKey(srcHash, tgtHash, flags);
+    const key = historyKey(srcHash, tgtHash);
     const prior = this.history.get(key);
 
     const askedMs = timeoutMs ?? this.timeouts.checkDefaultMs;
     const budgetMs = this.capped(askedMs);
-    const check = await this.checker.check(this.store.get(srcHash), this.store.get(tgtHash), {
-      timeoutMs: budgetMs,
-      flags,
-    });
+    const check = await this.check(
+      { src: this.store.get(srcHash), tgt: this.store.get(tgtHash) },
+      { timeoutMs: budgetMs },
+    );
     const outcome = goalOutcome(check.outcome);
     this.history.set(key, { outcome, budgetMs, ms: check.ms });
 
@@ -246,10 +244,6 @@ export class Steps {
       return { kind: "refused", check: unchanged() };
     }
 
-    const flags = askedUnder(tree, gid);
-    // The window first, on a cheap budget. Its parameters are values the
-    // program computed rather than the arguments the run was given, so it is
-    // asked under no assumption at all, exactly as a cut's callee is.
     const narrowed = options.narrowed;
 
     let local: CheckResult | undefined;
@@ -263,7 +257,6 @@ export class Steps {
         narrowed,
         options.preconditions,
         side,
-        flags,
       );
       if (conditioned?.kind === "checked") {
         if (conditioned.check.outcome === "correct") {
@@ -280,7 +273,6 @@ export class Steps {
     if (!local && narrowed) {
       local = await this.check(orient(side, narrowed.before, narrowed.after), {
         timeoutMs: this.timeouts.eagerCheckMs,
-        flags: [],
       });
     }
 
@@ -305,7 +297,6 @@ export class Steps {
         : { reason: "no_window" };
       const whole = await this.check(orient(side, beforeText, afterText), {
         timeoutMs: this.timeouts.alive2Ms,
-        flags,
       });
       if (whole.outcome !== "correct") {
         return {
@@ -360,11 +351,10 @@ export class Steps {
     // know about this step until its effect is recorded.
     const eagerSrcHash = side === "src" ? after : head(goal, "src");
     const eagerTgtHash = side === "tgt" ? after : head(goal, "tgt");
-    const eagerKey = historyKey(eagerSrcHash, eagerTgtHash, flags);
-    const eager = await this.checker.check(
-      this.store.get(eagerSrcHash),
-      this.store.get(eagerTgtHash),
-      { timeoutMs: this.timeouts.eagerCheckMs, flags },
+    const eagerKey = historyKey(eagerSrcHash, eagerTgtHash);
+    const eager = await this.check(
+      { src: this.store.get(eagerSrcHash), tgt: this.store.get(eagerTgtHash) },
+      { timeoutMs: this.timeouts.eagerCheckMs },
     );
     this.history.set(eagerKey, {
       outcome: goalOutcome(eager.outcome),
@@ -390,7 +380,6 @@ export class Steps {
     narrowed: Narrowed,
     preconditions: Record<string, Record<string, unknown>>,
     side: Side,
-    flags: string[],
   ): Promise<Conditioned | undefined> {
     if (!this.llops) return undefined;
 
@@ -449,10 +438,7 @@ export class Steps {
 
     const assumeCheck = await this.check(
       { src: whole, tgt: inlined.module },
-      {
-        timeoutMs: this.timeouts.alive2Ms,
-        flags,
-      },
+      { timeoutMs: this.timeouts.alive2Ms },
     );
     if (assumeCheck.outcome !== "correct")
       return { kind: "refused", reason: "the facts do not hold at the call site" };
@@ -475,7 +461,6 @@ export class Steps {
 
     const condCheck = await this.check(orient(side, condBefore, condAfter), {
       timeoutMs: this.timeouts.eagerCheckMs,
-      flags: [],
     });
 
     return { kind: "checked", check: condCheck, preconditions: mappedFacts };
@@ -484,9 +469,13 @@ export class Steps {
   /** One question to the checker, in the direction the side settled. */
   private check(
     pair: { src: string; tgt: string },
-    options: { timeoutMs: number; flags: string[] },
+    options: { timeoutMs: number },
   ): Promise<CheckResult> {
-    return this.checker.check(pair.src, pair.tgt, options);
+    // The no-`undef` model: every query is asked with `--disable-undef-input`.
+    return this.checker.check(pair.src, pair.tgt, {
+      timeoutMs: options.timeoutMs,
+      flags: ["--disable-undef-input"],
+    });
   }
 
   /**
@@ -505,15 +494,6 @@ export class Steps {
   private capped(timeoutMs: number): number {
     return Math.min(timeoutMs, this.timeouts.checkCapMs);
   }
-}
-
-/**
- * What a check of this goal is asked under: the run's assumption about the
- * pair's arguments where the goal still has the pair's entry, and nothing at
- * all below a cut, where the parameters are values the program computed.
- */
-function askedUnder(tree: Tree, gid: string): string[] {
-  return hasRootEntry(tree, gid) ? assumptionFlags(tree.assumed) : [];
 }
 
 /** What a check's answer says about the goal it was asked about. */
@@ -537,6 +517,6 @@ function unchanged(): CheckResult {
   };
 }
 
-function historyKey(src: Hash, tgt: Hash, flags: string[]): string {
-  return `${src}\0${tgt}\0${flags.join("\0")}`;
+function historyKey(src: Hash, tgt: Hash): string {
+  return `${src}\0${tgt}`;
 }

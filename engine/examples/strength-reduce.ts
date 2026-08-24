@@ -1,10 +1,9 @@
 // The smallest run there is: one check, and the root is discharged.
 //
-// The parameter is `noundef` here and in every scenario, because alive2 asked
-// about undef-capable inputs does not answer even this: `mul x, 2` into
-// `shl x, 1` runs out of thirty seconds, and takes milliseconds once the input
-// is known to be defined. That is a fact about the pair rather than a switch,
-// so it lives in the IR, where a certificate can see it too.
+// The parameter is `noundef` here, expressing that the function input is
+// defined (some scenarios like `freeze` deliberately leave it unconstrained to
+// demonstrate poison-blocking). That is a fact about the pair rather than an
+// out-of-band switch, so it lives in the IR, where a certificate can see it too.
 import { expect, type Scenario } from "../core/scenario.ts";
 
 export const strengthReduce: Scenario = {
