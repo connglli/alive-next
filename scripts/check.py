@@ -52,6 +52,9 @@ class Package:
         self.llubi = self.tool("llubi", tools.get("llubi"))
         self.queries = 0
         self.seconds = 0.0
+        # Programs are read more than once, and each read pays for a hash and
+        # a model check; the files are immutable, so one answer lasts.
+        self.read: dict[str, str] = {}
 
     def tool(self, name: str, chosen: str | None) -> str:
         """Where to find a binary: the option, then the manifest, then PATH."""
@@ -86,19 +89,35 @@ class Package:
 
     def program(self, digest: str) -> str:
         """A program, read from the file whose name says what it must hash to."""
+        found = self.read.get(digest)
+        if found is not None:
+            return found
         path = self.root / "programs" / f"{digest}.ll"
         if not path.exists():
             raise Refused(f"the package has no program {digest}")
         text = path.read_text()
         if hashlib.sha256(text.encode()).hexdigest() != digest:
             raise Refused(f"{path.name} is not the program its name claims")
-        # The no-undef model: a program holding an `undef` value has states the
-        # model does not cover, and a certificate replay asks about none of
-        # them, so one is refused rather than replayed under the wrong model.
-        # `(?<![\w@%"])` excludes `noundef`, `%undef`, `@undef` and `!"undef"`.
-        if re.search(r'(?<![\w@%"])undef\b', text):
-            raise Refused(f"{path.name} holds an undef value, which the no-undef model excludes")
+        # The no-undef model: a program holding an `undef` value has states
+        # the model does not cover, and a certificate replay asks about none
+        # of them, so one is refused rather than replayed under the wrong
+        # model. The gate is `llops canon`, the checker a program passed when
+        # the run stored it, applied here to the bytes the package carries.
+        self.model_gate(
+            text, f"{path.name} holds an undef value, which the no-undef model excludes"
+        )
+        self.read[digest] = text
         return text
+
+    def model_gate(self, module: str, said: str) -> str:
+        """The module, unless it holds an `undef` value, which the model excludes."""
+        answer = self.ask_llops("canon", {"module": module})
+        if not answer.get("ok"):
+            error = answer.get("error", {})
+            if error.get("code") == "undef":
+                raise Refused(said)
+            raise Refused(f"llops canon: {error.get('message')}")
+        return module
 
     def goal(self, gid: str) -> dict:
         found = self.manifest["goals"].get(gid)
@@ -113,8 +132,17 @@ class Package:
             for name, item in (("src.ll", src), ("tgt.ll", tgt)):
                 path = Path(scratch) / name
                 # A digest is exactly a sha256 name; anything else is the
-                # program itself, which is what a replayed window carries.
-                text = self.program(item) if re.fullmatch(r"[0-9a-f]{64}", item) else item
+                # program itself, which is what a replayed window carries,
+                # and it passes the model gate like any stored program.
+                text = (
+                    self.program(item)
+                    if re.fullmatch(r"[0-9a-f]{64}", item)
+                    else self.model_gate(
+                        item,
+                        "a program carried in the manifest holds an undef value,"
+                        " which the no-undef model excludes",
+                    )
+                )
                 path.write_text(text)
                 paths.append(str(path))
             started = time.monotonic()
@@ -127,7 +155,7 @@ class Package:
             self.queries += 1
         return summary(done.stdout) == "correct"
 
-    def run_llops(self, subcommand: str, request: dict) -> dict:
+    def ask_llops(self, subcommand: str, request: dict) -> dict:
         done = subprocess.run(
             [self.llops, subcommand],
             input=json.dumps(request),
@@ -140,6 +168,10 @@ class Package:
             raise Refused(f"llops {subcommand} answered with no JSON: {done.stderr.strip()}") from (
                 error
             )
+        return answer
+
+    def run_llops(self, subcommand: str, request: dict) -> dict:
+        answer = self.ask_llops(subcommand, request)
         if not answer.get("ok"):
             raise Refused(f"llops {subcommand}: {answer.get('error', {}).get('message')}")
         return answer

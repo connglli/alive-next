@@ -67,6 +67,8 @@ Request `{ "module": "<ir text>" }`, response `{ "ok": true, "module": ... }`.
 
 Every local name is dropped, so LLVM numbers values in definition order with the arguments first, and blocks are named by position starting at `entry`. Two programs that differ only in names canonicalize to identical bytes, which is what makes a content hash a program's identity, and canon over its own output changes nothing.
 
+A module holding an `undef` value is refused with the error code `undef`. Canon is the gate text passes through to become a stored program, and every program is reasoned about under the [no-`undef` model](./design.md), so the refusal keeps what is stored inside what any later question can be about. The value, not the word, is what is refused: poison is a value of its own and passes, a local called `%undef` is an ordinary name, and metadata passes, since none of them put an `undef` into a runtime state.
+
 ## edit
 
 Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module": ... }`. One op per call.
@@ -236,6 +238,7 @@ A request that asks for a condition and a bundle at once produces two assumes, b
 | `bad_request` | a field is missing, or has the wrong type |
 | `parse_error` | the module does not parse |
 | `shape_error` | the module is not one defined straightline function |
+| `undef` | the module holds an `undef` value |
 | `not_found` | a reference names nothing |
 | `invalid` | the operation does not apply here |
 | `type_mismatch` | two types had to agree and did not |

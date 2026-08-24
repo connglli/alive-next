@@ -70,6 +70,12 @@ std::vector<Diag> checkFunction(llvm::Function &F);
 // edit is reported instead of handed back as text.
 std::vector<Diag> checkModule(llvm::Module &M);
 
+// Whether any value in the module is `undef`. Poison is a value of its own
+// and passes, and so does metadata, since neither defines runtime state;
+// everything that does, global initializers included, is searched through
+// constants wherever a constant is accepted.
+bool holdsUndef(const llvm::Module &M);
+
 // Values are referenced by the token that names them in printed IR, so the
 // agent can quote back what it reads: "%3" for a slot, "%x" for a name and
 // "#7" for the instruction at index 7, which is the only form that reaches

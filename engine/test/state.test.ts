@@ -56,23 +56,26 @@ describe("the store", () => {
 });
 
 describe("canonWith", () => {
-  /** Stands in for `llops canon`: the text is already canonical. */
+  /**
+   * Stands in for `llops canon`, which answers with the canonical text and,
+   * under the no-undef model, refuses an undef value itself.
+   */
   const canon = async (text: string) => ({ ok: true, module: text });
+  const canonUndef = async () => ({
+    ok: false,
+    code: "undef",
+    message: "the module holds an undef value, which the no-undef model excludes",
+  });
 
-  test("passes a program with no undef value", async () => {
+  test("stores what canon hands back", async () => {
     const put = canonWith({ canon } as unknown as Llops);
     expect(await put("define i32 @f() { ret i32 0 }")).toBe("define i32 @f() { ret i32 0 }");
   });
 
-  test("refuses an undef value wherever it appears", async () => {
-    const put = canonWith({ canon } as unknown as Llops);
-    await expect(put("define i32 @f() { ret i32 undef }")).rejects.toThrow(/no-undef/);
-  });
-
-  test("does not mistake a noundef attribute for an undef value", async () => {
-    const put = canonWith({ canon } as unknown as Llops);
-    await expect(put("define i32 @f(i32 noundef %x) { ret i32 %x }")).resolves.toBe(
-      "define i32 @f(i32 noundef %x) { ret i32 %x }",
+  test("refuses what canon refuses, saying what it said", async () => {
+    const put = canonWith({ canon: canonUndef } as unknown as Llops);
+    await expect(put("define i32 @f() { ret i32 undef }")).rejects.toThrow(
+      /llops canon: undef, the module holds an undef value/,
     );
   });
 });

@@ -24,29 +24,16 @@ import { sha256 } from "./hash.ts";
 export type Canonicalize = (text: string) => Promise<string>;
 
 /**
- * An `undef` value in canonical text. The word `undef` must not be part of a
- * larger identifier or a quoted string, so `noundef`, `%undef`, `@undef` and
- * `!"undef"` are excluded via a negative look-behind. This catches
- * `i32 undef` regardless of the delimiter before it (` `, `(`, `,`, `[`, `{`,
- * `<`, `=`, line start).
- */
-const HAS_UNDEF = /(?<![\w@%"])undef\b/;
-
-/**
  * The canonicalizer every store outside a unit test uses. A program llops will
  * not parse cannot be stored at all, so a store never holds text no later tool
- * can read. Under the no-`undef` model a program holding an `undef` value is
- * outside the framework's semantics, so it is refused here: a program state
- * can never contain `undef`, and storing one would be checking a question the
- * model does not cover.
+ * can read, and canon refuses an `undef` value with the same finality: under
+ * the no-`undef` model a program state can never contain one, so a program
+ * holding `undef` is outside what any later tool can be asked about.
  */
 export function canonWith(llops: Llops): Canonicalize {
   return async (text: string) => {
     const result = await llops.canon(text);
     if (!result.ok) throw new Error(`llops canon: ${result.code}, ${result.message}`);
-    if (HAS_UNDEF.test(result.module)) {
-      throw new Error("the program holds an undef value, which the no-undef model excludes");
-    }
     return result.module;
   };
 }

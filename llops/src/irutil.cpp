@@ -2,6 +2,8 @@
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
@@ -155,6 +157,60 @@ std::vector<Diag> checkModule(llvm::Module &M) {
   if (llvm::verifyModule(M, &os))
     diags.push_back({Diag::Severity::Error, "invalid_ir", llvm::StringRef(msg).trim().str()});
   return diags;
+}
+
+namespace {
+
+// Undef itself carries nothing, but an aggregate or a constant expression
+// accepts one anywhere a constant is accepted, so the search follows
+// operands. Not every operand of a constant is one: the block of a
+// BlockAddress is not.
+bool constantHoldsUndef(const llvm::Constant *C) {
+  // PoisonValue derives from UndefValue, and poison stays inside the model.
+  if (llvm::isa<llvm::PoisonValue>(C))
+    return false;
+  if (llvm::isa<llvm::UndefValue>(C))
+    return true;
+  // A global symbol is an address constant, never an undef value. Its
+  // initializer, aliasee, or resolver is inspected by the module-level loops
+  // in holdsUndef, so recursing into it here would be redundant at best and
+  // an infinite loop at worst (a global's operand 0 is its initializer,
+  // which may reference the global itself).
+  if (llvm::isa<llvm::GlobalValue>(C))
+    return false;
+  for (const llvm::Use &U : C->operands())
+    if (auto *op = llvm::dyn_cast<llvm::Constant>(U.get()))
+      if (constantHoldsUndef(op))
+        return true;
+  return false;
+}
+
+} // namespace
+
+bool holdsUndef(const llvm::Module &M) {
+  // Everything that can hold a value at run time: initializers, indirect
+  // symbols and resolvers, personality functions, and instruction operands,
+  // which include call arguments and operand bundles. Metadata is left out:
+  // it names no runtime state.
+  for (const auto &G : M.globals())
+    if (G.hasInitializer() && constantHoldsUndef(G.getInitializer()))
+      return true;
+  for (const auto &A : M.aliases())
+    if (constantHoldsUndef(A.getAliasee()))
+      return true;
+  for (const auto &I : M.ifuncs())
+    if (constantHoldsUndef(I.getResolver()))
+      return true;
+  for (const auto &F : M) {
+    if (F.hasPersonalityFn() && constantHoldsUndef(F.getPersonalityFn()))
+      return true;
+    for (const auto &I : llvm::instructions(F))
+      for (const llvm::Use &U : I.operands())
+        if (auto *C = llvm::dyn_cast<llvm::Constant>(U.get()))
+          if (constantHoldsUndef(C))
+            return true;
+  }
+  return false;
 }
 
 std::vector<Diag> validateModule(llvm::Module &M) {

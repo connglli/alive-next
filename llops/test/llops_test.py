@@ -269,6 +269,52 @@ entry:
         module = "declare i32 @h(i32)\n\n" + F_SIMPLE
         self.assertIn("declare i32 @h(i32)", self.canon(module))
 
+    def test_refuses_an_undef_value(self):
+        # The no-undef model leaves no program holding an undef value inside
+        # what llops will answer about, and canon is where that is enforced.
+        r = run("canon", {"module": F_SIMPLE.replace("ret i32 %s", "ret i32 undef")})
+        self.bad(r, "undef")
+
+    def test_refuses_an_undef_operand(self):
+        r = run(
+            "canon", {"module": F_SIMPLE.replace("%s = add i32 %m, %x", "%s = add i32 %m, undef")}
+        )
+        self.bad(r, "undef")
+
+    def test_poison_is_not_undef(self):
+        self.good(run("canon", {"module": F_SIMPLE.replace("ret i32 %s", "ret i32 poison")}))
+
+    def test_a_value_named_undef_is_not_an_undef_value(self):
+        # What is refused is the value, not the word: a local called %undef
+        # is an ordinary name.
+        module = F_SIMPLE.replace("%m = mul", "%undef = mul").replace("%m,", "%undef,")
+        self.canon(module)
+
+    def test_refuses_an_undef_initializer_behind_an_aggregate(self):
+        module = "@g = global { i32, i32 } { i32 0, i32 undef }\n\n" + F_SIMPLE
+        self.bad(run("canon", {"module": module}), "undef")
+
+    def test_metadata_does_not_hold_values(self):
+        # Metadata names no runtime state, so it is not searched.
+        module = F_SIMPLE.replace("ret i32 %s", "ret i32 %s, !foo !0") + "\n!0 = !{i32 undef}\n"
+        self.good(run("canon", {"module": module}))
+
+    def test_a_self_referential_global_is_not_undef(self):
+        # A global whose initializer points to itself is a cycle through
+        # Constant::operands; it must terminate, not crash.
+        module = "@g = global ptr @g\n\n" + F_SIMPLE
+        self.canon(module)
+
+    def test_mutually_referential_globals_are_not_undef(self):
+        module = "@a = global ptr @b\n@b = global ptr @a\n\n" + F_SIMPLE
+        self.canon(module)
+
+    def test_refuses_undef_behind_a_global_reference(self):
+        # The initializer holds undef; the global symbol itself is just an
+        # address, but the initializer is inspected at module scope.
+        module = "@g = global i32 undef\n\n" + F_SIMPLE
+        self.bad(run("canon", {"module": module}), "undef")
+
 
 class TestRefs(Case):
     """Values are addressed the way printed IR names them."""
