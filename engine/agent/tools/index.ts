@@ -16,6 +16,7 @@ import { createBeginTool } from "./begin.ts";
 import { createCheckTool } from "./check.ts";
 import { createCommitTool } from "./commit.ts";
 import { createEditTool } from "./edit.ts";
+import { toolResultFrom } from "./format.ts";
 import { createGiveUpTool } from "./give-up.ts";
 import { createOptTool } from "./opt.ts";
 import { createReportCexTool } from "./report-cex.ts";
@@ -60,7 +61,29 @@ export function createProofAssistantTools(
     createStrengthenTool(session),
     createReportCexTool(session),
     createGiveUpTool(session, stop),
-  ];
+  ].map((tool) => withErrorGuard(tool, session));
+}
+
+/**
+ * Wrapping every proof tool here turns any thrown error into an ordinary
+ * `refused` result so the model sees a `FAILURE` with the same shape as any
+ * other refusal.
+ */
+function withErrorGuard(tool: ToolDefinition, session: Session): ToolDefinition {
+  const orig = tool.execute as (...args: unknown[]) => Promise<unknown>;
+  return {
+    ...tool,
+    execute: async (...args: unknown[]) => {
+      try {
+        return await orig(...args);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return toolResultFrom(session, false, `refused: ${msg}`, {
+          error: msg,
+        } as unknown as never);
+      }
+    },
+  } as ToolDefinition;
 }
 
 /** Every tool a run may call, which is what the allowlist has to say. */

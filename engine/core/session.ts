@@ -491,10 +491,10 @@ export class Session {
     move: (tree: Tree) => Promise<T>,
     written: (result: T) => unknown = (result) => result,
   ): Promise<T> {
-    const id = `t${++this.calls}`;
-    this.append({ kind: "tool_call", id, tool, args });
     const started = Date.now();
     const result = await move(this.tree);
+    const id = `t${++this.calls}`;
+    this.append({ kind: "tool_call", id, tool, args });
     this.append({
       kind: "tool_result",
       id,
