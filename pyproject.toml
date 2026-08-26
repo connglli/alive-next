@@ -18,6 +18,7 @@ package = false
 [tool.ruff]
 # One column limit for the project, the same one .clang-format sets.
 line-length = 100
+indent-width = 2
 
 [tool.ruff.lint]
 # ruff's default set, plus import order, modern syntax and the bugbear checks.
