@@ -1794,6 +1794,101 @@ declare i32 @g(i32)
     self.bad(self.assume(before="%nope"), "not_found")
     self.bad(self.assume(value="%nope"), "not_found")
 
+  def test_entry_anchor_with_fact(self):
+    module = """define i32 @f(i32 %x, i32 %y) {
+entry:
+  %a = add i32 %x, %y
+  ret i32 %a
+}
+"""
+    r = self.good(
+      run("assume", {"module": module, "entry": "f", "arg": 0, "fact": {"noundef": True}})
+    )
+    body = self.body(r["module"])
+    self.assertEqual(body[0], 'call void @llvm.assume(i1 true) [ "noundef"(i32 %x) ]')
+    self.assertEqual(body[1], "%a = add i32 %x, %y")
+
+  def test_entry_anchor_with_predicate(self):
+    module = """define i32 @f(i32 %x, i32 %y) {
+entry:
+  %a = add i32 %x, %y
+  ret i32 %a
+}
+"""
+    r = self.good(
+      run(
+        "assume",
+        {
+          "module": module,
+          "entry": "f",
+          "predicate": {"op": "slt", "lhs": {"arg": 0}, "rhs": {"arg": 1}},
+        },
+      )
+    )
+    body = self.body(r["module"])
+    self.assertEqual(body[0], "%0 = icmp slt i32 %x, %y")
+    self.assertEqual(body[1], "call void @llvm.assume(i1 %0)")
+
+  def test_before_call_with_predicate(self):
+    module = """declare i32 @g(i32, i32)
+
+define i32 @f(i32 %x, i32 %y) {
+entry:
+  %c = call i32 @g(i32 %x, i32 %y)
+  ret i32 %c
+}
+"""
+    r = self.good(
+      run(
+        "assume",
+        {
+          "module": module,
+          "before_call": "g",
+          "predicate": {"op": "ne", "lhs": {"arg": 0}, "rhs": {"const": 0}},
+        },
+      )
+    )
+    body = self.body(r["module"])
+    self.assertEqual(body[0], "%0 = icmp ne i32 %x, 0")
+    self.assertEqual(body[1], "call void @llvm.assume(i1 %0)")
+    self.assertEqual(body[2], "%c = call i32 @g(i32 %x, i32 %y)")
+
+  def test_predicate_type_mismatch(self):
+    module = """define i32 @f(i32 %x, i64 %y) {
+entry:
+  ret i32 %x
+}
+"""
+    self.bad(
+      run(
+        "assume",
+        {
+          "module": module,
+          "entry": "f",
+          "predicate": {"op": "eq", "lhs": {"arg": 0}, "rhs": {"arg": 1}},
+        },
+      ),
+      "type_mismatch",
+    )
+
+  def test_unknown_predicate_operator(self):
+    module = """define i32 @f(i32 %x, i32 %y) {
+entry:
+  ret i32 %x
+}
+"""
+    self.bad(
+      run(
+        "assume",
+        {
+          "module": module,
+          "entry": "f",
+          "predicate": {"op": "bogus", "lhs": {"arg": 0}, "rhs": {"arg": 1}},
+        },
+      ),
+      "invalid",
+    )
+
 
 class TestAnalyze(Case):
   MASKED = """define i32 @f(i32 %x) {

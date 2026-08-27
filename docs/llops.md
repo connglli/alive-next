@@ -213,20 +213,21 @@ The harness is not a v1 program, since it defines a second function, so `validat
 
 ## assume
 
-States a fact about a value, just before an instruction. This is the first half of interface strengthening: an attribute on an outlined callee's parameter is an assumption its caller has to honour, so it may only be added once the caller has been shown to honour it, and an assume is how that is shown. If the fact were false the assume would add UB the program did not have, and the alive2 check of the insertion refuses it.
+States a fact about a value or a relational comparison between values. This is the first half of interface strengthening: an attribute or precondition on an outlined callee is an assumption its caller has to honour, so it may only be assumed once the caller has been shown to satisfy it, and an assume is how that is shown. If the assertion were false the assume would add UB the program did not have, and the alive2 check of the insertion refuses it.
 
-Request `{ "module": ..., "before": ref, "value": ref, "fact": { ... } }`, response `{ "ok": true, "module": ... }`.
+Request `{ "module": ..., ... }`, response `{ "ok": true, "module": ... }`.
 
-Where the assume goes can be said the other way instead, with `{ "before_call": "g", "arg": 0 }` in place of `before` and `value`: before the call to that function, about the argument at that position. That is what strengthening needs, since a fact about a call's argument outlives the reference that named it, which every edit before the call renumbers. The two forms are exclusive.
+Where the assume goes is specified by exactly one anchor:
+* `before`: names an instruction reference (with `value` when stating a fact).
+* `before_call`: names a called function (with `arg` when stating a fact).
+* `entry`: names a defined function to insert at the start of its entry block (with `arg` when stating a fact).
 
-The fact vocabulary is the one `edit attrs` takes, so what is proved here and what is attributed cannot drift apart. How each one is written depends on what it says:
+The assertion is stated with `fact`, `predicate`, or an array of `predicates`:
 
-* `range` becomes two signed comparisons over the value, joined by an `and` when the interval runs upwards and by an `or` when it wraps, which is the same half-open interval the attribute means.
-* `noundef` becomes a `"noundef"` operand bundle, which is UB exactly when the value is undef or poison, and which `analyze defined` reads back.
-* `nonnull`, `align` and `dereferenceable` become operand bundles on an assume of `true`, since that is the only form they have.
-* `noalias` is refused. It describes a function's whole argument list rather than a value at a point, so there is nothing here that would prove it.
+* `fact`: takes the vocabulary of `edit attrs` (`range`, `noundef`, `nonnull`, `align`, `dereferenceable`). `noalias` is refused.
+* `predicate`: takes `{ "op": "<icmp_pred>", "lhs": <operand>, "rhs": <operand> }`, where `op` is an integer comparison (`eq`, `ne`, `slt`, `sle`, `sgt`, `sge`, `ult`, `ule`, `ugt`, `uge`), and operands are `{ "arg": n }`, `{ "value": ref }`, or `{ "const": n }`. Mismatched operand types are refused with `type_mismatch`.
 
-A request that asks for a condition and a bundle at once produces two assumes, because an assume carrying operand bundles has to have `true` as its condition.
+A request that asks for a condition and an operand bundle at once produces two assumes, because an assume carrying operand bundles has to have `true` as its condition.
 
 ## Error codes
 

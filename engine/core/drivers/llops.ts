@@ -104,6 +104,22 @@ export type OptOp =
   | { what: "simplify"; v: Ref }
   | { what: "instcombine"; max_iterations?: number; debug_counter?: number };
 
+export type PredicateOperand = { arg: number } | { value: Ref } | { const: number };
+
+export type Predicate = {
+  op: "eq" | "ne" | "slt" | "sle" | "sgt" | "sge" | "ult" | "ule" | "ugt" | "uge";
+  lhs: PredicateOperand;
+  rhs: PredicateOperand;
+};
+
+export type AssumeSpec =
+  | { before: Ref; value: Ref; fact: Record<string, unknown> }
+  | { before_call: string; arg: number; fact: Record<string, unknown> }
+  | { entry: string; arg: number; fact: Record<string, unknown> }
+  | { before: Ref; predicate?: Predicate; predicates?: Predicate[] }
+  | { before_call: string; predicate?: Predicate; predicates?: Predicate[] }
+  | { entry: string; predicate?: Predicate; predicates?: Predicate[] };
+
 /** Thrown when llops cannot be run or does not answer in JSON. */
 export class LlopsCrash extends Error {
   constructor(
@@ -182,15 +198,10 @@ export class Llops {
   }
 
   /**
-   * State a fact about a value, either before an instruction or before a call
-   * about one of its arguments. The two ways of saying where are exclusive.
+   * State a fact or relational predicate at an anchor point (before an instruction,
+   * before a call, or at function entry).
    */
-  assume(
-    module: Module,
-    where:
-      | { before: Ref; value: Ref; fact: Record<string, unknown> }
-      | { before_call: string; arg: number; fact: Record<string, unknown> },
-  ): Promise<LlopsResult<ModuleResult>> {
+  assume(module: Module, where: AssumeSpec): Promise<LlopsResult<ModuleResult>> {
     return this.run("assume", { module, ...where });
   }
 
