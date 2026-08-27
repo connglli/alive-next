@@ -85,7 +85,7 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 | `retype` | `v`, `ty`, `ext` | give a value another integer type |
 | `dedup` | `a`, `b` | erase `b`, its uses become `a` |
 | `set_body` | `body` | replace the whole body |
-| `attrs` | `fn`, `param`, `attrs` | put attributes on a parameter |
+| `attrs` | `fn`, optional `param`, `attrs` | put attributes on a function or parameter |
 | `flags` | `v`, `flags` | put or remove the flags an instruction can carry |
 
 `where` is `"before"` or `"after"`. The terminator cannot be moved, erased or replaced, and nothing can be inserted after it.
@@ -102,7 +102,7 @@ A snippet that calls a function the module does not declare gets a declaration, 
 
 `retype` keeps the definition computing in the old type, converts it under the old name, and converts back at every use, with `ext` choosing `zext` or `sext` where the conversion widens. Whether the conversions lose nothing is a claim for the caller's alive2 check.
 
-`attrs` takes `noundef`, `nonnull`, `noalias`, `align`, `dereferenceable` and `range`. The last two carry a byte count and a `{ "min": n, "max": m }` pair, the range being the half-open interval `[min, max)`.
+`attrs` puts attributes on a parameter when `param` is given, or on the function itself when omitted. On a parameter it accepts `noundef`, `nonnull`, `noalias`, `align`, `dereferenceable` and `range`. The last two carry a byte count and a `{ "min": n, "max": m }` pair, the range being the half-open interval `[min, max)`. On a function it accepts `nounwind`, `nofree`, `nosync`, `willreturn`, `norecurse`, `mustprogress` (each boolean `true`), and `memory` (a string such as `"none"`, `"read"`, `"write"`, or `"argmem: readwrite"`).
 
 `flags` names instruction flags with `true` or `false`, so the same op puts and removes: `{ "nuw": true }` puts `nuw` on and `{ "nsw": false }` takes `nsw` off. `nuw` and `nsw` apply to `add`, `sub`, `mul`, `shl` and `trunc`, `exact` to the divisions and shifts that carry it, `disjoint` to `or`, `nneg` to `zext` and `uitofp`, and `fast`, `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn` and `reassoc` to floating-point instructions. A flag the instruction cannot carry is refused rather than ignored, so the agent never guesses what the IR keeps.
 

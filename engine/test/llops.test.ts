@@ -99,6 +99,34 @@ entry:
     expect(off.module).not.toContain("add nuw");
   });
 
+  test("attrs: sets parameter and function attributes", async () => {
+    const declModule = `declare i32 @h(i32)
+
+define i32 @f(i32 %x) {
+entry:
+  %c = call i32 @h(i32 %x)
+  ret i32 %c
+}
+`;
+    const withParam = await llops.edit(declModule, {
+      op: "attrs",
+      fn: "h",
+      param: 0,
+      attrs: { noundef: true },
+    });
+    if (!withParam.ok) throw new Error(withParam.message);
+    expect(withParam.module).toContain("@h(i32 noundef)");
+
+    const withFn = await llops.edit(withParam.module, {
+      op: "attrs",
+      fn: "h",
+      attrs: { memory: "none", nounwind: true },
+    });
+    if (!withFn.ok) throw new Error(withFn.message);
+    expect(withFn.module).toContain("memory(none)");
+    expect(withFn.module).toContain("nounwind");
+  });
+
   test("refuses a flag the instruction cannot carry", async () => {
     const result = await llops.edit(F, { op: "flags", v: "%m", flags: { exact: true } });
     if (result.ok) throw new Error("expected a refusal");

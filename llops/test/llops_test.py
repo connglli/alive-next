@@ -777,6 +777,46 @@ entry:
       "invalid",
     )
 
+  def test_function_attributes_on_declaration(self):
+    r = self.good(
+      self.edit(
+        "attrs",
+        module=self.DECL,
+        fn="h",
+        attrs={"memory": "none", "nounwind": True, "willreturn": True, "nofree": True},
+      )
+    )
+    self.assertIn("declare i32 @h(ptr, i32)", r["module"])
+    self.assertTrue(
+      "memory(none)" in r["module"]
+      and "nounwind" in r["module"]
+      and "willreturn" in r["module"]
+      and "nofree" in r["module"]
+    )
+
+  def test_function_attributes_on_definition(self):
+    r = self.good(
+      self.edit(
+        "attrs",
+        module=self.DECL,
+        fn="f",
+        attrs={"memory": "none", "nounwind": True},
+      )
+    )
+    self.assertTrue("memory(none)" in r["module"] and "nounwind" in r["module"])
+
+  def test_invalid_function_attribute(self):
+    self.bad(
+      self.edit("attrs", module=self.DECL, fn="h", attrs={"speedy": True}),
+      "invalid",
+    )
+
+  def test_invalid_memory_effect(self):
+    self.bad(
+      self.edit("attrs", module=self.DECL, fn="h", attrs={"memory": "bogus"}),
+      "invalid",
+    )
+
 
 class TestEditFlags(Case):
   def test_add_nuw(self):
