@@ -13,42 +13,18 @@ One rule draws the boundary: does it need LLVM?
 
 ```
 alive-next/
-  docs/                 design.md, implementation.md, llops.md, agent.md
-  llops/                C++, CMake; builds the llops binary
-    src/
-    test/               llops_test.py, driving the binary over JSON
-  engine/               the interactive framework; TypeScript on bun
-    package.json        JS packages; bun.lock pins them
-    core/               the framework: session, state, drivers, toolchain
-      session.ts        a session directory and the moves that fill it
-      scenario.ts       a scripted proof: a pair and the moves that prove it
-      prove.ts          run one scenario to a verdict
-      state/            store, goal tree, steps, transactions, narrowing,
-                        counterexamples, trajectory
-      drivers/          alive-tv, llubi, llops wrappers
-    agent/              the Pi agent: the model in front of the engine
-      prompt.ts         the rules of the game, naming no tool
-      budget.ts         what a run may spend, from --max-steps/--max-seconds
-      model.ts          which of Pi's models a run talks to
-      agent.ts          the Pi runtime: tools, prompt, stop, recording
-      main.ts           the CLI: one pair, drawn by Pi's TUI
-      tools/            one file per tool from design.md
-    cert/               certificate package assembly
-      main.ts           certify a finished session
-      manifest.ts       the manifest: what the proof was, pruned
-    examples/           small LHS/RHS pairs, each with the script that
-                        settles it
-    test/               bun test
-  scripts/              depman.sh, visualize.py, check.py, build helpers
-  rules/                pre-proved rule library (empty in v1)
-  deps/                 gitignored: where the toolchain is built unless
-                        the configuration names somewhere else
-  .venv/                gitignored: the Python environment uv builds
-  pyproject.toml        Python dev packages; uv.lock pins them
-  .pre-commit-config.yaml  the checks, and .gitlint the commit rules
-  config.jsonc          machine-local (gitignored); config.example.jsonc is
-                        checked in
-  Makefile              names the targets, delegates the work
+  docs/                 system specifications: design.md, implementation.md, llops.md, agent.md
+  llops/                stateless C++ LLVM toolbox (CMake)
+    src/                IR validation, outlining, inlining, edits, and test harness synthesis
+    test/               llops integration test suite (llops_test.py)
+  engine/               interactive validation framework (TypeScript on Bun)
+    core/               session lifecycle, state (goals, store, steps, strengthen), and toolchain drivers
+    agent/              Pi agent harness, interactive TUI, and proof tactic tools
+    cert/               certificate package and manifest assembly
+    examples/           worked proof scenarios and validation benchmarks
+    test/               engine unit and integration tests
+  scripts/              standalone utilities (check.py, visualize.py, depman.sh)
+  Makefile              build, dependency, and test entry points
 ```
 
 ## llops: the native binary
