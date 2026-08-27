@@ -180,13 +180,11 @@ A step may move a goal that has already been proved. The goal reopens, and every
 
 ### Interface strengthening
 
-- `strengthen(gid, facts)`: the two-phase recipe as one tool; `gid` must be a split goal, and `facts` gives one fact per parameter position. Phase 1: insert an `llvm.assume(fact)` per parameter before the call in the outer src and validate the lot with alive2 as one step (this is where the proof cost lives). Phase 2: add the corresponding attributes to `g`'s declaration in the outer goal and the callee goal. Fails cleanly at phase 1 if a fact does not hold.
+- `strengthen(gid, contract)`: enrich a split goal's interface with parameter attributes (`param_attrs`), semantic function attributes (`fn_attrs`), and relational entry preconditions (`predicates`). Phase 1 proves caller preconditions as `llvm.assume` assertions before the call in `outer.src` certified by alive2. Phase 2 certifies callee function attributes via refinement checks on both `callee.src` and `callee.tgt`. Phase 3 materializes the parameter and function attributes on caller declarations (`outer.src` and `outer.tgt`), and applies parameter attributes, function attributes, and entry relational predicates to callee definitions (`callee.src` and `callee.tgt`).
 
-A fact includes the value being defined, since an attribute a caller has to honour is violated by a poison argument as much as by an out of range one. Phase 1 fails for a value that can be poison: the assume is UB the program did not have, and alive2 refuses the step.
+An interface is strengthened as a whole rather than one attribute at a time, so the solver cost is bounded: caller assumption steps, callee attribute checks, and eager cross-checks.
 
-An interface is strengthened as a whole rather than one parameter at a time, so the solver cost is the same whether the call carries one fact or all of them: three certified steps and the two cross-checks below.
-
-Both children are cross-checked once, after phase 2 and not between the steps inside it, where the outer's two sides declare `g` differently.
+Both children are cross-checked once at the end, after phase 3, and not between intermediate half-steps where the outer's two sides declare `g` differently.
 
 ### Analyses
 
