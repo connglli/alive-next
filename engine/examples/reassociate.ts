@@ -95,10 +95,12 @@ entry:
     // by instructions that cannot make poison, so the callee can be told so.
     // One call, since the four assumes are proved in one query.
     const defined = await session.strengthen("g1", {
-      0: { noundef: true },
-      1: { noundef: true },
-      2: { noundef: true },
-      3: { noundef: true },
+      param_attrs: {
+        0: { noundef: true },
+        1: { noundef: true },
+        2: { noundef: true },
+        3: { noundef: true },
+      },
     });
     expect("prove the first cut's interface defined", defined.kind === "strengthened", defined);
 
@@ -155,7 +157,9 @@ entry:
 
     // And again the interface, which is defined once nothing before it can
     // make poison.
-    const again = await session.strengthen(callee, { 0: { noundef: true }, 1: { noundef: true } });
+    const again = await session.strengthen(callee, {
+      param_attrs: { 0: { noundef: true }, 1: { noundef: true } },
+    });
     expect("prove the second cut's interface defined", again.kind === "strengthened", again);
 
     // The total, computed two ways, in front of the same unknown call. This is

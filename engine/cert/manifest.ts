@@ -10,7 +10,7 @@
 // What the run abandoned does not appear. A goal's chain is the path from the
 // pair it started with to the pair it ended with, which is what the goal tree
 // holds after reverts have truncated it.
-import type { HarnessArg } from "../core/drivers/llops.ts";
+import type { Attrs, HarnessArg, PredicateAssertion } from "../core/drivers/llops.ts";
 import { type Goal, head, type Tree } from "../core/state/goals.ts";
 import type { Effect, Entry, Hash } from "../core/state/trajectory.ts";
 
@@ -44,16 +44,17 @@ export type Step =
       };
     }
   /**
-   * Both sides took an attribute the caller was shown to honour. No check
-   * certifies this on its own: what does is the outer's chain, which is
-   * checked like any other, and the signature the two ends have to share.
+   * An interface was strengthened: the callee gained parameter attributes,
+   * function attributes, and/or entry relational predicates.
    */
   | {
       kind: "strengthen";
       from: Pair;
       to: Pair;
-      facts: Record<number, Record<string, unknown>>;
-      by: { gid: string; hash: Hash };
+      param_attrs?: Record<number, Attrs>;
+      fn_attrs?: Attrs;
+      predicates?: PredicateAssertion[];
+      by?: { gid: string; hash: Hash };
     };
 
 export interface Pair {
@@ -261,8 +262,10 @@ function chainOf(goal: Goal, effects: Effect[]): Step[] {
         kind: "strengthen",
         from: { src: src[si - 1] as Hash, tgt: tgt[ti - 1] as Hash },
         to: { src: effect.src, tgt: effect.tgt },
-        facts: effect.facts,
-        by: effect.by,
+        ...(effect.param_attrs ? { param_attrs: effect.param_attrs } : {}),
+        ...(effect.fn_attrs ? { fn_attrs: effect.fn_attrs } : {}),
+        ...(effect.predicates ? { predicates: effect.predicates } : {}),
+        ...(effect.by ? { by: effect.by } : {}),
       });
       si += 1;
       ti += 1;

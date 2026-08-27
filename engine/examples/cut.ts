@@ -12,10 +12,8 @@
 // an assume before the call, then the attribute, and the callee is a question
 // with an answer.
 //
-// Canonically `%0` is the parameter, `%1` the add and `%2` the multiply, which
-// is where both sides are cut.
+import type { Attrs } from "../core/drivers/llops.ts";
 import { expect, type Scenario } from "../core/scenario.ts";
-import type { Facts } from "../core/state/strengthen.ts";
 
 export const cut: Scenario = {
   name: "cut",
@@ -57,12 +55,12 @@ entry:
     );
 
     // An interface is strengthened as a whole, so the facts go in one call.
-    const wanted: Facts = {};
+    const wanted: Record<number, Attrs> = {};
     for (const [param, entry] of split.params.entries()) {
       expect(`${entry.live} is defined`, defined.has(entry.live), facts);
       wanted[param] = { noundef: true };
     }
-    const proved = await session.strengthen("g1", wanted);
+    const proved = await session.strengthen("g1", { param_attrs: wanted });
     expect("prove the interface defined", proved.kind === "strengthened", proved);
 
     const outer = await session.check(split.children.outer);

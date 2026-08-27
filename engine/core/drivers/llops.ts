@@ -84,6 +84,9 @@ export interface AnalyzeResult {
   facts: Fact[];
 }
 
+/** Attributes dictionary for functions or parameters (e.g. { noundef: true, memory: "none", range: ... }). */
+export type Attrs = Record<string, unknown>;
+
 /** The edit catalog, one member per op, as docs/llops.md lists it. */
 export type EditOp =
   | { op: "swap"; a: Ref; b: Ref }
@@ -96,7 +99,7 @@ export type EditOp =
   | { op: "retype"; v: Ref; ty: string; ext?: "zext" | "sext" }
   | { op: "dedup"; a: Ref; b: Ref }
   | { op: "set_body"; body: string }
-  | { op: "attrs"; fn: string; param?: number; attrs: Record<string, unknown> }
+  | { op: "attrs"; fn: string; param?: number; attrs: Attrs }
   | { op: "flags"; v: Ref; flags: Record<string, boolean> };
 
 /** One structural optimizer pass, as the `opt` subcommand takes it. */
@@ -117,9 +120,7 @@ export type PredicateAssertion = {
   rhs: PredicateOperand;
 };
 
-export type FactAssertion =
-  | { fact: Record<string, unknown>; arg: number }
-  | { fact: Record<string, unknown>; val: Ref };
+export type FactAssertion = { fact: Attrs; arg: number } | { fact: Attrs; val: Ref };
 
 export type Assertion = FactAssertion | PredicateAssertion;
 

@@ -120,8 +120,8 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(facts).toContain("noundef");
 
     expect(
-      await call("tree_strengthen", { gid: "g1", facts: { "0": { noundef: true } } }),
-    ).toContain("stated on 0");
+      await call("tree_strengthen", { gid: "g1", param_attrs: { "0": { noundef: true } } }),
+    ).toContain("strengthened contract on g1");
 
     // The yes-man discharges both halves, and the last of them ends the run.
     expect(await call("goal_check", { gid: "g2" })).toContain("g2 proved");

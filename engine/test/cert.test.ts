@@ -145,11 +145,11 @@ describe.skipIf(!built)("the manifest", () => {
     expect(attributed).toHaveLength(1);
     const [only] = attributed;
     if (only?.kind !== "strengthen") throw new Error("a strengthen step");
-    expect(only.facts).toEqual({ 0: { noundef: true, range: { min: 0, max: 256 } } });
+    expect(only.param_attrs).toEqual({ 0: { noundef: true, range: { min: 0, max: 256 } } });
     // The step it names is a step of the outer's chain, which is checked.
-    expect(only.by.gid).toBe("g2");
+    expect(only.by?.gid).toBe("g2");
     const outer = manifest.goals.g2?.steps ?? [];
-    expect(outer.some((step) => step.kind === "checked" && step.to === only.by.hash)).toBe(true);
+    expect(outer.some((step) => step.kind === "checked" && step.to === only.by?.hash)).toBe(true);
   });
 
   test("records a narrowed step as the three halves it was cut into", async () => {

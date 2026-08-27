@@ -50,7 +50,7 @@ import {
   type Timeouts,
 } from "./state/steps.ts";
 import { canonWith, Store } from "./state/store.ts";
-import { type Facts, Strengthen, type StrengthenResult } from "./state/strengthen.ts";
+import { Strengthen, type StrengthenContract, type StrengthenResult } from "./state/strengthen.ts";
 import { type Effect, type Entry, type Event, type Hash, Trajectory } from "./state/trajectory.ts";
 import {
   type EditingRefusal,
@@ -426,15 +426,15 @@ export class Session {
     });
   }
 
-  /** State facts about a cut's parameters, one interface at a time. */
-  strengthen(gid: string, facts: Facts): Promise<SessionStrengthenResult> {
-    return this.act("strengthen", { gid, facts }, async (tree) => {
+  /** Strengthen a cut's interface with parameter attributes, function attributes, or predicates. */
+  strengthen(gid: string, contract: StrengthenContract): Promise<SessionStrengthenResult> {
+    return this.act("strengthen", { gid, ...contract }, async (tree) => {
       const parent = goalOf(tree, gid);
       const editing = this.editing.open();
       if (editing && [parent.id, ...parent.children].some((id) => this.editing.isEditing(id))) {
         return { kind: "editing", message: transactionMessage(editing) };
       }
-      return this.strengthening.strengthen(tree, gid, facts);
+      return this.strengthening.strengthen(tree, gid, contract);
     });
   }
 

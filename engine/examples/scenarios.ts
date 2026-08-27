@@ -7,6 +7,7 @@ import { freeze } from "./freeze.ts";
 import { miscompile } from "./miscompile.ts";
 import { nuw } from "./nuw.ts";
 import { poison } from "./poison.ts";
+import { predicate } from "./predicate.ts";
 import { reassociate } from "./reassociate.ts";
 import { rewrite } from "./rewrite.ts";
 import { strengthReduce } from "./strength-reduce.ts";
@@ -19,6 +20,7 @@ export const scenarios: Scenario[] = [
   rewrite,
   cut,
   strengthen,
+  predicate,
   freeze,
   nuw,
   reassociate,

@@ -1,8 +1,9 @@
 // tree_strengthen: give a cut's interface the facts its callee is missing.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import type { Attrs, PredicateAssertion } from "../../core/drivers/llops.ts";
 import type { Session } from "../../core/session.ts";
-import type { Facts } from "../../core/state/strengthen.ts";
+import type { StrengthenContract } from "../../core/state/strengthen.ts";
 import { toolResultFrom } from "./format.ts";
 
 export function createStrengthenTool(session: Session) {
@@ -10,16 +11,43 @@ export function createStrengthenTool(session: Session) {
     name: "tree_strengthen",
     label: "Strengthen",
     description:
-      'Put facts on the parameters of the function a cut made. Each is first proved where the evidence is, as an assume before the call in the outer src that alive2 has to certify, and only then attributed to the parameter. Give the whole interface at once: the cost is the same for one parameter or for all of them. Facts include noundef, pointer attributes (nonnull, align, dereferenceable), and range: {"min": n, "max": m}. Note: under the no-`undef` model, noundef asserts that a parameter cannot be poison, range is the half-open interval [min, max) where min is inclusive and max is exclusive (e.g. min: 0, max: 256 covers values 0..255). A fact that does not hold is refused, and a value that can be poison fails, which is what noundef is for.',
+      "Strengthen the interface of a function cut at a split boundary. Supports parameter attributes (param_attrs), function-level attributes (fn_attrs), and relational preconditions (predicates). Preconditions are certified at the caller before being assumed on the callee, and function attributes are certified on the callee before being assumed on the caller.",
     parameters: Type.Object({
       gid: Type.String({ description: "The goal that was cut, not one of its children." }),
-      facts: Type.Record(Type.String(), Type.Record(Type.String(), Type.Unknown()), {
-        description:
-          'By parameter position, as {"0": {"noundef": true}, "1": {"range": {"min": 0, "max": 256}}}.',
-      }),
+      param_attrs: Type.Optional(
+        Type.Record(Type.String(), Type.Record(Type.String(), Type.Unknown()), {
+          description:
+            'Parameter attributes by parameter index (0, 1, ...), e.g. {"0": {"noundef": true}, "1": {"range": {"min": 0, "max": 256}}}.',
+        }),
+      ),
+      fn_attrs: Type.Optional(
+        Type.Record(Type.String(), Type.Unknown(), {
+          description:
+            'Function-level semantic attributes, e.g. {"memory": "none", "nounwind": true, "willreturn": true}.',
+        }),
+      ),
+      predicates: Type.Optional(
+        Type.Array(
+          Type.Object({
+            op: Type.String({
+              description: "Relational predicate operator (eq, ne, slt, ugt, ...)",
+            }),
+            lhs: Type.Any({ description: 'Operand, e.g. {"arg": 0}' }),
+            rhs: Type.Any({ description: 'Operand, e.g. {"arg": 1} or {"const": 0}' }),
+          }),
+          {
+            description: "Relational comparison preconditions conjoined at the cut boundary.",
+          },
+        ),
+      ),
     }),
-    execute: async (_id, { gid, facts }) => {
-      const stronger = await session.strengthen(gid, facts as Facts);
+    execute: async (_id, { gid, param_attrs, fn_attrs, predicates }) => {
+      const contract: StrengthenContract = {
+        ...(param_attrs ? { param_attrs: param_attrs as Record<number, Attrs> } : {}),
+        ...(fn_attrs ? { fn_attrs } : {}),
+        ...(predicates ? { predicates: predicates as PredicateAssertion[] } : {}),
+      };
+      const stronger = await session.strengthen(gid, contract);
       if (stronger.kind === "editing") {
         return toolResultFrom(session, false, `refused: ${stronger.message}`, stronger);
       }
@@ -40,7 +68,7 @@ export function createStrengthenTool(session: Session) {
       return toolResultFrom(
         session,
         true,
-        `stated on ${Object.keys(facts).join(", ")}, ${proved} of ${stronger.checks.length} checks came back correct`,
+        `strengthened contract on ${gid}, ${proved} of ${stronger.checks.length} checks came back correct`,
         stronger,
       );
     },

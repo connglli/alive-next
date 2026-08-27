@@ -450,6 +450,75 @@ class TestGolden(Case):
     self.built.goal("g3", inner, inner, [], {"kind": "checked"})
     return self.built.write()
 
+  def test_strengthen_with_attrs_and_predicates_verifies(self):
+    package = self.cut()
+    inner = self.built.goals["g3"]["start"]
+    outer = self.built.goals["g2"]["start"]
+    src_mod = (package / "programs" / f"{inner['src']}.ll").read_text()
+    tgt_mod = (package / "programs" / f"{inner['tgt']}.ll").read_text()
+    outer_src_mod = (package / "programs" / f"{outer['src']}.ll").read_text()
+    outer_tgt_mod = (package / "programs" / f"{outer['tgt']}.ll").read_text()
+
+    def transform_callee(mod):
+      m = llops(
+        "edit",
+        {"module": mod, "op": "attrs", "fn": "g", "param": 0, "attrs": {"noundef": True}},
+      )["module"]
+      m = llops("edit", {"module": m, "op": "attrs", "fn": "g", "attrs": {"nounwind": True}})[
+        "module"
+      ]
+      m = llops(
+        "assume",
+        {
+          "module": m,
+          "anchor": {"at": "entry", "fn": "g"},
+          "assertions": [{"op": "ne", "lhs": {"arg": 0}, "rhs": {"const": 0}}],
+        },
+      )["module"]
+      return llops("canon", {"module": m})["module"]
+
+    def transform_outer(mod):
+      m = llops(
+        "edit",
+        {"module": mod, "op": "attrs", "fn": "g", "param": 0, "attrs": {"noundef": True}},
+      )["module"]
+      m = llops("edit", {"module": m, "op": "attrs", "fn": "g", "attrs": {"nounwind": True}})[
+        "module"
+      ]
+      return llops("canon", {"module": m})["module"]
+
+    new_src = self.built.program(transform_callee(src_mod))
+    new_tgt = self.built.program(transform_callee(tgt_mod))
+    strengthened = {"src": new_src, "tgt": new_tgt}
+
+    new_outer_src = self.built.program(transform_outer(outer_src_mod))
+    new_outer_tgt = self.built.program(transform_outer(outer_tgt_mod))
+    outer_strengthened = {"src": new_outer_src, "tgt": new_outer_tgt}
+
+    outer_steps = [
+      {"kind": "checked", "side": "src", "from": outer["src"], "to": new_outer_src},
+      {"kind": "checked", "side": "tgt", "from": outer["tgt"], "to": new_outer_tgt},
+    ]
+    self.built.goal("g2", outer, outer_strengthened, outer_steps, {"kind": "checked"})
+
+    step = {
+      "kind": "strengthen",
+      "from": inner,
+      "to": strengthened,
+      "param_attrs": {"0": {"noundef": True}},
+      "fn_attrs": {"nounwind": True},
+      "predicates": [{"op": "ne", "lhs": {"arg": 0}, "rhs": {"const": 0}}],
+      "by": {"gid": "g2", "hash": "dummy"},
+    }
+    self.built.goal("g3", inner, strengthened, [step], {"kind": "checked"})
+    self.built.write()
+
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertIn("verified", done.stdout)
+    self.assertIn("the attributes on src replay", done.stdout)
+    self.assertIn("the attributes on tgt replay", done.stdout)
+
 
 class TestTampered(Case):
   def test_a_program_that_is_not_what_its_name_says(self):
@@ -544,7 +613,7 @@ class TestTampered(Case):
           "kind": "strengthen",
           "from": pair,
           "to": pair,
-          "facts": {"0": {"noundef": True}},
+          "param_attrs": {"0": {"noundef": True}},
           "by": {"gid": "g2", "hash": "x"},
         }
       ],
@@ -571,7 +640,7 @@ class TestTampered(Case):
           "kind": "strengthen",
           "from": inner,
           "to": forged,
-          "facts": {"0": {"noundef": True}},
+          "param_attrs": {"0": {"noundef": True}},
           "by": {"gid": "g2", "hash": "bogus"},
         }
       ],

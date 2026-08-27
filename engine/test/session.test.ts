@@ -253,7 +253,7 @@ describe.skipIf(!built)("reading a session", () => {
     const before = await run.show(split.children.outer);
     await run.begin(split.children.outer, "src");
 
-    const refused = await run.strengthen("g1", { 0: { noundef: true } });
+    const refused = await run.strengthen("g1", { param_attrs: { 0: { noundef: true } } });
     expect(refused).toMatchObject({ kind: "editing" });
     if (refused.kind !== "editing") throw new Error("unreachable");
     expect(refused.message).toContain(`a transaction is open on ${split.children.outer} src`);

@@ -496,7 +496,7 @@ export class Steps {
    * The cheap check of a goal's current pair, for a caller holding a tree
    * that already reflects what it did.
    */
-  async crossCheck(tree: Tree, gid: string): Promise<CheckGoalResult> {
+  async eagerGoalCheck(tree: Tree, gid: string): Promise<CheckGoalResult> {
     return this.checkGoal(tree, gid, this.timeouts.eagerCheckMs);
   }
 

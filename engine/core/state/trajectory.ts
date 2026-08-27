@@ -14,6 +14,7 @@
 // a verdict rests on replaying the certificate rather than on this file.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import type { Attrs, PredicateAssertion } from "../drivers/llops.ts";
 import { sha256 } from "./hash.ts";
 
 /** Programs are named by their store hash wherever an event mentions one. */
@@ -82,19 +83,22 @@ export type Effect =
       callee: { gid: string; src: Hash; tgt: Hash };
     }
   /**
-   * Both sides of a callee goal gained an attribute on the outlined
-   * function's parameter. This is not a step: adding an attribute to a
-   * definition introduces UB where the old program was defined, so neither
-   * direction of a refinement check would certify it. What makes it sound is
-   * the assume at the call site, and `by` names the step that put it there.
+   * Both sides of a callee goal gained a strengthened interface contract
+   * (parameter attributes, function attributes, and/or entry relational predicates).
+   * This is not a step: adding an assumption/attribute to a definition introduces
+   * UB where the old program was defined, so neither direction of a refinement
+   * check would certify it. What makes it sound is the verified assumption at the
+   * call site (`by`) and/or certified function attribute refinement.
    */
   | {
       effect: "strengthen";
       gid: string;
       src: Hash;
       tgt: Hash;
-      facts: Record<number, Record<string, unknown>>;
-      by: { gid: string; hash: Hash };
+      param_attrs?: Record<number, Attrs>;
+      fn_attrs?: Attrs;
+      predicates?: PredicateAssertion[];
+      by?: { gid: string; hash: Hash };
     }
   /** A split was undone, discarding both children and their subtrees. */
   | { effect: "unsplit"; gid: string }

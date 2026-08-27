@@ -8,8 +8,8 @@
 // When we cut at the multiply, the values crossing the cut (`%f` and `%a`)
 // cannot be poison, so `session.analyze` identifies them as `not_poison` and
 // `session.strengthen` formally proves `noundef` on the callee's parameters.
+import type { Attrs } from "../core/drivers/llops.ts";
 import { expect, type Scenario } from "../core/scenario.ts";
-import type { Facts } from "../core/state/strengthen.ts";
 
 export const freeze: Scenario = {
   name: "freeze",
@@ -56,12 +56,12 @@ entry:
     );
 
     // Strengthen the callee interface with noundef for each non-poison live-in.
-    const wanted: Facts = {};
+    const wanted: Record<number, Attrs> = {};
     for (const [param, entry] of split.params.entries()) {
       expect(`${entry.live} is not poison`, defined.has(entry.live), facts);
       wanted[param] = { noundef: true };
     }
-    const proved = await session.strengthen("g1", wanted);
+    const proved = await session.strengthen("g1", { param_attrs: wanted });
     expect("prove the callee interface noundef", proved.kind === "strengthened", proved);
 
     const outer = await session.check(split.children.outer);

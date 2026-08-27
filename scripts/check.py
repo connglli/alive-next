@@ -232,20 +232,59 @@ def summary(stdout: str) -> str:
 # --- signatures --------------------------------------------------------------
 
 
+def function_attributes(module: str, tail: str) -> list[str]:
+  """The normalized function-level attributes attached to a function declaration/definition."""
+  attrs: set[str] = set()
+  for group_id in re.findall(r"#(\d+)", tail):
+    group_match = re.search(rf"^attributes #{group_id} = \x7b\s*(.*?)\s*\x7d", module, re.M)
+    if group_match:
+      for item in group_match.group(1).split():
+        if not item.startswith('"'):
+          attrs.add(item)
+  for item in tail.split():
+    if not item.startswith("#") and not item.startswith("{") and not item.startswith('"'):
+      attrs.add(item)
+  return sorted(attrs)
+
+
 def signature(module: str, name: str) -> str:
-  """The parameter list a function is declared or defined with, names aside.
+  """The parameter list and function attributes a function is declared or defined with.
 
   A cut leaves the callee declared in one program and defined in another, and
-  they have to say the same thing about the arguments: what the outer was
-  checked against is what the callee has to be.
+  they have to say the same thing about the arguments and semantic attributes:
+  what the outer was checked against is what the callee has to be.
   """
-  pattern = rf"^(?:declare|define)\b(?P<head>[^@]*)@{re.escape(name)}\((?P<params>.*)\)"
+  pattern = rf"^(?:declare|define)\b(?P<head>[^@]*)@{re.escape(name)}\("
   found = re.search(pattern, module, re.M)
   if not found:
     raise Refused(f"@{name} is neither declared nor defined where it has to be")
+
+  start_idx = found.end()
+  depth = 1
+  params_end = start_idx
+  for i in range(start_idx, len(module)):
+    char = module[i]
+    if char == "(":
+      depth += 1
+    elif char == ")":
+      depth -= 1
+      if depth == 0:
+        params_end = i
+        break
+
+  if depth != 0:
+    raise Refused(f"@{name} parameter list is malformed")
+
+  params_text = module[start_idx:params_end]
+  rest = module[params_end + 1 :]
+  tail_match = re.match(r"[^\n{]*", rest)
+  tail = tail_match.group(0) if tail_match else ""
+
   types = found.group("head").split()
   types = [word for word in types if word not in ("dso_local", "local_unnamed_addr")]
-  return f"{' '.join(types)}({', '.join(parameters(found.group('params')))})"
+  fn_attrs = function_attributes(module, tail)
+  fn_suffix = f" {{{', '.join(fn_attrs)}}}" if fn_attrs else ""
+  return f"{' '.join(types)}({', '.join(parameters(params_text))}){fn_suffix}"
 
 
 def parameters(text: str) -> list[str]:
@@ -341,19 +380,24 @@ class Check:
     return head
 
   def strengthen(self, gid: str, step: dict, head: dict, role: str | None) -> None:
-    """Replay the exact parameter attributes a callee claims to have gained."""
+    """Replay the exact parameter attributes, function attributes, and entry predicates a callee claims to have gained."""
     if role is None or role == "outer":
       self.fail(gid, "an attribute", "on a goal that is not a callee")
       return
 
-    facts = step.get("facts")
-    if not isinstance(facts, dict) or not facts:
-      raise Refused("a strengthen step has no facts")
+    param_attrs = step.get("param_attrs") or {}
+    fn_attrs = step.get("fn_attrs") or {}
+    predicates = step.get("predicates") or []
+
+    if not param_attrs and not fn_attrs and not predicates:
+      raise Refused(
+        "a strengthen step has no parameter attributes, function attributes, or predicates"
+      )
 
     replayable: list[tuple[int, dict]] = []
-    for key, fact in facts.items():
+    for key, fact in param_attrs.items():
       # JSON object keys are always strings; require the exact format the engine emits.
-      if not isinstance(key, str) or not re.fullmatch(r"(?:0|[1-9]\d*)", key):
+      if not isinstance(key, (str, int)) or not re.fullmatch(r"(?:0|[1-9]\d*)", str(key)):
         raise Refused(f"a strengthen parameter is not a non-negative integer index: {key!r}")
       if not isinstance(fact, dict):
         raise Refused(f"a strengthen fact for parameter {key} is not an object")
@@ -373,6 +417,25 @@ class Check:
             "fn": role,
             "param": param,
             "attrs": fact,
+          },
+        )["module"]
+      if fn_attrs:
+        attributed = self.package.run_llops(
+          "edit",
+          {
+            "module": attributed,
+            "op": "attrs",
+            "fn": role,
+            "attrs": fn_attrs,
+          },
+        )["module"]
+      if predicates:
+        attributed = self.package.run_llops(
+          "assume",
+          {
+            "module": attributed,
+            "anchor": {"at": "entry", "fn": role},
+            "assertions": predicates,
           },
         )["module"]
       same = self.package.run_llops("canon", {"module": attributed})["module"]
