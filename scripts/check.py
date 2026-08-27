@@ -232,82 +232,19 @@ def summary(stdout: str) -> str:
 # --- signatures --------------------------------------------------------------
 
 
-def function_attributes(module: str, tail: str) -> list[str]:
-  """The normalized function-level attributes attached to a function declaration/definition."""
-  attrs: set[str] = set()
-  for group_id in re.findall(r"#(\d+)", tail):
-    group_match = re.search(rf"^attributes #{group_id} = \x7b\s*(.*?)\s*\x7d", module, re.M)
-    if group_match:
-      for item in group_match.group(1).split():
-        if not item.startswith('"'):
-          attrs.add(item)
-  for item in tail.split():
-    if not item.startswith("#") and not item.startswith("{") and not item.startswith('"'):
-      attrs.add(item)
-  return sorted(attrs)
-
-
-def signature(module: str, name: str) -> str:
+def signature(package: Package, module: str, name: str) -> str:
   """The parameter list and function attributes a function is declared or defined with.
 
   A cut leaves the callee declared in one program and defined in another, and
   they have to say the same thing about the arguments and semantic attributes:
   what the outer was checked against is what the callee has to be.
   """
-  pattern = rf"^(?:declare|define)\b(?P<head>[^@]*)@{re.escape(name)}\("
-  found = re.search(pattern, module, re.M)
-  if not found:
+  res = package.run_llops("validate", {"module": module})
+  funcs = res.get("functions", {})
+  fn = funcs.get(name)
+  if not fn:
     raise Refused(f"@{name} is neither declared nor defined where it has to be")
-
-  start_idx = found.end()
-  depth = 1
-  params_end = start_idx
-  for i in range(start_idx, len(module)):
-    char = module[i]
-    if char == "(":
-      depth += 1
-    elif char == ")":
-      depth -= 1
-      if depth == 0:
-        params_end = i
-        break
-
-  if depth != 0:
-    raise Refused(f"@{name} parameter list is malformed")
-
-  params_text = module[start_idx:params_end]
-  rest = module[params_end + 1 :]
-  tail_match = re.match(r"[^\n{]*", rest)
-  tail = tail_match.group(0) if tail_match else ""
-
-  types = found.group("head").split()
-  types = [word for word in types if word not in ("dso_local", "local_unnamed_addr")]
-  fn_attrs = function_attributes(module, tail)
-  fn_suffix = f" {{{', '.join(fn_attrs)}}}" if fn_attrs else ""
-  return f"{' '.join(types)}({', '.join(parameters(params_text))}){fn_suffix}"
-
-
-def parameters(text: str) -> list[str]:
-  """Each parameter as its type and attributes, with any name dropped."""
-  return [
-    " ".join(word for word in one.split() if not word.startswith("%"))
-    for one in split_parameters(text)
-  ]
-
-
-def split_parameters(text: str) -> list[str]:
-  """A parameter list, split on the commas that separate parameters."""
-  out, depth, current = [], 0, ""
-  for char in text:
-    if char == "," and depth == 0:
-      out.append(current)
-      current = ""
-      continue
-    depth += {"(": 1, ")": -1}.get(char, 0)
-    current += char
-  if current.strip():
-    out.append(current)
-  return [" ".join(one.split()) for one in out]
+  return fn["signature"]
 
 
 # --- the proof ---------------------------------------------------------------
@@ -591,8 +528,8 @@ class Check:
     # definition. An attribute on one and not the other is a claim nobody
     # made, so the two have to say the same thing.
     for side in ("src", "tgt"):
-      declared = signature(self.package.program(outer["end"][side]), name)
-      defined = signature(self.package.program(inner["end"][side]), name)
+      declared = signature(self.package, self.package.program(outer["end"][side]), name)
+      defined = signature(self.package, self.package.program(inner["end"][side]), name)
       what = f"@{name} says the same on both {side} halves"
       if declared == defined:
         self.say(gid, what, "matches")
@@ -708,10 +645,30 @@ def divergence(src: dict, tgt: dict) -> tuple[bool, str]:
   return False, "the two runs agree"
 
 
-def declared(module: str, entry: str) -> list[str]:
+def declared(package: Package, module: str, entry: str) -> list[str]:
   """Each parameter of the entry function, as the program declares it."""
-  found = re.search(rf"^define\b[^@]*@{re.escape(entry)}\((?P<params>.*)\)", module, re.M)
-  return split_parameters(found.group("params")) if found else []
+  res = package.run_llops("validate", {"module": module})
+  funcs = res.get("functions", {})
+  fn = funcs.get(entry)
+  if not fn:
+    return []
+  out = []
+  for p in fn.get("params", []):
+    parts = [p["type"]]
+    attrs = p.get("attrs", {})
+    if attrs.get("noundef"):
+      parts.append("noundef")
+    if attrs.get("nonnull"):
+      parts.append("nonnull")
+    if "align" in attrs:
+      parts.append(f"align {attrs['align']}")
+    if "dereferenceable" in attrs:
+      parts.append(f"dereferenceable({attrs['dereferenceable']})")
+    if "range" in attrs:
+      parts.append(f"range({p['type']} {attrs['range']['min']}, {attrs['range']['max']})")
+    parts.append(f"%{p['index']}")
+    out.append(" ".join(parts))
+  return out
 
 
 def given(argument: dict) -> str:
@@ -745,7 +702,7 @@ class Replay:
     # already refused an input of the wrong length, and a report is no
     # place to raise.
     for param, argument in zip(
-      declared(module, entry), self.package.manifest["input"], strict=False
+      declared(self.package, module, entry), self.package.manifest["input"], strict=False
     ):
       print(f"{param} = {given(argument)}")
     for side, name in (("src", "Source"), ("tgt", "Target")):

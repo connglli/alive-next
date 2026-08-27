@@ -167,6 +167,36 @@ entry:
 """
     self.assertTrue(self.conforms(module))
 
+  def test_function_metadata_and_signatures(self):
+    module = """declare i32 @g(i32 noundef range(i32 0, 256)) memory(none) nounwind
+
+define i32 @f(i32 noundef %x) memory(none) {
+entry:
+  %c = call i32 @g(i32 %x)
+  ret i32 %c
+}
+"""
+    r = self.good(run("validate", {"module": module}))
+    self.assertTrue(r["conforms"])
+    funcs = r["functions"]
+    self.assertIn("g", funcs)
+    self.assertIn("f", funcs)
+    self.assertFalse(funcs["g"]["defined"])
+    self.assertTrue(funcs["f"]["defined"])
+    self.assertEqual(funcs["g"]["return_type"], "i32")
+    self.assertEqual(funcs["g"]["params"][0]["attrs"]["noundef"], True)
+    self.assertEqual(funcs["g"]["params"][0]["attrs"]["range"], {"min": 0, "max": 256})
+    self.assertEqual(funcs["g"]["fn_attrs"]["memory"], "none")
+    self.assertEqual(funcs["g"]["fn_attrs"]["nounwind"], True)
+    self.assertEqual(
+      funcs["g"]["signature"],
+      "i32(i32 noundef range(i32 0, 256)) {memory(none), nounwind}",
+    )
+    self.assertEqual(
+      funcs["f"]["signature"],
+      "i32(i32 noundef) {memory(none)}",
+    )
+
   def test_use_before_def(self):
     module = """define i32 @f(i32 %x, i32 %y) {
 entry:

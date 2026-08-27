@@ -20,9 +20,24 @@ export interface Diagnostic {
 /** Every llops answer: the payload, or the code and message it refused with. */
 export type LlopsResult<T> = ({ ok: true } & T) | { ok: false; code: string; message: string };
 
+export interface FunctionParamMeta {
+  index: number;
+  type: string;
+  attrs: Record<string, unknown>;
+}
+
+export interface FunctionMeta {
+  defined: boolean;
+  return_type: string;
+  params: FunctionParamMeta[];
+  fn_attrs: Record<string, unknown>;
+  signature: string;
+}
+
 export interface ValidateResult {
   conforms: boolean;
   diagnostics: Diagnostic[];
+  functions?: Record<string, FunctionMeta>;
 }
 
 export interface ModuleResult {
