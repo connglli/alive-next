@@ -479,6 +479,20 @@ export class Steps {
   }
 
   /**
+   * Check whether tgt refines src under the no-undef model.
+   *
+   * Unlike step(), the direction is explicit (pair.src => pair.tgt) and the
+   * query is side-effect-free, leaving the goal tree and trajectory untouched.
+   */
+  async refinementCheck(
+    src: string,
+    tgt: string,
+    timeoutMs: number = this.timeouts.alive2Ms,
+  ): Promise<CheckResult> {
+    return this.check({ src, tgt }, { timeoutMs: this.capped(timeoutMs) });
+  }
+
+  /**
    * The cheap check of a goal's current pair, for a caller holding a tree
    * that already reflects what it did.
    */

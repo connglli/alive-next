@@ -577,3 +577,30 @@ describe("checking a goal", () => {
     });
   });
 });
+
+describe("refinementCheck", () => {
+  test("asks whether tgt refines src directly", async () => {
+    const checker = new FakeChecker(["correct"]);
+    const steps = new Steps(store, checker);
+    const result = await steps.refinementCheck(SRC, TGT);
+
+    expect(result.outcome).toBe("correct");
+    expect(checker.calls[0]).toMatchObject({
+      src: SRC,
+      tgt: TGT,
+      timeoutMs: DEFAULT_TIMEOUTS.alive2Ms,
+      flags: ["--disable-undef-input"],
+    });
+  });
+
+  test("honours requested timeout up to the cap", async () => {
+    const checker = new FakeChecker(["unknown", "unknown"]);
+    const steps = new Steps(store, checker);
+
+    await steps.refinementCheck(SRC, TGT, 5000);
+    expect(checker.calls[0]?.timeoutMs).toBe(5000);
+
+    await steps.refinementCheck(SRC, TGT, DEFAULT_TIMEOUTS.checkCapMs * 5);
+    expect(checker.calls[1]?.timeoutMs).toBe(DEFAULT_TIMEOUTS.checkCapMs);
+  });
+});
