@@ -213,21 +213,20 @@ The harness is not a v1 program, since it defines a second function, so `validat
 
 ## assume
 
-States a fact about a value or a relational comparison between values. This is the first half of interface strengthening: an attribute or precondition on an outlined callee is an assumption its caller has to honour, so it may only be assumed once the caller has been shown to satisfy it, and an assume is how that is shown. If the assertion were false the assume would add UB the program did not have, and the alive2 check of the insertion refuses it.
+States facts about values or relational comparisons between values at a program anchor. This is the first half of interface strengthening: an attribute or precondition on an outlined callee is an assumption its caller has to honour, so it may only be assumed once the caller has been shown to satisfy it, and an assume is how that is shown. If the assertion were false the assume would add UB the program did not have, and the alive2 check of the insertion refuses it.
 
-Request `{ "module": ..., ... }`, response `{ "ok": true, "module": ... }`.
+Request `{ "module": ..., "anchor": { ... }, "assertions": [ ... ] }`, response `{ "ok": true, "module": ... }`.
 
-Where the assume goes is specified by exactly one anchor:
-* `before`: names an instruction reference (with `value` when stating a fact).
-* `before_call`: names a called function (with `arg` when stating a fact).
-* `entry`: names a defined function to insert at the start of its entry block (with `arg` when stating a fact).
+`anchor` specifies the insertion point:
+* `{ "at": "entry", "fn": "<name>" }`: at the start of the defined function's entry block.
+* `{ "at": "before_call", "fn": "<name>" }`: immediately before the unique call to `<name>`.
+* `{ "at": "before_inst", "inst": "<ref>" }`: immediately before the instruction `<ref>`.
 
-The assertion is stated with `fact`, `predicate`, or an array of `predicates`:
+`assertions` is a list of assertions to assume at the anchor:
+* Unary fact on an argument or local value: `{ "fact": { ... }, "arg": <n> }` or `{ "fact": { ... }, "val": "<ref>" }`. Facts use the vocabulary of `edit attrs` (`range`, `noundef`, `nonnull`, `align`, `dereferenceable`). `noalias` is refused.
+* Relational comparison: `{ "op": "<icmp_pred>", "lhs": <operand>, "rhs": <operand> }`, where `op` is an integer comparison (`eq`, `ne`, `slt`, `sle`, `sgt`, `sge`, `ult`, `ule`, `ugt`, `uge`), and operands are `{ "arg": n }`, `{ "val": "<ref>" }`, or `{ "const": n }`. Mismatched operand types are refused with `type_mismatch`.
 
-* `fact`: takes the vocabulary of `edit attrs` (`range`, `noundef`, `nonnull`, `align`, `dereferenceable`). `noalias` is refused.
-* `predicate`: takes `{ "op": "<icmp_pred>", "lhs": <operand>, "rhs": <operand> }`, where `op` is an integer comparison (`eq`, `ne`, `slt`, `sle`, `sgt`, `sge`, `ult`, `ule`, `ugt`, `uge`), and operands are `{ "arg": n }`, `{ "value": ref }`, or `{ "const": n }`. Mismatched operand types are refused with `type_mismatch`.
-
-A request that asks for a condition and an operand bundle at once produces two assumes, because an assume carrying operand bundles has to have `true` as its condition.
+A request that asks for conditions and operand bundles produces two assumes, because an assume carrying operand bundles has to have `true` as its condition.
 
 ## Error codes
 

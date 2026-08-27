@@ -247,18 +247,19 @@ entry:
   ret i32 %a
 }
 `;
-    const withEntryFact = await llops.assume(module, {
-      entry: "f",
-      arg: 0,
-      fact: { noundef: true },
-    });
+    const withEntryFact = await llops.assume(
+      module,
+      { at: "entry", fn: "f" },
+      { arg: 0, fact: { noundef: true } },
+    );
     if (!withEntryFact.ok) throw new Error(withEntryFact.message);
     expect(withEntryFact.module).toContain('"noundef"(i32 %x)');
 
-    const withPred = await llops.assume(module, {
-      entry: "f",
-      predicate: { op: "slt", lhs: { arg: 0 }, rhs: { arg: 1 } },
-    });
+    const withPred = await llops.assume(
+      module,
+      { at: "entry", fn: "f" },
+      { op: "slt", lhs: { arg: 0 }, rhs: { arg: 1 } },
+    );
     if (!withPred.ok) throw new Error(withPred.message);
     expect(withPred.module).toContain("icmp slt i32 %x, %y");
     expect(withPred.module).toContain("call void @llvm.assume");
@@ -273,13 +274,32 @@ entry:
   ret i32 %c
 }
 `;
-    const result = await llops.assume(module, {
-      before_call: "g",
-      predicate: { op: "ne", lhs: { arg: 0 }, rhs: { const: 0 } },
-    });
+    const result = await llops.assume(
+      module,
+      { at: "before_call", fn: "g" },
+      { op: "ne", lhs: { arg: 0 }, rhs: { const: 0 } },
+    );
     if (!result.ok) throw new Error(result.message);
     expect(result.module).toContain("icmp ne i32 %x, 0");
     expect(result.module).toContain("call void @llvm.assume");
+  });
+
+  test("assume: supports multiple assertions in a single call", async () => {
+    const module = `define i32 @f(i32 %x, i32 %y) {
+entry:
+  %a = add i32 %x, %y
+  ret i32 %a
+}
+`;
+    const result = await llops.assume(module, { at: "entry", fn: "f" }, [
+      { arg: 0, fact: { noundef: true } },
+      { arg: 1, fact: { noundef: true } },
+      { op: "slt", lhs: { arg: 0 }, rhs: { arg: 1 } },
+    ]);
+    if (!result.ok) throw new Error(result.message);
+    expect(result.module).toContain("icmp slt i32 %x, %y");
+    expect(result.module).toContain('"noundef"(i32 %x)');
+    expect(result.module).toContain('"noundef"(i32 %y)');
   });
 
   test("assume: refuses predicate with mismatched operand types", async () => {
@@ -288,12 +308,48 @@ entry:
   ret i32 %x
 }
 `;
-    const result = await llops.assume(module, {
-      entry: "f",
-      predicate: { op: "eq", lhs: { arg: 0 }, rhs: { arg: 1 } },
-    });
+    const result = await llops.assume(
+      module,
+      { at: "entry", fn: "f" },
+      { op: "eq", lhs: { arg: 0 }, rhs: { arg: 1 } },
+    );
     if (result.ok) throw new Error("expected a refusal");
     expect(result.code).toBe("type_mismatch");
+  });
+
+  test("assume: supports before_inst with predicate comparing local values", async () => {
+    const module = `define i32 @f(i32 %x, i32 %y) {
+entry:
+  %a = add i32 %x, 1
+  %b = add i32 %y, 2
+  %c = add i32 %a, %b
+  ret i32 %c
+}
+`;
+    const result = await llops.assume(
+      module,
+      { at: "before_inst", inst: "%c" },
+      { op: "slt", lhs: { val: "%a" }, rhs: { val: "%b" } },
+    );
+    if (!result.ok) throw new Error(result.message);
+    expect(result.module).toContain("icmp slt i32 %a, %b");
+    expect(result.module).toContain("call void @llvm.assume");
+  });
+
+  test("assume: supports pointer comparison predicate", async () => {
+    const module = `define i32 @f(ptr %p, ptr %q) {
+entry:
+  ret i32 0
+}
+`;
+    const result = await llops.assume(
+      module,
+      { at: "entry", fn: "f" },
+      { op: "ne", lhs: { arg: 0 }, rhs: { arg: 1 } },
+    );
+    if (!result.ok) throw new Error(result.message);
+    expect(result.module).toContain("icmp ne ptr %p, %q");
+    expect(result.module).toContain("call void @llvm.assume");
   });
 });
 

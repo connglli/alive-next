@@ -407,21 +407,21 @@ export class Steps {
       return { kind: "refused", reason: "some preconditions do not name a value of the window" };
 
     // Phase 1: Insert assumes before call in outer and verify whole-function
-    let outerAssumed = narrowed.outer;
-    for (const [argIdxStr, fact] of Object.entries(mappedFacts)) {
-      const argIdx = Number(argIdxStr);
-      const res = await this.llops.assume(outerAssumed, {
-        before_call: narrowed.callee,
-        arg: argIdx,
-        fact,
-      });
-      if (!res.ok)
-        return {
-          kind: "refused",
-          reason: `a fact could not be assumed at the call site: ${res.message}`,
-        };
-      outerAssumed = res.module;
-    }
+    const assertions = Object.entries(mappedFacts).map(([argIdxStr, fact]) => ({
+      fact,
+      arg: Number(argIdxStr),
+    }));
+    const res = await this.llops.assume(
+      narrowed.outer,
+      { at: "before_call", fn: narrowed.callee },
+      assertions,
+    );
+    if (!res.ok)
+      return {
+        kind: "refused",
+        reason: `a fact could not be assumed at the call site: ${res.message}`,
+      };
+    const outerAssumed = res.module;
 
     // Phase 1: wherever the whole being replaced is defined, the facts hold at
     // the call site. Which whole that is follows the step's direction: on the

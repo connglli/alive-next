@@ -98,7 +98,7 @@ llvm::Value *resolveOperand(const llvm::json::Value &v, llvm::Function *F, llvm:
     err = errResponse("invalid", "cannot resolve argument without a function or call context");
     return nullptr;
   }
-  if (auto valRef = obj->getString("value")) {
+  if (auto valRef = obj->getString("val")) {
     auto *val = refs.resolve(*valRef);
     if (!val) {
       err = errResponse("not_found", "'" + valRef->str() + "' is not a value");
@@ -157,34 +157,136 @@ bool buildPredicate(const llvm::json::Object &predObj, llvm::Function *F, llvm::
   return true;
 }
 
+bool applyAssertion(const llvm::json::Object &item, llvm::Function *F, llvm::CallInst *call,
+                    ValueRefs &refs, llvm::LLVMContext &ctx, llvm::IRBuilder<> &builder,
+                    llvm::Value *&condition, std::vector<llvm::OperandBundleDef> &bundles,
+                    llvm::json::Object &err) {
+  auto *facts = item.getObject("fact");
+  auto op = item.getString("op");
+  auto *predicateObj = item.getObject("predicate");
+
+  if (facts) {
+    if (facts->empty()) {
+      err = errResponse("bad_request", "fact object cannot be empty");
+      return false;
+    }
+    llvm::Value *value = nullptr;
+    auto argIdx = item.getInteger("arg");
+    auto valRef = item.getString("val");
+
+    if (argIdx.has_value()) {
+      if (call) {
+        if (*argIdx < 0 || (uint64_t)*argIdx >= call->arg_size()) {
+          err = errResponse("invalid", "arg index out of range for call");
+          return false;
+        }
+        value = call->getArgOperand((unsigned)*argIdx);
+      } else if (F) {
+        if (*argIdx < 0 || (uint64_t)*argIdx >= F->arg_size()) {
+          err = errResponse("invalid", "arg index out of range for function");
+          return false;
+        }
+        value = F->getArg((unsigned)*argIdx);
+      } else {
+        err = errResponse("bad_request", "arg index cannot be used with before_inst; use 'val'");
+        return false;
+      }
+    } else if (valRef.has_value()) {
+      value = refs.resolve(*valRef);
+      if (!value) {
+        err = errResponse("not_found", "'" + valRef->str() + "' is not a value");
+        return false;
+      }
+    } else {
+      err = errResponse("bad_request", "fact assertion needs 'arg' or 'val'");
+      return false;
+    }
+
+    auto *i64 = llvm::Type::getInt64Ty(ctx);
+    auto conjoin = [&](llvm::Value *next) {
+      condition = condition ? builder.CreateAnd(condition, next) : next;
+    };
+
+    for (const auto &entry : *facts) {
+      llvm::StringRef kind = entry.first;
+      const llvm::json::Value &spec = entry.second;
+
+      if (kind == "range") {
+        const auto *range = spec.getAsObject();
+        if (!range || !value->getType()->isIntegerTy()) {
+          err = errResponse("invalid", "range needs {min, max} and an integer value");
+          return false;
+        }
+        unsigned bits = value->getType()->getIntegerBitWidth();
+        llvm::APInt min(bits, 0), max(bits, 0);
+        if (!bound(*range, "min", bits, min, err) || !bound(*range, "max", bits, max, err))
+          return false;
+        if (min == max) {
+          err = errResponse("invalid", "range must be a non-empty half-open interval");
+          return false;
+        }
+        llvm::Value *low = builder.CreateICmpSGE(value, llvm::ConstantInt::get(ctx, min));
+        llvm::Value *high = builder.CreateICmpSLT(value, llvm::ConstantInt::get(ctx, max));
+        conjoin(min.slt(max) ? builder.CreateAnd(low, high) : builder.CreateOr(low, high));
+        continue;
+      }
+      if (kind == "noundef") {
+        bundles.emplace_back("noundef", llvm::ArrayRef<llvm::Value *>{value});
+        continue;
+      }
+      if (kind == "nonnull") {
+        if (!value->getType()->isPointerTy()) {
+          err = errResponse("invalid", "'nonnull' applies to a pointer");
+          return false;
+        }
+        bundles.emplace_back("nonnull", llvm::ArrayRef<llvm::Value *>{value});
+        continue;
+      }
+      if (kind == "align" || kind == "dereferenceable") {
+        if (!value->getType()->isPointerTy()) {
+          err = errResponse("invalid", "'" + kind.str() + "' applies to a pointer");
+          return false;
+        }
+        uint64_t bytes = 0;
+        if (!positive(spec, kind == "align", kind, bytes, err))
+          return false;
+        bundles.emplace_back(
+            kind.str(), llvm::ArrayRef<llvm::Value *>{value, llvm::ConstantInt::get(i64, bytes)});
+        continue;
+      }
+      if (kind == "noalias") {
+        err = errResponse("invalid", "noalias cannot be stated as an assume");
+        return false;
+      }
+      err = errResponse("invalid", "unknown fact '" + kind.str() + "'");
+      return false;
+    }
+    return true;
+  }
+
+  if (op.has_value()) {
+    return buildPredicate(item, F, call, refs, builder, condition, err);
+  }
+  if (predicateObj) {
+    return buildPredicate(*predicateObj, F, call, refs, builder, condition, err);
+  }
+
+  err = errResponse("bad_request", "assertion must specify 'fact' or 'op'");
+  return false;
+}
+
 } // namespace
 
 llvm::json::Object assumeCmd(llvm::json::Object &args) {
   auto text = args.getString("module");
-  auto beforeRef = args.getString("before");
-  auto valueRef = args.getString("value");
-  auto beforeCall = args.getString("before_call");
-  auto entryRef = args.getString("entry");
-  auto argIndex = args.getInteger("arg");
-  auto *facts = args.getObject("fact");
-  auto *predicateObj = args.getObject("predicate");
-  auto *predicatesArr = args.getArray("predicates");
+  auto *anchorObj = args.getObject("anchor");
+  if (!text || !anchorObj)
+    return errResponse("bad_request", "assume needs 'module' and 'anchor'");
 
-  if (!text)
-    return errResponse("bad_request", "assume needs 'module'");
-
-  const int anchorCount = (beforeRef ? 1 : 0) + (beforeCall ? 1 : 0) + (entryRef ? 1 : 0);
-  if (anchorCount != 1) {
+  auto at = anchorObj->getString("at");
+  if (!at)
     return errResponse("bad_request",
-                       "assume takes exactly one anchor: 'before', 'before_call', or 'entry'");
-  }
-
-  const bool hasFacts = facts && !facts->empty();
-  const bool hasPredicates =
-      (predicateObj && !predicateObj->empty()) || (predicatesArr && !predicatesArr->empty());
-  if (!hasFacts && !hasPredicates) {
-    return errResponse("bad_request", "assume needs at least one fact or predicate");
-  }
+                       "anchor needs 'at' ('entry', 'before_call', or 'before_inst')");
 
   std::string parseErr;
   auto mwc = parseModule(*text, &parseErr);
@@ -200,138 +302,69 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
     return errResponse("shape_error", "assume needs a single basic block");
   ValueRefs refs(*F);
   llvm::Instruction *before = nullptr;
-  llvm::Value *value = nullptr;
   llvm::CallInst *call = nullptr;
 
-  if (beforeRef) {
-    before = refs.resolveInst(*beforeRef);
-    if (!before)
-      return errResponse("not_found", "'" + beforeRef->str() + "' is not an instruction");
-    if (hasFacts) {
-      if (!valueRef)
-        return errResponse("bad_request", "assume with 'before' and 'fact' needs 'value'");
-      value = refs.resolve(*valueRef);
-      if (!value)
-        return errResponse("not_found", "'" + valueRef->str() + "' is not a value");
-    }
-  } else if (beforeCall) {
+  if (*at == "entry") {
+    auto fnName = anchorObj->getString("fn");
+    if (!fnName)
+      return errResponse("bad_request", "anchor with at 'entry' needs 'fn'");
+    if (F->getName() != *fnName)
+      return errResponse("not_found", "no function defined with name '@" + fnName->str() + "'");
+    before = &*BB->begin();
+  } else if (*at == "before_call") {
+    auto fnName = anchorObj->getString("fn");
+    if (!fnName)
+      return errResponse("bad_request", "anchor with at 'before_call' needs 'fn'");
     for (auto &I : *BB) {
       auto *candidate = llvm::dyn_cast<llvm::CallInst>(&I);
       if (!candidate || !candidate->getCalledFunction())
         continue;
-      if (candidate->getCalledFunction()->getName() != *beforeCall)
+      if (candidate->getCalledFunction()->getName() != *fnName)
         continue;
       if (call)
-        return errResponse("invalid", "more than one call to '@" + beforeCall->str() + "'");
+        return errResponse("invalid", "more than one call to '@" + fnName->str() + "'");
       call = candidate;
     }
     if (!call)
-      return errResponse("not_found", "no call to '@" + beforeCall->str() + "'");
+      return errResponse("not_found", "no call to '@" + fnName->str() + "'");
     before = call;
-    if (hasFacts) {
-      if (!argIndex)
-        return errResponse("bad_request", "assume with 'before_call' and 'fact' needs 'arg'");
-      if (*argIndex < 0 || (uint64_t)*argIndex >= call->arg_size()) {
-        return errResponse("invalid", "'@" + beforeCall->str() + "' is called with " +
-                                          std::to_string(call->arg_size()) + " arguments");
-      }
-      value = call->getArgOperand((unsigned)*argIndex);
-    }
-  } else if (entryRef) {
-    if (F->getName() != *entryRef) {
-      return errResponse("not_found", "no function defined with name '@" + entryRef->str() + "'");
-    }
-    before = &*BB->begin();
-    if (hasFacts) {
-      if (!argIndex)
-        return errResponse("bad_request", "assume with 'entry' and 'fact' needs 'arg'");
-      if (*argIndex < 0 || (uint64_t)*argIndex >= F->arg_size()) {
-        return errResponse("invalid", "'@" + entryRef->str() + "' has " +
-                                          std::to_string(F->arg_size()) + " arguments");
-      }
-      value = F->getArg((unsigned)*argIndex);
-    }
+  } else if (*at == "before_inst") {
+    auto instRef = anchorObj->getString("inst");
+    if (!instRef)
+      return errResponse("bad_request", "anchor with at 'before_inst' needs 'inst'");
+    before = refs.resolveInst(*instRef);
+    if (!before)
+      return errResponse("not_found", "'" + instRef->str() + "' is not an instruction");
+  } else {
+    return errResponse("bad_request", "unknown anchor at '" + at->str() + "'");
+  }
+
+  auto *arr = args.getArray("assertions");
+  if (!arr || arr->empty())
+    return errResponse("bad_request", "assume needs non-empty 'assertions' array");
+
+  std::vector<const llvm::json::Object *> items;
+  for (const auto &val : *arr) {
+    const auto *obj = val.getAsObject();
+    if (!obj)
+      return errResponse("bad_request", "each assertion in 'assertions' must be an object");
+    items.push_back(obj);
   }
 
   llvm::LLVMContext &ctx = M.getContext();
   llvm::IRBuilder<> builder(before);
-  auto *i64 = llvm::Type::getInt64Ty(ctx);
   llvm::Value *condition = nullptr;
   std::vector<llvm::OperandBundleDef> bundles;
 
-  auto conjoin = [&](llvm::Value *next) {
-    condition = condition ? builder.CreateAnd(condition, next) : next;
-  };
-
-  if (hasFacts) {
-    for (const auto &entry : *facts) {
-      llvm::StringRef kind = entry.first;
-      const llvm::json::Value &spec = entry.second;
-      llvm::json::Object err;
-
-      if (kind == "range") {
-        const auto *range = spec.getAsObject();
-        if (!range || !value->getType()->isIntegerTy())
-          return errResponse("invalid", "range needs {min, max} and an integer value");
-        unsigned bits = value->getType()->getIntegerBitWidth();
-        llvm::APInt min(bits, 0), max(bits, 0);
-        if (!bound(*range, "min", bits, min, err) || !bound(*range, "max", bits, max, err))
-          return err;
-        if (min == max)
-          return errResponse("invalid", "range must be a non-empty half-open interval");
-        llvm::Value *low = builder.CreateICmpSGE(value, llvm::ConstantInt::get(ctx, min));
-        llvm::Value *high = builder.CreateICmpSLT(value, llvm::ConstantInt::get(ctx, max));
-        conjoin(min.slt(max) ? builder.CreateAnd(low, high) : builder.CreateOr(low, high));
-        continue;
-      }
-
-      if (kind == "noundef") {
-        bundles.emplace_back("noundef", llvm::ArrayRef<llvm::Value *>{value});
-        continue;
-      }
-
-      if (kind == "nonnull") {
-        if (!value->getType()->isPointerTy())
-          return errResponse("invalid", "'nonnull' applies to a pointer");
-        bundles.emplace_back("nonnull", llvm::ArrayRef<llvm::Value *>{value});
-        continue;
-      }
-      if (kind == "align" || kind == "dereferenceable") {
-        if (!value->getType()->isPointerTy())
-          return errResponse("invalid", "'" + kind.str() + "' applies to a pointer");
-        uint64_t bytes = 0;
-        if (!positive(spec, kind == "align", kind, bytes, err))
-          return err;
-        bundles.emplace_back(
-            kind.str(), llvm::ArrayRef<llvm::Value *>{value, llvm::ConstantInt::get(i64, bytes)});
-        continue;
-      }
-      if (kind == "noalias") {
-        return errResponse("invalid", "noalias cannot be stated as an assume");
-      }
-      return errResponse("invalid", "unknown fact '" + kind.str() + "'");
-    }
-  }
-
-  if (predicateObj && !predicateObj->empty()) {
+  for (const auto *item : items) {
     llvm::json::Object err;
-    if (!buildPredicate(*predicateObj, F, call, refs, builder, condition, err))
+    if (!applyAssertion(*item, F, call, refs, ctx, builder, condition, bundles, err))
       return err;
-  }
-  if (predicatesArr) {
-    for (const auto &pVal : *predicatesArr) {
-      const auto *pObj = pVal.getAsObject();
-      if (!pObj)
-        return errResponse("bad_request", "each predicate must be an object");
-      llvm::json::Object err;
-      if (!buildPredicate(*pObj, F, call, refs, builder, condition, err))
-        return err;
-    }
   }
 
   if (condition)
     builder.CreateAssumption(condition);
-  if (!bundles.empty() || (!condition && hasFacts))
+  if (!bundles.empty())
     builder.CreateAssumption(builder.getTrue(), bundles);
 
   auto diags = checkFunction(*F);

@@ -422,23 +422,24 @@ class Check:
 
     if preconditions:
       # Phase 1: Insert assumes before call in outer and verify whole-function
-      outer_assumed = self.package.program(window["outer"])
+      assertions = []
       for arg_str, fact in preconditions.items():
         try:
           arg = int(arg_str)
         except ValueError:
           self.fail(gid, "precondition arg", f"invalid integer {arg_str}")
           return step["to"]
-        res = self.package.run_llops(
-          "assume",
-          {
-            "module": outer_assumed,
-            "before_call": window["callee"],
-            "arg": arg,
-            "fact": fact,
-          },
-        )
-        outer_assumed = res["module"]
+        assertions.append({"fact": fact, "arg": arg})
+
+      res = self.package.run_llops(
+        "assume",
+        {
+          "module": self.package.program(window["outer"]),
+          "anchor": {"at": "before_call", "fn": window["callee"]},
+          "assertions": assertions,
+        },
+      )
+      outer_assumed = res["module"]
 
       # Phase 1: which whole the step replaces decides which half is
       # asked about it: a src step's obligation starts at the before

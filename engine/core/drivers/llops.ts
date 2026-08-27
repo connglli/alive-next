@@ -104,21 +104,24 @@ export type OptOp =
   | { what: "simplify"; v: Ref }
   | { what: "instcombine"; max_iterations?: number; debug_counter?: number };
 
-export type PredicateOperand = { arg: number } | { value: Ref } | { const: number };
+export type AssumeAnchor =
+  | { at: "entry"; fn: string }
+  | { at: "before_call"; fn: string }
+  | { at: "before_inst"; inst: Ref };
 
-export type Predicate = {
+export type PredicateOperand = { arg: number } | { val: Ref } | { const: number };
+
+export type PredicateAssertion = {
   op: "eq" | "ne" | "slt" | "sle" | "sgt" | "sge" | "ult" | "ule" | "ugt" | "uge";
   lhs: PredicateOperand;
   rhs: PredicateOperand;
 };
 
-export type AssumeSpec =
-  | { before: Ref; value: Ref; fact: Record<string, unknown> }
-  | { before_call: string; arg: number; fact: Record<string, unknown> }
-  | { entry: string; arg: number; fact: Record<string, unknown> }
-  | { before: Ref; predicate?: Predicate; predicates?: Predicate[] }
-  | { before_call: string; predicate?: Predicate; predicates?: Predicate[] }
-  | { entry: string; predicate?: Predicate; predicates?: Predicate[] };
+export type FactAssertion =
+  | { fact: Record<string, unknown>; arg: number }
+  | { fact: Record<string, unknown>; val: Ref };
+
+export type Assertion = FactAssertion | PredicateAssertion;
 
 /** Thrown when llops cannot be run or does not answer in JSON. */
 export class LlopsCrash extends Error {
@@ -198,11 +201,16 @@ export class Llops {
   }
 
   /**
-   * State a fact or relational predicate at an anchor point (before an instruction,
+   * State facts or relational predicates at a program anchor (before an instruction,
    * before a call, or at function entry).
    */
-  assume(module: Module, where: AssumeSpec): Promise<LlopsResult<ModuleResult>> {
-    return this.run("assume", { module, ...where });
+  assume(
+    module: Module,
+    anchor: AssumeAnchor,
+    assertions: Assertion | Assertion[],
+  ): Promise<LlopsResult<ModuleResult>> {
+    const list = Array.isArray(assertions) ? assertions : [assertions];
+    return this.run("assume", { module, anchor, assertions: list });
   }
 
   /** Wrap a function in the main llubi runs, with these argument values. */

@@ -117,23 +117,24 @@ export class Strengthen {
     // Phase one, where the proof cost is. Every fact is assumed before the
     // call, and the whole set goes to alive2 as one step: a caller either
     // honours the interface it is asked for or it does not.
-    let assumed = this.store.get(head(outer, "src"));
-    for (const param of params) {
-      const one = await this.llops.assume(assumed, {
-        before_call: name,
-        arg: param,
-        fact: facts[param] as Fact,
-      });
-      if (!one.ok) {
-        return {
-          kind: "refused",
-          phase: "assume",
-          reason: `parameter ${param}: ${one.message}`,
-          effects: landed,
-        };
-      }
-      assumed = one.module;
+    const assertions = params.map((param) => ({
+      fact: facts[param] as Fact,
+      arg: param,
+    }));
+    const one = await this.llops.assume(
+      this.store.get(head(outer, "src")),
+      { at: "before_call", fn: name },
+      assertions,
+    );
+    if (!one.ok) {
+      return {
+        kind: "refused",
+        phase: "assume",
+        reason: one.message,
+        effects: landed,
+      };
     }
+    const assumed = one.module;
     const proof = await this.steps.step(tree, outer.id, "src", assumed, { eager: false });
     if (proof.kind !== "certified") {
       // A fact does not hold, or nothing here shows that it does.
