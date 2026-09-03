@@ -141,7 +141,7 @@ builders() {
 # so instead of misbehaving later; and shared libraries keep four binaries from
 # costing several gigabytes each. Targets and projects do not affect what a
 # module means, so only X86 is built, and LLVM_TARGETS and LLVM_PROJECTS are
-# there for a machine that wants more.
+# there for a machine that wants more. MLIR is the exception.
 have_llvm() {
   local cfg="$LLVM_BUILD/bin/llvm-config" version
   [ -x "$cfg" ] || return 1
@@ -153,6 +153,10 @@ have_llvm() {
   # wrong.
   [ "$("$cfg" --has-rtti 2>/dev/null)" = YES ] || return 1
   [ "$("$cfg" --assertion-mode 2>/dev/null)" = ON ] || return 1
+  [ -x "$LLVM_BUILD/bin/opt" ] || return 1
+  # llrwt uses VeIR which in turn uses MLIR
+  [ -x "$LLVM_BUILD/bin/mlir-translate" ] || return 1
+  [ -x "$LLVM_BUILD/bin/mlir-opt" ] || return 1
   echo "$version at $cfg"
 }
 
@@ -169,7 +173,7 @@ install_llvm() {
     -DLLVM_ENABLE_RTTI=ON \
     -DLLVM_ENABLE_ASSERTIONS=ON \
     -DLLVM_ABI_BREAKING_CHECKS=WITH_ASSERTS \
-    -DLLVM_ENABLE_PROJECTS="${LLVM_PROJECTS:-llvm}" \
+    -DLLVM_ENABLE_PROJECTS="${LLVM_PROJECTS:-llvm;mlir}" \
     -DLLVM_TARGETS_TO_BUILD="${LLVM_TARGETS:-X86}" \
     -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF \
     -DLLVM_INCLUDE_EXAMPLES=OFF \
