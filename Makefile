@@ -1,8 +1,8 @@
 # Build and test orchestration. docs/implementation.md holds the layout, and
 # scripts/depman.sh owns everything about the toolchain, including the pins.
 #
-# One knob matters: TOOLCHAIN is where LLVM, alive2, llubi and llops are built,
-# and every one of them is built from source against that one LLVM. It is set
+# One knob matters: TOOLCHAIN is where LLVM, alive2, llubi, llrwt and llops are
+# built, and every one of them is built from source against that one LLVM. It is set
 # in config.jsonc, which is also what a run reads, and the environment
 # overrides it for one command.
 SHELL := /usr/bin/env bash
@@ -22,7 +22,7 @@ export PATH := $(PATH):$(HOME)/.bun/bin:$(HOME)/.local/bin
 
 LLOPS_BUILD := $(TOOLCHAIN)/llops/build
 
-.PHONY: help install-deps deps-status deps-llvm deps-alive2 deps-llubi deps-bun \
+.PHONY: help install-deps deps-status deps-llvm deps-alive2 deps-llubi deps-veir deps-bun \
         deps-js deps-uv deps-py deps-dev llops test-llops engine test-engine test examples \
         cert test-scripts clean
 
@@ -30,7 +30,7 @@ help:
 	@echo "dependencies"
 	@echo "  install-deps   build the toolchain and the host tools, then llops"
 	@echo "  deps-status    report what is built, and where"
-	@echo "  deps-<name>    build one of: llvm alive2 llubi bun js uv py dev"
+	@echo "  deps-<name>    build one of: llvm alive2 llubi veir bun js uv py dev"
 	@echo "                 (dev adds the check tools and this clone's git hooks)"
 	@echo "                 (FORCE=1 rebuilds one that is already there)"
 	@echo ""
@@ -59,7 +59,7 @@ install-deps:
 deps-status:
 	@$(DEPS) status
 
-deps-llvm deps-alive2 deps-llubi deps-bun deps-js deps-uv deps-py deps-dev:
+deps-llvm deps-alive2 deps-llubi deps-veir deps-bun deps-js deps-uv deps-py deps-dev:
 	@$(DEPS) $(patsubst deps-%,%,$@)
 
 # --- llops -------------------------------------------------------------------

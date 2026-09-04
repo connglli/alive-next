@@ -20,6 +20,7 @@
 #   $TOOLCHAIN/llvm-project/build/bin/llvm-config
 #   $TOOLCHAIN/alive2/build/alive-tv
 #   $TOOLCHAIN/llubi-legacy/build/llubi
+#   $TOOLCHAIN/veir/.lake/build/bin/llrwt
 #   $TOOLCHAIN/llops/build/llops
 #   $TOOLCHAIN/toolchain.json     what was built, from which revisions
 #
@@ -27,7 +28,7 @@
 # when its have_* check passes, so every subcommand is idempotent and a build
 # that already fits is left alone. FORCE=1 builds regardless.
 #
-# Usage: scripts/depman.sh <install|status|toolchain|llvm-cmakedir|llvm|alive2|llubi|bun|js|uv|py|dev>
+# Usage: scripts/depman.sh <install|status|toolchain|llvm-cmakedir|llvm|alive2|llubi|veir|bun|js|uv|py|dev>
 #
 # TOOLCHAIN, JOBS and FORCE are the environment knobs.
 set -euo pipefail
@@ -45,6 +46,8 @@ ALIVE2_REPO=https://github.com/AliveToolkit/alive2.git
 ALIVE2_PIN=0dc2be5f04ccb61caebb909a610968cb2348f196
 LLUBI_REPO=https://github.com/dtcxzyw/llvm-ub-aware-interpreter.git
 LLUBI_PIN=9798ef7520061b89485475c9739a8c578528f3f7
+VEIR_REPO=https://github.com/connglli/VeIR.git
+VEIR_PIN=d5758e40c45415a345654d5680c56e542610e254
 
 # The release a tool has to report to count as built against our LLVM.
 LLVM_VERSION=${LLVM_PIN#llvmorg-}
@@ -72,6 +75,8 @@ ALIVE2_SRC="$TOOLCHAIN/alive2"
 ALIVE2_BUILD="$ALIVE2_SRC/build"
 LLUBI_SRC="$TOOLCHAIN/llubi-legacy"
 LLUBI_BUILD="$LLUBI_SRC/build"
+VEIR_SRC="$TOOLCHAIN/veir"
+VEIR_BIN="$VEIR_SRC/.lake/build/bin/llrwt"
 LLOPS_BUILD="$TOOLCHAIN/llops/build"
 STAMP="$TOOLCHAIN/toolchain.json"
 ENGINE="$ROOT/engine"
@@ -234,6 +239,28 @@ install_llubi() {
   ninja -C "$LLUBI_BUILD" -j"$JOBS" llubi
 }
 
+# --- veir / llrwt ------------------------------------------------------------
+# The verified rewriter, a Lean binary running through the toolchain's own
+# mlir-translate and mlir-opt. Built counts as answering --version and
+# listing its rules; building needs lake (via elan), running needs llvm.
+have_veir() {
+  [ -x "$VEIR_BIN" ] || return 1
+  local version
+  version=$("$VEIR_BIN" --version 2>/dev/null) || return 1
+  [ -n "$version" ] || return 1
+  "$VEIR_BIN" --list-rules >/dev/null 2>&1 || return 1
+  echo "$VEIR_BIN ($version)"
+}
+
+install_veir() {
+  ensure llvm 0
+  checkout "$VEIR_SRC" "$VEIR_REPO" "$VEIR_PIN"
+  command -v lake >/dev/null 2>&1 ||
+    die "'lake' is not on PATH. Install Lean 4 first."
+  say "building llrwt against VeIR $VEIR_PIN"
+  (cd "$VEIR_SRC" && lake build llrwt)
+}
+
 # --- llops -------------------------------------------------------------------
 # Part of the toolchain, but built from this repository, so the Makefile owns
 # building it and this only reports it: a toolchain without llops is not one a
@@ -331,7 +358,7 @@ install_dev() {
 }
 
 # --- Driver ------------------------------------------------------------------
-DEP_NAMES=(llvm alive2 llubi bun js uv py dev)
+DEP_NAMES=(llvm alive2 llubi veir bun js uv py dev)
 
 # ensure <name> <force>. Force is passed rather than read from the environment
 # so that it applies to the dependency that was asked for and not to the ones
@@ -364,7 +391,7 @@ status() {
     printf '  \033[1;31m%-8s\033[0m missing, run '"'"'make llops'"'"'\n' llops
     missing=1
   fi
-  printf '\npins: llvm %s, alive2 %s, llubi %s\n' "$LLVM_PIN" "$ALIVE2_PIN" "$LLUBI_PIN"
+  printf '\npins: llvm %s, alive2 %s, llubi %s, veir %s\n' "$LLVM_PIN" "$ALIVE2_PIN" "$LLUBI_PIN" "$VEIR_PIN"
   [ "$missing" = 0 ] || printf "run 'make install-deps' to build what is missing\n"
 }
 
@@ -377,6 +404,7 @@ stamp() {
   "llvm": { "pin": "$LLVM_PIN", "revision": "$(revision "$LLVM_SRC")" },
   "alive2": { "pin": "$ALIVE2_PIN", "revision": "$(revision "$ALIVE2_SRC")" },
   "llubi": { "pin": "$LLUBI_PIN", "revision": "$(revision "$LLUBI_SRC")" },
+  "veir": { "pin": "$VEIR_PIN", "revision": "$(revision "$VEIR_SRC")" },
   "built": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 JSON
@@ -401,9 +429,9 @@ case "${1:-status}" in
   status) status ;;
   toolchain) echo "$TOOLCHAIN" ;;
   llvm-cmakedir) llvm_cmakedir ;;
-  llvm | alive2 | llubi | bun | js | uv | py | dev)
+  llvm | alive2 | llubi | veir | bun | js | uv | py | dev)
     ensure "$1" "${FORCE:-0}"
-    case "$1" in llvm | alive2 | llubi) stamp ;; esac
+    case "$1" in llvm | alive2 | llubi | veir) stamp ;; esac
     ;;
   *)
     die "usage: $(basename "$0") <install|status|toolchain|llvm-cmakedir|${DEP_NAMES[*]}>"
