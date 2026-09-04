@@ -3,7 +3,9 @@
 // llops, alive-tv and llubi mean the same thing by a module only when they
 // were built against the same LLVM, so a run takes one directory rather than
 // three paths: the one scripts/depman.sh builds into, from pinned revisions
-// against one LLVM. The layout below is the contract between the two, and
+// against one LLVM. llrwt joins them there as the verified rewriter: a Lean
+// binary with no LLVM banner, so a run asks it for a version, not a release.
+// The layout below is the contract between the two, and
 // docs/implementation.md states it for people.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,6 +15,7 @@ export const LAYOUT = {
   llops: { at: "llops/build/llops", version: ["version"] },
   "alive-tv": { at: "alive2/build/alive-tv", version: ["--version"] },
   llubi: { at: "llubi-legacy/build/llubi", version: ["--version"] },
+  llrwt: { at: "veir/.lake/build/bin/llrwt", version: ["--version"] },
   "llvm-config": { at: "llvm-project/build/bin/llvm-config", version: ["--version"] },
 } as const;
 
@@ -26,6 +29,8 @@ export interface ToolReport {
   path: string;
   /** The LLVM release it reports, absent when it could not be asked. */
   llvm?: string;
+  /** The version line it prints, kept for binaries like llrwt that carry no LLVM banner. */
+  version?: string;
   /** Why it could not be asked: missing, or it would not run. */
   error?: string;
 }
@@ -50,6 +55,14 @@ export class Toolchain {
 
   path(name: ToolName): string {
     return join(this.dir, LAYOUT[name].at);
+  }
+
+  /**
+   * One of the MLIR translators llrwt runs under, built with the
+   * toolchain's LLVM rather than beside the other binaries.
+   */
+  mlir(name: "mlir-translate" | "mlir-opt"): string {
+    return join(this.dir, "llvm-project/build/bin", name);
   }
 
   has(name: ToolName): boolean {
@@ -77,6 +90,7 @@ export class Toolchain {
     for (const name of CHECKED) {
       tools[name] = await ask(this.path(name), LAYOUT[name].version);
     }
+    tools.llrwt = await askVersion(this.path("llrwt"), LAYOUT.llrwt.version);
     return { dir: this.dir, tools, stamp: this.stamp() };
   }
 
@@ -95,14 +109,12 @@ export class Toolchain {
           .join("\n")}\nRun 'make install-deps' with TOOLCHAIN=${this.dir}.`,
       );
     }
-    const versions = new Set(Object.values(report.tools).map((tool) => tool.llvm));
+    const versions = new Set(CHECKED.map((name) => report.tools[name]?.llvm));
     if (versions.size > 1) {
       throw new ToolchainError(
-        `${this.dir} mixes LLVM versions, so its tools do not agree on what a module means.\n${Object.entries(
-          report.tools,
-        )
-          .map(([name, tool]) => `  ${name}: LLVM ${tool.llvm}`)
-          .join("\n")}\nRebuild it with 'make install-deps FORCE=1 TOOLCHAIN=${this.dir}'.`,
+        `${this.dir} mixes LLVM versions, so its tools do not agree on what a module means.\n${CHECKED.map(
+          (name) => `  ${name}: LLVM ${report.tools[name]?.llvm}`,
+        ).join("\n")}\nRebuild it with 'make install-deps FORCE=1 TOOLCHAIN=${this.dir}'.`,
       );
     }
     return report;
@@ -125,6 +137,23 @@ async function ask(path: string, version: readonly string[]): Promise<ToolReport
     ]);
     const llvm = llvmVersion(out) ?? llvmVersion(err);
     return llvm ? { path, llvm } : { path, error: "it does not say which LLVM it carries" };
+  } catch (error) {
+    return { path, error: (error as Error).message };
+  }
+}
+
+/**
+ * Ask the rewriter for its version line. It carries no LLVM banner, so a
+ * version line is what counts as built.
+ */
+async function askVersion(path: string, version: readonly string[]): Promise<ToolReport> {
+  if (!existsSync(path)) return { path, error: `no binary at ${path}` };
+  try {
+    const child = Bun.spawn([path, ...version], { stdout: "pipe", stderr: "pipe" });
+    const [out] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    const line = out.trim();
+    if (child.exitCode !== 0 || line === "") return { path, error: "it does not print a version" };
+    return { path, version: line };
   } catch (error) {
     return { path, error: (error as Error).message };
   }

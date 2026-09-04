@@ -1,16 +1,13 @@
 // Driving llrwt, the pre-proved rewrite rule applier.
 //
-// One process per request: an input file holding LLVM IR, rewritten LLVM IR on
-// stdout, exit 0 on success (byte-identical echo when nothing changed), 1 on
-// refusal, 2 on misuse. Everything llrwt can refuse is a value here rather
-// than an exception, and a refusal is the normal case while an agent searches
-// (an unknown rule, input outside the supported subset). Only a broken invocation
-// throws, because a binary that will not run is a bug in us, not a move the
-// agent made.
+// A file in, rewritten IR out, exit 0 on success. Success always prints
+// afresh through the MLIR roundtrip, never echoes. Exit 1 is a failed run,
+// exit 2 a bad command line, an unknown rule, or a missing translator.
+// Refusals are values, and the normal case while searching; only a binary
+// that will not run throws. The translators default to PATH; the driver
+// names the toolchain's own pair explicitly.
 //
-// The refusal codes below are read off llrwt's stderr while it speaks only
-// free text. When llrwt learns stable machine-readable errors the mapping in
-// refuse() is what changes; the codes themselves are the contract.
+// The refusal codes below are read off free-text stderr, and are the contract.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +23,8 @@ export interface LlrwtInvocation {
   binary: string;
   rules: string[];
   timeoutMs: number;
+  mlirTranslate?: string;
+  mlirOpt?: string;
 }
 
 export interface ApplyResult {
@@ -61,10 +60,17 @@ function wallClock(timeoutMs: number): number {
 }
 
 export class Llrwt {
+  private readonly mlirTranslate?: string;
+  private readonly mlirOpt?: string;
+
   constructor(
     private readonly path: string = "llrwt",
     private readonly defaultTimeoutMs: number = 30_000,
-  ) {}
+    translators: { mlirTranslate?: string; mlirOpt?: string } = {},
+  ) {
+    this.mlirTranslate = translators.mlirTranslate;
+    this.mlirOpt = translators.mlirOpt;
+  }
 
   /** The version line, which a run records to say what rewrote its programs. */
   async version(): Promise<string> {
@@ -72,6 +78,27 @@ export class Llrwt {
     const [out] = await Promise.all([new Response(child.stdout).text(), child.exited]);
     if (child.exitCode !== 0) throw new LlrwtCrash(`--version exited ${child.exitCode}`);
     return out.trim();
+  }
+
+  /**
+   * The rule table, one name per line before its description. This is what an
+   * agent offers in a rewrite and what a certificate replays, so both read it
+   * here rather than remembering it.
+   */
+  async listRules(): Promise<string[]> {
+    const child = Bun.spawn([this.path, "--list-rules"], { stdout: "pipe", stderr: "pipe" });
+    const [out, err] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    if (child.exitCode !== 0) {
+      throw new LlrwtCrash(`--list-rules exited ${child.exitCode}, ${detail(err, out)}`);
+    }
+    return out
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/)[0] ?? "")
+      .filter((name) => name !== "");
   }
 
   /**
@@ -86,8 +113,20 @@ export class Llrwt {
     options: ApplyOptions = {},
   ): Promise<LlrwtResult<ApplyResult>> {
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
-    const invocation: LlrwtInvocation = { binary: this.path, rules: [...rules], timeoutMs };
-    const args = ["--rules", rules.join(","), "--allow-unregistered-dialect"];
+    const invocation: LlrwtInvocation = {
+      binary: this.path,
+      rules: [...rules],
+      timeoutMs,
+      ...(this.mlirTranslate ? { mlirTranslate: this.mlirTranslate } : {}),
+      ...(this.mlirOpt ? { mlirOpt: this.mlirOpt } : {}),
+    };
+    const args = [
+      "--rules",
+      rules.join(","),
+      "--allow-unregistered-dialect",
+      ...(this.mlirTranslate ? ["--mlir-translate", this.mlirTranslate] : []),
+      ...(this.mlirOpt ? ["--mlir-opt", this.mlirOpt] : []),
+    ];
 
     const dir = mkdtempSync(join(tmpdir(), "alive-next-llrwt-"));
     const inPath = join(dir, "in.ll");
@@ -138,6 +177,7 @@ function refuse(stderr: string, stdout: string): { code: string; message: string
   const message = detail(stderr, stdout);
   if (isUnknownRule(message)) return { code: "unknown_rule", message };
   if (/mlir-translate|mlir-opt/i.test(message)) return { code: "bridge_error", message };
+  if (/verif/i.test(message)) return { code: "verify_error", message };
   if (/timed out|timeout/i.test(message)) return { code: "timeout", message };
   return { code: "parse_error", message };
 }

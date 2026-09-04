@@ -27,6 +27,7 @@ const AGREED = {
   llops: "llops 0.1.0 (LLVM 22.1.0)",
   "alive-tv": "LLVM version 22.1.0",
   llubi: "LLVM version 22.1.0",
+  llrwt: "llrwt 0.1.0 (VeIR 0.1.0)",
 };
 
 describe("reading a version banner", () => {
@@ -44,6 +45,7 @@ describe("insisting on a toolchain", () => {
       const report = await new Toolchain(dir).insist();
       expect(report.tools.llops?.llvm).toBe("22.1.0");
       expect(report.tools.llubi?.llvm).toBe("22.1.0");
+      expect(report.tools.llrwt?.version).toBe("llrwt 0.1.0 (VeIR 0.1.0)");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -74,6 +76,17 @@ describe("insisting on a toolchain", () => {
     }
   });
 
+  test("refuses one without the verified rewriter", async () => {
+    const dir = fake({ ...AGREED, llrwt: null });
+    try {
+      const attempt = new Toolchain(dir).insist();
+      await expect(attempt).rejects.toThrow(/is not built/);
+      await expect(attempt).rejects.toThrow(/llrwt/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("has no stamp when nobody wrote one", () => {
     const dir = fake(AGREED);
     try {
@@ -88,6 +101,10 @@ describe("the toolchain this suite runs against", () => {
   test("is one build, if it is there at all", async () => {
     if (!toolchain.has("llops")) return;
     const report = await toolchain.insist();
-    expect(new Set(Object.values(report.tools).map((tool) => tool.llvm)).size).toBe(1);
+    // llrwt is a Lean binary with no LLVM banner, so only the LLVM tools agree.
+    const versions = new Set(
+      ["llops", "alive-tv", "llubi"].map((name) => report.tools[name]?.llvm),
+    );
+    expect(versions.size).toBe(1);
   });
 });
