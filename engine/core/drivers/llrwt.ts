@@ -186,9 +186,10 @@ export class Llrwt {
         };
       }
       // Exit 2 is a command line llrwt did not understand, which is our bug
-      // unless the complaint is about a rule name, which is the agent's: rule
-      // names arrive from the tool call, not from us.
-      if (child.exitCode === 2 && !isUnknownRule(err)) {
+      // unless the complaint is about a rule name, which is the agent's, or
+      // about a translator, which is the toolchain's: rule names arrive from
+      // the tool call and translator paths from the toolchain, not from us.
+      if (child.exitCode === 2 && !isUnknownRule(err) && !isTranslatorError(err, out)) {
         throw new LlrwtCrash(`exited 2, ${detail(err, out)}`);
       }
       return { ok: false, ...refuse(err, out) };
@@ -211,6 +212,11 @@ function refuse(stderr: string, stdout: string): { code: string; message: string
 /** llrwt reports an unnameable rule as `Unknown rewrite rule: '<name>'`. */
 function isUnknownRule(text: string): boolean {
   return /unknown (rewrite )?rule/i.test(text);
+}
+
+/** llrwt reports a translator it cannot run by naming it. */
+function isTranslatorError(stderr: string, stdout: string): boolean {
+  return /mlir-translate|mlir-opt/i.test(detail(stderr, stdout));
 }
 
 function detail(stderr: string, stdout: string): string {

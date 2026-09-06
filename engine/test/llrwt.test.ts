@@ -229,6 +229,19 @@ describe("llrwt apply", () => {
     }
   });
 
+  test("a missing translator is a bridge error, on either exit code", async () => {
+    for (const exitCode of [1, 2]) {
+      const { dir, path } = stub("", exitCode, "mlir-translate: No such file or directory");
+      try {
+        const result = await new Llrwt(path).apply(F, ["add_zero"]);
+        if (result.ok) throw new Error("expected a refusal");
+        expect(result.code).toBe("bridge_error");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
   test("a run we killed is a timeout, not a broken installation", async () => {
     const dir = mkdtempSync(join(tmpdir(), "alive-next-llrwt-stub-"));
     const path = join(dir, "llrwt");

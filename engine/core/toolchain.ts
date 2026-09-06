@@ -109,6 +109,17 @@ export class Toolchain {
           .join("\n")}\nRun 'make install-deps' with TOOLCHAIN=${this.dir}.`,
       );
     }
+    // llrwt translates through the toolchain's own MLIR pair at run time, so
+    // a toolchain without them rewrites nothing: every rewrite would fail
+    // where it runs rather than where the run starts.
+    for (const name of ["mlir-translate", "mlir-opt"] as const) {
+      const path = this.mlir(name);
+      if (!existsSync(path)) {
+        throw new ToolchainError(
+          `${this.dir} cannot rewrite: no binary at ${path}.\nRun 'make install-deps' with TOOLCHAIN=${this.dir}.`,
+        );
+      }
+    }
     const versions = new Set(CHECKED.map((name) => report.tools[name]?.llvm));
     if (versions.size > 1) {
       throw new ToolchainError(

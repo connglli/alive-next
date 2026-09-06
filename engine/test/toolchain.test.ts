@@ -20,6 +20,14 @@ function fake(versions: Record<string, string | null>): string {
     writeFileSync(path, `#!/bin/sh\necho '${line}'\n`, "utf8");
     chmodSync(path, 0o755);
   }
+  // llrwt translates through the toolchain's own MLIR pair, which insist
+  // requires beside the binaries above.
+  for (const name of ["mlir-translate", "mlir-opt"]) {
+    const path = join(dir, "llvm-project/build/bin", name);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "#!/bin/sh\n", "utf8");
+    chmodSync(path, 0o755);
+  }
   return dir;
 }
 
@@ -82,6 +90,18 @@ describe("insisting on a toolchain", () => {
       const attempt = new Toolchain(dir).insist();
       await expect(attempt).rejects.toThrow(/is not built/);
       await expect(attempt).rejects.toThrow(/llrwt/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses one without the translators llrwt runs under", async () => {
+    const dir = fake(AGREED);
+    try {
+      rmSync(join(dir, "llvm-project/build/bin/mlir-translate"));
+      const attempt = new Toolchain(dir).insist();
+      await expect(attempt).rejects.toThrow(/cannot rewrite/);
+      await expect(attempt).rejects.toThrow(/mlir-translate/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
