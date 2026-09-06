@@ -9,9 +9,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckOutcome, CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
+import type { Llrwt } from "../core/drivers/llrwt.ts";
 import type { Goal, Tree } from "../core/state/goals.ts";
 import { derive, head } from "../core/state/goals.ts";
-import { Steps } from "../core/state/steps.ts";
+import { DEFAULT_TIMEOUTS, Steps } from "../core/state/steps.ts";
 import { Store } from "../core/state/store.ts";
 import type { Entry, Event } from "../core/state/trajectory.ts";
 import { TransactionError, Transactions } from "../core/state/transactions.ts";
@@ -38,6 +39,15 @@ const built = await llops
   .version()
   .then(() => true)
   .catch(() => false);
+
+/** A stand-in for llrwt that refuses any use, for tests that never rewrite. */
+const unrewriting = {
+  apply: async () => ({
+    ok: false as const,
+    code: "unavailable",
+    message: "unused in this test",
+  }),
+} as unknown as Llrwt;
 
 const PROGRAM = `define i32 @f(i32 %x, i32 %y) {
 entry:
@@ -120,7 +130,7 @@ describe.skipIf(!built)("transactions", () => {
 
   test("commits the whole session as one step", async () => {
     const checker = new FakeChecker(["correct", "unknown"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const transactions = new Transactions(store, llops);
     const goals = await tree();
     const before = store.get(head(goal(goals, "g1"), "src"));
@@ -139,7 +149,13 @@ describe.skipIf(!built)("transactions", () => {
   });
 
   test("a refused commit leaves the head alone and closes by default", async () => {
-    const steps = new Steps(store, new FakeChecker(["incorrect"]));
+    const steps = new Steps(
+      store,
+      new FakeChecker(["incorrect"]),
+      DEFAULT_TIMEOUTS,
+      llops,
+      unrewriting,
+    );
     const transactions = new Transactions(store, llops);
     const goals = await tree();
     const before = head(goal(goals, "g1"), "src");
@@ -154,7 +170,13 @@ describe.skipIf(!built)("transactions", () => {
   });
 
   test("a refused commit can keep the scratch open", async () => {
-    const steps = new Steps(store, new FakeChecker(["incorrect"]));
+    const steps = new Steps(
+      store,
+      new FakeChecker(["incorrect"]),
+      DEFAULT_TIMEOUTS,
+      llops,
+      unrewriting,
+    );
     const transactions = new Transactions(store, llops);
     const goals = await tree();
 
@@ -175,7 +197,10 @@ describe.skipIf(!built)("transactions", () => {
     const goals = await tree();
 
     transactions.begin(goals, "g1", "src");
-    const result = await transactions.commit(goals, new Steps(store, checker));
+    const result = await transactions.commit(
+      goals,
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+    );
 
     expect(result.kind).toBe("refused");
     expect(checker.calls).toHaveLength(0);
@@ -205,9 +230,12 @@ describe.skipIf(!built)("transactions", () => {
     await expect(transactions.edit({ op: "commute", v: "%2" })).rejects.toThrow(
       /no transaction is open/,
     );
-    await expect(transactions.commit(goals, new Steps(store, new FakeChecker([])))).rejects.toThrow(
-      /no transaction is open/,
-    );
+    await expect(
+      transactions.commit(
+        goals,
+        new Steps(store, new FakeChecker([]), DEFAULT_TIMEOUTS, llops, unrewriting),
+      ),
+    ).rejects.toThrow(/no transaction is open/);
     expect(() => transactions.abort()).toThrow(/no transaction is open/);
   });
 

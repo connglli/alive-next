@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
+import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, DEFAULT_TIMEOUTS, timeoutsFrom } from "../core/state/steps.ts";
@@ -42,6 +43,15 @@ const noRun: Interpreter = {
   },
 };
 
+/** A stand-in for llrwt that refuses any use, for tests that never rewrite. */
+const unrewriting = {
+  apply: async () => ({
+    ok: false as const,
+    code: "unavailable",
+    message: "unused in this test",
+  }),
+} as unknown as Llrwt;
+
 let dir: string;
 
 beforeEach(() => {
@@ -60,6 +70,7 @@ async function session(): Promise<Session> {
     llops,
     checker: new YesMan(),
     interp: noRun,
+    rewriter: unrewriting,
   });
 }
 
@@ -137,6 +148,7 @@ describe.skipIf(!built)("reading a session", () => {
       llops,
       checker: new YesMan(),
       interp: noRun,
+      rewriter: unrewriting,
       timeouts: timeoutsFrom({ eagerCheckMs: 100 }),
       config: { toolchain: "/somewhere" },
     });
@@ -337,6 +349,7 @@ describe.skipIf(!built)("reading a session", () => {
       llops,
       checker: new SeqChecker(),
       interp: noRun,
+      rewriter: unrewriting,
     });
 
     const first = await run.check("g1", 1000);

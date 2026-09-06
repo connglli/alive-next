@@ -11,10 +11,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckOutcome, CheckResult } from "../core/drivers/alive2.ts";
 import { type Attrs, Llops } from "../core/drivers/llops.ts";
+import type { Llrwt } from "../core/drivers/llrwt.ts";
 import type { Goal, Tree } from "../core/state/goals.ts";
 import { applyEffect, derive, head } from "../core/state/goals.ts";
 import { Splits } from "../core/state/splits.ts";
-import { Steps } from "../core/state/steps.ts";
+import { DEFAULT_TIMEOUTS, Steps } from "../core/state/steps.ts";
 import { Store } from "../core/state/store.ts";
 import { explainAssumeRefusal, Strengthen } from "../core/state/strengthen.ts";
 import type { Effect, Entry, Event } from "../core/state/trajectory.ts";
@@ -41,6 +42,15 @@ const built = await llops
   .version()
   .then(() => true)
   .catch(() => false);
+
+/** A stand-in for llrwt that refuses any use, for tests that never rewrite. */
+const unrewriting = {
+  apply: async () => ({
+    ok: false as const,
+    code: "unavailable",
+    message: "unused in this test",
+  }),
+} as unknown as Llrwt;
 
 const SRC = `define i32 @f(i32 %n) {
 entry:
@@ -118,7 +128,11 @@ describe.skipIf(!built)("strengthening", () => {
   test("proves the fact, then attributes it in four programs", async () => {
     const checker = new FakeChecker(["correct", "correct", "correct", "unknown", "unknown"]);
     const tree = await cut();
-    const strengthen = new Strengthen(store, llops, new Steps(store, checker));
+    const strengthen = new Strengthen(
+      store,
+      llops,
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+    );
     const result = await strengthen.strengthen(tree, "g1", { param_attrs: { 0: RANGE } });
 
     if (result.kind !== "strengthened") throw new Error(result.reason);
@@ -144,11 +158,11 @@ describe.skipIf(!built)("strengthening", () => {
   test("the callee's two sides move together, justified by the assume", async () => {
     const checker = new FakeChecker(["correct", "correct", "correct", "unknown", "unknown"]);
     const tree = await cut();
-    const result = await new Strengthen(store, llops, new Steps(store, checker)).strengthen(
-      tree,
-      "g1",
-      { param_attrs: { 0: RANGE } },
-    );
+    const result = await new Strengthen(
+      store,
+      llops,
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+    ).strengthen(tree, "g1", { param_attrs: { 0: RANGE } });
     if (result.kind !== "strengthened") throw new Error(result.reason);
 
     const last = result.effects[3];
@@ -164,11 +178,11 @@ describe.skipIf(!built)("strengthening", () => {
     // state between the outer's two sides being attributed.
     const checker = new FakeChecker(["correct", "correct", "correct", "correct", "correct"]);
     const tree = await cut();
-    const result = await new Strengthen(store, llops, new Steps(store, checker)).strengthen(
-      tree,
-      "g1",
-      { param_attrs: { 0: RANGE } },
-    );
+    const result = await new Strengthen(
+      store,
+      llops,
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+    ).strengthen(tree, "g1", { param_attrs: { 0: RANGE } });
     if (result.kind !== "strengthened") throw new Error(result.reason);
 
     expect(checker.calls).toHaveLength(5);
@@ -186,11 +200,11 @@ describe.skipIf(!built)("strengthening", () => {
     // attributes land together: three steps and two cross-checks, as for one.
     const checker = new FakeChecker(["correct", "correct", "correct", "unknown", "unknown"]);
     const tree = await cutTwice();
-    const result = await new Strengthen(store, llops, new Steps(store, checker)).strengthen(
-      tree,
-      "g1",
-      { param_attrs: { 0: RANGE, 1: { noundef: true } } },
-    );
+    const result = await new Strengthen(
+      store,
+      llops,
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+    ).strengthen(tree, "g1", { param_attrs: { 0: RANGE, 1: { noundef: true } } });
     if (result.kind !== "strengthened") throw new Error(result.reason);
 
     expect(checker.calls).toHaveLength(5);
@@ -217,7 +231,11 @@ describe.skipIf(!built)("strengthening", () => {
       "correct",
       "correct",
     ]);
-    const strengthen = new Strengthen(store, llops, new Steps(store, checker));
+    const strengthen = new Strengthen(
+      store,
+      llops,
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+    );
     const tree = await cut();
 
     const first = await strengthen.strengthen(tree, "g1", { param_attrs: { 0: RANGE } });
@@ -241,7 +259,7 @@ describe.skipIf(!built)("strengthening", () => {
     const result = await new Strengthen(
       store,
       llops,
-      new Steps(store, new FakeChecker([])),
+      new Steps(store, new FakeChecker([]), DEFAULT_TIMEOUTS, llops, unrewriting),
     ).strengthen(tree, "g1", { param_attrs: { 0: RANGE } });
     expect(result).toMatchObject({ kind: "refused" });
     if (result.kind !== "refused") throw new Error("unreachable");
@@ -252,7 +270,11 @@ describe.skipIf(!built)("strengthening", () => {
     const checker = new FakeChecker(["correct", "correct", "correct", "unknown", "unknown"]);
     const tree = await cut();
     const before = store.get(head(goal(tree, "g2"), "src"));
-    await new Strengthen(store, llops, new Steps(store, checker)).strengthen(tree, "g1", {
+    await new Strengthen(
+      store,
+      llops,
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+    ).strengthen(tree, "g1", {
       param_attrs: { 0: RANGE },
     });
 
@@ -265,11 +287,11 @@ describe.skipIf(!built)("strengthening", () => {
     const checker = new FakeChecker(["incorrect"]);
     const tree = await cut();
     const before = head(goal(tree, "g2"), "src");
-    const result = await new Strengthen(store, llops, new Steps(store, checker)).strengthen(
-      tree,
-      "g1",
-      { param_attrs: { 0: RANGE } },
-    );
+    const result = await new Strengthen(
+      store,
+      llops,
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+    ).strengthen(tree, "g1", { param_attrs: { 0: RANGE } });
 
     expect(result).toMatchObject({ kind: "refused", phase: "assume" });
     if (result.kind !== "refused") throw new Error("unreachable");
@@ -283,11 +305,11 @@ describe.skipIf(!built)("strengthening", () => {
     // The assume is certified; the attribute on the outer tgt is not.
     const checker = new FakeChecker(["correct", "correct", "incorrect"]);
     const tree = await cut();
-    const result = await new Strengthen(store, llops, new Steps(store, checker)).strengthen(
-      tree,
-      "g1",
-      { param_attrs: { 0: RANGE } },
-    );
+    const result = await new Strengthen(
+      store,
+      llops,
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+    ).strengthen(tree, "g1", { param_attrs: { 0: RANGE } });
 
     expect(result).toMatchObject({ kind: "refused", phase: "attribute" });
     if (result.kind !== "refused") throw new Error("unreachable");
@@ -303,7 +325,7 @@ describe.skipIf(!built)("strengthening", () => {
     const result = await new Strengthen(
       store,
       llops,
-      new Steps(store, new FakeChecker([])),
+      new Steps(store, new FakeChecker([]), DEFAULT_TIMEOUTS, llops, unrewriting),
     ).strengthen(tree, "g1", { param_attrs: { 0: { noalias: true } } });
     expect(result).toMatchObject({ kind: "refused", phase: "assume" });
     if (result.kind !== "refused") throw new Error("unreachable");
@@ -314,7 +336,11 @@ describe.skipIf(!built)("strengthening", () => {
     const src = await store.put(SRC);
     const tgt = await store.put(TGT);
     events.push({ kind: "run_start", src, tgt, config: {}, versions: {} });
-    const strengthen = new Strengthen(store, llops, new Steps(store, new FakeChecker([])));
+    const strengthen = new Strengthen(
+      store,
+      llops,
+      new Steps(store, new FakeChecker([]), DEFAULT_TIMEOUTS, llops, unrewriting),
+    );
     await expect(
       strengthen.strengthen(replay(), "g1", { param_attrs: { 0: RANGE } }),
     ).rejects.toThrow(/g1 is open, not split/);
@@ -322,7 +348,11 @@ describe.skipIf(!built)("strengthening", () => {
 
   test("facts are keyed by parameter position", async () => {
     const tree = await cut();
-    const strengthen = new Strengthen(store, llops, new Steps(store, new FakeChecker([])));
+    const strengthen = new Strengthen(
+      store,
+      llops,
+      new Steps(store, new FakeChecker([]), DEFAULT_TIMEOUTS, llops, unrewriting),
+    );
     for (const bad of ["%0", "-1", "1.5", "0x1"]) {
       await expect(
         strengthen.strengthen(tree, "g1", {
@@ -498,7 +528,11 @@ Target:
       "unknown",
     ]);
     const tree = await cut();
-    const strengthen = new Strengthen(store, llops, new Steps(store, checker));
+    const strengthen = new Strengthen(
+      store,
+      llops,
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+    );
     const result = await strengthen.strengthen(tree, "g1", {
       fn_attrs: { memory: "none", nounwind: true },
     });
@@ -518,7 +552,11 @@ Target:
     // 1 caller assume step, 2 cross checks
     const checker = new FakeChecker(["correct", "unknown", "unknown"]);
     const tree = await cutTwice();
-    const strengthen = new Strengthen(store, llops, new Steps(store, checker));
+    const strengthen = new Strengthen(
+      store,
+      llops,
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+    );
     const result = await strengthen.strengthen(tree, "g1", {
       predicates: [{ op: "slt", lhs: { arg: 0 }, rhs: { arg: 1 } }],
     });
@@ -545,7 +583,11 @@ Target:
       "unknown",
     ]);
     const tree = await cutTwice();
-    const strengthen = new Strengthen(store, llops, new Steps(store, checker));
+    const strengthen = new Strengthen(
+      store,
+      llops,
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+    );
     const result = await strengthen.strengthen(tree, "g1", {
       param_attrs: { 0: { noundef: true } },
       fn_attrs: { nounwind: true },
@@ -567,7 +609,11 @@ Target:
   test("refuses when callee function attribute check fails", async () => {
     const checker = new FakeChecker(["incorrect"]);
     const tree = await cut();
-    const strengthen = new Strengthen(store, llops, new Steps(store, checker));
+    const strengthen = new Strengthen(
+      store,
+      llops,
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+    );
     const result = await strengthen.strengthen(tree, "g1", {
       fn_attrs: { memory: "none" },
     });

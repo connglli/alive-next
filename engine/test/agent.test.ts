@@ -16,6 +16,7 @@ import { createProofAssistant, createServices } from "../agent/agent.ts";
 import { Budget } from "../agent/budget.ts";
 import type { CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
+import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import type { Checker } from "../core/state/steps.ts";
@@ -47,6 +48,15 @@ const noRun: Interpreter = {
     throw new Error("this session has no interpreter");
   },
 };
+
+/** A stand-in for llrwt that refuses any use, for tests that never rewrite. */
+const unrewriting = {
+  apply: async () => ({
+    ok: false as const,
+    code: "unavailable",
+    message: "unused in this test",
+  }),
+} as unknown as Llrwt;
 
 /** One assistant turn: some text, and the tool calls it asked for. */
 function turn(text: string, calls: { name: string; arguments: Record<string, unknown> }[] = []) {
@@ -153,6 +163,7 @@ async function agent(turns: AssistantMessage[], maxSteps = 8) {
     llops,
     checker: new YesMan(),
     interp: noRun,
+    rewriter: unrewriting,
   });
   const { models, model } = await stubRuntime(join(dir, "pi"));
   const built = await createProofAssistant({

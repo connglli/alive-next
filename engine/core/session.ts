@@ -137,7 +137,7 @@ export interface SessionOptions {
   /** llubi, which is what certifies a counterexample. */
   interp: Interpreter;
   /** llrwt, which is what certifies a rewrite without a solver run. */
-  rewriter?: Llrwt;
+  rewriter: Llrwt;
   timeouts?: Timeouts;
 }
 

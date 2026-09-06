@@ -169,11 +169,14 @@ function fake(answer: string | { code: string; message: string }): Llrwt {
   return new FakeRewriter(answer) as unknown as Llrwt;
 }
 
+/** A stand-in for llrwt that refuses any use, for tests that never rewrite. */
+const unrewriting = fake({ code: "unavailable", message: "unused in this test" });
+
 function rewriting(
   answer: string | { code: string; message: string },
   checker = new FakeChecker([]),
 ) {
-  const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, undefined, fake(answer));
+  const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, fake(answer));
   return { steps, checker };
 }
 
@@ -218,14 +221,9 @@ describe("rewriting", () => {
     expect(checker.calls).toHaveLength(0);
   });
 
-  test("no rules and no rewriter are refusals, not crashes", async () => {
+  test("no rules is a refusal, not a crash", async () => {
     const { steps } = rewriting(NEW);
     expect((await steps.rewrite(await tree(), "g1", "src", [])).kind).toBe("refused");
-
-    const bare = new Steps(store, new FakeChecker([]));
-    const refused = await bare.rewrite(await tree(), "g1", "src", ["addi-zero-to-x"]);
-    if (refused.kind !== "refused") throw new Error("expected a refusal");
-    expect(refused.code).toBe("unavailable");
   });
 
   test("refuses a rewrite on the tgt side", async () => {
@@ -238,7 +236,7 @@ describe("rewriting", () => {
 describe("stepping", () => {
   test("sends the pair in the src direction and advances the head", async () => {
     const checker = new FakeChecker(["correct", "unknown"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await tree(), "g1", "src", NEW);
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
@@ -254,7 +252,7 @@ describe("stepping", () => {
 
   test("sends the pair the other way round for a tgt step", async () => {
     const checker = new FakeChecker(["correct", "unknown"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await tree(), "g1", "tgt", NEW);
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
@@ -263,7 +261,7 @@ describe("stepping", () => {
 
   test("refuses a step alive2 will not certify, leaving the head alone", async () => {
     const checker = new FakeChecker(["incorrect"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await tree(), "g1", "src", NEW);
 
     expect(result.kind).toBe("refused");
@@ -275,7 +273,7 @@ describe("stepping", () => {
 
   test("checks the new pair after a step, and says when it discharges", async () => {
     const checker = new FakeChecker(["correct", "correct"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await tree(), "g1", "src", NEW);
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
@@ -287,7 +285,7 @@ describe("stepping", () => {
 
   test("leaves the goal open when the cross-check settles nothing", async () => {
     const checker = new FakeChecker(["correct", "unknown"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await tree(), "g1", "src", NEW);
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
@@ -297,7 +295,7 @@ describe("stepping", () => {
 
   test("asks about the window first, and records what it asked", async () => {
     const checker = new FakeChecker(["correct", "unknown"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await tree(), "g1", "src", NEW, { narrowed: WINDOW });
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
@@ -319,7 +317,7 @@ describe("stepping", () => {
 
   test("falls back to the whole function when the window settles nothing", async () => {
     const checker = new FakeChecker(["unknown", "correct", "unknown"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await tree(), "g1", "src", NEW, { narrowed: WINDOW });
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
@@ -338,7 +336,7 @@ describe("stepping", () => {
     // The window is asked about inputs the body around it may never produce,
     // so a counterexample there can be about the window rather than the step.
     const checker = new FakeChecker(["incorrect", "correct", "unknown"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await tree(), "g1", "src", NEW, { narrowed: WINDOW });
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
@@ -347,7 +345,7 @@ describe("stepping", () => {
 
   test("a refusal says whether the window was any easier", async () => {
     const checker = new FakeChecker(["unknown", "incorrect"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await tree(), "g1", "src", NEW, { narrowed: WINDOW });
 
     if (result.kind !== "refused") throw new Error("expected the step to be refused");
@@ -357,7 +355,7 @@ describe("stepping", () => {
 
   test("records preconditions when conditioned window succeeds", async () => {
     const checker = new FakeChecker(["correct", "correct", "unknown"]);
-    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
       narrowed: await preconditionedNarrow(),
       preconditions: { "%v1": { noundef: true } },
@@ -372,7 +370,7 @@ describe("stepping", () => {
 
   test("an incorrect conditioned window skips the plain retry", async () => {
     const checker = new FakeChecker(["correct", "incorrect", "correct"]);
-    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
       narrowed: await preconditionedNarrow(),
       preconditions: { "%v1": { noundef: true } },
@@ -398,7 +396,7 @@ describe("stepping", () => {
     // the fallback's check has to be the conditioned one that the reported
     // preconditions ran under.
     const checker = new FakeChecker(["correct", "unknown", "incorrect", "incorrect"]);
-    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
       narrowed: await preconditionedNarrow(),
       preconditions: { "%v1": { noundef: true } },
@@ -412,7 +410,7 @@ describe("stepping", () => {
 
   test("an errored conditioned window still tries the plain window", async () => {
     const checker = new FakeChecker(["correct", "error", "incorrect", "incorrect"]);
-    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const narrowed = await preconditionedNarrow();
     const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
       narrowed,
@@ -435,7 +433,7 @@ describe("stepping", () => {
     // function are asked; the fallback must not attach preconditions to a
     // check that never ran under them.
     const checker = new FakeChecker(["incorrect", "unknown", "incorrect"]);
-    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
       narrowed: await preconditionedNarrow(),
       preconditions: { "%v1": { noundef: true } },
@@ -452,7 +450,7 @@ describe("stepping", () => {
     // attempt is refused before any check; the plain window then certifies,
     // and the step must say it holds without the facts it was asked for.
     const checker = new FakeChecker(["correct"]);
-    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
       narrowed: await preconditionedNarrow(),
       preconditions: { "%nope": { noundef: true } },
@@ -479,6 +477,7 @@ describe("stepping", () => {
       checker,
       DEFAULT_TIMEOUTS,
       new InlineRefusing(toolchain.path("llops")),
+      unrewriting,
     );
     const result = await steps.step(await preconditionedTree(), "g1", "src", AFTER, {
       narrowed: await preconditionedNarrow(),
@@ -492,7 +491,7 @@ describe("stepping", () => {
 
   test("refuses a step to the program that is already there", async () => {
     const checker = new FakeChecker([]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.step(await tree(), "g1", "src", SRC);
 
     expect(result.kind).toBe("refused");
@@ -501,21 +500,39 @@ describe("stepping", () => {
   });
 
   test("refuses to touch a goal that is not open", async () => {
-    const steps = new Steps(store, new FakeChecker(["correct"]));
+    const steps = new Steps(
+      store,
+      new FakeChecker(["correct"]),
+      DEFAULT_TIMEOUTS,
+      llops,
+      unrewriting,
+    );
     await expect(steps.step(await tree(), "g9", "src", NEW)).rejects.toThrow(/no goal g9/);
   });
 });
 
 describe("checking a goal", () => {
   test("proves it when alive2 agrees", async () => {
-    const steps = new Steps(store, new FakeChecker(["correct"]));
+    const steps = new Steps(
+      store,
+      new FakeChecker(["correct"]),
+      DEFAULT_TIMEOUTS,
+      llops,
+      unrewriting,
+    );
     const result = await steps.checkGoal(await tree(), "g1");
     expect(result.outcome).toBe("proved");
     expect(result.effects).toEqual([{ effect: "proved", gid: "g1" }]);
   });
 
   test("calls a refutation a hint, not a verdict", async () => {
-    const steps = new Steps(store, new FakeChecker(["incorrect"]));
+    const steps = new Steps(
+      store,
+      new FakeChecker(["incorrect"]),
+      DEFAULT_TIMEOUTS,
+      llops,
+      unrewriting,
+    );
     const result = await steps.checkGoal(await tree(), "g1");
     expect(result.outcome).toBe("refuted");
     // Only execution certifies a counterexample, so the tree is left alone.
@@ -523,7 +540,13 @@ describe("checking a goal", () => {
   });
 
   test("leaves the goal open on a timeout", async () => {
-    const steps = new Steps(store, new FakeChecker(["unknown"]));
+    const steps = new Steps(
+      store,
+      new FakeChecker(["unknown"]),
+      DEFAULT_TIMEOUTS,
+      llops,
+      unrewriting,
+    );
     const result = await steps.checkGoal(await tree(), "g1");
     expect(result.outcome).toBe("unknown");
     expect(result.effects).toEqual([]);
@@ -531,13 +554,16 @@ describe("checking a goal", () => {
 
   test("asks the goal's own question, src against tgt", async () => {
     const checker = new FakeChecker(["correct"]);
-    await new Steps(store, checker).checkGoal(await tree(), "g1");
+    await new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting).checkGoal(
+      await tree(),
+      "g1",
+    );
     expect(checker.calls[0]).toMatchObject({ src: SRC, tgt: TGT });
   });
 
   test("honours the agent's timeout, up to the cap", async () => {
     const checker = new FakeChecker(["unknown", "unknown"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const whole = await steps.checkGoal(await tree(), "g1", 1000);
     expect(checker.calls[0]?.timeoutMs).toBe(1000);
     // Nothing was cut down, so there is no second number to report.
@@ -552,7 +578,7 @@ describe("checking a goal", () => {
 
   test("always passes --disable-undef-input to goal checks", async () => {
     const checker = new FakeChecker(["unknown", "unknown", "unknown"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const src = await store.put(SRC);
 
     await steps.checkGoal(await tree(), "g1");
@@ -565,14 +591,20 @@ describe("checking a goal", () => {
   });
 
   test("reports the budgets it resolved to", () => {
-    const steps = new Steps(store, new FakeChecker([]), timeoutsFrom({ eagerCheckMs: 100 }));
+    const steps = new Steps(
+      store,
+      new FakeChecker([]),
+      timeoutsFrom({ eagerCheckMs: 100 }),
+      llops,
+      unrewriting,
+    );
     expect(steps.budgets.eagerCheckMs).toBe(100);
     expect(steps.budgets.alive2Ms).toBe(DEFAULT_TIMEOUTS.alive2Ms);
   });
 
   test("repeated checks on the same pair receive earlier check history", async () => {
     const checker = new FakeChecker(["unknown", "correct"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const t = await tree();
 
     const first = await steps.checkGoal(t, "g1", 1000);
@@ -590,7 +622,7 @@ describe("checking a goal", () => {
 
   test("check history is invalidated when either program hash changes", async () => {
     const checker = new FakeChecker(["unknown", "correct", "unknown"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const t = await tree();
 
     await steps.checkGoal(t, "g1", 1000);
@@ -626,7 +658,7 @@ describe("checking a goal", () => {
 
   test("an eager check records into history for subsequent direct checks", async () => {
     const checker = new FakeChecker(["correct", "unknown", "correct"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const t = await tree();
 
     // Step g1 src to NEW. The eager check runs on (NEW, TGT) with outcome "unknown"
@@ -667,7 +699,7 @@ describe("checking a goal", () => {
 describe("refinementCheck", () => {
   test("asks whether tgt refines src directly", async () => {
     const checker = new FakeChecker(["correct"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.refinementCheck(SRC, TGT);
 
     expect(result.outcome).toBe("correct");
@@ -681,7 +713,7 @@ describe("refinementCheck", () => {
 
   test("honours requested timeout up to the cap", async () => {
     const checker = new FakeChecker(["unknown", "unknown"]);
-    const steps = new Steps(store, checker);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
 
     await steps.refinementCheck(SRC, TGT, 5000);
     expect(checker.calls[0]?.timeoutMs).toBe(5000);

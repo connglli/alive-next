@@ -212,8 +212,8 @@ export class Steps {
     private readonly store: Store,
     private readonly checker: Checker,
     private readonly timeouts: Timeouts = DEFAULT_TIMEOUTS,
-    private readonly llops?: Llops,
-    private readonly rewriter?: Llrwt,
+    private readonly llops: Llops,
+    private readonly rewriter: Llrwt,
   ) {}
 
   /**
@@ -389,12 +389,9 @@ export class Steps {
   }
 
   /**
-   * The rewriter's rule table, which is what a rewrite offers. Reads nothing
-   * but the binary, so like any other read it throws when there is nothing
-   * to read it from rather than refusing a move.
+   * The rewriter's rule table, which is what a rewrite offers.
    */
   async listRules(): Promise<RuleInfo[]> {
-    if (!this.rewriter) throw new Error("this run has no verified rewriter");
     return this.rewriter.listRules();
   }
 
@@ -419,9 +416,6 @@ export class Steps {
         code: "side_unsupported",
         message: "rewriting is supported on src only; peephole rules optimize forward",
       };
-    }
-    if (!this.rewriter) {
-      return { kind: "refused", code: "unavailable", message: "this run has no verified rewriter" };
     }
     if (rules.length === 0) {
       return { kind: "refused", code: "no_rules", message: "no rules were named" };
@@ -492,8 +486,6 @@ export class Steps {
     preconditions: Record<string, Record<string, unknown>>,
     side: Side,
   ): Promise<Conditioned | undefined> {
-    if (!this.llops) return undefined;
-
     const mappedFacts: Record<string, Record<string, unknown>> = {};
     const rawLines = moduleLines(before);
     // A precondition names a value as the step opens on it, and the window's

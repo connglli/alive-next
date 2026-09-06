@@ -102,6 +102,15 @@ entry:
 /** Counts the runs the stand-in interpreter was asked for, src then tgt. */
 let diverging = 0;
 
+/** A stand-in for llrwt that refuses any use, for tests that never rewrite. */
+const unrewriting = {
+  apply: async () => ({
+    ok: false as const,
+    code: "unavailable",
+    message: "unused in this test",
+  }),
+} as unknown as Llrwt;
+
 let dir: string;
 
 beforeEach(() => {
@@ -122,6 +131,7 @@ async function prove(scenario: Scenario): Promise<string> {
     llops,
     checker: new YesMan(),
     interp: noRun,
+    rewriter: unrewriting,
     config: loadConfig(),
   });
   await scenario.prove(session);
@@ -188,6 +198,7 @@ describe.skipIf(!built)("the manifest", () => {
       llops,
       checker: new YesMan(),
       interp: noRun,
+      rewriter: unrewriting,
     });
     await session.begin("g1", "src");
     // The same value in and the same value out, so the window is one line.
@@ -266,6 +277,7 @@ describe.skipIf(!built)("the manifest", () => {
           };
         },
       },
+      rewriter: unrewriting,
     });
     const input = [{ kind: "int", value: "-3" } as const];
     const reported = await session.reportCex(input);
@@ -299,6 +311,7 @@ describe.skipIf(!built)("the manifest", () => {
       llops,
       checker: new YesMan(),
       interp: noRun,
+      rewriter: unrewriting,
     });
     session.finish();
     const entries = parse(readFileSync(join(session.dir, "trajectory.jsonl"), "utf8"));

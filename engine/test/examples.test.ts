@@ -8,6 +8,7 @@
 // since a checker that proves everything cannot reach one.
 //
 // The second pass is the real one, and needs alive-tv and llubi installed.
+// Only the rule scenario needs llrwt on top of those.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -46,6 +47,15 @@ const rewriterBuilt = await rewriter
   .version()
   .then((line) => line.length > 0)
   .catch(() => false);
+
+/** A stand-in for llrwt that refuses any use, for scenarios that never rewrite. */
+const noRewriter = {
+  apply: async () => ({
+    ok: false as const,
+    code: "unavailable",
+    message: "unused in this scenario",
+  }),
+} as unknown as Llrwt;
 
 /** The interpreter of a session that will not report a counterexample. */
 class NoRun implements Interpreter {
@@ -96,7 +106,7 @@ describe.skipIf(!built)("scenarios, with a stand-in checker", () => {
         llops,
         checker,
         interp: new NoRun(),
-        ...(rewriterBuilt ? { rewriter } : {}),
+        rewriter: rewriterBuilt ? rewriter : noRewriter,
         timeouts,
       });
       await one.prove(session);
@@ -110,7 +120,7 @@ describe.skipIf(!built)("scenarios, with a stand-in checker", () => {
         llops,
         checker,
         interp: new NoRun(),
-        ...(rewriterBuilt ? { rewriter } : {}),
+        rewriter: rewriterBuilt ? rewriter : noRewriter,
         timeouts,
       });
       expect(shape(again)).toEqual(shape(session));
@@ -118,31 +128,30 @@ describe.skipIf(!built)("scenarios, with a stand-in checker", () => {
   }
 });
 
-describe.skipIf(!built || !installed || !rewriterBuilt)(
-  "scenarios, checked by the toolchain",
-  () => {
-    for (const one of scenarios) {
-      test(
-        `${one.name} reaches ${one.verdict ?? "verified"}`,
-        async () => {
-          const session = await Session.start({
-            dir,
-            src: one.src,
-            tgt: one.tgt,
-            llops,
-            checker: aliveTv,
-            interp: llubi,
-            rewriter,
-            timeouts,
-          });
-          await one.prove(session);
-          expect(session.finish()).toBe(one.verdict ?? "verified");
-        },
-        { timeout: timeouts.alive2Ms * 4 },
-      );
-    }
-  },
-);
+describe.skipIf(!built || !installed)("scenarios, checked by the toolchain", () => {
+  // The rule scenario needs the verified rewriter itself, so only it sits out
+  // where the toolchain has none built.
+  for (const one of scenarios.filter((one) => one.name !== "rule" || rewriterBuilt)) {
+    test(
+      `${one.name} reaches ${one.verdict ?? "verified"}`,
+      async () => {
+        const session = await Session.start({
+          dir,
+          src: one.src,
+          tgt: one.tgt,
+          llops,
+          checker: aliveTv,
+          interp: llubi,
+          rewriter: rewriterBuilt ? rewriter : noRewriter,
+          timeouts,
+        });
+        await one.prove(session);
+        expect(session.finish()).toBe(one.verdict ?? "verified");
+      },
+      { timeout: timeouts.alive2Ms * 4 },
+    );
+  }
+});
 
 /** A session's tree as something two of them can be compared by. */
 function shape(session: Session): unknown {

@@ -67,6 +67,15 @@ const noRun: Interpreter = {
   },
 };
 
+/** A stand-in for llrwt that refuses any use, for tests that never rewrite. */
+const unrewriting = {
+  apply: async () => ({
+    ok: false as const,
+    code: "unavailable",
+    message: "unused in this test",
+  }),
+} as unknown as Llrwt;
+
 let dir: string;
 let session: Session;
 let surface: ToolDefinition[];
@@ -80,6 +89,7 @@ beforeEach(async () => {
     llops,
     checker: new YesMan(),
     interp: noRun,
+    rewriter: unrewriting,
   });
   surface = createProofAssistantTools(session);
 });
@@ -218,6 +228,7 @@ describe.skipIf(!built)("the tool layer", () => {
       llops,
       checker: new NoMan(),
       interp: noRun,
+      rewriter: unrewriting,
     });
     const refusingTools = createProofAssistantTools(refusing);
 
@@ -374,6 +385,7 @@ describe.skipIf(!built)("the tool layer", () => {
       llops,
       checker: new SequenceChecker(["unknown", "correct"]),
       interp: noRun,
+      rewriter: unrewriting,
     });
     const seqTools = createProofAssistantTools(seqSession);
 
@@ -406,6 +418,7 @@ describe.skipIf(!built)("the tool layer", () => {
       llops,
       checker: new EagerSeqChecker(["correct", "unknown"]),
       interp: noRun,
+      rewriter: unrewriting,
     });
     const eagerTools = createProofAssistantTools(eagerSession);
 
@@ -440,6 +453,7 @@ describe.skipIf(!built)("the tool layer", () => {
       llops,
       checker: new EagerCexChecker(["correct", "incorrect"]),
       interp: noRun,
+      rewriter: unrewriting,
     });
     const eagerTools = createProofAssistantTools(eagerSession);
 
@@ -475,6 +489,7 @@ describe.skipIf(!built)("the tool layer", () => {
       llops,
       checker: new FallbackChecker(["unknown", "correct", "unknown"]),
       interp: noRun,
+      rewriter: unrewriting,
     });
     const fbTools = createProofAssistantTools(fbSession);
 
@@ -507,6 +522,7 @@ describe.skipIf(!built)("the tool layer", () => {
       llops,
       checker: new RefusedFallbackChecker(["unknown", "unknown"]),
       interp: noRun,
+      rewriter: unrewriting,
     });
     const rfbTools = createProofAssistantTools(rfbSession);
 
@@ -537,6 +553,7 @@ describe.skipIf(!built)("the tool layer", () => {
       llops,
       checker: new DroppedChecker(),
       interp: noRun,
+      rewriter: unrewriting,
     });
     const dropTools = createProofAssistantTools(dropSession);
 
@@ -573,6 +590,7 @@ describe.skipIf(!built)("the tool layer", () => {
       llops,
       checker: new NamedWindowChecker(),
       interp: noRun,
+      rewriter: unrewriting,
     });
     const namedTools = createProofAssistantTools(namedSession);
 
@@ -663,8 +681,23 @@ entry:
     await callFrom(rewritingTools, "tx_abort", {});
   });
 
-  test("run_list_rules refuses a run with no rewriter", async () => {
-    expect(await call("run_list_rules", {})).toContain("FAILURE");
+  test("run_list_rules reports a broken rewriter instead of crashing", async () => {
+    const broken = await Session.start({
+      dir: join(dir, "broken-session"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: {
+        listRules: async () => {
+          throw new Error("llrwt fell over");
+        },
+      } as unknown as Llrwt,
+    });
+    const res = await callFrom(createProofAssistantTools(broken), "run_list_rules", {});
+    expect(res).toContain("FAILURE");
+    expect(res).toContain("llrwt fell over");
   });
 
   test("tree_split_preview discovers live-ins and validates candidate cuts without mutating tree", async () => {
@@ -683,6 +716,7 @@ entry:
         }),
       },
       interp: noRun,
+      rewriter: unrewriting,
     });
     const previewTools = createProofAssistantTools(previewSession);
 
