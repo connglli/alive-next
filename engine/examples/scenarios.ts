@@ -6,6 +6,7 @@ import { cut } from "./cut.ts";
 import { freeze } from "./freeze.ts";
 import { miscompile } from "./miscompile.ts";
 import { nuw } from "./nuw.ts";
+import { pipeline } from "./pipeline.ts";
 import { poison } from "./poison.ts";
 import { predicate } from "./predicate.ts";
 import { reassociate } from "./reassociate.ts";
@@ -22,6 +23,7 @@ export const scenarios: Scenario[] = [
   rule,
   cut,
   strengthen,
+  pipeline,
   predicate,
   freeze,
   nuw,
