@@ -162,7 +162,7 @@ export class Strengthen {
         };
       }
       const assumed = one.module;
-      const proof = await this.steps.step(tree, outer.id, "src", assumed, { eager: false });
+      const proof = await this.steps.checkStep(tree, outer.id, "src", assumed, { eager: false });
       if (proof.kind !== "certified") {
         const explanation = explainAssumeRefusal(params, rawParamAttrs, proof.check, outer.id);
         return {
@@ -228,7 +228,7 @@ export class Strengthen {
           fnAttrs,
         );
         if (typeof attributed !== "string") return { ...attributed, effects: landed };
-        const step = await this.steps.step(tree, outer.id, side, attributed, { eager: false });
+        const step = await this.steps.checkStep(tree, outer.id, side, attributed, { eager: false });
         if (step.kind !== "certified") {
           return {
             kind: "refused",

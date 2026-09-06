@@ -45,9 +45,9 @@ import { type SplitPreviewResult, type SplitResult, Splits } from "./state/split
 import {
   type Checker,
   type CheckGoalResult,
+  type CheckStepResult,
   DEFAULT_TIMEOUTS,
-  type RuleResult,
-  type StepResult,
+  type RewriteStepResult,
   Steps,
   type Timeouts,
 } from "./state/steps.ts";
@@ -349,7 +349,12 @@ export class Session {
    * step itself. A refusal names the rewriter's reason, which usually means
    * the input is outside the integer peepholes it supports.
    */
-  rewrite(gid: string, side: Side, rules: string[], timeoutMs?: number): Promise<RuleResult> {
+  rewrite(
+    gid: string,
+    side: Side,
+    rules: string[],
+    timeoutMs?: number,
+  ): Promise<RewriteStepResult> {
     return this.act("rewrite", { gid, side, rules, timeout_ms: timeoutMs }, async (tree) => {
       // TODO: Support tgt->src rewrites (some kind of anti-optimizations).
       if (side !== "src") {
@@ -401,7 +406,7 @@ export class Session {
       preconditions?: Record<string, Record<string, unknown>>;
     },
     imm_abort: boolean = true,
-  ): Promise<StepResult> {
+  ): Promise<CheckStepResult> {
     return this.act("commit", { ...options, imm_abort }, (tree) =>
       this.editing.commit(tree, this.steps, options, imm_abort),
     );

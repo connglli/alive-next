@@ -71,10 +71,8 @@ export function orient(side: Side, before: string, after: string): { src: string
   return side === "src" ? { src: before, tgt: after } : { src: after, tgt: before };
 }
 
-/** How a step is made, and whether it should look at where it lands. */
-export interface StepOptions {
-  /** A rule application needs no alive2 run of its own to certify it. */
-  how?: "rule" | "checked";
+/** How a checked step is made, and whether it should look at where it lands. */
+export interface CheckStepOptions {
   /**
    * The window the edit touched, when the caller found one. A step asks about
    * it first, on the budget a cheap question gets, and falls back to the whole
@@ -135,8 +133,8 @@ type Conditioned =
     }
   | { kind: "refused"; reason: string };
 
-/** A step that landed, or the reason it did not. */
-export type StepResult =
+/** A checked step that landed, or the reason it did not. */
+export type CheckStepResult =
   | {
       kind: "certified";
       hash: Hash;
@@ -163,8 +161,21 @@ export type StepResult =
       fallback?: Fallback;
     };
 
+/** How a rewrite runs, and whether it should look at where it lands. */
+export interface RewriteStepOptions {
+  /** Wall clock for the rewriter run; defaults to the run's llrwt budget. */
+  timeoutMs?: number;
+  /**
+   * Whether to check the goal's new pair afterwards. On by default, because
+   * catching a discharge early is the point of it, and off for the rewrites
+   * inside a larger operation, whose intermediate states are not states the
+   * agent is in.
+   */
+  eager?: boolean;
+}
+
 /** A rewrite that landed, or the reason it did not. */
-export type RuleResult =
+export type RewriteStepResult =
   | {
       kind: "certified";
       hash: Hash;
@@ -254,14 +265,13 @@ export class Steps {
    * goal's claim survives. On refusal the head does not move and the reason
    * comes back for the agent to work with.
    */
-  async step(
+  async checkStep(
     tree: Tree,
     gid: string,
     side: Side,
     text: string,
-    options: StepOptions = {},
-  ): Promise<StepResult> {
-    const how = options.how ?? "checked";
+    options: CheckStepOptions = {},
+  ): Promise<CheckStepResult> {
     const goal = workable(tree, gid);
     const beforeText = this.store.get(head(goal, side));
     const after = await this.store.put(text);
@@ -345,7 +355,7 @@ export class Steps {
       fallback = { reason: "preconditions_refused", conditioning: conditioned.reason };
     }
 
-    const step: Effect = { effect: "step", gid, side, to: after, how };
+    const step: Effect = { effect: "step", gid, side, to: after, how: "checked" };
     if (by === "window" && narrowed) {
       const [outer, from, to] = await Promise.all([
         this.store.put(narrowed.outer),
@@ -407,8 +417,8 @@ export class Steps {
     gid: string,
     side: Side,
     rules: string[],
-    options: { timeoutMs?: number; eager?: boolean } = {},
-  ): Promise<RuleResult> {
+    options: RewriteStepOptions = {},
+  ): Promise<RewriteStepResult> {
     // TODO: Support tgt->src rewrites (some kind of anti-optimizations).
     if (side !== "src") {
       return {
@@ -584,7 +594,7 @@ export class Steps {
   /**
    * Check whether tgt refines src under the no-undef model.
    *
-   * Unlike step(), the direction is explicit (pair.src => pair.tgt) and the
+   * Unlike checkStep(), the direction is explicit (pair.src => pair.tgt) and the
    * query is side-effect-free, leaving the goal tree and trajectory untouched.
    */
   async refinementCheck(

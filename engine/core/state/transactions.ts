@@ -15,7 +15,7 @@
 import type { EditOp, Llops, OptOp } from "../drivers/llops.ts";
 import { head, type Side, type Tree, workable } from "./goals.ts";
 import { narrow, narrowAt, type Window } from "./narrow.ts";
-import type { StepResult, Steps } from "./steps.ts";
+import type { CheckStepResult, Steps } from "./steps.ts";
 import type { Store } from "./store.ts";
 import type { Hash } from "./trajectory.ts";
 
@@ -152,7 +152,7 @@ export class Transactions {
       preconditions?: Record<string, Record<string, unknown>>;
     },
     imm_abort: boolean = true,
-  ): Promise<StepResult> {
+  ): Promise<CheckStepResult> {
     const transaction = this.require();
     if (imm_abort) this.current = undefined;
     // A commit is the step that is usually local, so it is the one that looks
@@ -180,10 +180,16 @@ export class Transactions {
         },
       };
     }
-    const result = await steps.step(tree, transaction.gid, transaction.side, transaction.text, {
-      narrowed,
-      preconditions: options?.preconditions,
-    });
+    const result = await steps.checkStep(
+      tree,
+      transaction.gid,
+      transaction.side,
+      transaction.text,
+      {
+        narrowed,
+        preconditions: options?.preconditions,
+      },
+    );
     if (!imm_abort && result.kind === "certified") this.current = undefined;
     return result;
   }
