@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckOutcome, CheckResult } from "../core/drivers/alive2.ts";
 import { Llops, type LlopsResult, type ModuleResult } from "../core/drivers/llops.ts";
+import type { Llrwt, LlrwtInvocation } from "../core/drivers/llrwt.ts";
 import { derive } from "../core/state/goals.ts";
 import { narrow } from "../core/state/narrow.ts";
 import { DEFAULT_TIMEOUTS, orient, Steps, timeoutsFrom } from "../core/state/steps.ts";
@@ -146,6 +147,85 @@ describe("orient", () => {
     // Deoptimising backward: the old target has to refine the new one, so the
     // new one is what alive2 is given as src.
     expect(orient("tgt", "old", "new")).toEqual({ src: "new", tgt: "old" });
+  });
+});
+
+/** A stand-in for llrwt that answers one rewritten module, or one refusal. */
+class FakeRewriter {
+  constructor(private readonly answer: string | { code: string; message: string }) {}
+
+  async apply(module: string, rules: string[], options: { timeoutMs?: number } = {}) {
+    if (typeof this.answer !== "string") return { ok: false as const, ...this.answer };
+    const invocation: LlrwtInvocation = {
+      binary: "fake-llrwt",
+      rules: [...rules],
+      timeoutMs: options.timeoutMs ?? 0,
+    };
+    return { ok: true as const, module: this.answer, changed: this.answer !== module, invocation };
+  }
+}
+
+function fake(answer: string | { code: string; message: string }): Llrwt {
+  return new FakeRewriter(answer) as unknown as Llrwt;
+}
+
+function rewriting(
+  answer: string | { code: string; message: string },
+  checker = new FakeChecker([]),
+) {
+  const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, undefined, fake(answer));
+  return { steps, checker };
+}
+
+describe("rewriting", () => {
+  test("a rewrite lands without asking alive2 about the step", async () => {
+    const { steps, checker } = rewriting(NEW, new FakeChecker(["correct"]));
+    const result = await steps.rewrite(await tree(), "g1", "src", ["muli-pow2-to-shl"]);
+
+    if (result.kind !== "certified") throw new Error("expected the rewrite to land");
+    // The only solver run is the eager check of the new pair, not of the step.
+    expect(checker.calls).toHaveLength(1);
+    expect(checker.calls[0]).toMatchObject({ src: NEW, tgt: TGT });
+    expect(result.effects[0]).toMatchObject({
+      effect: "step",
+      gid: "g1",
+      side: "src",
+      to: result.hash,
+      how: "rule",
+      rules: ["muli-pow2-to-shl"],
+    });
+    expect(result.effects[1]).toEqual({ effect: "proved", gid: "g1" });
+  });
+
+  test("an unchanged answer moves nothing and asks nothing", async () => {
+    const { steps, checker } = rewriting(SRC);
+    const result = await steps.rewrite(await tree(), "g1", "src", ["addi-zero-to-x"]);
+
+    expect(result.kind).toBe("unchanged");
+    expect(checker.calls).toHaveLength(0);
+  });
+
+  test("a refusal carries the rewriter's code and leaves the head alone", async () => {
+    const { steps, checker } = rewriting({
+      code: "bridge_error",
+      message: "mlir-translate failed",
+    });
+    const before = await tree();
+    const result = await steps.rewrite(before, "g1", "src", ["addi-zero-to-x"]);
+
+    if (result.kind !== "refused") throw new Error("expected a refusal");
+    expect(result.code).toBe("bridge_error");
+    expect(checker.calls).toHaveLength(0);
+  });
+
+  test("no rules and no rewriter are refusals, not crashes", async () => {
+    const { steps } = rewriting(NEW);
+    expect((await steps.rewrite(await tree(), "g1", "src", [])).kind).toBe("refused");
+
+    const bare = new Steps(store, new FakeChecker([]));
+    const refused = await bare.rewrite(await tree(), "g1", "src", ["addi-zero-to-x"]);
+    if (refused.kind !== "refused") throw new Error("expected a refusal");
+    expect(refused.code).toBe("unavailable");
   });
 });
 

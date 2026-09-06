@@ -21,6 +21,8 @@
     // "eager_check_ms": 3000,
     // What a commit is validated with.
     // "alive2_ms": 30000,
+    // What one verified-rewriter run may take before it is killed.
+    // "llrwt_ms": 30000,
     // How long one llubi run may take before it is killed.
     // "llubi_ms": 60000
   },

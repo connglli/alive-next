@@ -26,6 +26,7 @@ import type {
   LlopsResult,
   OptOp,
 } from "./drivers/llops.ts";
+import type { Llrwt } from "./drivers/llrwt.ts";
 import type { Ref } from "./refs.ts";
 import { Counterexamples, type Interpreter, type ReportResult } from "./state/counterexamples.ts";
 import {
@@ -45,6 +46,7 @@ import {
   type Checker,
   type CheckGoalResult,
   DEFAULT_TIMEOUTS,
+  type RuleResult,
   type StepResult,
   Steps,
   type Timeouts,
@@ -134,6 +136,8 @@ export interface SessionOptions {
   checker: Checker;
   /** llubi, which is what certifies a counterexample. */
   interp: Interpreter;
+  /** llrwt, which is what certifies a rewrite without a solver run. */
+  rewriter?: Llrwt;
   timeouts?: Timeouts;
 }
 
@@ -175,6 +179,7 @@ export class Session {
       options.checker,
       options.timeouts ?? DEFAULT_TIMEOUTS,
       options.llops,
+      options.rewriter,
     );
     this.splits = new Splits(this.store, options.llops);
     this.strengthening = new Strengthen(this.store, options.llops, this.steps);
@@ -335,6 +340,18 @@ export class Session {
   check(gid: string, timeoutMs?: number): Promise<CheckGoalResult> {
     return this.act("check", { gid, timeout_ms: timeoutMs }, (tree) =>
       this.steps.checkGoal(tree, gid, timeoutMs),
+    );
+  }
+
+  /**
+   * Rewrite one side of a goal with the verified rewriter's named rules to
+   * fixpoint. The rules' proofs certify the move, so no solver runs for the
+   * step itself. A refusal names the rewriter's reason, which usually means
+   * the input is outside the integer peepholes it supports.
+   */
+  rewrite(gid: string, side: Side, rules: string[], timeoutMs?: number): Promise<RuleResult> {
+    return this.act("rewrite", { gid, side, rules, timeout_ms: timeoutMs }, (tree) =>
+      this.steps.rewrite(tree, gid, side, rules, { timeoutMs }),
     );
   }
 

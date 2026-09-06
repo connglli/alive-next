@@ -13,6 +13,7 @@ import { certify } from "../cert/main.ts";
 import { loadConfig, repoRoot } from "./config.ts";
 import { AliveTv } from "./drivers/alive2.ts";
 import { Llops } from "./drivers/llops.ts";
+import { Llrwt } from "./drivers/llrwt.ts";
 import { Llubi } from "./drivers/llubi.ts";
 import type { Scenario } from "./scenario.ts";
 import { Session } from "./session.ts";
@@ -34,6 +35,10 @@ export async function prove(one: Scenario, options: ProveOptions = {}): Promise<
   const llops = new Llops(toolchain.path("llops"));
   const checker = new AliveTv(toolchain.path("alive-tv"), timeouts.alive2Ms);
   const interp = new Llubi(toolchain.path("llubi"), config.timeouts.llubiMs);
+  const rewriter = new Llrwt(toolchain.path("llrwt"), timeouts.llrwtMs, {
+    mlirTranslate: toolchain.mlir("mlir-translate"),
+    mlirOpt: toolchain.mlir("mlir-opt"),
+  });
 
   const dir = options.dir ?? join(repoRoot(), "sessions", `${one.name}-${stamp()}`);
   console.log(`\n${one.name}: ${one.about}\n  ${dir}`);
@@ -44,6 +49,7 @@ export async function prove(one: Scenario, options: ProveOptions = {}): Promise<
     llops,
     checker,
     interp,
+    rewriter,
     timeouts,
     config,
     toolchain: built,

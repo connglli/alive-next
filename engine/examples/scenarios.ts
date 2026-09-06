@@ -10,6 +10,7 @@ import { poison } from "./poison.ts";
 import { predicate } from "./predicate.ts";
 import { reassociate } from "./reassociate.ts";
 import { rewrite } from "./rewrite.ts";
+import { rule } from "./rule.ts";
 import { strengthReduce } from "./strength-reduce.ts";
 import { strengthen } from "./strengthen.ts";
 import { vectorize } from "./vectorize.ts";
@@ -18,6 +19,7 @@ import { widen } from "./widen.ts";
 export const scenarios: Scenario[] = [
   strengthReduce,
   rewrite,
+  rule,
   cut,
   strengthen,
   predicate,

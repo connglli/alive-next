@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { loadConfig } from "../core/config.ts";
 import { AliveTv, type CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
+import { Llrwt } from "../core/drivers/llrwt.ts";
 import type { RunResult } from "../core/drivers/llubi.ts";
 import { Llubi } from "../core/drivers/llubi.ts";
 import { Session } from "../core/session.ts";
@@ -36,6 +37,14 @@ const aliveTv = new AliveTv(toolchain.path("alive-tv"), timeouts.alive2Ms);
 const llubi = new Llubi(toolchain.path("llubi"));
 const installed = await Promise.all([aliveTv.version(), llubi.version()])
   .then((lines) => lines.every((line) => line.length > 0))
+  .catch(() => false);
+const rewriter = new Llrwt(toolchain.path("llrwt"), timeouts.llrwtMs, {
+  mlirTranslate: toolchain.mlir("mlir-translate"),
+  mlirOpt: toolchain.mlir("mlir-opt"),
+});
+const rewriterBuilt = await rewriter
+  .version()
+  .then((line) => line.length > 0)
   .catch(() => false);
 
 /** The interpreter of a session that will not report a counterexample. */
@@ -72,8 +81,12 @@ afterEach(() => {
 
 // A yes-man proves everything, so it can only drive the scenarios that end
 // verified; the counterexample ones need a refutation and an interpreter.
+// The rule scenario needs the verified rewriter itself, so it sits out where
+// the toolchain has none built.
 describe.skipIf(!built)("scenarios, with a stand-in checker", () => {
-  for (const one of scenarios.filter((one) => (one.verdict ?? "verified") === "verified")) {
+  for (const one of scenarios.filter(
+    (one) => (one.verdict ?? "verified") === "verified" && (one.name !== "rule" || rewriterBuilt),
+  )) {
     test(`${one.name} makes every move`, async () => {
       const checker = new YesMan();
       const session = await Session.start({
@@ -83,6 +96,7 @@ describe.skipIf(!built)("scenarios, with a stand-in checker", () => {
         llops,
         checker,
         interp: new NoRun(),
+        ...(rewriterBuilt ? { rewriter } : {}),
         timeouts,
       });
       await one.prove(session);
@@ -91,33 +105,44 @@ describe.skipIf(!built)("scenarios, with a stand-in checker", () => {
 
       // The tree is derived state, so a session picked back up has to be the
       // session that was put down.
-      const again = Session.resume({ dir, llops, checker, interp: new NoRun(), timeouts });
+      const again = Session.resume({
+        dir,
+        llops,
+        checker,
+        interp: new NoRun(),
+        ...(rewriterBuilt ? { rewriter } : {}),
+        timeouts,
+      });
       expect(shape(again)).toEqual(shape(session));
     });
   }
 });
 
-describe.skipIf(!built || !installed)("scenarios, checked by the toolchain", () => {
-  for (const one of scenarios) {
-    test(
-      `${one.name} reaches ${one.verdict ?? "verified"}`,
-      async () => {
-        const session = await Session.start({
-          dir,
-          src: one.src,
-          tgt: one.tgt,
-          llops,
-          checker: aliveTv,
-          interp: llubi,
-          timeouts,
-        });
-        await one.prove(session);
-        expect(session.finish()).toBe(one.verdict ?? "verified");
-      },
-      { timeout: timeouts.alive2Ms * 4 },
-    );
-  }
-});
+describe.skipIf(!built || !installed || !rewriterBuilt)(
+  "scenarios, checked by the toolchain",
+  () => {
+    for (const one of scenarios) {
+      test(
+        `${one.name} reaches ${one.verdict ?? "verified"}`,
+        async () => {
+          const session = await Session.start({
+            dir,
+            src: one.src,
+            tgt: one.tgt,
+            llops,
+            checker: aliveTv,
+            interp: llubi,
+            rewriter,
+            timeouts,
+          });
+          await one.prove(session);
+          expect(session.finish()).toBe(one.verdict ?? "verified");
+        },
+        { timeout: timeouts.alive2Ms * 4 },
+      );
+    }
+  },
+);
 
 /** A session's tree as something two of them can be compared by. */
 function shape(session: Session): unknown {

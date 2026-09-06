@@ -15,6 +15,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Attrs, PredicateAssertion } from "../drivers/llops.ts";
+import type { LlrwtInvocation } from "../drivers/llrwt.ts";
 import { sha256 } from "./hash.ts";
 
 /** Programs are named by their store hash wherever an event mentions one. */
@@ -59,6 +60,14 @@ export type Effect =
       side: "src" | "tgt";
       to: Hash;
       how: "rule" | "checked";
+      /**
+       * The rules llrwt ran, present when `how` is "rule". A rule step is
+       * certified by the rules' external proofs rather than by an alive2 run
+       * of its own, so what a checker reruns is the same invocation.
+       */
+      rules?: string[];
+      /** Exactly what the rewriter ran, so a replay runs it again. */
+      invocation?: LlrwtInvocation;
       /**
        * The window the check was narrowed to, when that is what certified the
        * step. The outer is shared by the two halves, which is what says the

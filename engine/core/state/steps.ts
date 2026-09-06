@@ -10,8 +10,9 @@
 // still alive belongs in the answer the agent reads.
 import type { CheckOutcome, CheckResult, Invocation } from "../drivers/alive2.ts";
 import { type Llops, moduleLines } from "../drivers/llops.ts";
+import type { Llrwt, LlrwtInvocation } from "../drivers/llrwt.ts";
 import { definedRefAt, named, resolveRef } from "../refs.ts";
-import { head, type Side, type Tree, workable } from "./goals.ts";
+import { type Goal, head, type Side, type Tree, workable } from "./goals.ts";
 import type { Narrowed, Window } from "./narrow.ts";
 import type { Store } from "./store.ts";
 import type { Effect, Hash } from "./trajectory.ts";
@@ -34,6 +35,8 @@ export interface Timeouts {
   eagerCheckMs: number;
   /** What a commit or an apply is validated with. */
   alive2Ms: number;
+  /** What one verified-rewriter run may take before it is killed. */
+  llrwtMs: number;
 }
 
 export const DEFAULT_TIMEOUTS: Timeouts = {
@@ -41,6 +44,7 @@ export const DEFAULT_TIMEOUTS: Timeouts = {
   checkCapMs: 60_000,
   eagerCheckMs: 3_000,
   alive2Ms: 30_000,
+  llrwtMs: 30_000,
 };
 
 /** The defaults, with whatever the configuration says on top. */
@@ -159,6 +163,29 @@ export type StepResult =
       fallback?: Fallback;
     };
 
+/** A rewrite that landed, or the reason it did not. */
+export type RuleResult =
+  | {
+      kind: "certified";
+      hash: Hash;
+      /** In order: the step, then the discharge when the eager check proved it. */
+      effects: Effect[];
+      invocation: LlrwtInvocation;
+      /** The check of the new pair, absent when the goal has no work left. */
+      eager?: CheckResult;
+    }
+  | {
+      kind: "unchanged";
+      hash: Hash;
+      effects: Effect[];
+      invocation: LlrwtInvocation;
+    }
+  | {
+      kind: "refused";
+      code: string;
+      message: string;
+    };
+
 /** What checking a goal's current pair came to. */
 export interface CheckGoalResult {
   outcome: "proved" | "refuted" | "unknown";
@@ -186,6 +213,7 @@ export class Steps {
     private readonly checker: Checker,
     private readonly timeouts: Timeouts = DEFAULT_TIMEOUTS,
     private readonly llops?: Llops,
+    private readonly rewriter?: Llrwt,
   ) {}
 
   /**
@@ -347,8 +375,82 @@ export class Steps {
     }
 
     // The pair has changed, so ask cheaply whether the goal is now discharged.
-    // The pair is built here rather than read from the tree, which does not
-    // know about this step until its effect is recorded.
+    const eager = await this.eagerCheck(goal, gid, side, after, effects);
+
+    return {
+      kind: "certified",
+      hash: after,
+      effects,
+      check,
+      by,
+      fallback,
+      eager,
+    };
+  }
+
+  /**
+   * Replace one side of a goal with what the verified rewriter makes of it.
+   * The rules' external proofs are what certify the move, so no alive2 run of
+   * its own is needed; what is recorded is the invocation a replay reruns. An
+   * unchanged answer moves nothing, and a refusal leaves the head alone with
+   * the rewriter's reason to work from.
+   */
+  async rewrite(
+    tree: Tree,
+    gid: string,
+    side: Side,
+    rules: string[],
+    options: { timeoutMs?: number; eager?: boolean } = {},
+  ): Promise<RuleResult> {
+    if (!this.rewriter) {
+      return { kind: "refused", code: "unavailable", message: "this run has no verified rewriter" };
+    }
+    if (rules.length === 0) {
+      return { kind: "refused", code: "no_rules", message: "no rules were named" };
+    }
+    const goal = workable(tree, gid);
+    const beforeHash = head(goal, side);
+    const applied = await this.rewriter.apply(this.store.get(beforeHash), rules, {
+      timeoutMs: options.timeoutMs ?? this.timeouts.llrwtMs,
+    });
+    if (!applied.ok) return { kind: "refused", code: applied.code, message: applied.message };
+    const after = await this.store.put(applied.module);
+    if (after === beforeHash) {
+      return { kind: "unchanged", hash: after, effects: [], invocation: applied.invocation };
+    }
+
+    const step: Effect = {
+      effect: "step",
+      gid,
+      side,
+      to: after,
+      how: "rule",
+      rules: [...rules],
+      invocation: applied.invocation,
+    };
+    const effects: Effect[] = [step];
+    if (options.eager === false) {
+      return { kind: "certified", hash: after, effects, invocation: applied.invocation };
+    }
+
+    // The pair has changed, so ask cheaply whether the goal is now discharged.
+    const eager = await this.eagerCheck(goal, gid, side, after, effects);
+
+    return { kind: "certified", hash: after, effects, invocation: applied.invocation, eager };
+  }
+
+  /**
+   * Ask cheaply whether the goal's new pair is now discharged. The pair is
+   * built here rather than read from the tree, which does not know about
+   * this step until its effect is recorded.
+   */
+  private async eagerCheck(
+    goal: Goal,
+    gid: string,
+    side: Side,
+    after: Hash,
+    effects: Effect[],
+  ): Promise<CheckResult> {
     const eagerSrcHash = side === "src" ? after : head(goal, "src");
     const eagerTgtHash = side === "tgt" ? after : head(goal, "tgt");
     const eagerKey = historyKey(eagerSrcHash, eagerTgtHash);
@@ -362,16 +464,7 @@ export class Steps {
       ms: eager.ms,
     });
     if (eager.outcome === "correct") effects.push({ effect: "proved", gid });
-
-    return {
-      kind: "certified",
-      hash: after,
-      effects,
-      check,
-      by,
-      fallback,
-      eager,
-    };
+    return eager;
   }
 
   private async tryConditionedWindow(

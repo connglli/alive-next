@@ -20,6 +20,7 @@ export interface TimeoutConfig {
   eagerCheckMs?: number;
   alive2Ms?: number;
   llubiMs?: number;
+  llrwtMs?: number;
 }
 
 export interface Config {
@@ -113,6 +114,7 @@ const TIMEOUT_KEYS: Record<string, keyof TimeoutConfig> = {
   eager_check_ms: "eagerCheckMs",
   alive2_ms: "alive2Ms",
   llubi_ms: "llubiMs",
+  llrwt_ms: "llrwtMs",
 };
 
 function readTimeouts(raw: unknown, source: string): TimeoutConfig {
