@@ -95,44 +95,12 @@ describe("llrwt apply", () => {
       const result = await new Llrwt(path).apply(F, ["add_zero", "sub_self"]);
       if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
       expect(result.module).toBe(`${out}\n`);
-      expect(result.changed).toBe(true);
       expect(result.invocation).toMatchObject({ binary: path, rules: ["add_zero", "sub_self"] });
 
       const args = await argv(dir);
       expect(args).toContain("--rules add_zero,sub_self");
       expect(args).toContain("--allow-unregistered-dialect");
       await expect(Bun.file(join(dir, "input")).text()).resolves.toBe(F);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("an unchanged echo reports unchanged", async () => {
-    // The stub's heredoc appends one newline, so hand the module over with its
-    // trailing newline already stripped: what llrwt prints then equals what it
-    // was given.
-    const echo = F.trimEnd();
-    const { dir, path } = stub(echo);
-    try {
-      const result = await new Llrwt(path).apply(`${echo}\n`, ["add_zero"]);
-      if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
-      expect(result.changed).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("printing noise alone is unchanged", async () => {
-    // Surrounding blank lines and trailing whitespace: what a fresh print
-    // adds around an untouched module.
-    const padded = `\n${F.split("\n")
-      .map((line) => `${line}   `)
-      .join("\n")}\n`;
-    const { dir, path } = stub(padded);
-    try {
-      const result = await new Llrwt(path).apply(F, ["add_zero"]);
-      if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
-      expect(result.changed).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -149,6 +117,19 @@ describe("llrwt apply", () => {
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
+    }
+  });
+
+  test("an unknown rule is a refusal, wherever it is printed", async () => {
+    // The complaint usually travels on stderr; a wrapper that prints it on
+    // stdout refuses all the same.
+    const heard = stub("Unknown rewrite rule: 'frobnicate'", 2);
+    try {
+      const result = await new Llrwt(heard.path).apply(F, ["frobnicate"]);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.code).toBe("unknown_rule");
+    } finally {
+      rmSync(heard.dir, { recursive: true, force: true });
     }
   });
 
@@ -287,7 +268,6 @@ describe.skipIf(!installed)("llrwt against the toolchain build", () => {
     async () => {
       const result = await real.apply(F, ["addi-zero-to-x"]);
       if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
-      expect(result.changed).toBe(true);
       expect(result.module).not.toContain("add i32");
       expect(result.module).toContain("ret i32");
     },
@@ -299,7 +279,6 @@ describe.skipIf(!installed)("llrwt against the toolchain build", () => {
     async () => {
       const result = await real.apply(F, ["subi-self-to-zero"]);
       if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
-      expect(result.changed).toBe(false);
       expect(result.module).toBe(F);
     },
     { timeout: 30_000 },

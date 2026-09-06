@@ -763,7 +763,17 @@ class TestTampered(Case):
     # program alone replay to the `from` program, not to the `to` one.
     self.ruled()
     package = self.built.write()
-    self.built.bend(lambda m: m["goals"]["g1"]["steps"][0].update({"rules": ["subi-self-to-zero"]}))
+    self.built.bend(
+      lambda m: m["goals"]["g1"]["steps"][0].update(
+        {
+          "rules": ["subi-self-to-zero"],
+          "invocation": {
+            **m["goals"]["g1"]["steps"][0]["invocation"],
+            "rules": ["subi-self-to-zero"],
+          },
+        }
+      )
+    )
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT)
     self.assertNotEqual(done.returncode, 0, done.stdout)
     self.assertIn("to a different program", done.stdout + done.stderr)
@@ -774,7 +784,11 @@ class TestTampered(Case):
     # rather than replayed as a different invocation.
     self.ruled()
     package = self.built.write()
-    self.built.bend(lambda m: m["goals"]["g1"]["steps"][0].update({"rules": []}))
+    self.built.bend(
+      lambda m: m["goals"]["g1"]["steps"][0].update(
+        {"rules": [], "invocation": {**m["goals"]["g1"]["steps"][0]["invocation"], "rules": []}}
+      )
+    )
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT)
     self.assertNotEqual(done.returncode, 0, done.stdout)
     self.assertIn("names no rules", done.stdout + done.stderr)
@@ -789,6 +803,19 @@ class TestTampered(Case):
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT)
     self.assertNotEqual(done.returncode, 0, done.stdout)
     self.assertIn("rules optimize forward on src only", done.stdout + done.stderr)
+
+  @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
+  def test_a_rule_step_whose_invocation_names_other_rules(self):
+    # The rules llrwt ran and the rules the step claims are one claim, so an
+    # invocation that names other rules is a certificate nobody made.
+    self.ruled()
+    package = self.built.write()
+    self.built.bend(
+      lambda m: m["goals"]["g1"]["steps"][0]["invocation"].update({"rules": ["subi-self-to-zero"]})
+    )
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("does not match", done.stdout + done.stderr)
 
   @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
   def test_a_rule_step_replays_with_translator_options(self):

@@ -30,12 +30,6 @@ export interface LlrwtInvocation {
 
 export interface ApplyResult {
   module: Module;
-  /**
-   * Whether the rewrite moved the module: the returned module against the
-   * input, ignoring leading and trailing blank lines and trailing
-   * whitespace, before any canonicalization.
-   */
-  changed: boolean;
   invocation: LlrwtInvocation;
 }
 
@@ -86,9 +80,17 @@ export class Llrwt {
   /** The version line, which a run records to say what rewrote its programs. */
   async version(): Promise<string> {
     const child = Bun.spawn([this.path, "--version"], { stdout: "pipe", stderr: "pipe" });
-    const [out] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    const [out, err] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
     if (child.exitCode !== 0) throw new LlrwtCrash(`--version exited ${child.exitCode}`);
-    return out.trim();
+    // The version travels on stdout; stderr is only where a wrapper that
+    // prints it elsewhere is still heard.
+    const line = out.trim() || err.trim();
+    if (line === "") throw new LlrwtCrash("--version printed nothing");
+    return line;
   }
 
   /**
@@ -164,7 +166,7 @@ export class Llrwt {
       let killed = false;
       const killer = setTimeout(() => {
         killed = true;
-        child.kill();
+        child.kill("SIGKILL");
       }, wallClock(timeoutMs));
       const [out, err] = await Promise.all([
         new Response(child.stdout).text(),
@@ -172,16 +174,17 @@ export class Llrwt {
         child.exited,
       ]);
       clearTimeout(killer);
-      // A process we stopped ourselves said nothing because we stopped it,
-      // which is no information rather than a broken installation.
-      if (killed) {
+      // SIGKILL leaves no time for a farewell, so a killed process says
+      // nothing and that is no information about the pair. The exit code
+      // tells a kill apart from a process that got there first: a timer
+      // that fired after the exit killed nothing.
+      if (killed && child.exitCode === null) {
         return { ok: false, code: "timeout", message: `killed after ${wallClock(timeoutMs)}ms` };
       }
       if (child.exitCode === 0) {
         return {
           ok: true,
           module: out,
-          changed: normalized(out) !== normalized(module),
           invocation,
         };
       }
@@ -189,7 +192,12 @@ export class Llrwt {
       // unless the complaint is about a rule name, which is the agent's, or
       // about a translator, which is the toolchain's: rule names arrive from
       // the tool call and translator paths from the toolchain, not from us.
-      if (child.exitCode === 2 && !isUnknownRule(err) && !isTranslatorError(err, out)) {
+      // Both streams are read because a complaint may travel on either one.
+      if (
+        child.exitCode === 2 &&
+        !isUnknownRule(`${err}\n${out}`) &&
+        !isTranslatorError(`${err}\n${out}`)
+      ) {
         throw new LlrwtCrash(`exited 2, ${detail(err, out)}`);
       }
       return { ok: false, ...refuse(err, out) };
@@ -202,10 +210,11 @@ export class Llrwt {
 /** Read a refusal out of what llrwt printed. Exit 1 carries the complaint on stderr. */
 function refuse(stderr: string, stdout: string): { code: string; message: string } {
   const message = detail(stderr, stdout);
-  if (isUnknownRule(message)) return { code: "unknown_rule", message };
-  if (/mlir-translate|mlir-opt/i.test(message)) return { code: "bridge_error", message };
-  if (/verif/i.test(message)) return { code: "verify_error", message };
-  if (/timed out|timeout/i.test(message)) return { code: "timeout", message };
+  const text = `${stderr}\n${stdout}`;
+  if (isUnknownRule(text)) return { code: "unknown_rule", message };
+  if (isTranslatorError(text)) return { code: "bridge_error", message };
+  if (/verif/i.test(text)) return { code: "verify_error", message };
+  if (/timed out|timeout/i.test(text)) return { code: "timeout", message };
   return { code: "parse_error", message };
 }
 
@@ -215,19 +224,10 @@ function isUnknownRule(text: string): boolean {
 }
 
 /** llrwt reports a translator it cannot run by naming it. */
-function isTranslatorError(stderr: string, stdout: string): boolean {
-  return /mlir-translate|mlir-opt/i.test(detail(stderr, stdout));
+function isTranslatorError(text: string): boolean {
+  return /mlir-translate|mlir-opt/i.test(text);
 }
 
 function detail(stderr: string, stdout: string): string {
   return stderr.trim() || stdout.trim() || "llrwt said nothing";
-}
-
-/** A module with the printing noise removed: surrounding blank lines and trailing whitespace. */
-function normalized(module: string): string {
-  return module
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .join("\n")
-    .trim();
 }

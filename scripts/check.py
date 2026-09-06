@@ -557,6 +557,9 @@ class Check:
         gid, "a rule step", f"was recorded on {side}, but rules optimize forward on src only"
       )
       return step["to"]
+    if list(step.get("invocation", {}).get("rules") or []) != list(step.get("rules") or []):
+      self.fail(gid, f"a {side} rule step records", "rules its invocation does not match")
+      return step["to"]
     if step["from"] != head[side]:
       self.fail(gid, f"a {side} step starts", f"at {step['from'][:12]}, not the head")
       return step["to"]

@@ -657,12 +657,14 @@ entry:
     expect(res).toContain("the new pair is proved");
     expect(rewriting.verdict).toBe("verified");
 
-    const refused = await callFrom(rewritingTools, "goal_rewrite", {
-      gid: "g1",
-      rules: [],
-    });
-    expect(refused).toContain("FAILURE");
-    expect(refused).toContain("refused, no_rules: no rules were named");
+    // An empty rule list is rejected by the schema, so the engine's no_rules
+    // refusal never runs.
+    expect(
+      Check(rewritingTools.find((tool) => tool.name === "goal_rewrite")!.parameters, {
+        gid: "g1",
+        rules: [],
+      }),
+    ).toBe(false);
 
     const unknownRefused = await callFrom(rewritingTools, "goal_rewrite", {
       gid: "g1",
