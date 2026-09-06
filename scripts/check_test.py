@@ -779,6 +779,34 @@ class TestTampered(Case):
     self.assertNotEqual(done.returncode, 0, done.stdout)
     self.assertIn("names no rules", done.stdout + done.stderr)
 
+  @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
+  def test_a_rule_step_replays_with_translator_options(self):
+    # The recorded translators are gone on this machine, so the replay
+    # names where they are instead; falling back to PATH would find a
+    # system mlir-translate llrwt does not parse.
+    self.ruled()
+    package = self.built.write()
+    self.built.bend(
+      lambda m: m["goals"]["g1"]["steps"][0]["invocation"].update(
+        {"mlirTranslate": "/nonexistent/mlir-translate", "mlirOpt": "/nonexistent/mlir-opt"}
+      )
+    )
+    done = run(
+      package,
+      "--alive-tv",
+      ALIVE_TV,
+      "--llops",
+      LLOPS,
+      "--llrwt",
+      LLRWT,
+      "--mlir-translate",
+      MLIR_TRANSLATE,
+      "--mlir-opt",
+      MLIR_OPT,
+    )
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertIn("verified", done.stdout)
+
   def test_a_manifest_from_another_version(self):
     self.leaf()
     self.built.write(version=2)

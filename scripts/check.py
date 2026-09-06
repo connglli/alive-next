@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Replay a certificate and say whether it holds.
 
-    python3 check.py [<package>] [--alive-tv PATH] [--llops PATH] [--llubi PATH] [--llrwt PATH] [--smt-to MS]
+    python3 check.py [<package>] [--alive-tv PATH] [--llops PATH] [--llubi PATH] [--llrwt PATH] [--mlir-translate PATH] [--mlir-opt PATH] [--smt-to MS]
 
 The package is the directory this script sits in unless one is named. What is
 needed besides Python: alive-tv for a proof, llubi for a counterexample, llrwt
@@ -52,6 +52,8 @@ class Package:
     self.llops = self.tool("llops", tools.get("llops"))
     self.llubi = self.tool("llubi", tools.get("llubi"))
     self.llrwt = self.tool("llrwt", tools.get("llrwt"))
+    self.mlir_translate = tools.get("mlir-translate")
+    self.mlir_opt = tools.get("mlir-opt")
     self.queries = 0
     self.seconds = 0.0
     # Programs are read more than once, and each read pays for a hash and
@@ -202,9 +204,14 @@ class Package:
       path = Path(scratch) / "in.ll"
       path.write_text(module)
       args = [self.llrwt, "--rules", ",".join(rules)]
-      # The translators the run used, when this machine has them; PATH otherwise.
-      for key, flag in (("mlirTranslate", "--mlir-translate"), ("mlirOpt", "--mlir-opt")):
-        recorded = invocation.get(key)
+      # The translators the run used, when this machine has them; an option
+      # says where they are when it does not, and PATH otherwise.
+      translators = (
+        ("mlirTranslate", "--mlir-translate", self.mlir_translate),
+        ("mlirOpt", "--mlir-opt", self.mlir_opt),
+      )
+      for key, flag, chosen in translators:
+        recorded = chosen or invocation.get(key)
         if recorded and Path(recorded).exists():
           args += [flag, recorded]
       args += ["--allow-unregistered-dialect", str(path)]
@@ -824,11 +831,20 @@ def main() -> int:
   parser.add_argument("--llops", help="default: where the manifest says, else PATH")
   parser.add_argument("--llubi", help="default: where the manifest says, else PATH")
   parser.add_argument("--llrwt", help="default: where the manifest says, else PATH")
+  parser.add_argument("--mlir-translate", help="default: where the manifest says, else PATH")
+  parser.add_argument("--mlir-opt", help="default: where the manifest says, else PATH")
   parser.add_argument("--smt-to", type=int, default=600_000, help="ms per query, default 600000")
   parser.add_argument("-v", "--verbose", action="store_true", help="say what passes too")
   args = parser.parse_args()
 
-  named = {"alive-tv": args.alive_tv, "llops": args.llops, "llubi": args.llubi, "llrwt": args.llrwt}
+  named = {
+    "alive-tv": args.alive_tv,
+    "llops": args.llops,
+    "llubi": args.llubi,
+    "llrwt": args.llrwt,
+    "mlir-translate": args.mlir_translate,
+    "mlir-opt": args.mlir_opt,
+  }
   try:
     package = Package(args.package, named, args.smt_to)
     print(f"checking {args.package}")
