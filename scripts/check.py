@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Replay a certificate and say whether it holds.
 
-    python3 check.py [<package>] [--alive-tv PATH] [--llops PATH] [--llubi PATH] [--smt-to MS]
+    python3 check.py [<package>] [--alive-tv PATH] [--llops PATH] [--llubi PATH] [--llrwt PATH] [--smt-to MS]
 
 The package is the directory this script sits in unless one is named. What is
-needed besides Python: alive-tv for a proof, llubi for a counterexample, and
-llops for the subcommands each of them needs. All are taken from the manifest,
-which records where the run found them and which LLVM each one carried; a path
-that is not there falls back to the name on PATH, and an option overrides both.
+needed besides Python: alive-tv for a proof, llubi for a counterexample, llrwt
+for a proof that rewrites with pre-proved rules, and llops for the subcommands
+each of them needs. All are taken from the manifest, which records where the
+run found them and which LLVM each one carried; a path that is not there falls
+back to the name on PATH, and an option overrides both.
 
 Nothing here believes the manifest. For a proof it says which pairs the run
 moved through and this reruns every claim about them: the direction of a check
@@ -50,6 +51,7 @@ class Package:
     self.alive_tv = self.tool("alive-tv", tools.get("alive-tv"))
     self.llops = self.tool("llops", tools.get("llops"))
     self.llubi = self.tool("llubi", tools.get("llubi"))
+    self.llrwt = self.tool("llrwt", tools.get("llrwt"))
     self.queries = 0
     self.seconds = 0.0
     # Programs are read more than once, and each read pays for a hash and
@@ -73,7 +75,10 @@ class Package:
   def say_toolchain(self) -> None:
     """Name the binaries in use, and say when they are not the recorded ones."""
     checker = ("alive-tv", self.alive_tv) if self.verdict == "verified" else ("llubi", self.llubi)
-    for name, path in (checker, ("llops", self.llops)):
+    names = [checker, ("llops", self.llops)]
+    if self.verdict == "verified":
+      names.append(("llrwt", self.llrwt))
+    for name, path in names:
       here = llvm_version(path)
       recorded = self.recorded(name).get("llvm")
       said = f"  {name:<9} {path}"
@@ -188,6 +193,35 @@ class Package:
     # llubi says everything on stderr: the trace, the UB, and its own
     # complaints. The exit code carries the return value, not the outcome.
     return done.stderr
+
+  def run_llrwt(self, rules: list, module: str, invocation: dict) -> str:
+    """Rewrite a program with llrwt under the recorded rules, and answer with what it printed."""
+    if not rules:
+      raise Refused("a rule step names no rules")
+    with tempfile.TemporaryDirectory() as scratch:
+      path = Path(scratch) / "in.ll"
+      path.write_text(module)
+      args = [self.llrwt, "--rules", ",".join(rules)]
+      # The translators the run used, when this machine has them; PATH otherwise.
+      for key, flag in (("mlirTranslate", "--mlir-translate"), ("mlirOpt", "--mlir-opt")):
+        recorded = invocation.get(key)
+        if recorded and Path(recorded).exists():
+          args += [flag, recorded]
+      args += ["--allow-unregistered-dialect", str(path)]
+      timeout_ms = invocation.get("timeoutMs") or 30000
+      try:
+        done = subprocess.run(
+          args,
+          capture_output=True,
+          text=True,
+          timeout=max(60, timeout_ms / 1000 + 30),
+        )
+      except subprocess.SubprocessError as error:
+        raise Refused(f"llrwt did not finish: {error}") from error
+      if done.returncode != 0:
+        raise Refused(f"llrwt refused the replay: {done.stderr.strip() or done.stdout.strip()}")
+      self.queries += 1
+      return done.stdout
 
 
 def llvm_version(path: str) -> str | None:
@@ -310,6 +344,8 @@ class Check:
         head[side] = after
       elif step["kind"] == "window":
         head[step["side"]] = self.window(gid, step, head)
+      elif step["kind"] == "rule":
+        head[step["side"]] = self.rule(gid, step, head)
       elif step["kind"] == "strengthen":
         self.strengthen(gid, step, head, role)
       else:
@@ -499,6 +535,28 @@ class Check:
     outcome = self.refines(*pair)
     what = f"{side} window to {step['to'][:12]}"
     self.say(gid, what, outcome) if outcome == "correct" else self.fail(gid, what, outcome)
+    return step["to"]
+
+  def rule(self, gid: str, step: dict, head: dict) -> str:
+    """A step the verified rewriter certified: rerun the same invocation.
+
+    No solver is asked anything. What says the step holds is that llrwt, run
+    again under the recorded rules, prints the recorded program back.
+    """
+    side = step["side"]
+    if step["from"] != head[side]:
+      self.fail(gid, f"a {side} step starts", f"at {step['from'][:12]}, not the head")
+      return step["to"]
+
+    replayed = self.package.run_llrwt(
+      step.get("rules") or [], self.package.program(step["from"]), step.get("invocation") or {}
+    )
+    same = self.package.run_llops("canon", {"module": replayed})["module"]
+    what = f"{side} rule to {step['to'][:12]}"
+    if same == self.package.program(step["to"]):
+      self.say(gid, what, "matches")
+    else:
+      self.fail(gid, what, "to a different program")
     return step["to"]
 
   def split(self, gid: str, goal: dict, discharge: dict) -> None:
@@ -765,11 +823,12 @@ def main() -> int:
   parser.add_argument("--alive-tv", help="default: where the manifest says, else PATH")
   parser.add_argument("--llops", help="default: where the manifest says, else PATH")
   parser.add_argument("--llubi", help="default: where the manifest says, else PATH")
+  parser.add_argument("--llrwt", help="default: where the manifest says, else PATH")
   parser.add_argument("--smt-to", type=int, default=600_000, help="ms per query, default 600000")
   parser.add_argument("-v", "--verbose", action="store_true", help="say what passes too")
   args = parser.parse_args()
 
-  named = {"alive-tv": args.alive_tv, "llops": args.llops, "llubi": args.llubi}
+  named = {"alive-tv": args.alive_tv, "llops": args.llops, "llubi": args.llubi, "llrwt": args.llrwt}
   try:
     package = Package(args.package, named, args.smt_to)
     print(f"checking {args.package}")

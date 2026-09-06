@@ -12,6 +12,7 @@ import { type Counterexample, manifestOf, NotCertifiable, type Proof } from "../
 import { loadConfig } from "../core/config.ts";
 import type { CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
+import type { Llrwt, LlrwtInvocation } from "../core/drivers/llrwt.ts";
 import type { RunResult } from "../core/drivers/llubi.ts";
 import type { Scenario } from "../core/scenario.ts";
 import { Session } from "../core/session.ts";
@@ -62,6 +63,30 @@ const noRun: Interpreter = {
     throw new Error("this session has no interpreter");
   },
 };
+
+/** A stand-in for llrwt that folds to the module it was given. */
+function folding(folded: string): Llrwt {
+  return {
+    async apply(module: string, rules: string[]) {
+      const invocation: LlrwtInvocation = { binary: "fake-llrwt", rules: [...rules], timeoutMs: 0 };
+      return { ok: true as const, module: folded, changed: folded !== module, invocation };
+    },
+  } as unknown as Llrwt;
+}
+
+/** A body with an addition of zero for the rewriter to fold away. */
+const ADD_ZERO = `define i32 @f(i32 %x) {
+entry:
+  %s = add i32 %x, 0
+  ret i32 %s
+}
+`;
+
+const FOLDED = `define i32 @f(i32 %x) {
+entry:
+  ret i32 %x
+}
+`;
 
 /** A body long enough that an edit to one line of it is a window. */
 const WIDE = `define i32 @f(i32 %x, i32 %y) {
@@ -181,6 +206,28 @@ describe.skipIf(!built)("the manifest", () => {
     for (const hash of [only.window.outer, only.window.from, only.window.to]) {
       expect(readFileSync(join(out, "programs", `${hash}.ll`), "utf8").length).toBeGreaterThan(0);
     }
+  });
+
+  test("records a rewrite as the rules it ran, for a replay without a solver", async () => {
+    const session = await Session.start({
+      dir: join(dir, "rewritten"),
+      src: ADD_ZERO,
+      tgt: FOLDED,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: folding(FOLDED),
+    });
+    const rewritten = await session.rewrite("g1", "src", ["addi-zero-to-x"]);
+    if (rewritten.kind !== "certified") throw new Error("expected the rewrite to land");
+    expect(session.finish()).toBe("verified");
+
+    const manifest = manifestFrom(session.dir);
+    const [only] = manifest.goals.g1?.steps ?? [];
+    if (only?.kind !== "rule") throw new Error("expected a rule step");
+    expect(only.side).toBe("src");
+    expect(only.rules).toEqual(["addi-zero-to-x"]);
+    expect(only.invocation).toMatchObject({ binary: "fake-llrwt", rules: ["addi-zero-to-x"] });
   });
 
   test("copies every program the proof names", async () => {

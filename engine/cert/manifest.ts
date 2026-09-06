@@ -11,6 +11,7 @@
 // pair it started with to the pair it ended with, which is what the goal tree
 // holds after reverts have truncated it.
 import type { Attrs, HarnessArg, PredicateAssertion } from "../core/drivers/llops.ts";
+import type { LlrwtInvocation } from "../core/drivers/llrwt.ts";
 import { type Goal, head, type Tree } from "../core/state/goals.ts";
 import type { Effect, Entry, Hash } from "../core/state/trajectory.ts";
 
@@ -23,6 +24,19 @@ export type Step =
       side: "src" | "tgt";
       from: Hash;
       to: Hash;
+    }
+  /**
+   * A step the verified rewriter certified: the rules it ran and exactly what
+   * it ran them under. A checker reruns the same invocation and compares
+   * bytes, asking no solver anything.
+   */
+  | {
+      kind: "rule";
+      side: "src" | "tgt";
+      from: Hash;
+      to: Hash;
+      rules: string[];
+      invocation: LlrwtInvocation;
     }
   /**
    * A step whose check was narrowed to the window the edit touched. The two
@@ -239,22 +253,39 @@ function chainOf(goal: Goal, effects: Effect[]): Step[] {
     if (effect.gid !== goal.id) continue;
     if (effect.effect === "step" && effect.to === goal[effect.side].history[side(effect, si, ti)]) {
       const from = goal[effect.side].history[side(effect, si, ti) - 1] as Hash;
-      steps.push(
-        effect.window
-          ? {
-              kind: "window",
-              side: effect.side,
-              from,
-              to: effect.to,
-              window: effect.window,
-            }
-          : {
-              kind: "checked",
-              side: effect.side,
-              from,
-              to: effect.to,
-            },
-      );
+      if (effect.how === "rule") {
+        if (!effect.rules || effect.rules.length === 0) {
+          throw new NotCertifiable(`a rule step on ${goal.id} names no rules`);
+        }
+        if (!effect.invocation) {
+          throw new NotCertifiable(`a rule step on ${goal.id} records no invocation`);
+        }
+        steps.push({
+          kind: "rule",
+          side: effect.side,
+          from,
+          to: effect.to,
+          rules: effect.rules,
+          invocation: effect.invocation,
+        });
+      } else {
+        steps.push(
+          effect.window
+            ? {
+                kind: "window",
+                side: effect.side,
+                from,
+                to: effect.to,
+                window: effect.window,
+              }
+            : {
+                kind: "checked",
+                side: effect.side,
+                from,
+                to: effect.to,
+              },
+        );
+      }
       if (effect.side === "src") si += 1;
       else ti += 1;
     } else if (effect.effect === "strengthen" && effect.src === src[si] && effect.tgt === tgt[ti]) {

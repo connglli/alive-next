@@ -38,8 +38,12 @@ def toolchain() -> Path:
 ALIVE_TV = os.environ.get("ALIVE_TV") or str(toolchain() / "alive2" / "build" / "alive-tv")
 LLOPS = os.environ.get("LLOPS") or str(toolchain() / "llops" / "build" / "llops")
 LLUBI = os.environ.get("LLUBI") or str(toolchain() / "llubi-legacy" / "build" / "llubi")
+LLRWT = os.environ.get("LLRWT") or str(toolchain() / "veir" / ".lake" / "build" / "bin" / "llrwt")
+MLIR_TRANSLATE = str(toolchain() / "llvm-project" / "build" / "bin" / "mlir-translate")
+MLIR_OPT = str(toolchain() / "llvm-project" / "build" / "bin" / "mlir-opt")
 HAVE = Path(ALIVE_TV).exists() and Path(LLOPS).exists()
 HAVE_LLUBI = Path(LLUBI).exists() and Path(LLOPS).exists()
+HAVE_LLRWT = Path(LLRWT).exists() and Path(LLOPS).exists()
 
 # Halving rounds toward zero and shifting rounds down, so the two part company
 # on every negative odd value.
@@ -97,6 +101,18 @@ entry:
   ret i32 %1
 }
 """
+# Adding zero and folding it away, which is the verified rewriter's work.
+ZERO_ADD = """define i32 @f(i32 noundef %0) {
+entry:
+  %1 = add i32 %0, 0
+  ret i32 %1
+}
+"""
+ZERO_FOLDED = """define i32 @f(i32 noundef %0) {
+entry:
+  ret i32 %0
+}
+"""
 # Dropping nsw refines forwards and not backwards, which is what tells a step
 # recorded on the wrong side from one recorded on the right one.
 NSW = """define i32 @f(i32 noundef %0) {
@@ -129,6 +145,32 @@ def llops(subcommand: str, request: dict) -> dict:
   answer = json.loads(done.stdout)
   assert answer.get("ok"), answer
   return answer
+
+
+def llrwt(rules: list, module: str) -> str:
+  with tempfile.TemporaryDirectory() as scratch:
+    path = Path(scratch) / "in.ll"
+    path.write_text(module)
+    # The toolchain's own translators: a system mlir-translate prints a
+    # generic form llrwt does not parse, which is a build mistake rather
+    # than a rewrite outcome.
+    done = subprocess.run(
+      [
+        LLRWT,
+        "--rules",
+        ",".join(rules),
+        "--allow-unregistered-dialect",
+        "--mlir-translate",
+        MLIR_TRANSLATE,
+        "--mlir-opt",
+        MLIR_OPT,
+        str(path),
+      ],
+      capture_output=True,
+      text=True,
+    )
+    assert done.returncode == 0, done.stderr
+    return done.stdout
 
 
 class Built:
@@ -251,6 +293,38 @@ class Case(unittest.TestCase):
     )
     return step
 
+  def ruled(self) -> dict:
+    """A goal whose one step the verified rewriter certified.
+
+    The `to` program is what llrwt itself prints for the rules, canonicalized
+    like every stored program: what the replay reruns is the same invocation,
+    and what says the step holds is byte equality with the recorded program.
+    """
+    was = llops("canon", {"module": ZERO_ADD})["module"]
+    now = llops("canon", {"module": llrwt(["addi-zero-to-x"], ZERO_ADD)})["module"]
+    step = {
+      "kind": "rule",
+      "side": "src",
+      "from": self.built.program(was),
+      "to": self.built.program(now),
+      "rules": ["addi-zero-to-x"],
+      "invocation": {
+        "binary": LLRWT,
+        "rules": ["addi-zero-to-x"],
+        "timeoutMs": 30000,
+        "mlirTranslate": MLIR_TRANSLATE,
+        "mlirOpt": MLIR_OPT,
+      },
+    }
+    self.built.goal(
+      "g1",
+      {"src": step["from"], "tgt": step["to"]},
+      {"src": step["to"], "tgt": step["to"]},
+      [step],
+      {"kind": "checked"},
+    )
+    return step
+
   def verified(self, package: Path) -> subprocess.CompletedProcess:
     done = named(package)
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -278,6 +352,15 @@ class TestGolden(Case):
       {"kind": "checked"},
     )
     self.verified(self.built.write())
+
+  @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
+  def test_a_rule_step_verifies(self):
+    self.ruled()
+    done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT, "-v")
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertIn("verified", done.stdout)
+    # No solver is asked about the step itself: the rewrite is replayed.
+    self.assertIn("rule to", done.stdout)
 
   def test_a_cut_verifies(self):
     self.verified(self.cut())
@@ -662,6 +745,39 @@ class TestTampered(Case):
     pair = {"src": self.src, "tgt": self.tgt}
     self.built.goal("g1", pair, pair, [{"kind": "trust-me"}], {"kind": "checked"})
     self.refused(self.built.write(), "does not know")
+
+  @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
+  def test_a_rule_step_to_a_different_program(self):
+    # The replay prints what the rules say, so a `to` that is not that
+    # program is a step nobody's proofs stand behind.
+    self.ruled()
+    package = self.built.write()
+    self.built.bend(lambda m: m["goals"]["g1"]["steps"][0].update({"to": self.tgt}))
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("to a different program", done.stdout + done.stderr)
+
+  @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
+  def test_a_rule_step_under_rules_that_do_not_fire(self):
+    # The recorded rules are what the replay runs: rules that leave the
+    # program alone replay to the `from` program, not to the `to` one.
+    self.ruled()
+    package = self.built.write()
+    self.built.bend(lambda m: m["goals"]["g1"]["steps"][0].update({"rules": ["subi-self-to-zero"]}))
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("to a different program", done.stdout + done.stderr)
+
+  @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
+  def test_a_rule_step_that_names_no_rules(self):
+    # An empty rule list would mean "every rule" to llrwt, so it is refused
+    # rather than replayed as a different invocation.
+    self.ruled()
+    package = self.built.write()
+    self.built.bend(lambda m: m["goals"]["g1"]["steps"][0].update({"rules": []}))
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("names no rules", done.stdout + done.stderr)
 
   def test_a_manifest_from_another_version(self):
     self.leaf()
