@@ -26,7 +26,7 @@ import type {
   LlopsResult,
   OptOp,
 } from "./drivers/llops.ts";
-import type { Llrwt } from "./drivers/llrwt.ts";
+import type { Llrwt, RuleInfo } from "./drivers/llrwt.ts";
 import type { Ref } from "./refs.ts";
 import { Counterexamples, type Interpreter, type ReportResult } from "./state/counterexamples.ts";
 import {
@@ -370,7 +370,7 @@ export class Session {
   }
 
   /** The rewriter's rule table, which is what a rewrite offers. */
-  rules(): Promise<string[]> {
+  rules(): Promise<RuleInfo[]> {
     return this.act("rules", {}, async () => this.steps.listRules());
   }
 

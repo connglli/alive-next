@@ -620,7 +620,7 @@ entry:
             invocation: { binary: "fake-llrwt", rules: [...rules], timeoutMs: 0 },
           };
         },
-        listRules: async () => ["addi-zero-to-x"],
+        listRules: async () => [{ name: "addi-zero-to-x", pattern: "x + 0 => x" }],
       } as unknown as Llrwt,
     });
     const rewritingTools = createProofAssistantTools(rewriting);
@@ -628,6 +628,7 @@ entry:
     const listed = await callFrom(rewritingTools, "run_list_rules", {});
     expect(listed).toContain("SUCCESS");
     expect(listed).toContain("addi-zero-to-x");
+    expect(listed).toContain("x + 0 => x");
 
     const res = await callFrom(rewritingTools, "goal_rewrite", {
       gid: "g1",

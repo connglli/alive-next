@@ -44,6 +44,12 @@ export interface ApplyOptions {
   timeoutMs?: number;
 }
 
+/** A rewrite rule offered by llrwt, with its name and pattern. */
+export interface RuleInfo {
+  name: string;
+  pattern: string;
+}
+
 /**
  * Thrown when llrwt cannot be run or does not honor its CLI contract. That is
  * a broken installation rather than a search outcome, and turning it into one
@@ -86,11 +92,11 @@ export class Llrwt {
   }
 
   /**
-   * The rule table, one name per line before its description. This is what an
-   * agent offers in a rewrite and what a certificate replays, so both read it
-   * here rather than remembering it.
+   * The rule table, with each rule's name and pattern. This is what an agent
+   * reads to choose rules for a rewrite, so the driver parses both rather
+   * than discarding the pattern.
    */
-  async listRules(): Promise<string[]> {
+  async listRules(): Promise<RuleInfo[]> {
     const child = Bun.spawn([this.path, "--list-rules"], { stdout: "pipe", stderr: "pipe" });
     const [out, err] = await Promise.all([
       new Response(child.stdout).text(),
@@ -102,8 +108,18 @@ export class Llrwt {
     }
     return out
       .split("\n")
-      .map((line) => line.trim().split(/\s+/)[0] ?? "")
-      .filter((name) => name !== "");
+      .map((line) => line.trim())
+      .filter((line) => line !== "")
+      .map((line) => {
+        const dash = line.indexOf(" - ");
+        if (dash === -1) {
+          return { name: line.split(/\s+/)[0] ?? line, pattern: "" };
+        }
+        return {
+          name: line.slice(0, dash).trim(),
+          pattern: line.slice(dash + 3).trim(),
+        };
+      });
   }
 
   /**

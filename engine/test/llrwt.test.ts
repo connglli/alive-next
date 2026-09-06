@@ -65,10 +65,13 @@ describe("llrwt version", () => {
 });
 
 describe("llrwt rules", () => {
-  test("lists one rule name per line, before its description", async () => {
+  test("lists one rule name and pattern per line", async () => {
     const { dir, path } = stub("addi-zero-to-x - x + 0 => x\nsubi-self-to-zero - x - x => 0\n");
     try {
-      expect(await new Llrwt(path).listRules()).toEqual(["addi-zero-to-x", "subi-self-to-zero"]);
+      expect(await new Llrwt(path).listRules()).toEqual([
+        { name: "addi-zero-to-x", pattern: "x + 0 => x" },
+        { name: "subi-self-to-zero", pattern: "x - x => 0" },
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -303,7 +306,9 @@ describe.skipIf(!installed)("llrwt against the toolchain build", () => {
   test(
     "lists the rule table the driver offers",
     async () => {
-      expect(await real.listRules()).toContain("addi-zero-to-x");
+      const rules = await real.listRules();
+      expect(rules.map((r) => r.name)).toContain("addi-zero-to-x");
+      expect(rules.find((r) => r.name === "addi-zero-to-x")?.pattern).toContain("x + 0 => x");
     },
     { timeout: 30_000 },
   );

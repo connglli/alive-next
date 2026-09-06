@@ -10,7 +10,7 @@
 // still alive belongs in the answer the agent reads.
 import type { CheckOutcome, CheckResult, Invocation } from "../drivers/alive2.ts";
 import { type Llops, moduleLines } from "../drivers/llops.ts";
-import type { Llrwt, LlrwtInvocation } from "../drivers/llrwt.ts";
+import type { Llrwt, LlrwtInvocation, RuleInfo } from "../drivers/llrwt.ts";
 import { definedRefAt, named, resolveRef } from "../refs.ts";
 import { type Goal, head, type Side, type Tree, workable } from "./goals.ts";
 import type { Narrowed, Window } from "./narrow.ts";
@@ -393,7 +393,7 @@ export class Steps {
    * but the binary, so like any other read it throws when there is nothing
    * to read it from rather than refusing a move.
    */
-  async listRules(): Promise<string[]> {
+  async listRules(): Promise<RuleInfo[]> {
     if (!this.rewriter) throw new Error("this run has no verified rewriter");
     return this.rewriter.listRules();
   }
