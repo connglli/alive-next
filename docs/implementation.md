@@ -94,13 +94,13 @@ A settled run writes one, into `<session>/certificate`: `programs/` named by con
 A verified run's manifest is a version, the verdict, the root goal, the toolchain `run_start` recorded, and one entry per goal:
 
 - `start` and `end`, the pairs the goal began and ended with, as hashes.
-- `steps`, in the order they happened. A `checked` step names the side it moved and the hash it moved from and to. A `window` step is a checked step whose question was narrowed: it names the same pair and, under `window`, the outlined function and the three programs the narrowing produced, one outer and the two halves. A `strengthen` step names the pair on each end and the outer step that stands behind it.
+- `steps`, in the order they happened. A `checked` step names the side it moved and the hash it moved from and to. A `rule` step names the same pair and, beside it, the rules llrwt ran and the invocation a replay reruns. A `window` step is a checked step whose question was narrowed: it names the same pair and, under `window`, the outlined function and the three programs the narrowing produced, one outer and the two halves. A `strengthen` step names the pair on each end and the outer step that stands behind it.
 - `discharge`, either `checked` or a `split` naming the outlined function and the two children.
 
-check.py needs Python, alive-tv for a proof, llubi for a counterexample, and llops for the subcommands each needs. It takes their paths from the manifest, which records where the run found them and which LLVM each carried, falling back to the name on PATH and saying which it used and whether that is the LLVM the run had. It reads a program only from a file whose name is its hash. For a proof it verifies:
+check.py needs Python, alive-tv for a proof, llubi for a counterexample, llrwt for a proof that rewrites with pre-proved rules, and llops for the subcommands each needs. It takes their paths from the manifest, which records where the run found them and which LLVM each carried, falling back to the name on PATH and saying which it used and whether that is the LLVM the run had. It reads a program only from a file whose name is its hash. For a proof it verifies:
 
 1. Connectivity: each step starts at the current head, and the steps add up to `end`.
-2. Steps: rerun alive-tv in the direction the side implies, a src step forwards and a tgt step backwards. The result must be correct.
+2. Steps: rerun alive-tv in the direction the side implies, a src step forwards and a tgt step backwards. The result must be correct. A rule step instead reruns llrwt under the recorded rules.
 3. Leaves: rerun alive-tv on the pair the goal ended with.
 4. Windows: a narrowed step is rerun as the halves it was cut into. `llops inline` puts each half back into the outer they share and `llops canon` compares it against the pair the step names, which is what says the rest of the body came through untouched, and then the small pair is asked in the direction the side implies.
 5. Options: every check is run with `--disable-undef-input`, which encodes the no-`undef` model the whole proof is made under.
@@ -109,7 +109,7 @@ check.py needs Python, alive-tv for a proof, llubi for a counterexample, and llo
 
 A refuted run's manifest is a version, the verdict, the root goal, the toolchain, the pair the run was asked about, the input, and what the run saw diverge. The pair is the root's first, not the one the run reached: a step may overshoot, so only the original pair is the translation. check.py wraps each side in a `llops harness` around that input, runs both under llubi, and decides for itself. It refuses a src that is free to choose what it does, a `freeze` in a straightline program, since one run of such a src is one behaviour among several and the tgt is allowed any of them. Otherwise three rules settle it. A src with UB on the input allows every target, so it settles nothing. A tgt with UB where the src returned is a refutation, and so is any observation the two disagree on. Poison needs no rule of its own: the harness stores what the entry returns and storing poison is UB, so a poison result arrives as UB on the side that produced it. It reports what it ran in the shape alive2 reports a counterexample in: the error, the input one parameter per line, and what each side observed or the UB it hit. Which error it is comes from where the tgt stopped. The harness stores what the entry returned so it can be observed, and that store is the only UB the harness itself can have, so stopping there is a poison result, `Target is more poisonous than source`, and stopping anywhere else is UB the tgt has of its own, `Source is more defined than target`.
 
-`make test-scripts` builds packages and bends them: a program that is not what its name says, a chain that does not start where it says, a step recorded on the wrong side, a cut whose halves do not inline back, a cut whose halves disagree about the callee, an attribute on a goal that is not a callee, a step of a kind the checker does not know, and, for a counterexample, an input the two programs agree on and one the src has UB on.
+`make test-scripts` builds packages and bends them: a program that is not what its name says, a chain that does not start where it says, a step recorded on the wrong side, a rule step to a program its rules do not print, a cut whose halves do not inline back, a cut whose halves disagree about the callee, an attribute on a goal that is not a callee, a step of a kind the checker does not know, and, for a counterexample, an input the two programs agree on and one the src has UB on.
 
 ## visualize.py
 
@@ -155,7 +155,7 @@ The hooks are part of the dev environment, so `make deps-dev` provisions both: t
 
 ### The toolchain
 
-llops, alive-tv and llubi are built from source, from the pins in `scripts/depman.sh`, against one LLVM. Mixing builds is unsupported: the three agree on what a module means only when they share an LLVM, and a system LLVM or a packaged alive2 is not a configuration any target produces.
+llops, alive-tv, llubi and llrwt are built from source, from the pins in `scripts/depman.sh`, against one LLVM. Mixing builds is unsupported: the LLVM tools agree on what a module means only when they share an LLVM, and a system LLVM or a packaged alive2 is not a configuration any target produces. llrwt is the exception to the agreement: it is a Lean binary that translates through the toolchain's own mlir-translate and mlir-opt at run time, so what counts as built is the binary answering `--version` and listing its rules.
 
 A toolchain is one directory holding that build, and one can serve several checkouts. Its layout is a contract between `scripts/depman.sh`, which builds into it, and `engine/core/toolchain.ts`, which reads from it:
 
@@ -163,19 +163,20 @@ A toolchain is one directory holding that build, and one can serve several check
 <toolchain>/llvm-project/build/bin/llvm-config
 <toolchain>/alive2/build/alive-tv
 <toolchain>/llubi-legacy/build/llubi
+<toolchain>/veir/.lake/build/bin/llrwt
 <toolchain>/llops/build/llops
 <toolchain>/toolchain.json      what was built, from which revisions
 ```
 
 Where that directory is has one answer: the `TOOLCHAIN` environment variable, then `toolchain` in `config.jsonc`, then `deps/` in the repository. `scripts/depman.sh toolchain` prints it, and the Makefile, the agent and `llops/test/llops_test.py` ask rather than resolving it again.
 
-A run reads the toolchain before it proves anything: it asks each binary which LLVM it carries and stops if they disagree or one is missing. What it found, with `toolchain.json`, goes into `run_start`.
+A run reads the toolchain before it proves anything: it asks the LLVM tools which release they carry and stops if they disagree or one is missing, while llrwt answers with its version instead. What it found, with `toolchain.json`, goes into `run_start`.
 
 ### Dependencies
 
 `scripts/depman.sh` owns the toolchain, and the host tools beside it: bun with the JS packages, and uv with the Python ones. The host tools are not part of the toolchain and are installed where their own installers put them; a machine that already has one keeps it. `make install-deps` builds what is missing and then llops; `make deps-status` reports what is there; a single dependency is `make deps-llvm`, `make deps-alive2` and so on, and `FORCE=1` rebuilds one that is already present.
 
-What counts as missing is one check per dependency, so a build that already fits is left alone. For LLVM it is an `llvm-config` in the toolchain reporting the pinned release, with RTTI, which alive2 needs. For alive2 and llubi it is the binary being there and reporting that same release. For the Python packages it is `uv sync --check`, which compares the environment against `uv.lock` the way `bun.lock` pins the JS side, and for the dev environment the same plus the git hooks being in place. Prerequisites we do not install (git, cmake, ninja, curl, a C++ compiler, and the Z3 development headers alive2 needs) are reported with the command that installs them.
+What counts as missing is one check per dependency, so a build that already fits is left alone. For LLVM it is an `llvm-config` in the toolchain reporting the pinned release, with RTTI, which alive2 needs. For alive2 and llubi it is the binary being there and reporting that same release. For veir it is llrwt being there and listing its rules. For the Python packages it is `uv sync --check`, which compares the environment against `uv.lock` the way `bun.lock` pins the JS side, and for the dev environment the same plus the git hooks being in place. Prerequisites we do not install (git, cmake, ninja, curl, a C++ compiler, and the Z3 development headers alive2 needs) are reported with the command that installs them. Building veir needs lake, which elan provides; a machine without it is told how to install it.
 
 Four details are worth knowing before changing that script:
 

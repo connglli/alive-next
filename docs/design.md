@@ -136,7 +136,7 @@ A session looks like this:
 
 1. The framework creates the root goal `(LHS, RHS)`.
 2. The agent inspects (`status`, `show`, `diff`, `analyze`) and picks a strategy: usually, find aligned cut points and `split`, rewriting one side first when no alignment exists yet.
-3. On each open leaf goal: if it looks small enough, `check` it directly. Otherwise rewrite the src toward the tgt (`apply`, transactions), `strengthen` interfaces where the callee lacks facts, and `split` further.
+3. On each open leaf goal: if it looks small enough, `check` it directly. Otherwise rewrite the src toward the tgt (`rewrite`, transactions), `strengthen` interfaces where the callee lacks facts, and `split` further.
 4. A failed commit, a failed check, or an eager cross-check refutation returns a local counterexample as a hint. The agent either treats it as search feedback (revert, try another path) or investigates it as a possible real miscompilation: use `interp`, `solve`, `bash` to hunt for a whole-program input, then `report_cex` to certify it.
 5. The session ends when the root goal is proved (verified), the root goal is refuted (counterexample), or the budget runs out (unknown).
 
@@ -157,7 +157,7 @@ Every tool call is logged. Tools that create certified steps record enough to re
 
 ### Rewriting
 
-- `apply(gid, side, rule_id, location)`: apply a pre-proved rewrite rule at a location on the head of the given side. Certified without running alive2; the result becomes the new head.
+- `rewrite(gid, side, rules)`: apply the verified rewriter's named pre-proved rules to fixpoint on the head of the given side. Certified without running alive2; the result becomes the new head.
 - `begin(gid, side)`: open a transaction on the head of the given side. At most one open transaction per goal side; other tools on that goal side are rejected until `commit` or `abort`.
 - `edit(op)`: one edit inside the open transaction. Edit operations are semantic, not positional: each op is one coherent action that also carries out its consequential changes elsewhere in the body, so an intent takes one call instead of several raw edits. Initial catalog, extensible as we learn what agents actually need:
   - `swap(%a, %b)`: exchange the positions of two instructions.
@@ -240,7 +240,7 @@ Two tiers, drawn by one criterion: can a bug here cause a wrong verdict to be ac
 
 - alive2, and transitively the SMT solver it trusts (Z3) and the LLVM IR parser/printer it links. This is the largest real-world risk in the whole trust base; everything else of LLVM is out.
 - llubi, for counterexample verdicts only: a llubi bug cannot fake "verified" (that is alive2's side), only "counterexample", and a replay is a single concrete input that is easy to cross-check independently.
-- The pre-proved rewrite rule applier (used by `check.py` to replay rule steps), together with the rules' external proofs.
+- The pre-proved rewrite rule applier llrwt (used by `check.py` to replay rule steps), together with the rules' external proofs.
 - `check.py`: the small standalone checker that encodes chain connectivity, split faithfulness, and tree composition.
 
 **Tier 2, success-critical (untrusted for soundness).** The framework, the analyses, the agent, and `bash` scratch work. A bug here can waste time, mislead the search, or end the run at "unknown"; it cannot survive a certificate replay, so it cannot corrupt a verdict. These components are still engineered and tested like normal software, because the tool's success rate depends on them. The framework in particular orchestrates the search and assembles the package, but its mistakes show up as failed replays, not wrong answers.

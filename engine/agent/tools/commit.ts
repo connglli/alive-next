@@ -3,7 +3,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
 import type { Fallback } from "../../core/state/steps.ts";
-import { nameFor, toolResultFrom } from "./format.ts";
+import { formatEager, nameFor, toolResultFrom } from "./format.ts";
 
 export function createCommitTool(session: Session) {
   return defineTool({
@@ -53,23 +53,7 @@ export function createCommitTool(session: Session) {
         );
       }
       const fallback = fallbackSummary(step.fallback);
-      let eager = "";
-      if (step.eager) {
-        const eagerOutcome =
-          step.eager.outcome === "correct"
-            ? "proved"
-            : step.eager.outcome === "incorrect"
-              ? "refuted"
-              : "unknown";
-        const eagerBudget = step.eager.invocation.timeoutMs;
-        const eagerMs = step.eager.ms;
-        const eagerDetail =
-          step.eager.outcome === "incorrect" && step.eager.detail ? `\n${step.eager.detail}` : "";
-        eager =
-          eagerOutcome === "proved"
-            ? `, the new pair is proved in ${eagerMs}ms (${eagerBudget}ms budget)`
-            : `, the new pair is ${eagerOutcome} (${eagerMs}ms, ${eagerBudget}ms budget)${eagerDetail}`;
-      }
+      const eager = formatEager(step.eager);
       return toolResultFrom(
         session,
         true,

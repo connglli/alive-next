@@ -355,6 +355,11 @@ export class Session {
     );
   }
 
+  /** The rewriter's rule table, which is what a rewrite offers. */
+  rules(): Promise<string[]> {
+    return this.act("rules", {}, async () => this.steps.listRules());
+  }
+
   /** Open a transaction on a goal's side, which is how every rewrite starts. */
   begin(gid: string, side: Side): Promise<Transaction> {
     return this.act(

@@ -14,6 +14,7 @@ import { certify } from "../cert/main.ts";
 import { loadConfig, repoRoot } from "../core/config.ts";
 import { AliveTv } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
+import { Llrwt } from "../core/drivers/llrwt.ts";
 import { Llubi } from "../core/drivers/llubi.ts";
 import { Session } from "../core/session.ts";
 import { timeoutsFrom } from "../core/state/steps.ts";
@@ -114,6 +115,10 @@ const session = await Session.start({
   llops: new Llops(toolchain.path("llops")),
   checker: new AliveTv(toolchain.path("alive-tv"), timeouts.alive2Ms),
   interp: new Llubi(toolchain.path("llubi"), config.timeouts.llubiMs),
+  rewriter: new Llrwt(toolchain.path("llrwt"), timeouts.llrwtMs, {
+    mlirTranslate: toolchain.mlir("mlir-translate"),
+    mlirOpt: toolchain.mlir("mlir-opt"),
+  }),
   timeouts,
   config,
   toolchain: built,

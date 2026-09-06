@@ -389,6 +389,16 @@ export class Steps {
   }
 
   /**
+   * The rewriter's rule table, which is what a rewrite offers. Reads nothing
+   * but the binary, so like any other read it throws when there is nothing
+   * to read it from rather than refusing a move.
+   */
+  async listRules(): Promise<string[]> {
+    if (!this.rewriter) throw new Error("this run has no verified rewriter");
+    return this.rewriter.listRules();
+  }
+
+  /**
    * Replace one side of a goal with what the verified rewriter makes of it.
    * The rules' external proofs are what certify the move, so no alive2 run of
    * its own is needed; what is recorded is the invocation a replay reruns. An

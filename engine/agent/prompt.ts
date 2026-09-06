@@ -22,13 +22,13 @@ A turn does not otherwise end the run if you call no tool, or only use tools unr
 
 There are two ways to change a goal:
 
-1. **Perform a certified step:** Replace either \`src\` or \`tgt\` with a modified version. This helps you find fine-grained refinement steps. alive2 must confirm that the refinement claim still holds at each *small* step.
+1. **Perform a certified step:** Replace either \`src\` or \`tgt\` with a modified version. This helps you find fine-grained refinement steps. A step is certified either by the verified rewriter applying pre-proved peephole rules, with no solver run of its own, or by alive2 confirming that the refinement claim still holds at each *small* step.
 
 2. **Perform a program cut:** Split the goal into two new goals: an outer goal and a callee goal. Both programs in the outer goal call an outlined function. The callee goal contains the outlined function bodies. Proving both new goals proves the original goal.
 
 ## How to use certified steps
 
-Optimization opportunities in the \`src\` side or anti-optimization opportunities in the \`tgt\` side help find certified steps. Find small changes so that alive2 can verify them. Wrap a chain of changes in a transaction which, when committed, will verify the change.
+Optimization opportunities in the \`src\` side or anti-optimization opportunities in the \`tgt\` side help find certified steps. Prefer the verified rewriter where its integer arithmetic and bitwise peephole rules apply: it is cheap and needs no solver. It knows nothing of floating point, vectors, memory operations or calls, so input outside that subset passes through unchanged or fails with its reason. Otherwise find small changes so that alive2 can verify them. Wrap a chain of changes in a transaction which, when committed, will verify the change.
 
 The framework chooses the required refinement direction, so do not specify it yourself. The framework automatically enforces the no-\`undef\` model by passing \`--disable-undef-input\` to alive2, so do not worry.
 

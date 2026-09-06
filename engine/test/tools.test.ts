@@ -19,6 +19,7 @@ import {
 } from "../agent/tools/index.ts";
 import type { CheckOptions, CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
+import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import type { Checker } from "../core/state/steps.ts";
@@ -587,6 +588,62 @@ describe.skipIf(!built)("the tool layer", () => {
     });
     expect(res).toContain("(before: %2..%2");
     expect(res).toContain("with preconditions (parameter 0: noundef)");
+  });
+
+  test("goal_rewrite certifies a rewrite without a solver run of its own", async () => {
+    const folded = `define i32 @f(i32 %x) {
+entry:
+  ret i32 %x
+}
+`;
+    const rewriting = await Session.start({
+      dir: join(dir, "rewrite-session"),
+      src: `define i32 @f(i32 %x) {
+entry:
+  %s = add i32 %x, 0
+  ret i32 %s
+}
+`,
+      tgt: folded,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: {
+        apply: async (_module: string, rules: string[]) => ({
+          ok: true as const,
+          module: folded,
+          changed: true,
+          invocation: { binary: "fake-llrwt", rules: [...rules], timeoutMs: 0 },
+        }),
+        listRules: async () => ["addi-zero-to-x"],
+      } as unknown as Llrwt,
+    });
+    const rewritingTools = createProofAssistantTools(rewriting);
+
+    const listed = await callFrom(rewritingTools, "run_list_rules", {});
+    expect(listed).toContain("SUCCESS");
+    expect(listed).toContain("addi-zero-to-x");
+
+    const res = await callFrom(rewritingTools, "goal_rewrite", {
+      gid: "g1",
+      side: "src",
+      rules: ["addi-zero-to-x"],
+    });
+    expect(res).toContain("SUCCESS");
+    expect(res).toContain("rewrote g1 src with addi-zero-to-x");
+    expect(res).toContain("the new pair is proved");
+    expect(rewriting.verdict).toBe("verified");
+
+    const refused = await callFrom(rewritingTools, "goal_rewrite", {
+      gid: "g1",
+      side: "src",
+      rules: [],
+    });
+    expect(refused).toContain("FAILURE");
+  });
+
+  test("run_list_rules refuses a run with no rewriter", async () => {
+    expect(await call("run_list_rules", {})).toContain("FAILURE");
   });
 
   test("tree_split_preview discovers live-ins and validates candidate cuts without mutating tree", async () => {
