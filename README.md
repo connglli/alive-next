@@ -34,7 +34,18 @@ make test
 ```
 
 ### Agent
-The agent is built upon [Pi](https://github.com/earendil-works/pi). Start `./engine/node_modules/.bin/pi` and `/login` to login, or export a provider's key as environment variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `DEEPSEEK_API_KEY`. To use local OpenAI-compatible servers, such as Ollama or vLLM or llama.cpp, declare it in `~/.pi/agent/models.json` or in `.pi/extensions/`, [docs/agent.md](docs/agent.md#configuration) has the recipe.
+The agent is built upon [Pi](https://github.com/earendil-works/pi).
+
+Start `cd engine; bun x pi` and `/login` to login, or export a provider's key as environment variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `DEEPSEEK_API_KEY`.
+
+To use local OpenAI-compatible servers, such as Ollama or vLLM or llama.cpp, declare it in `~/.pi/agent/models.json` or in `.pi/extensions/`. [docs/agent.md](docs/agent.md#configuration) has the recipe.
+
+Use the following commands to list all available models:
+
+```sh
+cd engine
+bun run agent --list-models                        # what this machine can reach
+```
 
 ## Run
 
@@ -42,9 +53,8 @@ Run the agent to find a refinement proof of a pair of LLVM IR files, `a.ll` and 
 
 ```sh
 cd engine
-bun run agent a.ll b.ll
 
-bun run agent --list-models                        # what this machine can reach
+bun run agent a.ll b.ll # prove with default model for one run
 
 bun run agent -m deepseek/deepseek-v4-flash a.ll b.ll # prove with one model for one run
 

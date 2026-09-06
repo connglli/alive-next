@@ -80,7 +80,28 @@ Nothing about a model is configured here. Pi has a machine layer and a project l
 - `.pi/` in the repository is the project: `extensions/` for providers this checkout proves with, `settings.json` for which of them is the default. Pi reads it for `pi` run in this repository, and the engine names the same paths, so one declaration serves either. It is gitignored, because which models a machine can reach is a fact about that machine.
 - `--model`, `--provider` and `--thinking` choose for one run, over both. They resolve through Pi's own `resolveCliModel`, so `provider/id`, a bare id and a `:level` suffix mean here what they mean in `pi`, ambiguity errors included.
 
-A local server, Ollama or vLLM or llama.cpp, is a provider like any other. For a machine it goes in `~/.pi/agent/models.json`, which is what Pi's [models guide](../engine/node_modules/@earendil-works/pi-coding-agent/docs/models.md) documents. For one checkout it goes in `.pi/extensions/`, because Pi reads models from one file per machine and has no project counterpart, so a project declares a provider as an extension instead:
+An OpenAI-compatible model service, or a local server (Ollama or vLLM or llama.cpp), is a provider like any other.
+
+For OpenAI-compatible model services, it goes in `~/.pi/agent/models.json`. For example:
+
+```json
+{
+  "providers": {
+    "myprovider": {
+      "baseUrl": "https://api.myprovider.com/v1",
+      "api": "openai-completions",
+      "apiKey": "sk-myprovider-xxxxxx-yyyyyy-zzzzzz",
+      "models": [
+        {
+          "id": "glm-5.3-flash"
+        }
+      ]
+    }
+  }
+}
+```
+
+For local servers, it goes in `.pi/extensions/` as an extension, for example:
 
 ```typescript
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -97,7 +118,7 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-[Pi's custom-provider guide](../engine/node_modules/@earendil-works/pi-coding-agent/docs/custom-provider.md) is the reference for the rest of that shape.
+[Pi's models guide](https://github.com/earendil-works/pi/tree/main/packages/coding-agent/docs/models.md) and [Pi's custom-provider guide](https://github.com/earendil-works/pi/tree/main/packages/coding-agent/docs/custom-provider.md) are references.
 
 The project layer is read from the repository rather than from the session `cwd` Pi would find it beside, because that `cwd` is the run's scratch directory. `noExtensions` drops everything discovered on the machine and keeps what a caller names, so a run loads this repository's extensions and nothing else.
 
