@@ -8,7 +8,7 @@
 // refusal and which into a broken installation. The last section drives the
 // real binary instead, gated on the toolchain having one, which is what pins
 // the llrwt side the mapping depends on: the exit codes, the message wording,
-// and that success prints afresh rather than echoing.
+// a rewrite printing afresh, and an untouched input echoing byte-identical.
 import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -112,6 +112,22 @@ describe("llrwt apply", () => {
     const { dir, path } = stub(echo);
     try {
       const result = await new Llrwt(path).apply(`${echo}\n`, ["add_zero"]);
+      if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
+      expect(result.changed).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("printing noise alone is unchanged", async () => {
+    // Surrounding blank lines and trailing whitespace: what a fresh print
+    // adds around an untouched module.
+    const padded = `\n${F.split("\n")
+      .map((line) => `${line}   `)
+      .join("\n")}\n`;
+    const { dir, path } = stub(padded);
+    try {
+      const result = await new Llrwt(path).apply(F, ["add_zero"]);
       if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
       expect(result.changed).toBe(false);
     } finally {
@@ -258,12 +274,11 @@ describe.skipIf(!installed)("llrwt against the toolchain build", () => {
     expect(result.module).toContain("ret i32");
   });
 
-  test("leaves what no rule matches, printed afresh rather than echoed", async () => {
+  test("leaves what no rule matches byte-identical", async () => {
     const result = await real.apply(F, ["subi-self-to-zero"]);
     if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
-    // The add survives, under the roundtrip's own value names.
-    expect(result.module).toMatch(/add i32 %\d+, 0/);
-    expect(result.module).not.toBe(F);
+    expect(result.changed).toBe(false);
+    expect(result.module).toBe(F);
   });
 
   test("an unknown rule is a refusal on exit 2", async () => {

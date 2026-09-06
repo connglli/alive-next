@@ -47,7 +47,7 @@ ALIVE2_PIN=0dc2be5f04ccb61caebb909a610968cb2348f196
 LLUBI_REPO=https://github.com/dtcxzyw/llvm-ub-aware-interpreter.git
 LLUBI_PIN=9798ef7520061b89485475c9739a8c578528f3f7
 VEIR_REPO=https://github.com/connglli/VeIR.git
-VEIR_PIN=d5758e40c45415a345654d5680c56e542610e254
+VEIR_PIN=a7cff357b5275a77a9aaba17842927f3bce0044c
 
 # The release a tool has to report to count as built against our LLVM.
 LLVM_VERSION=${LLVM_PIN#llvmorg-}

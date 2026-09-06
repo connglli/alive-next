@@ -1,7 +1,8 @@
 // Driving llrwt, the pre-proved rewrite rule applier.
 //
-// A file in, rewritten IR out, exit 0 on success. Success always prints
-// afresh through the MLIR roundtrip, never echoes. Exit 1 is a failed run,
+// A file in, rewritten IR out, exit 0 on success. A rewrite prints afresh
+// through the MLIR roundtrip, with headers the input lacks stripped; when no
+// rule fires the input comes back byte-identical. Exit 1 is a failed run,
 // exit 2 a bad command line, an unknown rule, or a missing translator.
 // Refusals are values, and the normal case while searching; only a binary
 // that will not run throws. The translators default to PATH; the driver
@@ -29,7 +30,11 @@ export interface LlrwtInvocation {
 
 export interface ApplyResult {
   module: Module;
-  /** Byte comparison of stdout against the input, before any canonicalization. */
+  /**
+   * Whether the rewrite moved the module: the returned module against the
+   * input, ignoring leading and trailing blank lines and trailing
+   * whitespace, before any canonicalization.
+   */
   changed: boolean;
   invocation: LlrwtInvocation;
 }
@@ -157,7 +162,12 @@ export class Llrwt {
         return { ok: false, code: "timeout", message: `killed after ${wallClock(timeoutMs)}ms` };
       }
       if (child.exitCode === 0) {
-        return { ok: true, module: out, changed: out !== module, invocation };
+        return {
+          ok: true,
+          module: out,
+          changed: normalized(out) !== normalized(module),
+          invocation,
+        };
       }
       // Exit 2 is a command line llrwt did not understand, which is our bug
       // unless the complaint is about a rule name, which is the agent's: rule
@@ -189,4 +199,13 @@ function isUnknownRule(text: string): boolean {
 
 function detail(stderr: string, stdout: string): string {
   return stderr.trim() || stdout.trim() || "llrwt said nothing";
+}
+
+/** A module with the printing noise removed: surrounding blank lines and trailing whitespace. */
+function normalized(module: string): string {
+  return module
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim();
 }
