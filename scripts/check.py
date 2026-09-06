@@ -188,7 +188,7 @@ class Package:
         text=True,
         timeout=60,
       )
-    except subprocess.SubprocessError as error:
+    except (OSError, subprocess.SubprocessError) as error:
       raise Refused(f"llubi did not finish: {error}") from error
     self.seconds += time.monotonic() - started
     self.queries += 1
@@ -223,7 +223,7 @@ class Package:
           text=True,
           timeout=max(60, timeout_ms / 1000 + 30),
         )
-      except subprocess.SubprocessError as error:
+      except (OSError, subprocess.SubprocessError) as error:
         raise Refused(f"llrwt did not finish: {error}") from error
       if done.returncode != 0:
         raise Refused(f"llrwt refused the replay: {done.stderr.strip() or done.stdout.strip()}")

@@ -2,9 +2,9 @@
 # scripts/depman.sh owns everything about the toolchain, including the pins.
 #
 # One knob matters: TOOLCHAIN is where LLVM, alive2, llubi, llrwt and llops are
-# built, and every one of them is built from source against that one LLVM. It is set
-# in config.jsonc, which is also what a run reads, and the environment
-# overrides it for one command.
+# built; the LLVM tools are built from source against that one LLVM, and llrwt
+# bridges through its MLIR tools. It is set in config.jsonc, which is also what
+# a run reads, and the environment overrides it for one command.
 SHELL := /usr/bin/env bash
 JOBS ?= $(shell nproc)
 BUILD_TYPE ?= Release

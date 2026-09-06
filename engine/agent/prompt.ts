@@ -28,7 +28,7 @@ There are two ways to change a goal:
 
 ## How to use certified steps
 
-Optimization opportunities in the \`src\` side or anti-optimization opportunities in the \`tgt\` side help find certified steps. Prefer the verified rewriter where its integer arithmetic and bitwise peephole rules apply: it is cheap and needs no solver. It knows nothing of floating point, vectors, memory operations or calls, so input outside that subset passes through unchanged or fails with its reason. Otherwise find small changes so that alive2 can verify them. Wrap a chain of changes in a transaction which, when committed, will verify the change.
+Optimization opportunities in the \`src\` side or anti-optimization opportunities in the \`tgt\` side help find certified steps. Prefer the verified rewriter for optimizations on the \`src\` side where its integer arithmetic and bitwise peephole rules apply: it is cheap and needs no solver. Input outside the rules it matches passes through unchanged or fails with its reason, such as floating point numbers, vectors, memory operations or calls, etc. Otherwise, or when transforming the \`tgt\` side, find small changes so that alive2 can verify them. Wrap a chain of changes in a transaction which, when committed, will verify the change.
 
 The framework chooses the required refinement direction, so do not specify it yourself. The framework automatically enforces the no-\`undef\` model by passing \`--disable-undef-input\` to alive2, so do not worry.
 
