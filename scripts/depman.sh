@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Provision and inspect what alive-next builds and runs against: the LLVM
-# toolchain, and the host tools (bun with the JS packages, uv with the Python
-# ones).
+# toolchain (including llrwt), and the host tools (bun with the JS packages,
+# uv with the Python ones).
 #
 # alive-tv, llubi and llops all parse and print LLVM IR, and they mean the same
 # thing by a module only when they are built against the same LLVM. So there is
@@ -9,7 +9,7 @@
 # binary from someone else's checkout is a different dialect, and the failures
 # it produces look like search failures rather than build mistakes. Everything
 # LLVM-based is therefore built from source, from the pins below, against one
-# LLVM.
+# LLVM; llrwt is the exception, built from VeIR with lake.
 #
 # TOOLCHAIN is where that build lives, and it defaults to deps/ inside the
 # repository. It is a knob because one toolchain can serve several checkouts

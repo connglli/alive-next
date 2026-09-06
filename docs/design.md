@@ -240,7 +240,7 @@ Two tiers, drawn by one criterion: can a bug here cause a wrong verdict to be ac
 
 - alive2, and transitively the SMT solver it trusts (Z3) and the LLVM IR parser/printer it links. This is the largest real-world risk in the whole trust base; everything else of LLVM is out.
 - llubi, for counterexample verdicts only: a llubi bug cannot fake "verified" (that is alive2's side), only "counterexample", and a replay is a single concrete input that is easy to cross-check independently.
-- The pre-proved rewrite rule applier llrwt (used by `check.py` to replay rule steps), together with the rules' external proofs.
+- The verified rewriter llrwt (used by `check.py` to replay rule steps), together with the rules' external proofs and the MLIR translators it runs under.
 - `check.py`: the small standalone checker that encodes chain connectivity, split faithfulness, and tree composition.
 
 **Tier 2, success-critical (untrusted for soundness).** The framework, the analyses, the agent, and `bash` scratch work. A bug here can waste time, mislead the search, or end the run at "unknown"; it cannot survive a certificate replay, so it cannot corrupt a verdict. These components are still engineered and tested like normal software, because the tool's success rate depends on them. The framework in particular orchestrates the search and assembles the package, but its mistakes show up as failed replays, not wrong answers.

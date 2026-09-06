@@ -2,10 +2,12 @@
 // config.jsonc, which is machine-local and gitignored, and uncomment what you
 // want to change. Nothing has to be set: every option here has a default.
 {
-  // Where LLVM, alive2, llubi and llops were built. They read and write the
-  // same IR, so they have to be one build against one LLVM; `make install-deps
-  // TOOLCHAIN=<dir>` builds it, and this says which one a run uses. Relative
-  // paths are relative to the repository, and deps/ is the default.
+  // Where LLVM, alive2, llubi, llrwt and llops were built. The LLVM tools
+  // read and write the same IR, so they have to be one build against one LLVM;
+  // llrwt is a Lean binary that translates through that LLVM's MLIR tools.
+  // `make install-deps TOOLCHAIN=<dir>` builds it, and this says which one a
+  // run uses. Relative paths are relative to the repository, and deps/ is the
+  // default.
   "toolchain": "deps",
 
   // Milliseconds, and what a run may spend on one question. A proof is written

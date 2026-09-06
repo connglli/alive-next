@@ -97,7 +97,7 @@ A verified run's manifest is a version, the verdict, the root goal, the toolchai
 - `steps`, in the order they happened. A `checked` step names the side it moved and the hash it moved from and to. A `rule` step names the same pair and, beside it, the rules llrwt ran and the invocation a replay reruns. A `window` step is a checked step whose question was narrowed: it names the same pair and, under `window`, the outlined function and the three programs the narrowing produced, one outer and the two halves. A `strengthen` step names the pair on each end and the outer step that stands behind it.
 - `discharge`, either `checked` or a `split` naming the outlined function and the two children.
 
-check.py needs Python, alive-tv for a proof, llubi for a counterexample, llrwt for a proof that rewrites with pre-proved rules, and llops for the subcommands each needs. It takes their paths from the manifest, which records where the run found them and which LLVM each carried, falling back to the name on PATH and saying which it used and whether that is the LLVM the run had. It reads a program only from a file whose name is its hash. For a proof it verifies:
+check.py needs Python, alive-tv for a proof, llubi for a counterexample, llrwt for a proof that rewrites with pre-proved rules, and llops for the subcommands each needs. It takes their paths from the manifest, which records where the run found them and which LLVM each carried (llrwt records a version line instead, and the translators it ran under travel in each step's invocation); a path that is not there falls back to the name on PATH and an option overrides both. It reads a program only from a file whose name is its hash. For a proof it verifies:
 
 1. Connectivity: each step starts at the current head, and the steps add up to `end`.
 2. Steps: rerun alive-tv in the direction the side implies, a src step forwards and a tgt step backwards. The result must be correct. A rule step instead reruns llrwt under the recorded rules.
@@ -155,7 +155,7 @@ The hooks are part of the dev environment, so `make deps-dev` provisions both: t
 
 ### The toolchain
 
-llops, alive-tv, llubi and llrwt are built from source, from the pins in `scripts/depman.sh`, against one LLVM. Mixing builds is unsupported: the LLVM tools agree on what a module means only when they share an LLVM, and a system LLVM or a packaged alive2 is not a configuration any target produces. llrwt is the exception to the agreement: it is a Lean binary that translates through the toolchain's own mlir-translate and mlir-opt at run time, so what counts as built is the binary answering `--version` and listing its rules.
+llops, alive-tv and llubi are built from source, from the pins in `scripts/depman.sh`, against one LLVM. Mixing builds is unsupported: the LLVM tools agree on what a module means only when they share an LLVM, and a system LLVM or a packaged alive2 is not a configuration any target produces. llrwt is the exception: it is a Lean binary built from VeIR that translates through the toolchain's own mlir-translate and mlir-opt at run time, so what counts as built is the binary answering `--version` and listing its rules.
 
 A toolchain is one directory holding that build, and one can serve several checkouts. Its layout is a contract between `scripts/depman.sh`, which builds into it, and `engine/core/toolchain.ts`, which reads from it:
 

@@ -37,14 +37,14 @@ A flawed proposal wastes search budget, but can never compromise soundness or yi
 
 * **Engine (`engine/`):** Written in TypeScript and executed with [Bun](https://bun.sh). Manages the stateful proof infrastructure: the goal tree, program store, transactions, toolchain drivers, session lifecycle, and certificate generation. Hosts the agent harness built on the [Pi framework](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`).
 * **Native Toolbox (`llops/`):** Stateless C++ binary linked against LLVM. Communicates via JSON over standard I/O to perform IR validation, canonical printing, analysis, outlining, inlining, concrete test harness synthesis, flags editing, and LLVM simplification.
-* **External Checkers:** Pinned revisions of `alive-tv` (SMT refinement checker) and `llubi` (UB-aware interpreter) compiled from source against the toolchain's LLVM.
+* **External Checkers:** Pinned revisions of `alive-tv` (SMT refinement checker), `llubi` (UB-aware interpreter), and `llrwt` (verified rewriter built from VeIR), compiled from source against the toolchain's LLVM.
 * **Verification and Visualization Scripts (`scripts/`):** Standalone Python standard-library scripts. `scripts/check.py` independently replays and validates certificate packages. `scripts/visualize.py` renders an interactive, self-contained HTML page of the execution trajectory.
 
 ### Common Workflows
 
 ```bash
 # Build and Dependencies
-make install-deps                         # Build pinned LLVM, alive2, llubi, and llops
+make install-deps                         # Build pinned LLVM, alive2, llubi, llrwt, and llops
 make deps-status                          # Inspect toolchain and host dependency status
 
 # Running the Agent

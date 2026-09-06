@@ -26,9 +26,10 @@ export interface TimeoutConfig {
 export interface Config {
   timeouts: TimeoutConfig;
   /**
-   * Where LLVM, alive2, llubi and llops were built, absolute. One directory
-   * rather than a path per binary, because they are not four choices: they
-   * have to be one build against one LLVM, which is what a toolchain is.
+   * Where LLVM, alive2, llubi, llrwt and llops were built, absolute. One
+   * directory rather than a path per binary: the LLVM tools are one build
+   * against one LLVM, and llrwt is a Lean binary that translates through
+   * that LLVM's MLIR tools.
    */
   toolchain: string;
   /** The file this came from, for the run_start snapshot. */
