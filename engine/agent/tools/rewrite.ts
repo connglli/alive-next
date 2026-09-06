@@ -29,17 +29,12 @@ export function createRewriteTool(session: Session) {
         return toolResultFrom(
           session,
           false,
-          `refused (${rewritten.code}): ${rewritten.message}; rewrite by hand with tx_begin, tx_edit and tx_commit instead`,
+          `refused, ${rewritten.code}: ${rewritten.message}`,
           rewritten,
         );
       }
       if (rewritten.kind === "unchanged") {
-        return toolResultFrom(
-          session,
-          false,
-          "unchanged: no rule fired on this side; name other rules or rewrite by hand with tx_begin, tx_edit and tx_commit",
-          rewritten,
-        );
+        return toolResultFrom(session, false, "unchanged: no rule fired on this side", rewritten);
       }
       const eager = formatEager(rewritten.eager);
       return toolResultFrom(

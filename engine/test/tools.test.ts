@@ -609,12 +609,17 @@ entry:
       checker: new YesMan(),
       interp: noRun,
       rewriter: {
-        apply: async (_module: string, rules: string[]) => ({
-          ok: true as const,
-          module: folded,
-          changed: true,
-          invocation: { binary: "fake-llrwt", rules: [...rules], timeoutMs: 0 },
-        }),
+        apply: async (_module: string, rules: string[]) => {
+          if (rules.includes("bad-rule")) {
+            return { ok: false as const, code: "unknown_rule", message: "unknown rule: bad-rule" };
+          }
+          return {
+            ok: true as const,
+            module: folded,
+            changed: true,
+            invocation: { binary: "fake-llrwt", rules: [...rules], timeoutMs: 0 },
+          };
+        },
         listRules: async () => ["addi-zero-to-x"],
       } as unknown as Llrwt,
     });
@@ -638,6 +643,23 @@ entry:
       rules: [],
     });
     expect(refused).toContain("FAILURE");
+    expect(refused).toContain("refused, no_rules: no rules were named");
+
+    const unknownRefused = await callFrom(rewritingTools, "goal_rewrite", {
+      gid: "g1",
+      rules: ["bad-rule"],
+    });
+    expect(unknownRefused).toContain("FAILURE");
+    expect(unknownRefused).toContain("refused, unknown_rule: unknown rule: bad-rule");
+
+    await callFrom(rewritingTools, "tx_begin", { gid: "g1", side: "src" });
+    const editingRefused = await callFrom(rewritingTools, "goal_rewrite", {
+      gid: "g1",
+      rules: ["addi-zero-to-x"],
+    });
+    expect(editingRefused).toContain("FAILURE");
+    expect(editingRefused).toContain("refused, editing: a transaction is open on g1 src");
+    await callFrom(rewritingTools, "tx_abort", {});
   });
 
   test("run_list_rules refuses a run with no rewriter", async () => {
