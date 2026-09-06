@@ -16,15 +16,10 @@ export function createRewriteTool(session: Session) {
       rules: Type.Array(Type.String(), {
         description: "Rule names from `run_list_rules`, applied to fixpoint.",
       }),
-      timeout_ms: Type.Optional(
-        Type.Integer({
-          description: "Rewriter budget for this call. Spending it is your decision.",
-        }),
-      ),
     }),
-    execute: async (_id, { gid, rules, timeout_ms }) => {
+    execute: async (_id, { gid, rules }) => {
       const side = "src";
-      const rewritten = await session.rewrite(gid, side, rules, timeout_ms);
+      const rewritten = await session.rewrite(gid, side, rules);
       if (rewritten.kind === "refused") {
         return toolResultFrom(
           session,

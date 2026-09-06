@@ -161,10 +161,8 @@ export type CheckStepResult =
       fallback?: Fallback;
     };
 
-/** How a rewrite runs, and whether it should look at where it lands. */
+/** Whether a rewrite looks at where it lands. */
 export interface RewriteStepOptions {
-  /** Wall clock for the rewriter run; defaults to the run's llrwt budget. */
-  timeoutMs?: number;
   /**
    * Whether to check the goal's new pair afterwards. On by default, because
    * catching a discharge early is the point of it, and off for the rewrites
@@ -433,7 +431,7 @@ export class Steps {
     const goal = workable(tree, gid);
     const beforeHash = head(goal, side);
     const applied = await this.rewriter.apply(this.store.get(beforeHash), rules, {
-      timeoutMs: options.timeoutMs ?? this.timeouts.llrwtMs,
+      timeoutMs: this.timeouts.llrwtMs,
     });
     if (!applied.ok) return { kind: "refused", code: applied.code, message: applied.message };
     const after = await this.store.put(applied.module);

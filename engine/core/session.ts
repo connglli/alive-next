@@ -349,13 +349,8 @@ export class Session {
    * step itself. A refusal names the rewriter's reason, which usually means
    * the input is outside the integer peepholes it supports.
    */
-  rewrite(
-    gid: string,
-    side: Side,
-    rules: string[],
-    timeoutMs?: number,
-  ): Promise<RewriteStepResult> {
-    return this.act("rewrite", { gid, side, rules, timeout_ms: timeoutMs }, async (tree) => {
+  rewrite(gid: string, side: Side, rules: string[]): Promise<RewriteStepResult> {
+    return this.act("rewrite", { gid, side, rules }, async (tree) => {
       // TODO: Support tgt->src rewrites (some kind of anti-optimizations).
       if (side !== "src") {
         return {
@@ -370,7 +365,7 @@ export class Session {
       if (editing && this.editing.isEditing(gid, side)) {
         return { kind: "refused", code: "editing", message: transactionMessage(editing) };
       }
-      return this.steps.rewrite(tree, gid, side, rules, { timeoutMs });
+      return this.steps.rewrite(tree, gid, side, rules);
     });
   }
 

@@ -67,7 +67,6 @@ export function formatBudgets(budgets: Timeouts): string {
   return [
     `budgets: a check ${budgets.checkDefaultMs}ms and at most ${budgets.checkCapMs}ms`,
     `a commit ${budgets.alive2Ms}ms`,
-    `a rewrite ${budgets.llrwtMs}ms`,
     `the check after a step ${budgets.eagerCheckMs}ms`,
   ].join(", ");
 }
