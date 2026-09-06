@@ -350,9 +350,15 @@ export class Session {
    * the input is outside the integer peepholes it supports.
    */
   rewrite(gid: string, side: Side, rules: string[], timeoutMs?: number): Promise<RuleResult> {
-    return this.act("rewrite", { gid, side, rules, timeout_ms: timeoutMs }, (tree) =>
-      this.steps.rewrite(tree, gid, side, rules, { timeoutMs }),
-    );
+    return this.act("rewrite", { gid, side, rules, timeout_ms: timeoutMs }, async (tree) => {
+      // A rewrite moves the head the scratch was opened on, so like a revert
+      // it waits while its side is being edited.
+      const editing = this.editing.open();
+      if (editing && this.editing.isEditing(gid, side)) {
+        return { kind: "refused", code: "editing", message: transactionMessage(editing) };
+      }
+      return this.steps.rewrite(tree, gid, side, rules, { timeoutMs });
+    });
   }
 
   /** The rewriter's rule table, which is what a rewrite offers. */

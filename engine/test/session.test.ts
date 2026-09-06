@@ -215,6 +215,19 @@ describe.skipIf(!built)("reading a session", () => {
     expect(refused.message).toContain("a transaction is open");
   });
 
+  test("rewrite refuses while its side is being edited", async () => {
+    const run = await session();
+    const before = await run.show("g1");
+    await run.begin("g1", "src");
+
+    const refused = await run.rewrite("g1", "src", ["addi-zero-to-x"]);
+    expect(refused).toMatchObject({ kind: "refused", code: "editing" });
+    if (refused.kind !== "refused") throw new Error("unreachable");
+    expect(refused.message).toContain("a transaction is open on g1 src");
+    expect((await run.show("g1")).src.hash).toBe(before.src.hash);
+    expect((await run.status()).editing).toMatchObject({ gid: "g1", side: "src", ops: 0 });
+  });
+
   test("split refuses while the goal is being edited", async () => {
     const run = await session();
     await run.begin("g1", "src");
