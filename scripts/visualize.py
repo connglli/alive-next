@@ -358,6 +358,11 @@ def kind_of(row: list[dict]) -> str:
   return row[0]["tool"] if row[0]["kind"] == "tool_call" else row[0]["kind"]
 
 
+def timed(row: list[dict]) -> dict:
+  """The move's elapsed time, present only when the trajectory recorded one."""
+  return {"ms": row[-1]["ms"]} if "ms" in row[-1] else {}
+
+
 def compact(args: object, limit: int = 60) -> str:
   if args in (None, {}):
     return ""
@@ -730,7 +735,7 @@ def render(session: Path) -> str:
       {
         "kind": kind_of(row),
         "label": label(row),
-        "ms": row[-1].get("ms"),
+        **timed(row),
         "focus": run.focus[index],
         "entries": row,
       }

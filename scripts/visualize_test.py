@@ -194,6 +194,11 @@ class TestPage(Case):
     self.session.append({"kind": "tool_call", "id": "t", "tool": "check", "args": {}})
     self.assertEqual(self.data()["events"][-1]["label"], "check() ...")
 
+  def test_a_move_with_no_duration_carries_none(self):
+    events = self.data()["events"]
+    self.assertEqual(events[0]["label"], "run_start")
+    self.assertNotIn("ms", events[0])
+
   def test_every_event_has_a_line_for_the_timeline(self):
     data = self.data()
     self.assertEqual(data["events"][0]["label"], "run_start")
