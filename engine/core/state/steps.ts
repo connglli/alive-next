@@ -412,6 +412,14 @@ export class Steps {
     rules: string[],
     options: { timeoutMs?: number; eager?: boolean } = {},
   ): Promise<RuleResult> {
+    // TODO: Support tgt->src rewrites (some kind of anti-optimizations).
+    if (side !== "src") {
+      return {
+        kind: "refused",
+        code: "side_unsupported",
+        message: "rewriting is supported on src only; peephole rules optimize forward",
+      };
+    }
     if (!this.rewriter) {
       return { kind: "refused", code: "unavailable", message: "this run has no verified rewriter" };
     }

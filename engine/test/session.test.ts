@@ -228,6 +228,12 @@ describe.skipIf(!built)("reading a session", () => {
     expect((await run.status()).editing).toMatchObject({ gid: "g1", side: "src", ops: 0 });
   });
 
+  test("rewrite refuses on the tgt side", async () => {
+    const run = await session();
+    const refused = await run.rewrite("g1", "tgt", ["addi-zero-to-x"]);
+    expect(refused).toMatchObject({ kind: "refused", code: "side_unsupported" });
+  });
+
   test("split refuses while the goal is being edited", async () => {
     const run = await session();
     await run.begin("g1", "src");

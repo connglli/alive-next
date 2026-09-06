@@ -780,6 +780,17 @@ class TestTampered(Case):
     self.assertIn("names no rules", done.stdout + done.stderr)
 
   @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
+  def test_a_rule_step_recorded_on_the_tgt_side(self):
+    # Rules optimize forward, so a rule step read as a tgt step is a claim
+    # the rewriter's proofs do not make.
+    self.ruled()
+    package = self.built.write()
+    self.built.bend(lambda m: m["goals"]["g1"]["steps"][0].update({"side": "tgt"}))
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("rules optimize forward on src only", done.stdout + done.stderr)
+
+  @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
   def test_a_rule_step_replays_with_translator_options(self):
     # The recorded translators are gone on this machine, so the replay
     # names where they are instead; falling back to PATH would find a

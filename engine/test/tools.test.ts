@@ -626,7 +626,6 @@ entry:
 
     const res = await callFrom(rewritingTools, "goal_rewrite", {
       gid: "g1",
-      side: "src",
       rules: ["addi-zero-to-x"],
     });
     expect(res).toContain("SUCCESS");
@@ -636,7 +635,6 @@ entry:
 
     const refused = await callFrom(rewritingTools, "goal_rewrite", {
       gid: "g1",
-      side: "src",
       rules: [],
     });
     expect(refused).toContain("FAILURE");

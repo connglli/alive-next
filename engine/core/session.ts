@@ -351,6 +351,14 @@ export class Session {
    */
   rewrite(gid: string, side: Side, rules: string[], timeoutMs?: number): Promise<RuleResult> {
     return this.act("rewrite", { gid, side, rules, timeout_ms: timeoutMs }, async (tree) => {
+      // TODO: Support tgt->src rewrites (some kind of anti-optimizations).
+      if (side !== "src") {
+        return {
+          kind: "refused",
+          code: "side_unsupported",
+          message: "rewriting is supported on src only; peephole rules optimize forward",
+        };
+      }
       // A rewrite moves the head the scratch was opened on, so like a revert
       // it waits while its side is being edited.
       const editing = this.editing.open();

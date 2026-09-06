@@ -32,7 +32,7 @@ export type Step =
    */
   | {
       kind: "rule";
-      side: "src" | "tgt";
+      side: "src";
       from: Hash;
       to: Hash;
       rules: string[];
@@ -253,7 +253,13 @@ function chainOf(goal: Goal, effects: Effect[]): Step[] {
     if (effect.gid !== goal.id) continue;
     if (effect.effect === "step" && effect.to === goal[effect.side].history[side(effect, si, ti)]) {
       const from = goal[effect.side].history[side(effect, si, ti) - 1] as Hash;
+      // TODO: Support tgt->src rewrites (some kind of anti-optimizations).
       if (effect.how === "rule") {
+        if (effect.side !== "src") {
+          throw new NotCertifiable(
+            `a rule step on ${goal.id} was recorded on ${effect.side}, but rules optimize forward on src only`,
+          );
+        }
         if (!effect.rules || effect.rules.length === 0) {
           throw new NotCertifiable(`a rule step on ${goal.id} names no rules`);
         }

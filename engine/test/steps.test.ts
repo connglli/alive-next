@@ -227,6 +227,12 @@ describe("rewriting", () => {
     if (refused.kind !== "refused") throw new Error("expected a refusal");
     expect(refused.code).toBe("unavailable");
   });
+
+  test("refuses a rewrite on the tgt side", async () => {
+    const { steps } = rewriting(NEW);
+    const refused = await steps.rewrite(await tree(), "g1", "tgt", ["addi-zero-to-x"]);
+    expect(refused).toMatchObject({ kind: "refused", code: "side_unsupported" });
+  });
 });
 
 describe("stepping", () => {

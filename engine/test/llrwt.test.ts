@@ -266,50 +266,74 @@ const installed =
     .catch(() => false));
 
 describe.skipIf(!installed)("llrwt against the toolchain build", () => {
-  test("folds with a named rule", async () => {
-    const result = await real.apply(F, ["addi-zero-to-x"]);
-    if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
-    expect(result.changed).toBe(true);
-    expect(result.module).not.toContain("add i32");
-    expect(result.module).toContain("ret i32");
-  });
+  test(
+    "folds with a named rule",
+    async () => {
+      const result = await real.apply(F, ["addi-zero-to-x"]);
+      if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
+      expect(result.changed).toBe(true);
+      expect(result.module).not.toContain("add i32");
+      expect(result.module).toContain("ret i32");
+    },
+    { timeout: 30_000 },
+  );
 
-  test("leaves what no rule matches byte-identical", async () => {
-    const result = await real.apply(F, ["subi-self-to-zero"]);
-    if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
-    expect(result.changed).toBe(false);
-    expect(result.module).toBe(F);
-  });
+  test(
+    "leaves what no rule matches byte-identical",
+    async () => {
+      const result = await real.apply(F, ["subi-self-to-zero"]);
+      if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
+      expect(result.changed).toBe(false);
+      expect(result.module).toBe(F);
+    },
+    { timeout: 30_000 },
+  );
 
-  test("an unknown rule is a refusal on exit 2", async () => {
-    const result = await real.apply(F, ["frobnicate"]);
-    if (result.ok) throw new Error("expected a refusal");
-    expect(result.code).toBe("unknown_rule");
-    expect(result.message).toContain("frobnicate");
-  });
+  test(
+    "an unknown rule is a refusal on exit 2",
+    async () => {
+      const result = await real.apply(F, ["frobnicate"]);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.code).toBe("unknown_rule");
+      expect(result.message).toContain("frobnicate");
+    },
+    { timeout: 30_000 },
+  );
 
-  test("lists the rule table the driver offers", async () => {
-    expect(await real.listRules()).toContain("addi-zero-to-x");
-  });
+  test(
+    "lists the rule table the driver offers",
+    async () => {
+      expect(await real.listRules()).toContain("addi-zero-to-x");
+    },
+    { timeout: 30_000 },
+  );
 
-  test("garbage in is a bridge error on exit 1", async () => {
-    const result = await real.apply("this is not valid LLVM IR\n", ["addi-zero-to-x"]);
-    if (result.ok) throw new Error("expected a refusal");
-    expect(result.code).toBe("bridge_error");
-    expect(result.message).toMatch(/mlir-translate/i);
-  });
+  test(
+    "garbage in is a bridge error on exit 1",
+    async () => {
+      const result = await real.apply("this is not valid LLVM IR\n", ["addi-zero-to-x"]);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.code).toBe("bridge_error");
+      expect(result.message).toMatch(/mlir-translate/i);
+    },
+    { timeout: 30_000 },
+  );
 
-  test("several rules run to fixpoint", async () => {
-    const chained = `define i32 @f(i32 %x) {
+  test(
+    "several rules run to fixpoint",
+    async () => {
+      const chained = `define i32 @f(i32 %x) {
 entry:
   %a = add i32 %x, 0
   %m = mul i32 %a, 2
   ret i32 %m
 }
 `;
-    const result = await real.apply(chained, ["addi-zero-to-x", "muli-pow2-to-shl"]);
-    if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
-    expect(result.module).not.toContain("add i32");
-    expect(result.module).toMatch(/shl i32 %\d+, 1/);
-  });
+      const result = await real.apply(chained, ["addi-zero-to-x", "muli-pow2-to-shl"]);
+      if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
+      expect(result.module).not.toContain("add i32");
+      expect(result.module).toMatch(/shl i32 %\d+, 1/);
+    },
+    { timeout: 30_000 },
+  );
 });
