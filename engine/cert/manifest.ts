@@ -1,6 +1,6 @@
 // The manifest: what a run earned, pruned to what settled the root.
 //
-// This is the whole of what a certificate says, and scripts/check.py is the
+// This is the whole of what a certificate says, and kernel/check.py is the
 // only reader that matters. Nothing here is a claim on its own. A proof's
 // every step names the pair it moved and the side it moved, and the checker
 // reruns the check that certified it, in the direction the side implies. A

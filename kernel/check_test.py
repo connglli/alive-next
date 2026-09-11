@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Tests for check.py.
+"""Tests for kernel/check.py.
 
-    python3 scripts/check_test.py
+    python3 kernel/check_test.py
 
 A golden package has to pass and every bent one has to fail, which is the half
 that matters: a checker that accepts a certificate nobody could have earned is
 worse than no checker.
 
 Packages are built here rather than recorded, so what is under test is the
-rule check.py applies and not a run that happened to go well.
+rule kernel/check.py applies and not a run that happened to go well.
 """
 
 import hashlib
@@ -22,7 +22,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CHECK = ROOT / "scripts" / "check.py"
+CHECK = ROOT / "kernel" / "check.py"
 
 
 def toolchain() -> Path:

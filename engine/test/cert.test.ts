@@ -2,7 +2,7 @@
 //
 // What is under test is the manifest: which goals it keeps, what each chain
 // says, and what it refuses to certify. Whether the proof holds is
-// scripts/check.py's question, and scripts/check_test.py asks it.
+// kernel/check.py's question, and kernel/check_test.py asks it.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

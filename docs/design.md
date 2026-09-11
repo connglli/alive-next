@@ -104,9 +104,9 @@ This is the deepest cost item in the design: a fact assumed by a callee is prove
 
 ## Analyses are untrusted proposers
 
-Analyses only propose facts; a fact enters the certificate solely through an annotation step that alive2 proves. Because of that, we reuse LLVM's own analyses (known bits, value ranges, alias analysis) directly: a bug in them wastes time on rejected facts but cannot corrupt a verdict, and linking them into the framework adds nothing to the trust base, since the framework is untrusted anyway and `check.py` never runs an analysis. The `analyze` tool is a thin adapter that runs an LLVM analysis at a program point and reports the facts in a form that maps directly onto attributes and assumes. We write an analysis of our own only where LLVM has no fitting one, for example queries shaped around a planned cut; reimplementing what LLVM already does well would buy nothing.
+Analyses only propose facts; a fact enters the certificate solely through an annotation step that alive2 proves. Because of that, we reuse LLVM's own analyses (known bits, value ranges, alias analysis) directly: a bug in them wastes time on rejected facts but cannot corrupt a verdict, and linking them into the framework adds nothing to the trust base, since the framework is untrusted anyway and `kernel/check.py` never runs an analysis. The `analyze` tool is a thin adapter that runs an LLVM analysis at a program point and reports the facts in a form that maps directly onto attributes and assumes. We write an analysis of our own only where LLVM has no fitting one, for example queries shaped around a planned cut; reimplementing what LLVM already does well would buy nothing.
 
-"Untrusted" here means one specific thing: a bug in an analysis cannot change a verdict. A false fact can be proposed, but it cannot pass alive2, and `check.py` never executes an analysis, so certificate consumers do not depend on them at all. This is the proof-assistant architecture: tactics are large and buggy and nobody cares for soundness, because the small kernel checks every proof they produce. Our analyses are tactics; alive2 and `check.py` are the kernel. Note that untrusted does not mean carelessly built: the success rate of the whole tool rides on analysis quality, so they are engineered and tested like any normal software. They are just not verification-critical.
+"Untrusted" here means one specific thing: a bug in an analysis cannot change a verdict. A false fact can be proposed, but it cannot pass alive2, and `kernel/check.py` never executes an analysis, so certificate consumers do not depend on them at all. This is the proof-assistant architecture: tactics are large and buggy and nobody cares for soundness, because the small kernel checks every proof they produce. Our analyses are tactics; alive2 and `kernel/check.py` are the kernel. Note that untrusted does not mean carelessly built: the success rate of the whole tool rides on analysis quality, so they are engineered and tested like any normal software. They are just not verification-critical.
 
 ## Counterexamples: certified by execution, not by SMT chains
 
@@ -218,7 +218,7 @@ The script verifies:
 5. Alpha-equivalence discharges: recheck syntactic equality.
 6. Composition: the root is verified iff every leaf discharge and every faithfulness check passed and every parent's children are accounted for.
 
-The consequence for trust is significant: the framework is now just a search assistant and drops out of the trust base entirely. Anything it gets wrong (bookkeeping, direction, outlining) surfaces as a failed replay. The composition rule and the faithfulness check live in `check.py`, which is small, standalone, and auditable.
+The consequence for trust is significant: the framework is now just a search assistant and drops out of the trust base entirely. Anything it gets wrong (bookkeeping, direction, outlining) surfaces as a failed replay. The composition rule and the faithfulness check live in `kernel/check.py`, which is small, standalone, and auditable.
 
 A "counterexample" verdict ships the symmetric package: the two root programs, the input (argument values plus initial memory), and a script that runs both under llubi and confirms that RHS shows a behavior LHS does not allow.
 
@@ -240,8 +240,8 @@ Two tiers, drawn by one criterion: can a bug here cause a wrong verdict to be ac
 
 - alive2, and transitively the SMT solver it trusts (Z3) and the LLVM IR parser/printer it links. This is the largest real-world risk in the whole trust base; everything else of LLVM is out.
 - llubi, for counterexample verdicts only: a llubi bug cannot fake "verified" (that is alive2's side), only "counterexample", and a replay is a single concrete input that is easy to cross-check independently.
-- The verified rewriter llrwt (used by `check.py` to replay rule steps), together with the rules' external proofs and the MLIR translators it runs under.
-- `check.py`: the small standalone checker that encodes chain connectivity, split faithfulness, and tree composition.
+- The verified rewriter llrwt (used by `kernel/check.py` to replay rule steps), together with the rules' external proofs and the MLIR translators it runs under.
+- `kernel/check.py`: the small standalone checker that encodes chain connectivity, split faithfulness, and tree composition.
 
 **Tier 2, success-critical (untrusted for soundness).** The framework, the analyses, the agent, and `bash` scratch work. A bug here can waste time, mislead the search, or end the run at "unknown"; it cannot survive a certificate replay, so it cannot corrupt a verdict. These components are still engineered and tested like normal software, because the tool's success rate depends on them. The framework in particular orchestrates the search and assembles the package, but its mistakes show up as failed replays, not wrong answers.
 

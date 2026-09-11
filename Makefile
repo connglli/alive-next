@@ -24,7 +24,7 @@ LLOPS_BUILD := $(TOOLCHAIN)/llops/build
 
 .PHONY: help install-deps deps-status deps-llvm deps-alive2 deps-llubi deps-veir deps-bun \
         deps-js deps-uv deps-py deps-dev llops test-llops engine test-engine test examples \
-        cert test-scripts clean
+        cert test-kernel test-scripts clean
 
 help:
 	@echo "dependencies"
@@ -97,15 +97,18 @@ cert: deps-js
 	@test -n "$(SESSION)" || { echo "usage: make cert SESSION=sessions/<id>"; exit 2; }
 	cd engine && bun run cert ../$(SESSION)
 
-# --- scripts -----------------------------------------------------------------
-# check.py replays a certificate with alive-tv and llops and nothing of ours,
+# --- kernel ------------------------------------------------------------------
+# kernel/check.py replays a certificate with alive-tv and llops and nothing of ours,
 # so its tests build packages and bend them rather than running the framework.
+test-kernel:
+	python3 kernel/check_test.py
+
+# --- scripts -----------------------------------------------------------------
 test-scripts:
 	python3 scripts/visualize_test.py
-	python3 scripts/check_test.py
 
 # --- everything --------------------------------------------------------------
-test: test-llops test-engine test-scripts
+test: test-llops test-engine test-kernel test-scripts
 
 # .pre-commit-config.yaml is the one place that says what is checked and with
 # which upstream tool. The hook sees staged files; this sweeps the whole tree.

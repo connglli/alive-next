@@ -27,7 +27,7 @@ export function certify(session: string, out: string): string {
     writeFileSync(join(out, "programs", `${hash}.ll`), store.get(hash), "utf8");
   }
   writeFileSync(join(out, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  copyFileSync(join(repoRoot(), "scripts", "check.py"), join(out, "check.py"));
+  copyFileSync(join(repoRoot(), "kernel", "check.py"), join(out, "check.py"));
   return out;
 }
 

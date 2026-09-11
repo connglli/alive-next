@@ -23,7 +23,8 @@ alive-next/
     cert/               certificate package and manifest assembly
     examples/           worked proof scenarios and validation benchmarks
     test/               engine unit and integration tests
-  scripts/              standalone utilities (check.py, visualize.py, depman.sh)
+  kernel/               standalone certificate checker (check.py)
+  scripts/              standalone utilities (visualize.py, depman.sh)
   Makefile              build, dependency, and test entry points
 ```
 
@@ -89,7 +90,7 @@ What the model said reaches `trajectory.jsonl` as `message` entries and compacti
 
 ## Certificate package and check.py
 
-A settled run writes one, into `<session>/certificate`: `programs/` named by content hash, `manifest.json`, and a copy of `scripts/check.py`. `make cert SESSION=sessions/<id>` builds it from a session that has already finished, and `make examples` writes one for each example it settles. `engine/cert/` assembles it from the trajectory: the goal tree says which pairs survived, the log says what certified each move, and what the run abandoned does not appear.
+A settled run writes one, into `<session>/certificate`: `programs/` named by content hash, `manifest.json`, and a copy of `kernel/check.py`. `make cert SESSION=sessions/<id>` builds it from a session that has already finished, and `make examples` writes one for each example it settles. `engine/cert/` assembles it from the trajectory: the goal tree says which pairs survived, the log says what certified each move, and what the run abandoned does not appear.
 
 A verified run's manifest is a version, the verdict, the root goal, the toolchain `run_start` recorded, and one entry per goal:
 
@@ -97,7 +98,7 @@ A verified run's manifest is a version, the verdict, the root goal, the toolchai
 - `steps`, in the order they happened. A `checked` step names the side it moved and the hash it moved from and to. A `rule` step names the same pair and, beside it, the rules llrwt ran and the invocation a replay reruns. A `window` step is a checked step whose question was narrowed: it names the same pair and, under `window`, the outlined function and the three programs the narrowing produced, one outer and the two halves. A `strengthen` step names the pair on each end and the outer step that stands behind it.
 - `discharge`, either `checked` or a `split` naming the outlined function and the two children.
 
-check.py needs Python, alive-tv for a proof, llubi for a counterexample, llrwt for a proof that rewrites with pre-proved rules, and llops for the subcommands each needs. It takes their paths from the manifest, which records where the run found them and which LLVM each carried (llrwt records a version line instead, and the translators it ran under travel in each step's invocation); a path that is not there falls back to the name on PATH and an option overrides both. It reads a program only from a file whose name is its hash. For a proof it verifies:
+kernel/check.py needs Python, alive-tv for a proof, llubi for a counterexample, llrwt for a proof that rewrites with pre-proved rules, and llops for the subcommands each needs. It takes their paths from the manifest, which records where the run found them and which LLVM each carried (llrwt records a version line instead, and the translators it ran under travel in each step's invocation); a path that is not there falls back to the name on PATH and an option overrides both. It reads a program only from a file whose name is its hash. For a proof it verifies:
 
 1. Connectivity: each step starts at the current head, and the steps add up to `end`.
 2. Steps: rerun alive-tv in the direction the side implies, a src step forwards and a tgt step backwards. The result must be correct. A rule step instead reruns llrwt under the recorded rules.
@@ -107,9 +108,9 @@ check.py needs Python, alive-tv for a proof, llubi for a counterexample, llrwt f
 6. Cuts: `llops inline` the callee's starting program into the outer's, `llops canon` it, and compare bytes against the pair the parent ended with. The declaration of the outlined function in the outer's final programs must match its definition in the callee's, parameter attributes and function attributes included, which is what a `strengthen` step rests on along with the outer's chain being checked like any other.
 7. Composition: the root is verified when every goal reached under it passed.
 
-A refuted run's manifest is a version, the verdict, the root goal, the toolchain, the pair the run was asked about, the input, and what the run saw diverge. The pair is the root's first, not the one the run reached: a step may overshoot, so only the original pair is the translation. check.py wraps each side in a `llops harness` around that input, runs both under llubi, and decides for itself. It refuses a src that is free to choose what it does, a `freeze` in a straightline program, since one run of such a src is one behaviour among several and the tgt is allowed any of them. Otherwise three rules settle it. A src with UB on the input allows every target, so it settles nothing. A tgt with UB where the src returned is a refutation, and so is any observation the two disagree on. Poison needs no rule of its own: the harness stores what the entry returns and storing poison is UB, so a poison result arrives as UB on the side that produced it. It reports what it ran in the shape alive2 reports a counterexample in: the error, the input one parameter per line, and what each side observed or the UB it hit. Which error it is comes from where the tgt stopped. The harness stores what the entry returned so it can be observed, and that store is the only UB the harness itself can have, so stopping there is a poison result, `Target is more poisonous than source`, and stopping anywhere else is UB the tgt has of its own, `Source is more defined than target`.
+A refuted run's manifest is a version, the verdict, the root goal, the toolchain, the pair the run was asked about, the input, and what the run saw diverge. The pair is the root's first, not the one the run reached: a step may overshoot, so only the original pair is the translation. kernel/check.py wraps each side in a `llops harness` around that input, runs both under llubi, and decides for itself. It refuses a src that is free to choose what it does, a `freeze` in a straightline program, since one run of such a src is one behaviour among several and the tgt is allowed any of them. Otherwise three rules settle it. A src with UB on the input allows every target, so it settles nothing. A tgt with UB where the src returned is a refutation, and so is any observation the two disagree on. Poison needs no rule of its own: the harness stores what the entry returns and storing poison is UB, so a poison result arrives as UB on the side that produced it. It reports what it ran in the shape alive2 reports a counterexample in: the error, the input one parameter per line, and what each side observed or the UB it hit. Which error it is comes from where the tgt stopped. The harness stores what the entry returned so it can be observed, and that store is the only UB the harness itself can have, so stopping there is a poison result, `Target is more poisonous than source`, and stopping anywhere else is UB the tgt has of its own, `Source is more defined than target`.
 
-`make test-scripts` builds packages and bends them: a program that is not what its name says, a chain that does not start where it says, a step recorded on the wrong side, a rule step to a program its rules do not print, a cut whose halves do not inline back, a cut whose halves disagree about the callee, an attribute on a goal that is not a callee, a step of a kind the checker does not know, and, for a counterexample, an input the two programs agree on and one the src has UB on.
+`make test-kernel` builds packages and bends them: a program that is not what its name says, a chain that does not start where it says, a step recorded on the wrong side, a rule step to a program its rules do not print, a cut whose halves do not inline back, a cut whose halves disagree about the callee, an attribute on a goal that is not a callee, a step of a kind the checker does not know, and, for a counterexample, an input the two programs agree on and one the src has UB on.
 
 ## visualize.py
 
@@ -184,7 +185,7 @@ Four details are worth knowing before changing that script:
 - LLVM is built with shared libraries, RTTI, assertions and `LLVM_ABI_BREAKING_CHECKS=WITH_ASSERTS`, and with lld where the machine has it. alive2 does not configure without RTTI. `LLVM_TARGETS` and `LLVM_PROJECTS` widen the build, which is X86 and llvm alone by default.
 - llubi is the out-of-tree interpreter at dtcxzyw/llvm-ub-aware-interpreter, not the rewrite in `llvm/tools`.
 - alive2 builds `alive-tv` only with `-DBUILD_LLVM_UTILS=1`.
-- uv provides the Python interpreter as well as the packages, so a machine needs no system Python for `make deps-py`. It is still needed for the stdlib-only scripts, `check.py` above all, which run under whatever `python3` a consumer has.
+- uv provides the Python interpreter as well as the packages, so a machine needs no system Python for `make deps-py`. It is still needed for the stdlib-only scripts, `kernel/check.py` above all, which run under whatever `python3` a consumer has.
 - `py` and `dev` share one environment: `py` installs what a run needs, `dev` adds what a contributor needs. Both sync with `--inexact`, so installing either never removes what the other put there.
 
 The LLVM build is the expensive one, roughly an hour and tens of gigabytes. Everything else is minutes, and llops is seconds.
@@ -194,7 +195,7 @@ The LLVM build is the expensive one, roughly an hour and tens of gigabytes. Ever
 - llops: `llops/test/llops_test.py` drives the binary over its JSON protocol, which is the interface under test; see [llops.md](./llops.md).
 - Agent: bun test for state, drivers (against stub binaries), and tool semantics; goal tree derivation replayed from recorded trajectories.
 - Scripts: standard library unittest, run by `make test-scripts`.
-- check.py: `scripts/check_test.py`, run by `make test-scripts` with the visualizer's. Golden packages that must pass and bent ones that must fail; the second half is the one that matters.
+- kernel/check.py: `kernel/check_test.py`, run by `make test-kernel`. Golden packages that must pass and bent ones that must fail; the second half is the one that matters.
 - examples: `engine/examples/` holds a pair and the script that settles it, one file per scenario, with the verdict it claims when that is not `verified`. The example list lives there with them, and `engine/core/prove.ts` runs one; `bun test` runs each at `engine/test/examples.test.ts` against the toolchain, and each that ends verified a second time against a checker that agrees with everything, which needs no solver installed and tests only which moves the framework makes. `make examples` runs them into `sessions/`, which is what the visualizer and the certificate checker read.
 
 ## Implementation order
@@ -205,5 +206,5 @@ The LLVM build is the expensive one, roughly an hour and tens of gigabytes. Ever
 4. The alive-tv and llubi drivers; config plumbing.
 5. Steps, transactions, splits, and the strengthen flow over the facts analyze proposes, against a stub alive-tv.
 6. Tools wired into Pi; the scripted driver running through the tool layer.
-7. Certificate assembly and check.py, with the tamper test suite.
+7. Certificate assembly and kernel/check.py, with the tamper test suite.
 8. Real-agent e2e on growing program sizes.
