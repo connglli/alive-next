@@ -83,7 +83,8 @@ class TestFold(Case):
     data = self.data()
     self.assertEqual(data["verdict"], "verified")
     self.assertEqual(
-      data["snapshots"][-1], {"g1": {"status": "proved", "node": "n0", "role": None}}
+      data["snapshots"][-1],
+      {"g1": {"status": "proved", "node": "n0", "role": None, "parent": None}},
     )
 
   def test_a_split_is_proved_through_its_children(self):
@@ -148,6 +149,72 @@ class TestFold(Case):
     self.assertEqual(events[2]["focus"], "n1")
     self.assertTrue(all(event["focus"] for event in events))
 
+  def test_a_step_is_a_version_of_its_goal_with_a_diff(self):
+    other = self.session.program(SRC.replace("mul i32 %0, 2", "add i32 %0, %0"))
+    self.session.result(
+      "commit",
+      {"effect": "step", "gid": "g1", "side": "src", "to": other, "how": "checked"},
+    )
+    data = self.data()
+    # Programs are named in the order they appeared, as goal_show names them.
+    self.assertEqual(data["pnames"], {self.src: "p1", self.tgt: "p2", other: "p3"})
+    # The step is a second version of the same goal, not a branch.
+    self.assertEqual(data["nodes"][1]["parent"], "n0")
+    self.assertEqual(data["snapshots"][-1]["g1"]["parent"], None)
+    # The pair panel reads the change, not two dumps: the moved side diffs.
+    diff = data["diffs"]["n1"]
+    self.assertTrue(diff["src"]["changed"])
+    self.assertIn("-  %1 = mul i32 %0, 2", diff["src"]["lines"])
+    self.assertIn("+  %1 = add i32 %0, %0", diff["src"]["lines"])
+    self.assertFalse(diff["tgt"]["changed"])
+
+  def test_a_rewrite_names_its_rule_and_a_strengthen_its_attributes(self):
+    other = self.session.program(SRC.replace("mul i32 %0, 2", "add i32 %0, %0"))
+    self.session.result(
+      "rewrite",
+      {
+        "effect": "step",
+        "gid": "g1",
+        "side": "src",
+        "to": other,
+        "how": "rule",
+        "rules": ["muli-pow2-to-shl"],
+      },
+    )
+    strengthened_src = self.session.program(SRC.replace("@f(", "@f noundef "))
+    strengthened_tgt = self.session.program(TGT.replace("@f(", "@f noundef "))
+    self.session.result(
+      "strengthen",
+      {
+        "effect": "strengthen",
+        "gid": "g1",
+        "src": strengthened_src,
+        "tgt": strengthened_tgt,
+        "param_attrs": {"0": {"noundef": True}},
+      },
+    )
+    data = self.data()
+    nodes = {node["id"]: node for node in data["nodes"]}
+    self.assertEqual(nodes["n1"]["note"], "muli-pow2-to-shl")
+    self.assertEqual(nodes["n2"]["note"], "+noundef %0")
+
+  def test_a_split_birth_has_no_before_to_diff_against(self):
+    self.session.result(
+      "split",
+      {
+        "effect": "split",
+        "gid": "g1",
+        "name": "outlined_g3",
+        "outer": {"gid": "g2", "src": self.src, "tgt": self.tgt},
+        "callee": {"gid": "g3", "src": self.src, "tgt": self.tgt},
+      },
+    )
+    data = self.data()
+    self.assertEqual(data["snapshots"][-1]["g2"]["parent"], "g1")
+    for nid in ("n1", "n2"):
+      for side in ("src", "tgt"):
+        self.assertTrue(data["diffs"][nid][side]["birth"])
+
   def test_an_impossible_effect_stops_the_fold_and_is_reported(self):
     self.session.result("check", {"effect": "proved", "gid": "g9"})
     data = self.data()
@@ -172,9 +239,17 @@ class TestPage(Case):
       quotes = len(re.findall(r'(?<!\\)"', line))
       self.assertEqual(quotes % 2, 0, f"line {number} of the script: {line}")
 
-  def test_the_page_needs_nothing_from_outside(self):
+  def test_outside_loads_are_only_the_pinned_highlighter(self):
+    # Highlighting comes from a pinned CDN; everything else stays embedded,
+    # and the page reads plain when the library fails to load.
     page = visualize.render(self.session.write())
-    self.assertEqual(re.findall(r'(?:src|href)="(?!#)([^"]*)"', page), [])
+    refs = re.findall(r'(?:src|href)="(?!#)([^"]*)"', page)
+    self.assertTrue(refs)
+    for ref in refs:
+      self.assertTrue(
+        ref.startswith("https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.12.0/"),
+        ref,
+      )
 
   def test_both_programs_of_a_pair_are_there(self):
     programs = self.data()["programs"]

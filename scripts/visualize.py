@@ -3,8 +3,10 @@
 
     python3 scripts/visualize.py sessions/<id> [-o page.html]
 
-The page needs no server and no network: the trajectory, the programs it
-refers to and a goal tree per event are embedded in it.
+The page needs no server: the trajectory, the programs it
+refers to and a goal tree per event are embedded in it. Syntax
+highlighting loads Highlight.js and its theme from a pinned CDN;
+the page reads plain when those assets are unavailable.
 
 The fold below is the same one engine/core/state/goals.ts applies, so the two can
 drift. What keeps them honest is the verdict: a session that ends in one is
@@ -18,6 +20,10 @@ import html
 import json
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from visualize_ui import CSS, JS, PAGE
 
 # --- the trajectory ----------------------------------------------------------
 
@@ -51,15 +57,19 @@ class Tree:
   """The goals, as the effects so far describe them.
 
   A goal's pair changes as the run works on it, and every pair it holds is a
-  node here, with an edge from the pair the move started at. That is the
-  shape the page draws: the derivation, where a split branches and a revert
-  leaves the abandoned line beside the one that continued.
+  node here, grouped by goal. That is what the page draws: the goal tree,
+  where only a split branches, and each goal carries its own rewrite history
+  as a version strip. A revert leaves the abandoned line beside the one that
+  continued, as another version of the same goal.
   """
 
   def __init__(self, src: str, tgt: str, at: int):
     self.goals: dict[str, dict] = {}
     self.nodes: list[dict] = []
-    self.open_goal("g1", None, None, None, src, tgt, at, "run_start", None)
+    self.pnames: dict[str, str] = {}
+    self.name(src)
+    self.name(tgt)
+    self.open_goal("g1", None, None, None, src, tgt, at, "run_start", None, None)
 
   def open_goal(
     self,
@@ -72,7 +82,10 @@ class Tree:
     at: int,
     tool: str,
     side: str | None,
+    note: str | None,
   ) -> None:
+    self.name(src)
+    self.name(tgt)
     self.goals[gid] = {
       "id": gid,
       "parent": parent,
@@ -81,7 +94,7 @@ class Tree:
       "src": [src],
       "tgt": [tgt],
       "children": [],
-      "node": self.node(gid, from_node, src, tgt, at, tool, side),
+      "node": self.node(gid, from_node, src, tgt, at, tool, side, note),
     }
 
   def node(
@@ -93,6 +106,7 @@ class Tree:
     at: int,
     tool: str,
     side: str | None,
+    note: str | None,
   ) -> str:
     """A pair a goal now holds, the move that led to it, and which side it moved."""
     name = f"n{len(self.nodes)}"
@@ -106,15 +120,24 @@ class Tree:
         "at": at,
         "tool": tool,
         "side": side,
+        "note": note,
       }
     )
     return name
 
-  def moved(self, goal: dict, at: int, tool: str, side: str | None) -> None:
-    """Record the pair a goal moved to, as a node under the one it left."""
+  def moved(self, goal: dict, at: int, tool: str, side: str | None, note: str | None) -> None:
+    """Record the pair a goal moved to, as a version after the one it left."""
     goal["node"] = self.node(
-      goal["id"], goal["node"], goal["src"][-1], goal["tgt"][-1], at, tool, side
+      goal["id"], goal["node"], goal["src"][-1], goal["tgt"][-1], at, tool, side, note
     )
+
+  def name(self, digest: str) -> str:
+    """The short name of a program, in the order programs first appeared."""
+    found = self.pnames.get(digest)
+    if found is None:
+      found = f"p{len(self.pnames) + 1}"
+      self.pnames[digest] = found
+    return found
 
   def get(self, gid: str) -> dict:
     goal = self.goals.get(gid)
@@ -160,19 +183,22 @@ class Tree:
     if kind == "step":
       goal = self.editable(effect["gid"])
       goal[effect["side"]].append(effect["to"])
-      self.moved(goal, at, tool, effect["side"])
+      self.name(effect["to"])
+      self.moved(goal, at, tool, effect["side"], step_note(effect))
     elif kind == "revert":
       goal = self.editable(effect["gid"])
       history = goal[effect["side"]]
       if effect["to"] not in history:
         raise Broken(f"{effect['gid']} never had {effect['to']}")
       goal[effect["side"]] = history[: len(history) - history[::-1].index(effect["to"])]
-      self.moved(goal, at, "revert", effect["side"])
+      self.moved(goal, at, "revert", effect["side"], None)
     elif kind == "strengthen":
       goal = self.editable(effect["gid"])
       goal["src"].append(effect["src"])
       goal["tgt"].append(effect["tgt"])
-      self.moved(goal, at, "strengthen", "both")
+      self.name(effect["src"])
+      self.name(effect["tgt"])
+      self.moved(goal, at, "strengthen", "both", attrs_note(effect))
     elif kind == "split":
       parent = self.editable(effect["gid"])
       for role in ("outer", "callee"):
@@ -186,6 +212,7 @@ class Tree:
           child["tgt"],
           at,
           f"split {role}",
+          None,
           None,
         )
         parent["children"].append(child["gid"])
@@ -210,7 +237,12 @@ class Tree:
   def snapshot(self) -> dict[str, dict]:
     """What the page draws: where each goal stands, keyed by its id."""
     return {
-      goal["id"]: {"status": goal["status"], "node": goal["node"], "role": goal["role"]}
+      goal["id"]: {
+        "status": goal["status"],
+        "node": goal["node"],
+        "role": goal["role"],
+        "parent": goal["parent"],
+      }
       for goal in self.goals.values()
     }
 
@@ -221,19 +253,47 @@ class Tree:
     return {"proved": "verified", "refuted": "counterexample"}.get(root["status"], "unknown")
 
 
+def step_note(effect: dict) -> str | None:
+  """The rule behind a rewrite step, where the effect names one."""
+  rules = effect.get("rules")
+  if isinstance(rules, list) and rules and all(isinstance(rule, str) for rule in rules):
+    return ",".join(rules)
+  return None
+
+
+def attrs_note(effect: dict) -> str | None:
+  """The attributes a strengthen adds, grouped by attribute name."""
+  attrs = effect.get("param_attrs")
+  if not isinstance(attrs, dict):
+    return None
+  by_attr: dict[str, list[str]] = {}
+  for param in sorted(attrs, key=str):
+    names = attrs[param]
+    if not isinstance(names, dict):
+      continue
+    for name in sorted(names):
+      if names[name] is True:
+        by_attr.setdefault(name, []).append(f"%{param}")
+  if not by_attr:
+    return None
+  return " ".join(f"+{name} {' '.join(params)}" for name, params in sorted(by_attr.items()))
+
+
 class Replay:
-  """What the page is drawn from: the nodes, and where each goal stands."""
+  """What the page is drawn from: the versions, and where each goal stands."""
 
   def __init__(
     self,
     snapshots: list[dict],
     nodes: list[dict],
+    pnames: dict[str, str],
     focus: list[str | None],
     error: str | None,
     verdict: str,
   ):
     self.snapshots = snapshots
     self.nodes = nodes
+    self.pnames = pnames
     self.focus = focus
     self.error = error
     self.verdict = verdict
@@ -315,7 +375,12 @@ def replay(grouped: list[list[dict]]) -> Replay:
     snapshots.append(snapshots[-1] if snapshots else {})
     focus.append(focus[-1] if focus else None)
   return Replay(
-    snapshots, tree.nodes if tree else [], focus, error, tree.verdict() if tree else "unknown"
+    snapshots,
+    tree.nodes if tree else [],
+    tree.pnames if tree else {},
+    focus,
+    error,
+    tree.verdict() if tree else "unknown",
   )
 
 
@@ -330,6 +395,42 @@ def programs_for(store: Path, nodes: list[dict]) -> dict[str, str]:
     path = store / f"{digest}.ll"
     programs[digest] = path.read_text() if path.exists() else f"; {digest} is not in the store\n"
   return programs
+
+
+def diffs_for(nodes: list[dict], programs: dict[str, str]) -> dict[str, dict]:
+  """The inline diff behind each rewrite: what each side was and became.
+
+  A version born of a split has no before to diff against: its two halves
+  are new functions, so the page shows them whole. Every other version diffs
+  against the version of the same goal it follows, with three lines of
+  context around each change.
+  """
+  import difflib
+
+  by_id = {node["id"]: node for node in nodes}
+  diffs = {}
+  for node in nodes:
+    parent = by_id.get(node["parent"] or "")
+    entry = {}
+    for side in ("src", "tgt"):
+      if parent is None or parent["gid"] != node["gid"]:
+        entry[side] = {"changed": True, "birth": True, "lines": [], "adds": 0, "dels": 0}
+      elif parent[side] == node[side]:
+        entry[side] = {"changed": False, "lines": [], "adds": 0, "dels": 0}
+      else:
+        before = programs.get(parent[side], "").splitlines()
+        after = programs.get(node[side], "").splitlines()
+        # Only the first two lines are file headers.
+        raw = list(difflib.unified_diff(before, after, n=3, lineterm=""))
+        lines = raw[2:] if raw else []
+        entry[side] = {
+          "changed": True,
+          "lines": lines,
+          "adds": sum(line.startswith("+") for line in lines),
+          "dels": sum(line.startswith("-") for line in lines),
+        }
+    diffs[node["id"]] = entry
+  return diffs
 
 
 def label(row: list[dict]) -> str:
@@ -372,349 +473,6 @@ def compact(args: object, limit: int = 60) -> str:
 
 # --- the page ----------------------------------------------------------------
 
-PAGE = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__TITLE__</title>
-<style>__CSS__</style>
-</head>
-<body>
-<header>
-  <h1>__TITLE__</h1>
-  <p id="summary"></p>
-</header>
-<main>
-  <aside>
-    <div id="filters"></div>
-    <input id="scrubber" type="range" min="0" value="0">
-    <ol id="timeline"></ol>
-  </aside>
-  <section>
-    <h2>derivation</h2>
-    <p class="legend">
-      <span class="chip proved">proved</span>
-      <span class="chip open">open</span>
-      <span class="chip split">split</span>
-      <span class="chip refuted">refuted</span>
-      <span class="chip past">superseded</span>
-      <span class="hint">click a node for its pair, the caret to fold it</span>
-    </p>
-    <div id="tree" class="tree"></div>
-    <h2 id="pair-title">pair</h2>
-    <div class="pair">
-      <div><h3 id="src-title">src</h3><div id="src-body"></div></div>
-      <div><h3 id="tgt-title">tgt</h3><div id="tgt-body"></div></div>
-    </div>
-    <h2>event</h2>
-    <pre id="detail"></pre>
-  </section>
-</main>
-<script id="data" type="application/json">__DATA__</script>
-<script>__JS__</script>
-</body>
-</html>
-"""
-
-CSS = """
-:root {
-  color-scheme: light dark;
-  --line: #8884; --add: #1a7f37; --del: #cf222e; --warm: #9a6700;
-}
-* { box-sizing: border-box; }
-body { margin: 0; font: 14px/1.5 system-ui, sans-serif; }
-header { padding: 8px 16px; border-bottom: 1px solid var(--line); }
-h1 { font-size: 16px; margin: 0; }
-h2 { font-size: 13px; text-transform: lowercase; letter-spacing: .04em; margin: 16px 0 4px; }
-#summary { margin: 2px 0 0; opacity: .7; }
-main { display: flex; align-items: stretch; height: calc(100vh - 62px); }
-aside { width: 22em; min-width: 16em; border-right: 1px solid var(--line);
-        display: flex; flex-direction: column; }
-#filters { padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
-#filters label { margin-right: 8px; white-space: nowrap; }
-#scrubber { width: calc(100% - 20px); margin: 8px 10px; }
-#timeline { flex: 1; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
-#timeline li { padding: 3px 10px; cursor: pointer; display: flex; gap: 6px;
-               font-family: ui-monospace, monospace; font-size: 12px; white-space: nowrap; }
-#timeline li:hover { background: #8882; }
-#timeline li.on { background: #8884; font-weight: 600; }
-#timeline .n { opacity: .5; min-width: 2.5em; text-align: right; }
-#timeline .ms { margin-left: auto; opacity: .5; }
-section { flex: 1; overflow: auto; padding: 8px 16px 32px; }
-
-.legend { margin: 0 0 8px; font-size: 12px; }
-.hint { opacity: .6; margin-left: 8px; }
-.chip { border-radius: 3px; padding: 0 6px; margin-right: 4px; border: 1px solid; }
-
-/* The derivation: nested lists with the usual connector lines, so a subtree
-   folds by not being drawn. */
-.tree ul { list-style: none; margin: 0; padding-left: 20px; }
-.tree > ul { padding-left: 0; }
-.tree li { position: relative; padding: 2px 0 2px 16px; }
-.tree > ul > li { padding-left: 0; }
-.tree > ul > li::before, .tree > ul > li::after { display: none; }
-.tree li::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0;
-                   border-left: 1px solid var(--line); }
-.tree li:last-child::before { bottom: auto; height: 15px; }
-.tree li::after { content: ""; position: absolute; left: 0; top: 15px; width: 12px;
-                  border-top: 1px solid var(--line); }
-
-.node { display: inline-flex; align-items: baseline; gap: 6px; cursor: pointer;
-        border: 1px solid; border-radius: 4px; padding: 1px 8px;
-        font-family: ui-monospace, monospace; font-size: 12px; }
-.node.on { outline: 2px solid currentColor; outline-offset: 1px; }
-.node .gid { font-weight: 600; }
-.node .via { opacity: .75; }
-.node .pair { opacity: .5; }
-.caret { border: 0; background: none; cursor: pointer; padding: 0 2px; font: inherit;
-         color: inherit; opacity: .6; }
-.edge { border: 0; background: none; padding: 0 6px 0 0; cursor: pointer; opacity: .75;
-        font-family: ui-monospace, monospace; font-size: 12px; color: inherit; }
-.edge:hover { opacity: 1; text-decoration: underline; }
-.folded { opacity: .6; font-size: 11px; margin-left: 4px; }
-
-.proved { color: var(--add); border-color: var(--add); }
-.open { color: var(--del); border-color: var(--del); }
-.split { color: var(--warm); border-color: var(--warm); }
-.refuted { color: var(--del); border-color: var(--del); border-style: double; border-width: 3px; }
-.past { opacity: .45; border-style: dashed; }
-
-h3 { font-size: 12px; font-weight: 600; margin: 0 0 2px; opacity: .7; }
-h3.changed { opacity: 1; color: var(--warm); }
-.arrow { text-align: center; font-size: 16px; line-height: 1.2; opacity: .7; margin: 2px 0; }
-.was pre { opacity: .75; }
-.caption { font-size: 11px; opacity: .6; }
-#pair-title span { font-weight: 400; opacity: .8; margin-left: 6px; }
-#pair-title .at, #pair-title .quiet, .quiet { opacity: .55; }
-.was { border: 1px solid var(--line); border-radius: 3px; background: none; color: inherit;
-       font: inherit; font-size: 11px; padding: 0 5px; cursor: pointer; }
-.pair { display: flex; gap: 12px; align-items: flex-start; }
-.pair > div { flex: 1; min-width: 0; }
-pre { font-family: ui-monospace, monospace; font-size: 12px; border: 1px solid var(--line);
-      padding: 8px; overflow-x: auto; margin: 0; white-space: pre; }
-"""
-
-JS = """
-const data = JSON.parse(document.getElementById("data").textContent);
-const kinds = [...new Set(data.events.map((event) => event.kind))];
-const byId = new Map(data.nodes.map((node) => [node.id, node]));
-const children = new Map(data.nodes.map((node) => [node.id, []]));
-for (const node of data.nodes) if (node.parent) children.get(node.parent).push(node.id);
-
-const hidden = new Set();
-const folded = new Set();
-let at = data.events.length - 1;
-let picked = data.events[at].focus;
-
-const timeline = document.getElementById("timeline");
-const scrubber = document.getElementById("scrubber");
-scrubber.max = String(data.events.length - 1);
-
-document.getElementById("summary").textContent =
-  `${data.events.length} events, ${data.nodes.length} pairs, verdict ${data.verdict}` +
-  (data.error ? `, log broken at ${data.error}` : "");
-
-document.getElementById("filters").append(...kinds.map((kind) => {
-  const label = document.createElement("label");
-  const box = document.createElement("input");
-  box.type = "checkbox";
-  box.checked = true;
-  box.onchange = () => { box.checked ? hidden.delete(kind) : hidden.add(kind); draw(); };
-  label.append(box, " " + kind);
-  return label;
-}));
-
-function draw() {
-  drawTimeline();
-  drawTree();
-  drawPair();
-  document.getElementById("detail").textContent =
-    data.events[at].entries.map((entry) => JSON.stringify(entry, null, 2)).join("\\n\\n");
-}
-
-function drawTimeline() {
-  timeline.replaceChildren(...data.events.flatMap((event, index) => {
-    if (hidden.has(event.kind)) return [];
-    const row = document.createElement("li");
-    if (index === at) row.className = "on";
-    const n = document.createElement("span");
-    n.className = "n";
-    n.textContent = String(index);
-    const what = document.createElement("span");
-    what.textContent = event.label;
-    row.append(n, what);
-    if (event.ms !== undefined) {
-      const ms = document.createElement("span");
-      ms.className = "ms";
-      ms.textContent = event.ms + "ms";
-      row.append(ms);
-    }
-    row.onclick = () => { go(index); };
-    return [row];
-  }));
-  timeline.querySelector(".on")?.scrollIntoView({ block: "nearest" });
-  scrubber.value = String(at);
-}
-
-/**
- * The derivation as it stands at the selected event: a node is drawn once its
- * move has happened, coloured by where its goal stands when the node is the
- * pair that goal currently holds, and faded when the run has moved past it.
- */
-function drawTree() {
-  const where = data.snapshots[at] ?? {};
-  const current = new Map(Object.entries(where).map(([gid, goal]) => [goal.node, gid]));
-
-  const drawNode = (id) => {
-    const node = byId.get(id);
-    const gid = current.get(id);
-    const goal = gid ? where[gid] : null;
-    const kids = children.get(id).filter((child) => byId.get(child).at <= at);
-
-    const box = document.createElement("span");
-    box.className = "node " + (goal ? goal.status : "past") + (id === picked ? " on" : "");
-    box.onclick = () => { picked = id; draw(); };
-
-    if (kids.length) {
-      const caret = document.createElement("button");
-      caret.className = "caret";
-      caret.textContent = folded.has(id) ? "▸" : "▾";
-      caret.onclick = (event) => {
-        event.stopPropagation();
-        folded.has(id) ? folded.delete(id) : folded.add(id);
-        drawTree();
-      };
-      box.append(caret);
-    }
-    const name = document.createElement("span");
-    name.className = "gid";
-    name.textContent = node.gid + (goal?.role ? ` ${goal.role}` : "");
-    const pair = document.createElement("span");
-    pair.className = "pair";
-    pair.textContent = `${short(node.src)} ${short(node.tgt)}`;
-    box.append(name, pair);
-
-    const row = document.createElement("li");
-    // The edge is the move, so it carries the move's name and goes to the
-    // event that made it; the node it points at is the pair that came out.
-    if (node.parent) {
-      const edge = document.createElement("button");
-      edge.className = "edge";
-      edge.textContent = `${moveOf(node)} →`;
-      edge.title = `event ${node.at}: ${data.events[node.at].label}`;
-      edge.onclick = () => { go(node.at, id); };
-      row.append(edge);
-    }
-    row.append(box);
-    if (folded.has(id) && kids.length) {
-      const count = document.createElement("span");
-      count.className = "folded";
-      count.textContent = `+${countUnder(id)}`;
-      box.append(count);
-    } else if (kids.length) {
-      const list = document.createElement("ul");
-      list.append(...kids.map(drawNode));
-      row.append(list);
-    }
-    return row;
-  };
-
-  const roots = data.nodes.filter((node) => !node.parent && node.at <= at);
-  const list = document.createElement("ul");
-  list.append(...roots.map((node) => drawNode(node.id)));
-  document.getElementById("tree").replaceChildren(list);
-}
-
-function countUnder(id) {
-  return children.get(id)
-    .filter((child) => byId.get(child).at <= at)
-    .reduce((total, child) => total + 1 + countUnder(child), 0);
-}
-
-/** How a node came about, in the words the timeline uses. */
-function moveOf(node) {
-  if (!node.parent) return node.tool;
-  return node.side ? `${node.tool} on ${node.side}` : node.tool;
-}
-
-/**
- * The selected pair, and the move that produced it: which side it touched and
- * what that side was before, with the side that did not move said so.
- */
-function drawPair() {
-  const node = byId.get(picked);
-  const title = document.getElementById("pair-title");
-  const from = node?.parent ? byId.get(node.parent) : null;
-  if (!node) {
-    title.textContent = "pair";
-    for (const side of ["src", "tgt"]) document.getElementById(side).textContent = "";
-    return;
-  }
-
-  const moved = node.at === at;
-  title.replaceChildren(
-    tag("b", node.gid),
-    tag("span", ` ${moveOf(node)}`),
-    tag("span", from ? ` from ${from.id} to ${node.id}` : " the pair the run was asked about"),
-    tag("span", ` at event ${node.at}`, "at"),
-    moved ? tag("span", "") : tag("span", "unchanged by the selected event", "quiet"),
-  );
-
-  for (const side of ["src", "tgt"]) {
-    const changed = from && from[side] !== node[side];
-    const header = document.getElementById(side + "-title");
-    header.className = changed ? "changed" : "";
-    header.textContent = changed
-      ? `${side} ${short(from[side])} → ${short(node[side])}`
-      : `${side} ${short(node[side])}` + (from ? " unchanged" : "");
-
-    const body = document.getElementById(side + "-body");
-    const after = program(node[side]);
-    if (!changed) {
-      body.replaceChildren(after);
-      continue;
-    }
-    // What the move replaced, above what it put there, so the change is read
-    // rather than described.
-    const before = program(from[side]);
-    before.className = "was";
-    body.replaceChildren(before, tag("div", "↓", "arrow"), after);
-  }
-}
-
-function program(digest) {
-  const block = document.createElement("pre");
-  block.textContent = data.programs[digest] ?? "";
-  return block;
-}
-
-function tag(name, text, className) {
-  const node = document.createElement(name);
-  if (className) node.className = className;
-  node.textContent = text;
-  return node;
-}
-
-function short(digest) { return digest.slice(0, 8); }
-
-/** Move to an event, and to the pair it is about unless one is named. */
-function go(index, pick) {
-  at = Math.min(data.events.length - 1, Math.max(0, index));
-  picked = pick ?? data.events[at].focus ?? picked;
-  draw();
-}
-
-scrubber.oninput = () => { go(Number(scrubber.value)); };
-document.onkeydown = (key) => {
-  const step = { ArrowLeft: -1, ArrowRight: 1, Home: -data.events.length, End: data.events.length };
-  if (!(key.key in step)) return;
-  key.preventDefault();
-  go(at + step[key.key]);
-};
-draw();
-"""
-
 
 def render(session: Path) -> str:
   entries = read_trajectory(session / "trajectory.jsonl")
@@ -743,6 +501,8 @@ def render(session: Path) -> str:
     ],
     "snapshots": run.snapshots,
     "nodes": run.nodes,
+    "pnames": run.pnames,
+    "diffs": diffs_for(run.nodes, programs),
     "programs": programs,
   }
   payload = json.dumps(data).replace("</", "<\\/")
