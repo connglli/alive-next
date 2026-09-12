@@ -78,7 +78,7 @@ PAGE = r"""<!doctype html>
       <header class="panel-heading graph-heading" id="graph-heading">
         <div>
           <div class="eyebrow">02 / DERIVATION STRUCTURE</div>
-          <h2 id="graph-title">Goal tree</h2>
+          <h2 id="graph-title">Goal Tree</h2>
         </div>
         <span id="graph-position" class="counter"></span>
       </header>
@@ -1093,8 +1093,8 @@ function counterexampleView() {
     "counterexample-note",
     "Complete recorded event data. Multiline fields are expanded for " +
     "readability; the original payload is preserved below. " +
-    "These records describe the reported goal check, not necessarily " +
-    "a refutation of the original root goal."
+    "These records describe the check that refuted the run, whatever " +
+    "tool (llubi or alive2) reported it."
   ));
 
   for (const record of records) {
@@ -2082,7 +2082,7 @@ document.addEventListener("keydown", event => {
 
 const goalsEver = new Set(data.nodes.map(node => node.gid));
 $("summary").textContent =
-  `${data.events.length} events · ${goalsEver.size} goal IDs · ${data.nodes.length} states`;
+  `${data.events.length} events · ${goalsEver.size} goals · ${data.nodes.length} states`;
 
 $("verdict").textContent = `Final: ${data.verdict}`;
 $("verdict").className = "badge " + ({
