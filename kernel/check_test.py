@@ -958,6 +958,20 @@ class TestCounterexample(unittest.TestCase):
     self.assertNotEqual(done.returncode, 0, done.stdout)
     self.assertIn("is not the program its name claims", done.stdout + done.stderr)
 
+  def test_an_executed_counterexample_without_an_input_is_refused(self):
+    package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}])
+    self.built.bend(lambda manifest: manifest.pop("input"))
+    done = self.replay(package)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("names no input", done.stdout + done.stderr)
+
+  def test_an_unknown_source_is_refused(self):
+    package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}])
+    self.built.bend(lambda manifest: manifest.__setitem__("source", "oracle"))
+    done = self.replay(package)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("unknown counterexample source", done.stdout + done.stderr)
+
 
 @unittest.skipUnless(HAVE, "needs alive-tv and llops")
 class TestRefuted(unittest.TestCase):
@@ -994,6 +1008,20 @@ class TestRefuted(unittest.TestCase):
     done = self.re_asked(package)
     self.assertNotEqual(done.returncode, 0, done.stdout)
     self.assertIn("is not the program its name claims", done.stdout + done.stderr)
+
+  def test_a_refutation_that_carries_an_input_is_refused(self):
+    package = self.built.refuted(HALVE, SHIFT)
+    self.built.bend(lambda manifest: manifest.__setitem__("input", []))
+    done = self.re_asked(package)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("carries no input", done.stdout + done.stderr)
+
+  def test_an_unknown_source_is_refused(self):
+    package = self.built.refuted(HALVE, SHIFT)
+    self.built.bend(lambda manifest: manifest.__setitem__("source", "oracle"))
+    done = self.re_asked(package)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("unknown counterexample source", done.stdout + done.stderr)
 
 
 if __name__ == "__main__":

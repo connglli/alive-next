@@ -172,7 +172,28 @@ class Package:
 
   def source(self) -> str:
     """What certifies a counterexample: the checker for the pair, or an input."""
-    return self.manifest.get("source", "llubi")
+    found = self.manifest.get("source", "llubi")
+    if found not in ("llubi", "alive2"):
+      raise Refused(f"unknown counterexample source {found!r}")
+    return found
+
+  def counterexample_pair(self) -> dict:
+    """The pair a counterexample is of, which has to name two programs."""
+    pair = self.manifest.get("pair")
+    if (
+      not isinstance(pair, dict)
+      or not isinstance(pair.get("src"), str)
+      or not isinstance(pair.get("tgt"), str)
+    ):
+      raise Refused("a counterexample names no pair to ask about")
+    return pair
+
+  def counterexample_input(self) -> list:
+    """The input an executed counterexample runs both programs on."""
+    found = self.manifest.get("input")
+    if not isinstance(found, list):
+      raise Refused("an executed counterexample names no input")
+    return found
 
   def ask_llops(self, subcommand: str, request: dict) -> dict:
     done = subprocess.run(
@@ -644,11 +665,13 @@ class Refutation:
     self.verbose = verbose
 
   def confirm(self) -> bool:
-    pair = self.package.manifest["pair"]
+    if "input" in self.package.manifest:
+      raise Refused("a counterexample the checker refuted carries no input")
+    pair = self.package.counterexample_pair()
     self.package.program(pair["src"])
     self.package.program(pair["tgt"])
     refuted = self.package.refutes(pair["src"], pair["tgt"])
-    gid = self.package.manifest["root"]
+    gid = self.package.manifest.get("root")
     what = "refuted" if refuted else "not refuted"
     print(f"  {'ok ' if refuted else 'BAD'} {gid:<4} the pair it was asked about   {what}")
     return refuted
@@ -799,7 +822,7 @@ class Replay:
     self.package = package
     self.verbose = verbose
 
-  def say(self, entry: str, module: str, runs: dict, confirmed: bool) -> None:
+  def say(self, entry: str, module: str, runs: dict, confirmed: bool, args: list) -> None:
     """What was run and what each side did, as alive2 reports the same thing."""
     if confirmed:
       print()
@@ -809,9 +832,7 @@ class Replay:
     # Not strict: llops harness takes one argument per parameter and has
     # already refused an input of the wrong length, and a report is no
     # place to raise.
-    for param, argument in zip(
-      declared(self.package, module, entry), self.package.manifest["input"], strict=False
-    ):
+    for param, argument in zip(declared(self.package, module, entry), args, strict=False):
       print(f"{param} = {given(argument)}")
     for side, name in (("src", "Source"), ("tgt", "Target")):
       print()
@@ -836,7 +857,8 @@ class Replay:
     return "Value mismatch"
 
   def confirm(self) -> bool:
-    pair = self.package.manifest["pair"]
+    pair = self.package.counterexample_pair()
+    args = self.package.counterexample_input()
     programs = {side: self.package.program(pair[side]) for side in ("src", "tgt")}
     entries = {side: entry_of(text) for side, text in programs.items()}
     if entries["src"] != entries["tgt"]:
@@ -856,13 +878,13 @@ class Replay:
         {
           "module": text,
           "entry": entries[side],
-          "args": self.package.manifest["input"],
+          "args": args,
         },
       )["module"]
       runs[side] = read_run(self.package.interpret(harness))
 
     confirmed, reason = divergence(runs["src"], runs["tgt"])
-    self.say(entries["src"], programs["src"], runs, confirmed)
+    self.say(entries["src"], programs["src"], runs, confirmed, args)
     print(reason)
     return confirmed
 
