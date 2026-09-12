@@ -13,7 +13,9 @@
 // holds after reverts have truncated it.
 import type { Attrs, HarnessArg, PredicateAssertion } from "../core/drivers/llops.ts";
 import type { LlrwtInvocation } from "../core/drivers/llrwt.ts";
+import type { ReportResult } from "../core/state/counterexamples.ts";
 import { type Goal, head, type Tree } from "../core/state/goals.ts";
+import type { CheckGoalResult } from "../core/state/steps.ts";
 import type { AutoEvent, Effect, Entry, Hash, ToolResult } from "../core/state/trajectory.ts";
 
 export const VERSION = 1;
@@ -194,6 +196,7 @@ function refutation(entries: Entry[], tree: Tree, root: Goal): [Counterexample, 
       new Set([pair.src, pair.tgt]),
     ];
   }
+  if (answer === undefined) throw new NotCertifiable(`nothing in the log refuted ${root.id}`);
   return [
     {
       version: VERSION,
@@ -202,7 +205,7 @@ function refutation(entries: Entry[], tree: Tree, root: Goal): [Counterexample, 
       toolchain: toolchainOf(entries),
       source: "alive2" as const,
       pair,
-      divergence: answer ?? "",
+      divergence: answer,
     },
     new Set([pair.src, pair.tgt]),
   ];
@@ -213,10 +216,10 @@ function refutedEffect(entry: ToolResult | AutoEvent, gid: string): boolean {
   return (entry.effects ?? []).some((effect) => effect.effect === "refuted" && effect.gid === gid);
 }
 
-/** A report the framework recorded, whole, with what it replayed. */
-interface RecordedReport {
-  input?: HarnessArg[];
-  divergence?: string;
+/** What an eager check recorded: the check itself, and a replay when one ran. */
+interface EagerOutcome {
+  check: CheckGoalResult;
+  report?: ReportResult;
 }
 
 /**
@@ -228,19 +231,16 @@ function report(
 ): { input: HarnessArg[]; divergence: string } | undefined {
   const said =
     entry.kind === "tool_result"
-      ? (entry.result as RecordedReport | null)
-      : (entry.outcome as { report?: RecordedReport } | null)?.report;
+      ? (entry.result as ReportResult | null)
+      : (entry.outcome as EagerOutcome | null)?.report;
   if (!said?.input) return undefined;
-  return { input: said.input, divergence: said.divergence ?? "" };
+  return { input: said.input, divergence: "divergence" in said ? said.divergence : "" };
 }
 
 /** What the checker printed on the pair it refuted, whatever entry holds the check. */
 function answerOf(entry: ToolResult | AutoEvent): string | undefined {
-  const said =
-    entry.kind === "tool_result"
-      ? (entry.result as { check?: { detail?: string } } | null)?.check
-      : (entry.outcome as { check?: { check?: { detail?: string } } } | null)?.check?.check;
-  return said?.detail;
+  if (entry.kind === "tool_result") return (entry.result as CheckGoalResult | null)?.check.detail;
+  return (entry.outcome as EagerOutcome | null)?.check.check.detail;
 }
 
 /** Walk what discharged the root, and nothing else. */

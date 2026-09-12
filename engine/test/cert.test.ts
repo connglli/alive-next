@@ -76,12 +76,13 @@ function folding(folded: string): Llrwt {
 
 /** A checker that refutes everything, so a run can start refuted. */
 class NoMan implements Checker {
+  constructor(private readonly stdout: string = "") {}
   async check(): Promise<CheckResult> {
     return {
       outcome: "incorrect",
       detail: "Value mismatch",
       invocation: { binary: "no-man", flags: [], timeoutMs: 0 },
-      stdout: "",
+      stdout: this.stdout,
       ms: 0,
     };
   }
@@ -389,5 +390,103 @@ describe.skipIf(!built)("the manifest", () => {
         readFileSync(join(dir, "auto-cex", "programs", `${manifest.pair[side]}.ll`), "utf8").length,
       ).toBeGreaterThan(0);
     }
+  });
+
+  test("a start check with a parseable counterexample replays and certifies under llubi", async () => {
+    let diverging = 0;
+    const example = `ERROR: Value mismatch
+
+Example:
+i32 noundef %x = #xfffffffb (4294967291, -5)
+
+Source:
+i32 %h = #xfffffffe (4294967294, -2)
+
+Target:
+i32 %h = #xfffffffd (4294967293, -3)
+
+Summary:
+  0 correct transformations
+  1 incorrect transformations
+  0 failed-to-prove transformations
+  0 Alive2 errors
+`;
+    const session = await Session.start({
+      dir: join(dir, "auto-replayed"),
+      src: miscompile.src,
+      tgt: miscompile.tgt,
+      llops,
+      checker: new NoMan(example),
+      interp: {
+        async run(): Promise<RunResult> {
+          diverging += 1;
+          return {
+            outcome: "returned",
+            observations: { "%obs.result": diverging === 1 ? "i32 -1" : "i32 -2" },
+            reason: "",
+            trace: "",
+            ms: 1,
+          };
+        },
+      },
+      rewriter: unrewriting,
+      eager: true,
+    });
+    expect(session.finish()).toBe("counterexample");
+
+    const manifest = JSON.parse(
+      readFileSync(
+        join(certify(session.dir, join(dir, "auto-replayed-cex")), "manifest.json"),
+        "utf8",
+      ),
+    ) as Counterexample;
+    expect(manifest.verdict).toBe("counterexample");
+    expect(manifest.source).toBe("llubi");
+    expect(manifest.input).toEqual([{ kind: "int", value: "-5" }]);
+    expect(manifest.divergence).toContain("i32 -1 in the src and i32 -2 in the tgt");
+  });
+
+  test("an executed input supersedes a checker counterexample in the manifest", async () => {
+    let diverging = 0;
+    const session = await Session.start({
+      dir: join(dir, "superseded"),
+      src: miscompile.src,
+      tgt: miscompile.tgt,
+      llops,
+      // The checker refutes without a parseable example, so the eager check
+      // falls back to the checker's answer (source alive2). Then report_cex
+      // offers a concrete input the interpreter confirms, and the manifest
+      // carries that one instead.
+      checker: new NoMan(),
+      interp: {
+        async run(): Promise<RunResult> {
+          diverging += 1;
+          return {
+            outcome: "returned",
+            observations: { "%obs.result": diverging === 1 ? "i32 -1" : "i32 -2" },
+            reason: "",
+            trace: "",
+            ms: 1,
+          };
+        },
+      },
+      rewriter: unrewriting,
+      eager: true,
+    });
+    expect(session.verdict).toBe("counterexample");
+
+    const input = [{ kind: "int", value: "-3" } as const];
+    const reported = await session.reportCex(input);
+    expect(reported.kind).toBe("refuted");
+
+    const manifest = JSON.parse(
+      readFileSync(
+        join(certify(session.dir, join(dir, "superseded-cex")), "manifest.json"),
+        "utf8",
+      ),
+    ) as Counterexample;
+    expect(manifest.source).toBe("llubi");
+    expect(manifest.input).toEqual(input);
+    expect(manifest.divergence).toContain("i32 -1 in the src and i32 -2 in the tgt");
   });
 });
