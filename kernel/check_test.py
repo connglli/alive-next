@@ -1023,6 +1023,13 @@ class TestRefuted(unittest.TestCase):
     self.assertNotEqual(done.returncode, 0, done.stdout)
     self.assertIn("unknown counterexample source", done.stdout + done.stderr)
 
+  def test_a_refutation_without_a_root_is_refused(self):
+    package = self.built.refuted(HALVE, SHIFT)
+    self.built.bend(lambda manifest: manifest.pop("root"))
+    done = self.re_asked(package)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("names no root goal", done.stdout + done.stderr)
+
 
 if __name__ == "__main__":
   unittest.main(verbosity=2)

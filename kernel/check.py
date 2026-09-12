@@ -170,6 +170,13 @@ class Package:
       self.queries += 1
     return summary(done.stdout)
 
+  def root_goal(self) -> str:
+    """The goal a counterexample refutes, which has to be named."""
+    found = self.manifest.get("root")
+    if not isinstance(found, str):
+      raise Refused("a counterexample names no root goal")
+    return found
+
   def source(self) -> str:
     """What certifies a counterexample: the checker for the pair, or an input."""
     found = self.manifest.get("source", "llubi")
@@ -671,7 +678,7 @@ class Refutation:
     self.package.program(pair["src"])
     self.package.program(pair["tgt"])
     refuted = self.package.refutes(pair["src"], pair["tgt"])
-    gid = self.package.manifest.get("root")
+    gid = self.package.root_goal()
     what = "refuted" if refuted else "not refuted"
     print(f"  {'ok ' if refuted else 'BAD'} {gid:<4} the pair it was asked about   {what}")
     return refuted
@@ -921,7 +928,7 @@ def main() -> int:
         confirmed = Replay(package, args.verbose).confirm()
     else:
       check = Check(package, args.verbose)
-      check.goal(package.manifest["root"])
+      check.goal(package.root_goal())
       confirmed = not check.failures
   except (Refused, OSError) as error:
     print(f"refused: {error}", file=sys.stderr)
