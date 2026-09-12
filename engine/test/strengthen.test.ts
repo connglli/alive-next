@@ -118,7 +118,7 @@ async function cutTwice(): Promise<Tree> {
 async function cutting(srcText: string, tgtText: string, map: Record<string, string>) {
   const src = await store.put(srcText);
   const tgt = await store.put(tgtText);
-  events.push({ kind: "run_start", src, tgt, config: {}, versions: {} });
+  events.push({ kind: "start", src, tgt, config: {}, versions: {} });
   const result = await new Splits(store, llops).split(replay(), "g1", "%2", "%2", map);
   if (result.kind !== "split") throw new Error(result.message);
   return record(result.effects);
@@ -335,7 +335,7 @@ describe.skipIf(!built)("strengthening", () => {
   test("needs a goal that was cut", async () => {
     const src = await store.put(SRC);
     const tgt = await store.put(TGT);
-    events.push({ kind: "run_start", src, tgt, config: {}, versions: {} });
+    events.push({ kind: "start", src, tgt, config: {}, versions: {} });
     const strengthen = new Strengthen(
       store,
       llops,

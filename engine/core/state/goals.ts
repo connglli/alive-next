@@ -107,18 +107,18 @@ export function applyEffect(tree: Tree, effect: Effect): void {
 export function derive(entries: Entry[]): Tree {
   let tree: Tree | undefined;
   for (const entry of entries) {
-    if (entry.kind === "run_start") {
-      if (tree) throw new DerivationError("a second run_start");
+    if (entry.kind === "start") {
+      if (tree) throw new DerivationError("a second start");
       tree = start(entry.src, entry.tgt);
       continue;
     }
     const effects = "effects" in entry ? (entry.effects ?? []) : [];
     for (const effect of effects) {
-      if (!tree) throw new DerivationError(`${effect.effect} before run_start`);
+      if (!tree) throw new DerivationError(`${effect.effect} before start`);
       apply(tree, effect);
     }
   }
-  if (!tree) throw new DerivationError("no run_start");
+  if (!tree) throw new DerivationError("no start");
   return tree;
 }
 

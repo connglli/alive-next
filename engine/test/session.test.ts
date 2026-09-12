@@ -203,8 +203,8 @@ describe.skipIf(!built)("reading a session", () => {
       config: { toolchain: "/somewhere" },
     });
 
-    const start = log(run).find((entry) => entry.kind === "run_start");
-    if (start?.kind !== "run_start") throw new Error("no run_start was logged");
+    const start = log(run).find((entry) => entry.kind === "start");
+    if (start?.kind !== "start") throw new Error("no start was logged");
     expect(start.config).toEqual({
       toolchain: "/somewhere",
       timeouts: { ...DEFAULT_TIMEOUTS, eagerCheckMs: 100 },
@@ -246,9 +246,9 @@ describe.skipIf(!built)("reading a session", () => {
     expect(now.status).toBe("open");
     // The abandoned step stays in the log, and the history no longer holds it.
     expect(now.src.history).toEqual([before.src.id]);
-    expect(log(run).some((entry) => entry.kind === "tool_result" && entry.tool === "commit")).toBe(
-      true,
-    );
+    expect(
+      log(run).some((entry) => entry.kind === "tool_result" && entry.tool === "tx_commit"),
+    ).toBe(true);
   });
 
   test("revert refuses a program the side has never been, and its own head", async () => {
@@ -431,8 +431,8 @@ describe.skipIf(!built)("reading a session", () => {
     expect(run.verdict).toBe("verified");
     expect(run.tree.goals.get("g1")?.status).toBe("proved");
 
-    const checked = log(run).find((entry) => entry.kind === "auto");
-    if (checked?.kind !== "auto") throw new Error("the start check was not logged");
+    const checked = log(run).find((entry) => entry.kind === "framework");
+    if (checked?.kind !== "framework") throw new Error("the start check was not logged");
     expect(checked.action).toBe("eager_check");
     expect(checked.effects).toEqual([{ effect: "proved", gid: "g1" }]);
     expect(checked.outcome).toMatchObject({ check: { outcome: "proved" } });
@@ -452,7 +452,7 @@ describe.skipIf(!built)("reading a session", () => {
 
     expect(run.verdict).toBe("unknown");
     expect(checker.calls).toBe(0);
-    expect([...log(run).filter((entry) => entry.kind === "auto")]).toHaveLength(0);
+    expect([...log(run).filter((entry) => entry.kind === "framework")]).toHaveLength(0);
   });
 
   test("a check of the pair the run was asked about ends the run", async () => {
@@ -493,8 +493,8 @@ describe.skipIf(!built)("reading a session", () => {
     expect(run.verdict).toBe("counterexample");
     expect(run.tree.goals.get("g1")?.status).toBe("refuted");
 
-    const checked = log(run).find((entry) => entry.kind === "auto");
-    if (checked?.kind !== "auto") throw new Error("the start check was not logged");
+    const checked = log(run).find((entry) => entry.kind === "framework");
+    if (checked?.kind !== "framework") throw new Error("the start check was not logged");
     expect(checked.effects).toEqual([{ effect: "refuted", gid: "g1" }]);
     // The checker's answer is the source, so no input was named and no
     // program was run: nothing beside the check names the counterexample.
@@ -518,8 +518,8 @@ describe.skipIf(!built)("reading a session", () => {
     expect(run.verdict).toBe("unknown");
     expect(run.tree.goals.get("g1")?.status).toBe("open");
 
-    const checked = log(run).find((entry) => entry.kind === "auto");
-    if (checked?.kind !== "auto") throw new Error("the start check was not logged");
+    const checked = log(run).find((entry) => entry.kind === "framework");
+    if (checked?.kind !== "framework") throw new Error("the start check was not logged");
     expect(checked.effects).toEqual([]);
     expect(checked.outcome).toMatchObject({ check: { outcome: "unknown" } });
   });

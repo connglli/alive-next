@@ -271,7 +271,7 @@ describe.skipIf(!built)("the loop", () => {
     expect(await prove()).toBe("unknown");
 
     const notes = log(session).filter(
-      (entry) => entry.kind === "auto" && entry.action === "budget",
+      (entry) => entry.kind === "framework" && entry.action === "budget",
     );
     expect(notes).toHaveLength(1);
     expect(JSON.stringify(notes[0])).toContain("3 steps");

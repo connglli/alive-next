@@ -68,7 +68,7 @@ function record(effects: Effect[]): Tree {
 async function start() {
   const src = await store.put(PROGRAM);
   const tgt = await store.put(PROGRAM);
-  events.push({ kind: "run_start", src, tgt, config: {}, versions: {} });
+  events.push({ kind: "start", src, tgt, config: {}, versions: {} });
   return replay();
 }
 

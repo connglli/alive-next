@@ -63,7 +63,7 @@ class Case(unittest.TestCase):
     self.src = self.session.program(SRC)
     self.tgt = self.session.program(TGT)
     self.session.append(
-      {"kind": "run_start", "src": self.src, "tgt": self.tgt, "config": {}, "versions": {}}
+      {"kind": "start", "src": self.src, "tgt": self.tgt, "config": {}, "versions": {}}
     )
 
   def tearDown(self) -> None:
@@ -149,23 +149,23 @@ class TestFold(Case):
     self.assertEqual(events[2]["focus"], "n1")
     self.assertTrue(all(event["focus"] for event in events))
 
-  def test_an_auto_move_shows_the_effects_it_made(self):
-    # The start check lands as an auto event, and a refutation proves or
-    # ends the run through it, so the timeline says which one it was.
+  def test_a_framework_move_shows_the_effects_it_made(self):
+    # The start check is a framework event, and a refutation through it
+    # proves or refutes the run, so the line says which one it was.
     self.session.append(
       {
-        "kind": "auto",
+        "kind": "framework",
         "action": "eager_check",
         "outcome": {},
         "effects": [{"effect": "refuted", "gid": "g1"}],
       }
     )
-    self.session.append({"kind": "auto", "action": "budget", "outcome": {}})
+    self.session.append({"kind": "framework", "action": "budget", "outcome": {}})
     events = self.data()["events"]
-    self.assertEqual(events[-2]["label"], "auto eager_check -> refuted g1")
+    self.assertEqual(events[-2]["label"], "framework eager_check -> refuted g1")
     self.assertEqual(events[-2]["focus"], "n0")
-    # A budget changes no goal, so the line stays bare the way it did.
-    self.assertEqual(events[-1]["label"], "auto budget")
+    # A budget changes no goal, so the line stays bare.
+    self.assertEqual(events[-1]["label"], "framework budget")
 
   def test_a_step_is_a_version_of_its_goal_with_a_diff(self):
     other = self.session.program(SRC.replace("mul i32 %0, 2", "add i32 %0, %0"))
@@ -276,7 +276,7 @@ class TestPage(Case):
 
   def test_a_call_and_its_result_are_one_move(self):
     events = self.data()["events"]
-    self.assertEqual([event["kind"] for event in events], ["run_start", "check", "verdict"])
+    self.assertEqual([event["kind"] for event in events], ["start", "check", "verdict"])
     call, result = events[1]["entries"]
     self.assertEqual((call["kind"], result["kind"]), ("tool_call", "tool_result"))
     self.assertEqual(events[1]["label"], "check() -> proved g1")
@@ -289,12 +289,12 @@ class TestPage(Case):
 
   def test_a_move_with_no_duration_carries_none(self):
     events = self.data()["events"]
-    self.assertEqual(events[0]["label"], "run_start")
+    self.assertEqual(events[0]["label"], "start")
     self.assertNotIn("ms", events[0])
 
   def test_every_event_has_a_line_for_the_timeline(self):
     data = self.data()
-    self.assertEqual(data["events"][0]["label"], "run_start")
+    self.assertEqual(data["events"][0]["label"], "start")
     self.assertEqual(data["events"][-1]["label"], "verdict verified")
     self.assertTrue(all(event["label"] for event in data["events"]))
 

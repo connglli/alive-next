@@ -58,7 +58,7 @@ It does not describe the tools. Pi sends each tool's description and schema with
 
 ## Sessions
 
-`trajectory.jsonl` is the source of truth, the goal tree is derived from it, and a resumed run replays the trajectory, which is the rule [implementation.md](./implementation.md) states for state on disk. Pi's session manager holds the message history for the run in memory and compaction rewrites it, which the framework records as an `auto` event, so the trajectory keeps the messages the model actually saw.
+`trajectory.jsonl` is the source of truth, the goal tree is derived from it, and a resumed run replays the trajectory, which is the rule [implementation.md](./implementation.md) states for state on disk. Pi's session manager holds the message history for the run in memory and compaction rewrites it, which the framework records as a `framework` event, so the trajectory keeps the messages the model actually saw.
 
 ## Watching a run
 

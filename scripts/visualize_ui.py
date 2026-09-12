@@ -1195,7 +1195,7 @@ function edgeCaption(node) {
   // A commit records a transaction, so the edge says what it was. A
   // strengthen's attributes stay in the footers, so its edge says one word.
   let move = node.note || node.tool;
-  if (node.tool === "commit") move = "transaction";
+  if (node.tool === "tx_commit") move = "transaction";
   else if (node.side === "both") move = node.tool;
   return [side, move].filter(Boolean).join(" · ");
 }

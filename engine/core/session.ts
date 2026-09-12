@@ -143,7 +143,7 @@ export interface SessionOptions {
   eager?: boolean;
 }
 
-/** What `start` records about the run, verbatim, in `run_start`. */
+/** What `start` records about the run, verbatim. */
 export interface SessionStartOptions extends SessionOptions {
   src: string;
   tgt: string;
@@ -198,7 +198,7 @@ export class Session {
     const src = await session.store.put(options.src);
     const tgt = await session.store.put(options.tgt);
     session.append({
-      kind: "run_start",
+      kind: "start",
       src,
       tgt,
       config: resolved(options.config, session.steps.budgets),
@@ -220,7 +220,7 @@ export class Session {
 
   /** The goal tree, as the log says it stands. */
   get tree(): Tree {
-    if (!this.derived) throw new Error(`${this.dir} has no run_start`);
+    if (!this.derived) throw new Error(`${this.dir} has no start`);
     return this.derived;
   }
 
@@ -380,7 +380,7 @@ export class Session {
   /** Open a transaction on a goal's side, which is how every rewrite starts. */
   begin(gid: string, side: Side): Promise<Transaction> {
     return this.act(
-      "begin",
+      "tx_begin",
       { gid, side },
       async (tree) => this.editing.begin(tree, gid, side),
       scratch,
@@ -389,12 +389,12 @@ export class Session {
 
   /** Apply one edit to the open transaction, which is how every rewrite continues. */
   edit(op: EditOp): Promise<EditResult> {
-    return this.act("edit", op, () => this.editing.edit(op), scratch);
+    return this.act("tx_edit", op, () => this.editing.edit(op), scratch);
   }
 
   /** Apply one llops structural optimizer op to the scratch program. */
   opt(op: OptOp): Promise<EditResult> {
-    return this.act("opt", op, () => this.editing.opt(op), scratch);
+    return this.act("tx_opt", op, () => this.editing.opt(op), scratch);
   }
 
   /** Certify the open transaction as one step. */
@@ -405,14 +405,14 @@ export class Session {
     },
     imm_abort: boolean = true,
   ): Promise<CheckStepResult> {
-    return this.act("commit", { ...options, imm_abort }, (tree) =>
+    return this.act("tx_commit", { ...options, imm_abort }, (tree) =>
       this.editing.commit(tree, this.steps, options, imm_abort),
     );
   }
 
   /** Abandon the open transaction, which leaves the goal unchanged. */
   abort(): Promise<Transaction> {
-    return this.act("abort", {}, async () => this.editing.abort(), scratch);
+    return this.act("tx_abort", {}, async () => this.editing.abort(), scratch);
   }
 
   /**
@@ -517,7 +517,9 @@ export class Session {
    */
   note(action: string, outcome: unknown, effects?: Effect[]): void {
     this.append(
-      effects ? { kind: "auto", action, outcome, effects } : { kind: "auto", action, outcome },
+      effects
+        ? { kind: "framework", action, outcome, effects }
+        : { kind: "framework", action, outcome },
     );
   }
 

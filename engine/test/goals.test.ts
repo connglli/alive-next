@@ -13,7 +13,7 @@ function log(...events: Event[]): Entry[] {
 }
 
 function run(src = "hash-src", tgt = "hash-tgt"): Event {
-  return { kind: "run_start", src, tgt, config: {}, versions: {} };
+  return { kind: "start", src, tgt, config: {}, versions: {} };
 }
 
 /** The goal an id names, or a failure here rather than a null check below. */
@@ -25,7 +25,7 @@ function goal(tree: Tree, id: string): Goal {
 
 /** A tool result carrying the effects it had, which is how the tree changes. */
 function did(...effects: Effect[]): Event {
-  return { kind: "tool_result", id: "1", tool: "commit", effects, result: null, ms: 1 };
+  return { kind: "tool_result", id: "1", tool: "tx_commit", effects, result: null, ms: 1 };
 }
 
 describe("derive", () => {
@@ -218,7 +218,7 @@ describe("derive", () => {
   test("an eager check discharges a goal the same way a tool does", () => {
     const tree = derive(
       log(run(), {
-        kind: "auto",
+        kind: "framework",
         action: "eager_check",
         effects: [{ effect: "proved", gid: "g1" }],
         outcome: "proved",
@@ -241,9 +241,9 @@ describe("derive", () => {
   });
 
   test("refuses a log that does not start a run", () => {
-    expect(() => derive([])).toThrow(/no run_start/);
-    expect(() => derive(log(did({ effect: "proved", gid: "g1" })))).toThrow(/before run_start/);
-    expect(() => derive(log(run(), run()))).toThrow(/second run_start/);
+    expect(() => derive([])).toThrow(/no start/);
+    expect(() => derive(log(did({ effect: "proved", gid: "g1" })))).toThrow(/before start/);
+    expect(() => derive(log(run(), run()))).toThrow(/second start/);
   });
 
   test("refuses an effect on a goal that is not there", () => {

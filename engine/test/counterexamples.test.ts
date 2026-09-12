@@ -106,7 +106,7 @@ function replay(): Tree {
 async function asked(): Promise<Tree> {
   const src = await store.put(SRC);
   const tgt = await store.put(TGT);
-  events.push({ kind: "run_start", src, tgt, config: {}, versions: {} });
+  events.push({ kind: "start", src, tgt, config: {}, versions: {} });
   return replay();
 }
 
@@ -176,7 +176,7 @@ describe.skipIf(!built)("reporting a counterexample", () => {
     events.push({
       kind: "tool_result",
       id: "1",
-      tool: "commit",
+      tool: "tx_commit",
       effects: [{ effect: "step", gid: "g1", side: "src", to: moved, how: "checked" }],
       result: null,
       ms: 1,
@@ -220,7 +220,7 @@ entry:
 }
 `);
     const tgt = await store.put(TGT);
-    events.push({ kind: "run_start", src, tgt, config: {}, versions: {} });
+    events.push({ kind: "start", src, tgt, config: {}, versions: {} });
     const result = await new Counterexamples(store, llops, new Canned([])).report(replay(), INPUT);
 
     expect(result).toMatchObject({ kind: "refused" });

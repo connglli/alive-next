@@ -58,7 +58,7 @@ sessions/<id>/
 - **Store**: every program version is canonical text (as printed by `llops canon`) stored under its sha256. Filename equals hash, so integrity verification on load is free. This is the isolation guarantee from design.md: agent `bash`/`python` scratch work runs in a separate working directory under a bubblewrap sandbox ([agent.md](./agent.md) has the confinement), so the store cannot be written from it; a store that is tampered with anyway is detected on the next load.
 - **Goal tree**: not stored separately; it is derived state, rebuilt by replaying the trajectory. One source of truth, nothing to drift.
 
-Reading is a move like any other. `status` answers with the tree, each goal's status and heads, the transaction if one is open, and the budgets the run resolved to, and names no program text. Those budgets are read rather than found out by running out of one, and `run_start` records them beside the configuration they came from, since a file that names no timeout still produced the ones a run spent. A check reports the budget it ran on, and says so when the cap cut down what was asked for. `show` answers with one goal and the text of both sides, each side also listing every program it has been. `program` answers with any of those, by the name the tree gave it or by its hash.
+Reading is a move like any other. `status` answers with the tree, each goal's status and heads, the transaction if one is open, and the budgets the run resolved to, and names no program text. Those budgets are read rather than found out by running out of one, and `start` records them beside the configuration they came from, since a file that names no timeout still produced the ones a run spent. A check reports the budget it ran on, and says so when the cap cut down what was asked for. `show` answers with one goal and the text of both sides, each side also listing every program it has been. `program` answers with any of those, by the name the tree gave it or by its hash.
 
 A program's value references are the program's own, so a caller reads a side before addressing anything in it: `begin` answers with the body it opened on, an applied edit with the body as it now stands, and a refused edit with the body it refused, which is where the reference it could not find was meant to be.
 
@@ -70,10 +70,10 @@ One JSON object per line, appended synchronously by the framework's tool wrapper
 
 Event kinds:
 
-- `run_start`: root program hashes, config snapshot, versions (LLVM, alive2, llubi, model), timestamp.
+- `start`: root program hashes, config snapshot, versions (LLVM, alive2, llubi, model), timestamp.
 - `message`: every agent turn, verbatim.
 - `tool_call` / `tool_result`: name, args, full result, duration; programs referenced by store hash rather than repeated, whether the move created one or only read it.
-- `auto`: framework-initiated actions (the start eager check, a budget spent, a compaction) with outcomes.
+- `framework`: actions the framework takes on its own (the start check, a budget spent, a compaction), with outcomes.
 - `verdict`: final outcome plus certificate path if one was produced.
 
 ## The agent
@@ -86,13 +86,13 @@ The loop stops on a verdict or on the budget. A tool that settles the root sets 
 
 `bun run agent` opens Pi's TUI, which is also where the model and the thinking level are steered from, and it is the only way a run is drawn. Drawing belongs to the entry point rather than to `agent.ts`, which builds a session runtime and stays quiet, so a caller with a screen of its own can draw the same events differently, and one with no screen drives `createAgent`'s `prove` instead.
 
-What the model said reaches `trajectory.jsonl` as `message` entries and compaction as an `auto` entry. Its tool calls are already there, since every tool of ours writes itself through the session and Pi's own arrive inside the assistant message.
+What the model said reaches `trajectory.jsonl` as `message` entries and compaction as a `framework` entry. Its tool calls are already there, since every tool of ours writes itself through the session and Pi's own arrive inside the assistant message.
 
 ## Certificate package and check.py
 
 A settled run writes one, into `<session>/certificate`: `programs/` named by content hash, `manifest.json`, and a copy of `kernel/check.py`. `make cert SESSION=sessions/<id>` builds it from a session that has already finished, and `make examples` writes one for each example it settles. `engine/cert/` assembles it from the trajectory: the goal tree says which pairs survived, the log says what certified each move, and what the run abandoned does not appear.
 
-A verified run's manifest is a version, the verdict, the root goal, the toolchain `run_start` recorded, and one entry per goal:
+A verified run's manifest is a version, the verdict, the root goal, the toolchain `start` recorded, and one entry per goal:
 
 - `start` and `end`, the pairs the goal began and ended with, as hashes.
 - `steps`, in the order they happened. A `checked` step names the side it moved and the hash it moved from and to. A `rule` step names the same pair and, beside it, the rules llrwt ran and the invocation a replay reruns. A `window` step is a checked step whose question was narrowed: it names the same pair and, under `window`, the outlined function and the three programs the narrowing produced, one outer and the two halves. A `strengthen` step names the pair on each end and the outer step that stands behind it.
@@ -132,7 +132,7 @@ One `config.jsonc` at the repo root; no config directory. The dialect is JSONC, 
 
 `engine/core/config.ts` carries the toolchain and the timeouts, and nothing that belongs to the agent: what bounds a model is a per-run choice, so `engine/agent/budget.ts` takes it from the command line.
 
-This split is purely ergonomic, never a correctness question: `run_start` snapshots the fully resolved configuration, every assistant message the trajectory records names the model that produced it, and the certificate manifest records exact invocations.
+This split is purely ergonomic, never a correctness question: `start` snapshots the fully resolved configuration, every assistant message the trajectory records names the model that produced it, and the certificate manifest records exact invocations.
 
 ## Build system
 
@@ -169,7 +169,7 @@ A toolchain is one directory holding that build, and one can serve several check
 
 Where that directory is has one answer: the `TOOLCHAIN` environment variable, then `toolchain` in `config.jsonc`, then `deps/` in the repository. `scripts/depman.sh toolchain` prints it, and the Makefile, the agent and `llops/test/llops_test.py` ask rather than resolving it again.
 
-A run reads the toolchain before it proves anything: it asks the LLVM tools which release they carry and stops if they disagree or one is missing, while llrwt answers with its version instead. What it found, with `toolchain.json`, goes into `run_start`.
+A run reads the toolchain before it proves anything: it asks the LLVM tools which release they carry and stops if they disagree or one is missing, while llrwt answers with its version instead. What it found, with `toolchain.json`, goes into `start`.
 
 ### Dependencies
 

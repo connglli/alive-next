@@ -21,8 +21,9 @@ import { sha256 } from "./hash.ts";
 /** Programs are named by their store hash wherever an event mentions one. */
 export type Hash = string;
 
-export interface RunStart {
-  kind: "run_start";
+/** The pair a run was asked about, with the config and the toolchain that produced the run. */
+export interface StartEvent {
+  kind: "start";
   src: Hash;
   tgt: Hash;
   /** The fully resolved configuration, so a run says what produced it. */
@@ -116,14 +117,16 @@ export type Effect =
   | { effect: "proved"; gid: string }
   | { effect: "refuted"; gid: string };
 
-export interface ToolCall {
+/** One tool call: its id, its name, and its args. */
+export interface ToolCallEvent {
   kind: "tool_call";
   id: string;
   tool: string;
   args: unknown;
 }
 
-export interface ToolResult {
+/** What the tool answered: the effects, the result, and how long it took. */
+export interface ToolResultEvent {
   kind: "tool_result";
   id: string;
   tool: string;
@@ -140,21 +143,28 @@ export interface ToolResult {
 }
 
 /** Something the framework did on its own: the start check, a budget spent, a compaction. */
-export interface AutoEvent {
-  kind: "auto";
+export interface FrameworkEvent {
+  kind: "framework";
   action: string;
   /** An eager check that discharges a goal changes the tree like a tool does. */
   effects?: Effect[];
   outcome: unknown;
 }
 
-export interface Verdict {
+/** Close the run: the final outcome, and the certificate when one was produced. */
+export interface VerdictEvent {
   kind: "verdict";
   outcome: "verified" | "counterexample" | "unknown";
   certificate?: string;
 }
 
-export type Event = RunStart | MessageEvent | ToolCall | ToolResult | AutoEvent | Verdict;
+export type Event =
+  | StartEvent
+  | MessageEvent
+  | ToolCallEvent
+  | ToolResultEvent
+  | FrameworkEvent
+  | VerdictEvent;
 
 /** An event as it sits in the file: what happened, when, and what preceded it. */
 export type Entry = Event & { time: number; prev: Hash };

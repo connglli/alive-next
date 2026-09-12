@@ -83,7 +83,7 @@ function goal(goals: Tree, id: string): Goal {
 async function tree() {
   const src = await store.put(PROGRAM);
   const tgt = await store.put(PROGRAM.replace("%m, %x", "%x, %m"));
-  const events: Event[] = [{ kind: "run_start", src, tgt, config: {}, versions: {} }];
+  const events: Event[] = [{ kind: "start", src, tgt, config: {}, versions: {} }];
   return derive(events.map((event) => ({ ...event, time: 0, prev: "" }) as Entry));
 }
 

@@ -77,7 +77,7 @@ afterEach(() => {
 async function tree(...events: Event[]) {
   const src = await store.put(SRC);
   const tgt = await store.put(TGT);
-  const start: Event[] = [{ kind: "run_start", src, tgt, config: {}, versions: {} }];
+  const start: Event[] = [{ kind: "start", src, tgt, config: {}, versions: {} }];
   return derive([...start, ...events].map((event) => ({ ...event, time: 0, prev: "" }) as Entry));
 }
 
@@ -107,7 +107,7 @@ async function preconditionedTree() {
   const tgt = await store.put(AFTER);
   return derive([
     {
-      kind: "run_start",
+      kind: "start",
       src,
       tgt,
       config: {},
@@ -555,7 +555,7 @@ describe("checking a goal", () => {
       await tree({
         kind: "tool_result",
         id: "1",
-        tool: "commit",
+        tool: "tx_commit",
         effects: [{ effect: "step", gid: "g1", side: "src", to: moved, how: "checked" }],
         result: null,
         ms: 1,
@@ -678,7 +678,7 @@ describe("checking a goal", () => {
     const newT = derive(
       [
         {
-          kind: "run_start",
+          kind: "start",
           src: await store.put(SRC),
           tgt: await store.put(TGT),
           config: {},
@@ -687,7 +687,7 @@ describe("checking a goal", () => {
         ...stepResult.effects.map((effect) => ({
           kind: "tool_result",
           id: "t1",
-          tool: "commit",
+          tool: "tx_commit",
           effects: [effect],
           result: null,
           ms: 1,
@@ -711,7 +711,7 @@ describe("checking a goal", () => {
     const newT = derive(
       [
         {
-          kind: "run_start",
+          kind: "start",
           src: await store.put(SRC),
           tgt: await store.put(TGT),
           config: {},
@@ -720,7 +720,7 @@ describe("checking a goal", () => {
         ...stepResult.effects.map((effect) => ({
           kind: "tool_result",
           id: "t1",
-          tool: "commit",
+          tool: "tx_commit",
           effects: [effect],
           result: null,
           ms: 1,

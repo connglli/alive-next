@@ -96,12 +96,12 @@ describe("the trajectory", () => {
 
   test("reads back what it wrote, in order", () => {
     const log = new Trajectory(path());
-    log.append({ kind: "run_start", src: "aa", tgt: "bb", config: {}, versions: {} });
+    log.append({ kind: "start", src: "aa", tgt: "bb", config: {}, versions: {} });
     log.append({ kind: "tool_call", id: "1", tool: "check", args: { gid: "g1" } });
     log.append({ kind: "tool_result", id: "1", tool: "check", result: "proved", ms: 12 });
 
     const entries = log.read();
-    expect(entries.map((entry) => entry.kind)).toEqual(["run_start", "tool_call", "tool_result"]);
+    expect(entries.map((entry) => entry.kind)).toEqual(["start", "tool_call", "tool_result"]);
     expect(entries[0]?.time).toBeGreaterThan(0);
   });
 

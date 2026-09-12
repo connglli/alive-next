@@ -32,7 +32,7 @@ export interface Config {
    * that LLVM's MLIR tools.
    */
   toolchain: string;
-  /** The file this came from, for the run_start snapshot. */
+  /** The file this came from, for the start snapshot. */
   source: string;
 }
 

@@ -69,7 +69,7 @@ class Tree:
     self.pnames: dict[str, str] = {}
     self.name(src)
     self.name(tgt)
-    self.open_goal("g1", None, None, None, src, tgt, at, "run_start", None, None)
+    self.open_goal("g1", None, None, None, src, tgt, at, "start", None, None)
 
   def open_goal(
     self,
@@ -347,13 +347,13 @@ def replay(grouped: list[list[dict]]) -> Replay:
     before = len(tree.nodes) if tree else 0
     try:
       for entry in row:
-        if entry["kind"] == "run_start":
+        if entry["kind"] == "start":
           if tree is not None:
-            raise Broken("a second run_start")
+            raise Broken("a second start")
           tree = Tree(entry["src"], entry["tgt"], index)
         for effect in entry.get("effects", []):
           if tree is None:
-            raise Broken(f"{effect['effect']} before run_start")
+            raise Broken(f"{effect['effect']} before start")
           tree.apply(effect, index, entry.get("tool", entry["kind"]))
     except Broken as broken:
       error = f"move {index}: {broken}"
@@ -434,7 +434,7 @@ def diffs_for(nodes: list[dict], programs: dict[str, str]) -> dict[str, dict]:
 
 
 def effects_line(effects: list[dict]) -> str:
-  """Effects as the timeline shows a move by them: the effect, and the goal."""
+  """Effects as one line for the timeline: what a move did, and to which goal."""
   return ", ".join(f"{effect['effect']} {effect.get('gid', '')}".strip() for effect in effects)
 
 
@@ -442,12 +442,12 @@ def label(row: list[dict]) -> str:
   """The one line the timeline shows for a move."""
   entry = row[0]
   kind = entry["kind"]
-  if kind == "run_start":
-    return "run_start"
+  if kind == "start":
+    return "start"
   if kind == "verdict":
     return f"verdict {entry['outcome']}"
-  if kind == "auto":
-    line = f"auto {entry.get('action', '')}"
+  if kind == "framework":
+    line = f"framework {entry.get('action', '')}"
     effects = effects_line(entry.get("effects", []))
     return f"{line} -> {effects}" if effects else line
   if kind != "tool_call":

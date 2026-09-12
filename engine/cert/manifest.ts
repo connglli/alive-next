@@ -16,7 +16,13 @@ import type { LlrwtInvocation } from "../core/drivers/llrwt.ts";
 import type { ReportResult } from "../core/state/counterexamples.ts";
 import { type Goal, head, type Tree } from "../core/state/goals.ts";
 import type { CheckGoalResult } from "../core/state/steps.ts";
-import type { AutoEvent, Effect, Entry, Hash, ToolResult } from "../core/state/trajectory.ts";
+import type {
+  Effect,
+  Entry,
+  FrameworkEvent,
+  Hash,
+  ToolResultEvent,
+} from "../core/state/trajectory.ts";
 
 export const VERSION = 1;
 
@@ -99,7 +105,7 @@ export interface Proof {
   version: number;
   verdict: "verified";
   root: string;
-  /** The binaries the run used, as `run_start` recorded them. */
+  /** The binaries the run used, as `start` recorded them. */
   toolchain: unknown;
   goals: Record<string, ManifestGoal>;
 }
@@ -172,7 +178,7 @@ function refutation(entries: Entry[], tree: Tree, root: Goal): [Counterexample, 
   let said: { input: HarnessArg[]; divergence: string } | undefined;
   let answer: string | undefined;
   for (const entry of entries) {
-    if (entry.kind !== "tool_result" && entry.kind !== "auto") continue;
+    if (entry.kind !== "tool_result" && entry.kind !== "framework") continue;
     if (!refutedEffect(entry, root.id)) continue;
     const found = report(entry);
     if (found) {
@@ -212,7 +218,7 @@ function refutation(entries: Entry[], tree: Tree, root: Goal): [Counterexample, 
 }
 
 /** Whether the entry marked the root refuted. */
-function refutedEffect(entry: ToolResult | AutoEvent, gid: string): boolean {
+function refutedEffect(entry: ToolResultEvent | FrameworkEvent, gid: string): boolean {
   return (entry.effects ?? []).some((effect) => effect.effect === "refuted" && effect.gid === gid);
 }
 
@@ -227,7 +233,7 @@ interface EagerOutcome {
  * or an action of the framework's own did.
  */
 function report(
-  entry: ToolResult | AutoEvent,
+  entry: ToolResultEvent | FrameworkEvent,
 ): { input: HarnessArg[]; divergence: string } | undefined {
   const said =
     entry.kind === "tool_result"
@@ -238,7 +244,7 @@ function report(
 }
 
 /** What the checker printed on the pair it refuted, whatever entry holds the check. */
-function answerOf(entry: ToolResult | AutoEvent): string | undefined {
+function answerOf(entry: ToolResultEvent | FrameworkEvent): string | undefined {
   if (entry.kind === "tool_result") return (entry.result as CheckGoalResult | null)?.check.detail;
   return (entry.outcome as EagerOutcome | null)?.check.check.detail;
 }
@@ -395,6 +401,6 @@ function effectsOf(entries: Entry[]): Effect[] {
 }
 
 function toolchainOf(entries: Entry[]): unknown {
-  const start = entries.find((entry) => entry.kind === "run_start");
+  const start = entries.find((entry) => entry.kind === "start");
   return start && "toolchain" in start ? start.toolchain : undefined;
 }
