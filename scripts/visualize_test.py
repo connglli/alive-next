@@ -149,6 +149,24 @@ class TestFold(Case):
     self.assertEqual(events[2]["focus"], "n1")
     self.assertTrue(all(event["focus"] for event in events))
 
+  def test_an_auto_move_shows_the_effects_it_made(self):
+    # The start check lands as an auto event, and a refutation proves or
+    # ends the run through it, so the timeline says which one it was.
+    self.session.append(
+      {
+        "kind": "auto",
+        "action": "eager_check",
+        "outcome": {},
+        "effects": [{"effect": "refuted", "gid": "g1"}],
+      }
+    )
+    self.session.append({"kind": "auto", "action": "budget", "outcome": {}})
+    events = self.data()["events"]
+    self.assertEqual(events[-2]["label"], "auto eager_check -> refuted g1")
+    self.assertEqual(events[-2]["focus"], "n0")
+    # A budget changes no goal, so the line stays bare the way it did.
+    self.assertEqual(events[-1]["label"], "auto budget")
+
   def test_a_step_is_a_version_of_its_goal_with_a_diff(self):
     other = self.session.program(SRC.replace("mul i32 %0, 2", "add i32 %0, %0"))
     self.session.result(

@@ -433,6 +433,11 @@ def diffs_for(nodes: list[dict], programs: dict[str, str]) -> dict[str, dict]:
   return diffs
 
 
+def effects_line(effects: list[dict]) -> str:
+  """Effects as the timeline shows a move by them: the effect, and the goal."""
+  return ", ".join(f"{effect['effect']} {effect.get('gid', '')}".strip() for effect in effects)
+
+
 def label(row: list[dict]) -> str:
   """The one line the timeline shows for a move."""
   entry = row[0]
@@ -442,15 +447,15 @@ def label(row: list[dict]) -> str:
   if kind == "verdict":
     return f"verdict {entry['outcome']}"
   if kind == "auto":
-    return f"auto {entry.get('action', '')}"
+    line = f"auto {entry.get('action', '')}"
+    effects = effects_line(entry.get("effects", []))
+    return f"{line} -> {effects}" if effects else line
   if kind != "tool_call":
     return kind
   call = f"{entry['tool']}({compact(entry.get('args'))})"
   if len(row) == 1:
     return f"{call} ..."
-  effects = ", ".join(
-    f"{effect['effect']} {effect.get('gid', '')}".strip() for effect in row[1].get("effects", [])
-  )
+  effects = effects_line(row[1].get("effects", []))
   return f"{call} -> {effects or 'no change'}"
 
 

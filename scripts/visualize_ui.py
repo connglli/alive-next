@@ -353,6 +353,7 @@ summary { cursor: pointer; }
   border-radius: 10px;
   color: var(--text);
   background: transparent;
+  cursor: pointer;
 }
 .event-button:hover { background: #f7f8fc; }
 .event-button.selected {
@@ -598,9 +599,6 @@ summary { cursor: pointer; }
 .counterexample-action:hover {
   color: var(--red);
   background: #f8dfe4;
-}
-#timeline .counterexample-action {
-  margin: 0 8px 8px 47px;
 }
 .counterexample-card {
   min-width: 0;
@@ -1265,19 +1263,27 @@ function drawTimeline() {
     visible++;
     const row = el("li");
 
-    const isReportCex = event.kind === "report_cex" ||
-      event.entries.some(entry => entry.tool === "report_cex");
-
-    // report_cex has two independent actions:
-    //   tool name → open counterexample
+    // A reported counterexample has two independent actions:
+    //   kind → open counterexample
     //   description → select trajectory event
-    const control = isReportCex
-      ? el("div", "event-button report-cex-event")
+    // Which tool reported it does not matter: a report_cex row and one
+    // from a check or the start check read the same.
+    const reported = event.kind === "report_cex" ||
+      event.entries.some(entry => entry.tool === "report_cex") ||
+      counterexampleByEvent.has(index);
+
+    const control = reported
+      ? el("div", "event-button")
       : button("", "event-button", () => go(index));
+
+    // The cover stays a div, since a button does not carry buttons, but a
+    // click anywhere on the card still selects. Clicks on the kind and the
+    // description bubble into it, and those actions already select.
+    if (reported) control.onclick = () => go(index);
 
     control.dataset.index = String(index);
 
-    if (!isReportCex) {
+    if (!reported) {
       control.title = event.label;
     }
 
@@ -1289,18 +1295,18 @@ function drawTimeline() {
     const body = el("span", "event-text");
     const top = el("span", "event-top");
 
-    if (isReportCex) {
-      const report = button(
-        "report_cex",
+    if (reported) {
+      const kind = button(
+        event.kind,
         "event-kind counterexample-link",
         () => openCounterexample(index)
       );
-      report.title = "Open counterexample";
-      report.setAttribute(
+      kind.title = "Open counterexample";
+      kind.setAttribute(
         "aria-label",
         `Open counterexample reported at event ${index}`
       );
-      top.append(report);
+      top.append(kind);
     } else {
       top.append(el("span", "event-kind", event.kind));
     }
@@ -1309,7 +1315,7 @@ function drawTimeline() {
       top.append(el("span", "event-time", `${event.ms} ms`));
     }
 
-    const description = isReportCex
+    const description = reported
       ? button(
           event.label,
           "event-description event-select",
@@ -1317,7 +1323,7 @@ function drawTimeline() {
         )
       : el("span", "event-description", event.label);
 
-    if (isReportCex) {
+    if (reported) {
       description.title = event.label;
       description.setAttribute(
         "aria-label",
@@ -1328,15 +1334,6 @@ function drawTimeline() {
     body.append(top, description);
     control.append(number, body);
     row.append(control);
-
-    // Keep a discoverable entry point for refutations reported by other tools.
-    if (!isReportCex && counterexampleByEvent.has(index)) {
-      row.append(button(
-        "View counterexample ↗",
-        "small-button counterexample-action",
-        () => openCounterexample(index)
-      ));
-    }
 
     fragment.append(row);
   });
