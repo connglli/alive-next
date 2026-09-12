@@ -338,10 +338,10 @@ class Case(unittest.TestCase):
     )
     return step
 
-  def verified(self, package: Path) -> subprocess.CompletedProcess:
+  def verified(self, package: Path, saying: str = "VERIFIED - root") -> subprocess.CompletedProcess:
     done = named(package)
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-    self.assertIn("verified", done.stdout)
+    self.assertIn(saying, done.stdout)
     return done
 
   def refused(self, package: Path, saying: str) -> None:
@@ -371,9 +371,9 @@ class TestGolden(Case):
     self.rewritten()
     done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT, "-v")
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-    self.assertIn("verified", done.stdout)
+    self.assertIn("VERIFIED - root", done.stdout)
     # No solver is asked about the step itself: the rewrite is replayed.
-    self.assertIn("rewrite to", done.stdout)
+    self.assertIn("Rewriter replay", done.stdout)
 
   def test_a_cut_verifies(self):
     self.verified(self.cut())
@@ -382,10 +382,12 @@ class TestGolden(Case):
     self.windowed()
     done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-    self.assertIn("verified", done.stdout)
+    self.assertIn("VERIFIED - root", done.stdout)
     # Both halves go back into the outer before the small pair is asked:
     # what the step claims about the rest of the body is checked first.
-    self.assertEqual(done.stdout.count("inlines back"), 2)
+    self.assertEqual(
+      done.stdout.count("inline the from half") + done.stdout.count("inline the to half"), 2
+    )
 
   def test_a_conditioned_window_step_verifies(self):
     head = "define i32 @f(i32 noundef %0) {\nentry:\n  %1 = and i32 %0, 255\n"
@@ -419,8 +421,10 @@ class TestGolden(Case):
     )
     done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-    self.assertIn("verified", done.stdout)
-    self.assertEqual(done.stdout.count("inlines back"), 2)
+    self.assertIn("VERIFIED - root", done.stdout)
+    self.assertEqual(
+      done.stdout.count("inline the from half") + done.stdout.count("inline the to half"), 2
+    )
 
   def test_a_conditioned_window_step_is_asked_about_the_side_it_replaces(self):
     # A tgt step's obligation runs backward (before refines after), so the
@@ -479,8 +483,10 @@ class TestGolden(Case):
     )
     done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-    self.assertIn("verified", done.stdout)
-    self.assertEqual(done.stdout.count("inlines back"), 2)
+    self.assertIn("VERIFIED - root", done.stdout)
+    self.assertEqual(
+      done.stdout.count("inline the from half") + done.stdout.count("inline the to half"), 2
+    )
 
   def test_the_binaries_come_from_the_manifest(self):
     # A package is replayed by someone who was not there, so where the run
@@ -501,7 +507,7 @@ class TestGolden(Case):
     done = run(self.built.root)
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
     self.assertIn(ALIVE_TV, done.stdout)
-    self.assertIn("verified", done.stdout)
+    self.assertIn("VERIFIED - root", done.stdout)
 
   def test_a_toolchain_that_is_not_the_recorded_one_is_said_so(self):
     self.leaf()
@@ -611,9 +617,8 @@ class TestGolden(Case):
 
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-    self.assertIn("verified", done.stdout)
-    self.assertIn("the attributes on src replay", done.stdout)
-    self.assertIn("the attributes on tgt replay", done.stdout)
+    self.assertIn("VERIFIED - root", done.stdout)
+    self.assertIn("Strengthening replay", done.stdout)
 
 
 class TestTampered(Case):
@@ -656,7 +661,7 @@ class TestTampered(Case):
     )
     self.built.write()
     self.built.bend(lambda m: m["goals"]["g1"]["steps"][0].update({"side": "tgt"}))
-    self.refused(self.built.root, "NOT verified")
+    self.refused(self.built.root, "not the head")
 
   def test_a_chain_that_does_not_start_where_it_says(self):
     nsw, wraps = self.built.program(NSW), self.built.program(WRAPS)
@@ -676,7 +681,7 @@ class TestTampered(Case):
       llops("canon", {"module": SRC.replace("@f", "@g").replace("mul", "add")})["module"]
     )
     self.built.bend(lambda m: m["goals"]["g3"]["start"].update({"src": other}))
-    self.refused(package, "to a different program")
+    self.refused(package, "recorded program differs")
 
   def test_a_cut_whose_halves_disagree_about_the_callee(self):
     # An attribute on the definition that the outer was never checked
@@ -696,7 +701,7 @@ class TestTampered(Case):
     )["module"]
     digest = self.built.program(stronger)
     self.built.bend(lambda m: m["goals"]["g3"]["end"].update({"src": digest}))
-    self.refused(package, "says the same on both src halves")
+    self.refused(package, "declaration differs from definition")
 
   def test_an_attribute_on_a_goal_that_is_not_a_callee(self):
     pair = {"src": self.src, "tgt": self.tgt}
@@ -743,7 +748,7 @@ class TestTampered(Case):
       {"kind": "check"},
     )
     self.built.write()
-    self.refused(package, "attributes on src replay")
+    self.refused(package, "Strengthening replay")
 
   def test_a_window_that_does_not_inline_back(self):
     # The step claims one window changed and the rest came through. A
@@ -752,7 +757,7 @@ class TestTampered(Case):
     step = self.windowed()
     other = llops("canon", {"module": "define i32 @w(i32 %0) {\nentry:\n  ret i32 %0\n}\n"})
     step["window"]["to"] = self.built.program(other["module"])
-    self.refused(self.built.write(), "to a different program")
+    self.refused(self.built.write(), "recorded program differs")
 
   def test_a_step_of_a_kind_the_checker_does_not_know(self):
     pair = {"src": self.src, "tgt": self.tgt}
@@ -768,7 +773,7 @@ class TestTampered(Case):
     self.built.bend(lambda m: m["goals"]["g1"]["steps"][0].update({"to": self.tgt}))
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT)
     self.assertNotEqual(done.returncode, 0, done.stdout)
-    self.assertIn("to a different program", done.stdout + done.stderr)
+    self.assertIn("recorded program differs", done.stdout + done.stderr)
 
   @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
   def test_a_rewrite_step_under_rules_that_do_not_fire(self):
@@ -789,7 +794,7 @@ class TestTampered(Case):
     )
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT)
     self.assertNotEqual(done.returncode, 0, done.stdout)
-    self.assertIn("to a different program", done.stdout + done.stderr)
+    self.assertIn("recorded program differs", done.stdout + done.stderr)
 
   @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
   def test_a_rewrite_step_that_names_no_rules(self):
@@ -828,7 +833,7 @@ class TestTampered(Case):
     )
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT)
     self.assertNotEqual(done.returncode, 0, done.stdout)
-    self.assertIn("does not match", done.stdout + done.stderr)
+    self.assertIn("do not match", done.stdout + done.stderr)
 
   @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
   def test_a_rewrite_step_replays_with_translator_options(self):
@@ -856,7 +861,7 @@ class TestTampered(Case):
       MLIR_OPT,
     )
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-    self.assertIn("verified", done.stdout)
+    self.assertIn("VERIFIED - root", done.stdout)
 
   def test_a_manifest_from_another_version(self):
     self.leaf()
@@ -993,7 +998,7 @@ class TestRefuted(unittest.TestCase):
     done = self.re_asked(package)
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
     self.assertIn("counterexample", done.stdout)
-    self.assertIn("the pair it was asked about", done.stdout)
+    self.assertIn("Root refutation", done.stdout)
 
   def test_a_pair_that_refines_is_not_a_counterexample(self):
     package = self.built.refuted(SRC, TGT)

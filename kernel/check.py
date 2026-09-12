@@ -38,6 +38,51 @@ class Refused(Exception):
   """The certificate does not hold, saying where."""
 
 
+# --- reporting ---------------------------------------------------------------
+
+
+def report_prefix(
+  result: str,
+  gid: str,
+  side: str,
+  tool: str,
+  elapsed: str,
+  check: str,
+) -> str:
+  """The fixed columns before a row's notes."""
+  return f"{result:<7} {gid:<5} {side:<5} {tool:<14} {elapsed:<9} {check:<22} "
+
+
+def report_header() -> None:
+  print(
+    report_prefix("RESULT", "GOAL", "SIDE", "TOOL", "ELAPSED", "CHECK") + "NOTES",
+    flush=True,
+  )
+
+
+def report_row(
+  *,
+  result: str,
+  gid: str,
+  side: str,
+  tool: str,
+  check: str,
+  notes: str = "",
+  ms: int | None = None,
+) -> None:
+  """Print one obligation, aligning continuation lines with its notes."""
+  elapsed = f"{ms}ms" if ms is not None else "--"
+  prefix = report_prefix(result, gid, side, tool, elapsed, check)
+  lines = notes.split("\n") if notes else [""]
+  print(f"{prefix}{lines[0]}", flush=True)
+  for line in lines[1:]:
+    print(f"{' ' * len(prefix)}{line}", flush=True)
+
+
+def elapsed_ms(started: float) -> int:
+  return int((time.monotonic() - started) * 1000)
+
+
 # --- the package -------------------------------------------------------------
 
 
@@ -59,6 +104,11 @@ class Package:
     self.mlir_opt = tools.get("mlir-opt")
     self.queries = 0
     self.seconds = 0.0
+    # Reporting-only breakdown: the existing aggregate counters above retain
+    # their original meaning.
+    self.solver_queries = 0
+    self.rewrite_runs = 0
+    self.rewrite_seconds = 0.0
     # Programs are read more than once, and each read pays for a hash and
     # a model check; the files are immutable, so one answer lasts.
     self.read: dict[str, str] = {}
@@ -168,6 +218,7 @@ class Package:
       )
       self.seconds += time.monotonic() - started
       self.queries += 1
+      self.solver_queries += 1
     return summary(done.stdout)
 
   def root_goal(self) -> str:
@@ -260,6 +311,7 @@ class Package:
           args += [flag, recorded]
       args += ["--allow-unregistered-dialect", str(path)]
       timeout_ms = invocation.get("timeoutMs") or 30000
+      started = time.monotonic()
       try:
         done = subprocess.run(
           args,
@@ -269,9 +321,12 @@ class Package:
         )
       except (OSError, subprocess.SubprocessError) as error:
         raise Refused(f"llrwt did not finish: {error}") from error
+      duration = time.monotonic() - started
       if done.returncode != 0:
         raise Refused(f"llrwt refused the replay: {done.stderr.strip() or done.stdout.strip()}")
       self.queries += 1
+      self.rewrite_runs += 1
+      self.rewrite_seconds += duration
       return done.stdout
 
 
@@ -342,15 +397,108 @@ class Check:
     self.package = package
     self.verbose = verbose
     self.failures: list[str] = []
+    self.held = 0
+    self.failed = 0
+    self.unresolved = 0
 
-  def say(self, gid: str, what: str, outcome: str) -> None:
-    mark = "ok " if outcome in ("correct", "faithful", "matches") else "BAD"
-    if mark != "ok " or self.verbose:
-      print(f"  {mark} {gid:<4} {what:<44} {outcome}", flush=True)
+  def report(
+    self,
+    *,
+    result: str,
+    gid: str,
+    side: str,
+    tool: str,
+    check: str,
+    notes: str = "",
+    ms: int | None = None,
+  ) -> None:
+    """Report and count one obligation without changing replay control flow.
 
-  def fail(self, gid: str, what: str, outcome: str) -> None:
-    self.say(gid, what, outcome)
-    self.failures.append(f"{gid}: {what}: {outcome}")
+    ELAPSED is wall-clock time for the reported obligation, including program
+    loading, model gates, and preparation performed within that obligation.
+    The summary's solver and rewriter times measure their subprocesses only.
+    """
+    if result != "OK" or self.verbose:
+      report_row(
+        result=result,
+        gid=gid,
+        side=side,
+        tool=tool,
+        check=check,
+        notes=notes,
+        ms=ms,
+      )
+    if result == "OK":
+      self.held += 1
+    else:
+      self.failures.append(f"{gid}: {side}: {check}: {notes}")
+      if result == "FAIL":
+        self.failed += 1
+      else:
+        self.unresolved += 1
+
+  def fail(self, gid: str, side: str, check: str, notes: str) -> None:
+    """Record a structural failure; the caller decides whether to continue."""
+    self.report(
+      result="FAIL",
+      gid=gid,
+      side=side,
+      tool="kernel",
+      check=check,
+      notes=notes,
+    )
+
+  def asked(
+    self,
+    gid: str,
+    side: str,
+    check: str,
+    src: str,
+    tgt: str,
+    notes: str,
+    *,
+    tool: str = "alive-tv",
+    started: float | None = None,
+  ) -> None:
+    """Ask alive-tv about one pair, preserving its answer in the report."""
+    if started is None:
+      started = time.monotonic()
+    outcome = self.package.ask(src, tgt)
+    ms = elapsed_ms(started)
+    result = {"correct": "OK", "incorrect": "FAIL"}.get(outcome, "ERROR")
+    if result != "OK":
+      notes = f"{notes}; alive-tv: {outcome}" if notes else f"alive-tv: {outcome}"
+    self.report(
+      result=result,
+      gid=gid,
+      side=side,
+      tool=tool,
+      check=check,
+      notes=notes,
+      ms=ms,
+    )
+
+  def compared(
+    self,
+    gid: str,
+    side: str,
+    tool: str,
+    check: str,
+    notes: str,
+    same: bool,
+    ms: int,
+  ) -> None:
+    """Report an equality comparison against the recorded program."""
+    outcome = "recorded program matches" if same else "recorded program differs"
+    self.report(
+      result="OK" if same else "FAIL",
+      gid=gid,
+      side=side,
+      tool=tool,
+      check=check,
+      notes=f"{notes}; {outcome}" if notes else outcome,
+      ms=ms,
+    )
 
   def goal(self, gid: str, role: str | None = None) -> None:
     """Check one goal: its chain, then how it was discharged.
@@ -363,18 +511,32 @@ class Check:
     head = self.chain(gid, goal, role)
     for side in ("src", "tgt"):
       if head[side] != goal["end"][side]:
-        self.fail(gid, f"the {side} chain ends", f"at {head[side][:12]}, not the end pair")
+        self.fail(
+          gid,
+          side,
+          "Chain endpoint",
+          f"ends at {head[side][:12]}, not the end pair",
+        )
 
     discharge = goal["discharge"]
     if discharge["kind"] == "check":
-      outcome = self.refines(goal["end"]["src"], goal["end"]["tgt"])
-      self.say(gid, "the pair it was left with", outcome) if outcome == "correct" else (
-        self.fail(gid, "the pair it was left with", outcome)
+      self.asked(
+        gid,
+        "pair",
+        "Final refinement",
+        goal["end"]["src"],
+        goal["end"]["tgt"],
+        "tgt refines src",
       )
     elif discharge["kind"] == "split":
       self.split(gid, goal, discharge)
     else:
-      self.fail(gid, "discharged by", f"{discharge['kind']}, which this does not know")
+      self.fail(
+        gid,
+        "pair",
+        "Discharge kind",
+        f"{discharge['kind']}, which this does not know",
+      )
 
   def chain(self, gid: str, goal: dict, role: str | None) -> dict:
     """Walk the steps, checking each one in the direction its side implies."""
@@ -383,15 +545,20 @@ class Check:
       if step["kind"] == "check":
         side = step["side"]
         if step["from"] != head[side]:
-          self.fail(gid, f"a {side} step starts", f"at {step['from'][:12]}, not the head")
+          self.fail(
+            gid,
+            side,
+            "Chain continuity",
+            f"step starts at {step['from'][:12]}, not the head",
+          )
         # A src step optimises forward, so the new program has to refine
         # the old; a tgt step deoptimises backward, so the old refines
         # the new.
         before, after = step["from"], step["to"]
         pair = (before, after) if side == "src" else (after, before)
-        outcome = self.refines(*pair)
-        what = f"{side} step to {after[:12]}"
-        self.say(gid, what, outcome) if outcome == "correct" else self.fail(gid, what, outcome)
+        which = "forward" if side == "src" else "backward"
+        notes = f"{before[:12]} -> {after[:12]}; {which}"
+        self.asked(gid, side, "Chain step", *pair, notes)
         head[side] = after
       elif step["kind"] == "window":
         head[step["side"]] = self.window(gid, step, head)
@@ -400,13 +567,23 @@ class Check:
       elif step["kind"] == "strengthen":
         self.strengthen(gid, step, head, role)
       else:
-        self.fail(gid, "a step of kind", f"{step['kind']}, which this does not know")
+        self.fail(
+          gid,
+          "--",
+          "Step kind",
+          f"{step['kind']}, which this does not know",
+        )
     return head
 
   def strengthen(self, gid: str, step: dict, head: dict, role: str | None) -> None:
     """Replay the exact parameter attributes, function attributes, and entry predicates a callee claims to have gained."""
     if role is None or role == "outer":
-      self.fail(gid, "an attribute", "on a goal that is not a callee")
+      self.fail(
+        gid,
+        "pair",
+        "Strengthening role",
+        "on a goal that is not a callee",
+      )
       return
 
     param_attrs = step.get("param_attrs") or {}
@@ -428,9 +605,20 @@ class Check:
       replayable.append((int(key), fact))
     replayable.sort(key=lambda item: item[0])
 
+    replayed = ", ".join(
+      (["parameter attributes"] if param_attrs else [])
+      + (["function attributes"] if fn_attrs else [])
+      + (["entry predicates"] if predicates else [])
+    )
     for side in ("src", "tgt"):
       if step["from"][side] != head[side]:
-        self.fail(gid, f"an attribute on {side} starts", "away from the head")
+        self.fail(
+          gid,
+          side,
+          "Chain continuity",
+          "strengthening starts away from the head",
+        )
+      started = time.monotonic()
       attributed = self.package.program(step["from"][side])
       for param, fact in replayable:
         attributed = self.package.run_llops(
@@ -463,11 +651,17 @@ class Check:
           },
         )["module"]
       same = self.package.run_llops("canon", {"module": attributed})["module"]
-      what = f"the attributes on {side} replay"
-      if same == self.package.program(step["to"][side]):
-        self.say(gid, what, "matches")
-      else:
-        self.fail(gid, what, "to a different program")
+      matches = same == self.package.program(step["to"][side])
+      ms = elapsed_ms(started)
+      self.compared(
+        gid,
+        side,
+        "llops",
+        "Strengthening replay",
+        replayed,
+        matches,
+        ms,
+      )
       head[side] = step["to"][side]
 
   def window(self, gid: str, step: dict, head: dict) -> str:
@@ -483,7 +677,12 @@ class Check:
     """
     side = step["side"]
     if step["from"] != head[side]:
-      self.fail(gid, f"a {side} step starts", f"at {step['from'][:12]}, not the head")
+      self.fail(
+        gid,
+        side,
+        "Chain continuity",
+        f"step starts at {step['from'][:12]}, not the head",
+      )
 
     window = step["window"]
     preconditions = window.get("preconditions", {})
@@ -492,6 +691,7 @@ class Check:
       (step["from"], window["from"], "from"),
       (step["to"], window["to"], "to"),
     ):
+      started = time.monotonic()
       back = self.package.run_llops(
         "inline",
         {
@@ -501,11 +701,17 @@ class Check:
         },
       )["module"]
       same = self.package.run_llops("canon", {"module": back})["module"]
-      what = f"the {which} half of a {side} window inlines back"
-      if same == self.package.program(whole):
-        self.say(gid, what, "faithful")
-      else:
-        self.fail(gid, what, "to a different program")
+      matches = same == self.package.program(whole)
+      ms = elapsed_ms(started)
+      self.compared(
+        gid,
+        side,
+        "llops",
+        "Window reconstruction",
+        f"inline the {which} half",
+        matches,
+        ms,
+      )
 
     if preconditions:
       # Phase 1: Insert assumes before call in outer and verify whole-function
@@ -514,10 +720,16 @@ class Check:
         try:
           arg = int(arg_str)
         except ValueError:
-          self.fail(gid, "precondition arg", f"invalid integer {arg_str}")
+          self.fail(
+            gid,
+            side,
+            "Precondition argument",
+            f"invalid integer {arg_str}",
+          )
           return step["to"]
         assertions.append({"fact": fact, "arg": arg})
 
+      started = time.monotonic()
       res = self.package.run_llops(
         "assume",
         {
@@ -547,11 +759,20 @@ class Check:
       # what says the facts hold wherever that whole is defined: where the
       # assume is false the assumed program is UB, so any defined execution
       # of the whole forces the facts true.
-      assume_outcome = self.refines(self.package.program(whole), inlined_assumed)
-      if assume_outcome != "correct":
-        self.fail(gid, "conditioned window precondition", f"failed: {assume_outcome}")
+      self.asked(
+        gid,
+        side,
+        "Window precondition",
+        self.package.program(whole),
+        inlined_assumed,
+        "caller preconditions on defined executions of the whole",
+        tool="llops+alive-tv",
+        started=started,
+      )
 
-      # Phase 2: Add attrs to both callee halves and check small pair
+      # Phase 2: Add attrs to both callee halves and check small pair.
+      # Include preparation in this obligation's row time.
+      started = time.monotonic()
       c_from = self.package.program(window["from"])
       c_to = self.package.program(window["to"])
       for arg_str, fact in preconditions.items():
@@ -580,12 +801,22 @@ class Check:
         c_to = res_to["module"]
 
       pair = (c_from, c_to) if side == "src" else (c_to, c_from)
+      tool = "llops+alive-tv"
     else:
+      started = time.monotonic()
       pair = (window["from"], window["to"]) if side == "src" else (window["to"], window["from"])
+      tool = "alive-tv"
 
-    outcome = self.refines(*pair)
-    what = f"{side} window to {step['to'][:12]}"
-    self.say(gid, what, outcome) if outcome == "correct" else self.fail(gid, what, outcome)
+    which = "forward" if side == "src" else "backward"
+    self.asked(
+      gid,
+      side,
+      "Window refinement",
+      *pair,
+      f"{window['from'][:12]} -> {window['to'][:12]}; {which}; narrowed",
+      tool=tool,
+      started=started,
+    )
     return step["to"]
 
   def rewrite(self, gid: str, step: dict, head: dict) -> str:
@@ -598,25 +829,46 @@ class Check:
     # TODO: Support tgt->src rewrites (some kind of anti-optimizations).
     if side != "src":
       self.fail(
-        gid, "a rewrite step", f"was recorded on {side}, but rules optimize forward on src only"
+        gid,
+        side,
+        "Rewrite direction",
+        f"recorded on {side}, but rules optimize forward on src only",
       )
       return step["to"]
     if list(step.get("invocation", {}).get("rules") or []) != list(step.get("rules") or []):
-      self.fail(gid, f"a {side} rewrite step records", "rules its invocation does not match")
+      self.fail(
+        gid,
+        side,
+        "Rewrite invocation",
+        "recorded rules do not match the invocation",
+      )
       return step["to"]
     if step["from"] != head[side]:
-      self.fail(gid, f"a {side} step starts", f"at {step['from'][:12]}, not the head")
+      self.fail(
+        gid,
+        side,
+        "Chain continuity",
+        f"step starts at {step['from'][:12]}, not the head",
+      )
       return step["to"]
 
+    started = time.monotonic()
     replayed = self.package.run_llrwt(
       step.get("rules") or [], self.package.program(step["from"]), step.get("invocation") or {}
     )
     same = self.package.run_llops("canon", {"module": replayed})["module"]
-    what = f"{side} rewrite to {step['to'][:12]}"
-    if same == self.package.program(step["to"]):
-      self.say(gid, what, "matches")
-    else:
-      self.fail(gid, what, "to a different program")
+    matches = same == self.package.program(step["to"])
+    ms = elapsed_ms(started)
+    rules = ", ".join(step.get("rules") or [])
+    self.compared(
+      gid,
+      side,
+      "llrwt+llops",
+      "Rewriter replay",
+      f"{step['from'][:12]} -> {step['to'][:12]}; {rules}",
+      matches,
+      ms,
+    )
     return step["to"]
 
   def split(self, gid: str, goal: dict, discharge: dict) -> None:
@@ -626,6 +878,7 @@ class Check:
     name = discharge["callee"]
 
     for side in ("src", "tgt"):
+      started = time.monotonic()
       back = self.package.run_llops(
         "inline",
         {
@@ -636,32 +889,50 @@ class Check:
       )["module"]
       same = self.package.run_llops("canon", {"module": back})["module"]
       whole = self.package.program(goal["end"][side])
-      what = f"the {side} halves inline back"
-      if same == whole:
-        self.say(gid, what, "faithful")
-      else:
-        self.fail(gid, what, "to a different program")
+      matches = same == whole
+      ms = elapsed_ms(started)
+      self.compared(
+        gid,
+        side,
+        "llops",
+        "Split reconstruction",
+        f"inline {discharge['outer']} + {discharge['inner']} at parent end",
+        matches,
+        ms,
+      )
 
     # The outer was checked against a declaration; the callee proves a
     # definition. An attribute on one and not the other is a claim nobody
     # made, so the two have to say the same thing.
     for side in ("src", "tgt"):
+      started = time.monotonic()
       declared = signature(self.package, self.package.program(outer["end"][side]), name)
       defined = signature(self.package, self.package.program(inner["end"][side]), name)
-      what = f"@{name} says the same on both {side} halves"
-      if declared == defined:
-        self.say(gid, what, "matches")
-      else:
-        self.fail(gid, what, f"{declared} against {defined}")
+      matches = declared == defined
+      ms = elapsed_ms(started)
+      self.report(
+        result="OK" if matches else "FAIL",
+        gid=gid,
+        side=side,
+        tool="llops",
+        check="Callee signature",
+        notes=(
+          f"@{name}: {discharge['outer']} declaration = {discharge['inner']} definition"
+          if matches
+          else (
+            f"@{name}: declaration differs from definition"
+            f"\ndeclaration ({discharge['outer']}): {declared}"
+            f"\ndefinition ({discharge['inner']}): {defined}"
+          )
+        ),
+        ms=ms,
+      )
 
     # The outer half keeps the entry the cut was made in; the callee's
     # parameters are values computed before it, so it is asked about them
     # under no assumption at all.
     self.goal(discharge["outer"], "outer")
     self.goal(discharge["inner"], name)
-
-  def refines(self, src: str, tgt: str) -> str:
-    return "correct" if self.package.refines(src, tgt) else "not correct"
 
 
 class Refutation:
@@ -675,12 +946,21 @@ class Refutation:
     if "input" in self.package.manifest:
       raise Refused("a counterexample the checker refuted carries no input")
     pair = self.package.counterexample_pair()
+    started = time.monotonic()
     self.package.program(pair["src"])
     self.package.program(pair["tgt"])
     refuted = self.package.refutes(pair["src"], pair["tgt"])
+    ms = elapsed_ms(started)
     gid = self.package.root_goal()
-    what = "refuted" if refuted else "not refuted"
-    print(f"  {'ok ' if refuted else 'BAD'} {gid:<4} the pair it was asked about   {what}")
+    report_row(
+      result="OK" if refuted else "FAIL",
+      gid=gid,
+      side="pair",
+      tool="alive-tv",
+      check="Root refutation",
+      notes="refuted" if refuted else "not refuted",
+      ms=ms,
+    )
     return refuted
 
 
@@ -923,12 +1203,21 @@ def main() -> int:
     package.say_toolchain()
     if package.verdict == "counterexample":
       if package.source() == "alive2":
+        if args.verbose:
+          print()
+          report_header()
         confirmed = Refutation(package, args.verbose).confirm()
+        print()
       else:
         confirmed = Replay(package, args.verbose).confirm()
+        print()
     else:
       check = Check(package, args.verbose)
+      if args.verbose:
+        print()
+        report_header()
       check.goal(package.root_goal())
+      print()
       confirmed = not check.failures
   except (Refused, OSError) as error:
     print(f"refused: {error}", file=sys.stderr)
@@ -939,8 +1228,8 @@ def main() -> int:
     if package.verdict == "counterexample" and package.source() != "alive2"
     else "solver queries"
   )
-  print(f"{package.queries} {counted} in {package.seconds:.1f}s")
   if package.verdict == "counterexample":
+    print(f"{package.queries} {counted} in {package.seconds:.1f}s")
     said = (
       "counterexample"
       if confirmed
@@ -952,11 +1241,32 @@ def main() -> int:
     )
     print(said)
     return 0 if confirmed else 1
-  if not confirmed:
-    print(f"NOT verified: {len(check.failures)} of them did not hold")
-    return 1
-  print("verified")
-  return 0
+
+  # Only proofs need a root for this summary. Their root was already
+  # validated during replay; executed counterexamples gain no new requirement.
+  root = package.root_goal()
+  solver_noun = "query" if package.solver_queries == 1 else "queries"
+  timing = f"{package.solver_queries} solver {solver_noun} · {package.seconds:.1f}s solver time"
+  if package.rewrite_runs:
+    rewrite_noun = "run" if package.rewrite_runs == 1 else "runs"
+    timing += (
+      f" · {package.rewrite_runs} rewriter {rewrite_noun}"
+      f" · {package.rewrite_seconds:.1f}s rewriter time"
+    )
+
+  if confirmed:
+    print(f"VERIFIED - root {root}")
+    held_noun = "obligation" if check.held == 1 else "obligations"
+    print(f"{check.held} {held_noun} passed · {timing}")
+    return 0
+
+  failed_noun = "obligation" if check.failed == 1 else "obligations"
+  failed = f"{check.failed} {failed_noun} failed"
+  if check.unresolved:
+    failed += f" · {check.unresolved} not established"
+  print(f"NOT verified - root {root}")
+  print(f"{failed} · {timing}")
+  return 1
 
 
 if __name__ == "__main__":
