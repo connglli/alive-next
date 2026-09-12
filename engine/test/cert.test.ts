@@ -392,8 +392,10 @@ describe.skipIf(!built)("the manifest", () => {
     }
   });
 
-  test("a start check with a parseable counterexample replays and certifies under llubi", async () => {
-    let diverging = 0;
+  test("a start check's counterexample carries no input, parseable or not", async () => {
+    // The search for a whole-program input stays the agent's problem, so the
+    // checker's example text is never lifted into one. The interpreter refuses
+    // if the replay ran.
     const example = `ERROR: Value mismatch
 
 Example:
@@ -412,23 +414,12 @@ Summary:
   0 Alive2 errors
 `;
     const session = await Session.start({
-      dir: join(dir, "auto-replayed"),
+      dir: join(dir, "auto-parseable"),
       src: miscompile.src,
       tgt: miscompile.tgt,
       llops,
       checker: new NoMan(example),
-      interp: {
-        async run(): Promise<RunResult> {
-          diverging += 1;
-          return {
-            outcome: "returned",
-            observations: { "%obs.result": diverging === 1 ? "i32 -1" : "i32 -2" },
-            reason: "",
-            trace: "",
-            ms: 1,
-          };
-        },
-      },
+      interp: noRun,
       rewriter: unrewriting,
       eager: true,
     });
@@ -436,14 +427,15 @@ Summary:
 
     const manifest = JSON.parse(
       readFileSync(
-        join(certify(session.dir, join(dir, "auto-replayed-cex")), "manifest.json"),
+        join(certify(session.dir, join(dir, "auto-parseable-cex")), "manifest.json"),
         "utf8",
       ),
     ) as Counterexample;
     expect(manifest.verdict).toBe("counterexample");
-    expect(manifest.source).toBe("llubi");
-    expect(manifest.input).toEqual([{ kind: "int", value: "-5" }]);
-    expect(manifest.divergence).toContain("i32 -1 in the src and i32 -2 in the tgt");
+    expect(manifest.source).toBe("alive2");
+    expect(manifest.input).toBeUndefined();
+    // What the checker printed travels with the package.
+    expect(manifest.divergence).toBe("Value mismatch");
   });
 
   test("an executed input supersedes a checker counterexample in the manifest", async () => {
