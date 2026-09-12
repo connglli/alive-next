@@ -356,7 +356,7 @@ export class Steps {
       fallback = { reason: "preconditions_refused", conditioning: conditioned.reason };
     }
 
-    const step: Effect = { effect: "step", gid, side, to: after, how: "checked" };
+    const step: Effect = { effect: "step", gid, side, to: after, how: "check" };
     if (by === "window" && narrowed) {
       const [outer, from, to] = await Promise.all([
         this.store.put(narrowed.outer),
@@ -447,7 +447,7 @@ export class Steps {
       gid,
       side,
       to: after,
-      how: "rule",
+      how: "rewrite",
       rules: [...rules],
       invocation: applied.invocation,
     };

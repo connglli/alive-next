@@ -198,7 +198,7 @@ describe.skipIf(!built)("the manifest", () => {
     // The step it names is a step of the outer's chain, which is checked.
     expect(only.by?.gid).toBe("g2");
     const outer = manifest.goals.g2?.steps ?? [];
-    expect(outer.some((step) => step.kind === "checked" && step.to === only.by?.hash)).toBe(true);
+    expect(outer.some((step) => step.kind === "check" && step.to === only.by?.hash)).toBe(true);
   });
 
   test("records a narrowed step as the three halves it was cut into", async () => {
@@ -249,7 +249,7 @@ describe.skipIf(!built)("the manifest", () => {
 
     const manifest = manifestFrom(session.dir);
     const [only] = manifest.goals.g1?.steps ?? [];
-    if (only?.kind !== "rule") throw new Error("expected a rule step");
+    if (only?.kind !== "rewrite") throw new Error("expected a rewrite step");
     expect(only.side).toBe("src");
     expect(only.rules).toEqual(["addi-zero-to-x"]);
     expect(only.invocation).toMatchObject({ binary: "fake-llrwt", rules: ["addi-zero-to-x"] });

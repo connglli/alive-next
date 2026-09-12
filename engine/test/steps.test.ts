@@ -194,7 +194,7 @@ describe("rewriting", () => {
       gid: "g1",
       side: "src",
       to: result.hash,
-      how: "rule",
+      how: "rewrite",
       rules: ["muli-pow2-to-shl"],
     });
     expect(result.effects[1]).toEqual({ effect: "proved", gid: "g1" });
@@ -246,7 +246,7 @@ describe("stepping", () => {
       gid: "g1",
       side: "src",
       to: result.hash,
-      how: "checked",
+      how: "check",
     });
   });
 
@@ -556,7 +556,7 @@ describe("checking a goal", () => {
         kind: "tool_result",
         id: "1",
         tool: "tx_commit",
-        effects: [{ effect: "step", gid: "g1", side: "src", to: moved, how: "checked" }],
+        effects: [{ effect: "step", gid: "g1", side: "src", to: moved, how: "check" }],
         result: null,
         ms: 1,
       }),

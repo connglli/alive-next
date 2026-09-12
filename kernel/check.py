@@ -243,7 +243,7 @@ class Package:
   def run_llrwt(self, rules: list, module: str, invocation: dict) -> str:
     """Rewrite a program with llrwt under the recorded rules, and answer with what it printed."""
     if not rules:
-      raise Refused("a rule step names no rules")
+      raise Refused("a rewrite step names no rules")
     with tempfile.TemporaryDirectory() as scratch:
       path = Path(scratch) / "in.ll"
       path.write_text(module)
@@ -366,7 +366,7 @@ class Check:
         self.fail(gid, f"the {side} chain ends", f"at {head[side][:12]}, not the end pair")
 
     discharge = goal["discharge"]
-    if discharge["kind"] == "checked":
+    if discharge["kind"] == "check":
       outcome = self.refines(goal["end"]["src"], goal["end"]["tgt"])
       self.say(gid, "the pair it was left with", outcome) if outcome == "correct" else (
         self.fail(gid, "the pair it was left with", outcome)
@@ -380,7 +380,7 @@ class Check:
     """Walk the steps, checking each one in the direction its side implies."""
     head = dict(goal["start"])
     for step in goal["steps"]:
-      if step["kind"] == "checked":
+      if step["kind"] == "check":
         side = step["side"]
         if step["from"] != head[side]:
           self.fail(gid, f"a {side} step starts", f"at {step['from'][:12]}, not the head")
@@ -395,8 +395,8 @@ class Check:
         head[side] = after
       elif step["kind"] == "window":
         head[step["side"]] = self.window(gid, step, head)
-      elif step["kind"] == "rule":
-        head[step["side"]] = self.rule(gid, step, head)
+      elif step["kind"] == "rewrite":
+        head[step["side"]] = self.rewrite(gid, step, head)
       elif step["kind"] == "strengthen":
         self.strengthen(gid, step, head, role)
       else:
@@ -588,7 +588,7 @@ class Check:
     self.say(gid, what, outcome) if outcome == "correct" else self.fail(gid, what, outcome)
     return step["to"]
 
-  def rule(self, gid: str, step: dict, head: dict) -> str:
+  def rewrite(self, gid: str, step: dict, head: dict) -> str:
     """A step the verified rewriter certified: rerun the same invocation.
 
     No solver is asked anything. What says the step holds is that llrwt, run
@@ -598,11 +598,11 @@ class Check:
     # TODO: Support tgt->src rewrites (some kind of anti-optimizations).
     if side != "src":
       self.fail(
-        gid, "a rule step", f"was recorded on {side}, but rules optimize forward on src only"
+        gid, "a rewrite step", f"was recorded on {side}, but rules optimize forward on src only"
       )
       return step["to"]
     if list(step.get("invocation", {}).get("rules") or []) != list(step.get("rules") or []):
-      self.fail(gid, f"a {side} rule step records", "rules its invocation does not match")
+      self.fail(gid, f"a {side} rewrite step records", "rules its invocation does not match")
       return step["to"]
     if step["from"] != head[side]:
       self.fail(gid, f"a {side} step starts", f"at {step['from'][:12]}, not the head")
@@ -612,7 +612,7 @@ class Check:
       step.get("rules") or [], self.package.program(step["from"]), step.get("invocation") or {}
     )
     same = self.package.run_llops("canon", {"module": replayed})["module"]
-    what = f"{side} rule to {step['to'][:12]}"
+    what = f"{side} rewrite to {step['to'][:12]}"
     if same == self.package.program(step["to"]):
       self.say(gid, what, "matches")
     else:

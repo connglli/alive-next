@@ -95,8 +95,8 @@ A settled run writes one, into `<session>/certificate`: `programs/` named by con
 A verified run's manifest is a version, the verdict, the root goal, the toolchain `start` recorded, and one entry per goal:
 
 - `start` and `end`, the pairs the goal began and ended with, as hashes.
-- `steps`, in the order they happened. A `checked` step names the side it moved and the hash it moved from and to. A `rule` step names the same pair and, beside it, the rules llrwt ran and the invocation a replay reruns. A `window` step is a checked step whose question was narrowed: it names the same pair and, under `window`, the outlined function and the three programs the narrowing produced, one outer and the two halves. A `strengthen` step names the pair on each end and the outer step that stands behind it.
-- `discharge`, either `checked` or a `split` naming the outlined function and the two children.
+- `steps`, in the order they happened. A `check` step names the side it moved and the hash it moved from and to. A `rewrite` step names the same pair and, beside it, the rules llrwt ran and the invocation a replay reruns. A `window` step is a check step whose question was narrowed: it names the same pair and, under `window`, the outlined function and the three programs the narrowing produced, one outer and the two halves. A `strengthen` step names the pair on each end and the outer step that stands behind it.
+- `discharge`, either `check` or a `split` naming the outlined function and the two children.
 
 kernel/check.py needs Python, alive-tv for a proof or a counterexample the checker itself produced, llubi for a counterexample replayed on an input, llrwt for a proof that rewrites with pre-proved rules, and llops for the subcommands each needs. It takes their paths from the manifest, which records where the run found them and which LLVM each carried (llrwt records a version line instead, and the translators it ran under travel in each step's invocation); a path that is not there falls back to the name on PATH and an option overrides both. It reads a program only from a file whose name is its hash. For a proof it verifies:
 

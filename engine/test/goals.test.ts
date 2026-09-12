@@ -42,8 +42,8 @@ describe("derive", () => {
     const tree = derive(
       log(
         run(),
-        did({ effect: "step", gid: "g1", side: "src", to: "hash-2", how: "checked" }),
-        did({ effect: "step", gid: "g1", side: "src", to: "hash-3", how: "rule" }),
+        did({ effect: "step", gid: "g1", side: "src", to: "hash-2", how: "check" }),
+        did({ effect: "step", gid: "g1", side: "src", to: "hash-3", how: "rewrite" }),
       ),
     );
     expect([...tree.programs.values()]).toEqual(["p1", "p2", "p3", "p4"]);
@@ -53,7 +53,7 @@ describe("derive", () => {
 
   test("advances a head and keeps the history behind it", () => {
     const tree = derive(
-      log(run(), did({ effect: "step", gid: "g1", side: "tgt", to: "hash-2", how: "checked" })),
+      log(run(), did({ effect: "step", gid: "g1", side: "tgt", to: "hash-2", how: "check" })),
     );
     const root = goal(tree, "g1");
     expect(root.tgt.history).toEqual(["hash-tgt", "hash-2"]);
@@ -64,8 +64,8 @@ describe("derive", () => {
     const tree = derive(
       log(
         run(),
-        did({ effect: "step", gid: "g1", side: "src", to: "hash-2", how: "checked" }),
-        did({ effect: "step", gid: "g1", side: "src", to: "hash-3", how: "checked" }),
+        did({ effect: "step", gid: "g1", side: "src", to: "hash-2", how: "check" }),
+        did({ effect: "step", gid: "g1", side: "src", to: "hash-3", how: "check" }),
         did({ effect: "revert", gid: "g1", side: "src", to: "hash-src" }),
       ),
     );
@@ -95,7 +95,7 @@ describe("derive", () => {
         log(
           run(),
           did(splitG1()),
-          did({ effect: "step", gid: "g1", side: "src", to: "hash-9", how: "checked" }),
+          did({ effect: "step", gid: "g1", side: "src", to: "hash-9", how: "check" }),
         ),
       ),
     ).toThrow(/g1 is split/);
@@ -186,7 +186,7 @@ describe("derive", () => {
       log(
         run(),
         did({ effect: "proved", gid: "g1" }),
-        did({ effect: "step", gid: "g1", side: "src", to: "hash-2", how: "checked" }),
+        did({ effect: "step", gid: "g1", side: "src", to: "hash-2", how: "check" }),
       ),
     );
     expect(goal(tree, "g1").status).toBe("open");
@@ -200,7 +200,7 @@ describe("derive", () => {
         did(splitG1()),
         did({ effect: "proved", gid: "g2" }),
         did({ effect: "proved", gid: "g3" }),
-        did({ effect: "step", gid: "g2", side: "src", to: "h2s-again", how: "checked" }),
+        did({ effect: "step", gid: "g2", side: "src", to: "h2s-again", how: "check" }),
       ),
     );
     expect(goal(tree, "g2").status).toBe("open");

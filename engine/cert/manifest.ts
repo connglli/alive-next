@@ -28,8 +28,9 @@ export const VERSION = 1;
 
 /** One move along a goal's chain. */
 export type Step =
+  /** A step the checker certified, in the direction the side implies. */
   | {
-      kind: "checked";
+      kind: "check";
       side: "src" | "tgt";
       from: Hash;
       to: Hash;
@@ -40,7 +41,7 @@ export type Step =
    * bytes, asking no solver anything.
    */
   | {
-      kind: "rule";
+      kind: "rewrite";
       side: "src";
       from: Hash;
       to: Hash;
@@ -87,7 +88,7 @@ export interface Pair {
 
 /** How a goal was discharged. */
 export type Discharge =
-  | { kind: "checked" }
+  | { kind: "check" }
   | { kind: "split"; callee: string; outer: string; inner: string };
 
 /** One goal in a proof, from the pair it started with to the one it proved. */
@@ -268,7 +269,7 @@ function include(
       for (const hash of [step.window.outer, step.window.from, step.window.to]) programs.add(hash);
 
   if (goal.children.length === 0) {
-    goals[goal.id] = { start, steps, end, discharge: { kind: "checked" } };
+    goals[goal.id] = { start, steps, end, discharge: { kind: "check" } };
     return;
   }
   const outer = childOf(tree, goal, "outer");
@@ -309,20 +310,20 @@ function chainOf(goal: Goal, effects: Effect[]): Step[] {
     if (effect.effect === "step" && effect.to === goal[effect.side].history[side(effect, si, ti)]) {
       const from = goal[effect.side].history[side(effect, si, ti) - 1] as Hash;
       // TODO: Support tgt->src rewrites (some kind of anti-optimizations).
-      if (effect.how === "rule") {
+      if (effect.how === "rewrite") {
         if (effect.side !== "src") {
           throw new NotCertifiable(
-            `a rule step on ${goal.id} was recorded on ${effect.side}, but rules optimize forward on src only`,
+            `a rewrite step on ${goal.id} was recorded on ${effect.side}, but rules optimize forward on src only`,
           );
         }
         if (!effect.rules || effect.rules.length === 0) {
-          throw new NotCertifiable(`a rule step on ${goal.id} names no rules`);
+          throw new NotCertifiable(`a rewrite step on ${goal.id} names no rules`);
         }
         if (!effect.invocation) {
-          throw new NotCertifiable(`a rule step on ${goal.id} records no invocation`);
+          throw new NotCertifiable(`a rewrite step on ${goal.id} records no invocation`);
         }
         steps.push({
-          kind: "rule",
+          kind: "rewrite",
           side: effect.side,
           from,
           to: effect.to,
@@ -340,7 +341,7 @@ function chainOf(goal: Goal, effects: Effect[]): Step[] {
                 window: effect.window,
               }
             : {
-                kind: "checked",
+                kind: "check",
                 side: effect.side,
                 from,
                 to: effect.to,

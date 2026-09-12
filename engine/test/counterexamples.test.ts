@@ -177,7 +177,7 @@ describe.skipIf(!built)("reporting a counterexample", () => {
       kind: "tool_result",
       id: "1",
       tool: "tx_commit",
-      effects: [{ effect: "step", gid: "g1", side: "src", to: moved, how: "checked" }],
+      effects: [{ effect: "step", gid: "g1", side: "src", to: moved, how: "check" }],
       result: null,
       ms: 1,
     });

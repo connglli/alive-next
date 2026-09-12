@@ -267,7 +267,7 @@ class Case(unittest.TestCase):
   def leaf(self) -> Path:
     """The smallest certificate: one goal, discharged by one check."""
     pair = {"src": self.src, "tgt": self.tgt}
-    self.built.goal("g1", pair, pair, [], {"kind": "checked"})
+    self.built.goal("g1", pair, pair, [], {"kind": "check"})
     return self.built.write()
 
   def windowed(self, tail: str = "  %2 = add i32 %1, 1\n  ret i32 %2\n") -> dict:
@@ -302,11 +302,11 @@ class Case(unittest.TestCase):
       {"src": step["from"], "tgt": step["to"]},
       {"src": step["to"], "tgt": step["to"]},
       [step],
-      {"kind": "checked"},
+      {"kind": "check"},
     )
     return step
 
-  def ruled(self) -> dict:
+  def rewritten(self) -> dict:
     """A goal whose one step the verified rewriter certified.
 
     The `to` program is what llrwt itself prints for the rules, canonicalized
@@ -316,7 +316,7 @@ class Case(unittest.TestCase):
     was = llops("canon", {"module": ZERO_ADD})["module"]
     now = llops("canon", {"module": llrwt(["addi-zero-to-x"], ZERO_ADD)})["module"]
     step = {
-      "kind": "rule",
+      "kind": "rewrite",
       "side": "src",
       "from": self.built.program(was),
       "to": self.built.program(now),
@@ -334,7 +334,7 @@ class Case(unittest.TestCase):
       {"src": step["from"], "tgt": step["to"]},
       {"src": step["to"], "tgt": step["to"]},
       [step],
-      {"kind": "checked"},
+      {"kind": "check"},
     )
     return step
 
@@ -361,19 +361,19 @@ class TestGolden(Case):
       "g1",
       {"src": nsw, "tgt": wraps},
       {"src": wraps, "tgt": wraps},
-      [{"kind": "checked", "side": "src", "from": nsw, "to": wraps}],
-      {"kind": "checked"},
+      [{"kind": "check", "side": "src", "from": nsw, "to": wraps}],
+      {"kind": "check"},
     )
     self.verified(self.built.write())
 
   @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
-  def test_a_rule_step_verifies(self):
-    self.ruled()
+  def test_a_rewrite_step_verifies(self):
+    self.rewritten()
     done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT, "-v")
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
     self.assertIn("verified", done.stdout)
     # No solver is asked about the step itself: the rewrite is replayed.
-    self.assertIn("rule to", done.stdout)
+    self.assertIn("rewrite to", done.stdout)
 
   def test_a_cut_verifies(self):
     self.verified(self.cut())
@@ -415,7 +415,7 @@ class TestGolden(Case):
       {"src": step["from"], "tgt": step["to"]},
       {"src": step["to"], "tgt": step["to"]},
       [step],
-      {"kind": "checked"},
+      {"kind": "check"},
     )
     done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -475,7 +475,7 @@ class TestGolden(Case):
       {"src": step["to"], "tgt": step["from"]},
       {"src": step["to"], "tgt": step["to"]},
       [step],
-      {"kind": "checked"},
+      {"kind": "check"},
     )
     done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -542,8 +542,8 @@ class TestGolden(Case):
     self.built.goal(
       "g1", whole, whole, [], {"kind": "split", "callee": "g", "outer": "g2", "inner": "g3"}
     )
-    self.built.goal("g2", outer, outer, [], {"kind": "checked"})
-    self.built.goal("g3", inner, inner, [], {"kind": "checked"})
+    self.built.goal("g2", outer, outer, [], {"kind": "check"})
+    self.built.goal("g3", inner, inner, [], {"kind": "check"})
     return self.built.write()
 
   def test_strengthen_with_attrs_and_predicates_verifies(self):
@@ -592,10 +592,10 @@ class TestGolden(Case):
     outer_strengthened = {"src": new_outer_src, "tgt": new_outer_tgt}
 
     outer_steps = [
-      {"kind": "checked", "side": "src", "from": outer["src"], "to": new_outer_src},
-      {"kind": "checked", "side": "tgt", "from": outer["tgt"], "to": new_outer_tgt},
+      {"kind": "check", "side": "src", "from": outer["src"], "to": new_outer_src},
+      {"kind": "check", "side": "tgt", "from": outer["tgt"], "to": new_outer_tgt},
     ]
-    self.built.goal("g2", outer, outer_strengthened, outer_steps, {"kind": "checked"})
+    self.built.goal("g2", outer, outer_strengthened, outer_steps, {"kind": "check"})
 
     step = {
       "kind": "strengthen",
@@ -606,7 +606,7 @@ class TestGolden(Case):
       "predicates": [{"op": "ne", "lhs": {"arg": 0}, "rhs": {"const": 0}}],
       "by": {"gid": "g2", "hash": "dummy"},
     }
-    self.built.goal("g3", inner, strengthened, [step], {"kind": "checked"})
+    self.built.goal("g3", inner, strengthened, [step], {"kind": "check"})
     self.built.write()
 
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
@@ -628,7 +628,7 @@ class TestTampered(Case):
     # part of, whatever the manifest claims.
     bad = self.built.program(SRC.replace("ret i32 %1", "ret i32 undef"))
     pair = {"src": bad, "tgt": self.tgt}
-    self.built.goal("g1", pair, pair, [], {"kind": "checked"})
+    self.built.goal("g1", pair, pair, [], {"kind": "check"})
     self.refused(self.built.write(), "holds an undef value")
 
   def test_a_program_that_is_not_there(self):
@@ -640,7 +640,7 @@ class TestTampered(Case):
     # The two programs are not a refinement, whatever the manifest says.
     wrong = self.built.program(SRC.replace("mul i32 %0, 2", "mul i32 %0, 3"))
     pair = {"src": self.src, "tgt": wrong}
-    self.built.goal("g1", pair, pair, [], {"kind": "checked"})
+    self.built.goal("g1", pair, pair, [], {"kind": "check"})
     self.refused(self.built.write(), "NOT verified")
 
   def test_a_step_recorded_on_the_wrong_side(self):
@@ -651,8 +651,8 @@ class TestTampered(Case):
       "g1",
       {"src": nsw, "tgt": wraps},
       {"src": wraps, "tgt": wraps},
-      [{"kind": "checked", "side": "src", "from": nsw, "to": wraps}],
-      {"kind": "checked"},
+      [{"kind": "check", "side": "src", "from": nsw, "to": wraps}],
+      {"kind": "check"},
     )
     self.built.write()
     self.built.bend(lambda m: m["goals"]["g1"]["steps"][0].update({"side": "tgt"}))
@@ -664,8 +664,8 @@ class TestTampered(Case):
       "g1",
       {"src": nsw, "tgt": wraps},
       {"src": wraps, "tgt": wraps},
-      [{"kind": "checked", "side": "src", "from": wraps, "to": wraps}],
-      {"kind": "checked"},
+      [{"kind": "check", "side": "src", "from": wraps, "to": wraps}],
+      {"kind": "check"},
     )
     self.refused(self.built.write(), "not the head")
 
@@ -713,7 +713,7 @@ class TestTampered(Case):
           "by": {"gid": "g2", "hash": "x"},
         }
       ],
-      {"kind": "checked"},
+      {"kind": "check"},
     )
     self.refused(self.built.write(), "not a callee")
 
@@ -740,7 +740,7 @@ class TestTampered(Case):
           "by": {"gid": "g2", "hash": "bogus"},
         }
       ],
-      {"kind": "checked"},
+      {"kind": "check"},
     )
     self.built.write()
     self.refused(package, "attributes on src replay")
@@ -756,14 +756,14 @@ class TestTampered(Case):
 
   def test_a_step_of_a_kind_the_checker_does_not_know(self):
     pair = {"src": self.src, "tgt": self.tgt}
-    self.built.goal("g1", pair, pair, [{"kind": "trust-me"}], {"kind": "checked"})
+    self.built.goal("g1", pair, pair, [{"kind": "trust-me"}], {"kind": "check"})
     self.refused(self.built.write(), "does not know")
 
   @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
-  def test_a_rule_step_to_a_different_program(self):
+  def test_a_rewrite_step_to_a_different_program(self):
     # The replay prints what the rules say, so a `to` that is not that
     # program is a step nobody's proofs stand behind.
-    self.ruled()
+    self.rewritten()
     package = self.built.write()
     self.built.bend(lambda m: m["goals"]["g1"]["steps"][0].update({"to": self.tgt}))
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT)
@@ -771,10 +771,10 @@ class TestTampered(Case):
     self.assertIn("to a different program", done.stdout + done.stderr)
 
   @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
-  def test_a_rule_step_under_rules_that_do_not_fire(self):
+  def test_a_rewrite_step_under_rules_that_do_not_fire(self):
     # The recorded rules are what the replay runs: rules that leave the
     # program alone replay to the `from` program, not to the `to` one.
-    self.ruled()
+    self.rewritten()
     package = self.built.write()
     self.built.bend(
       lambda m: m["goals"]["g1"]["steps"][0].update(
@@ -792,10 +792,10 @@ class TestTampered(Case):
     self.assertIn("to a different program", done.stdout + done.stderr)
 
   @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
-  def test_a_rule_step_that_names_no_rules(self):
+  def test_a_rewrite_step_that_names_no_rules(self):
     # An empty rule list would mean "every rule" to llrwt, so it is refused
     # rather than replayed as a different invocation.
-    self.ruled()
+    self.rewritten()
     package = self.built.write()
     self.built.bend(
       lambda m: m["goals"]["g1"]["steps"][0].update(
@@ -807,10 +807,10 @@ class TestTampered(Case):
     self.assertIn("names no rules", done.stdout + done.stderr)
 
   @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
-  def test_a_rule_step_recorded_on_the_tgt_side(self):
-    # Rules optimize forward, so a rule step read as a tgt step is a claim
+  def test_a_rewrite_step_recorded_on_the_tgt_side(self):
+    # Rules optimize forward, so a rewrite step read as a tgt step is a claim
     # the rewriter's proofs do not make.
-    self.ruled()
+    self.rewritten()
     package = self.built.write()
     self.built.bend(lambda m: m["goals"]["g1"]["steps"][0].update({"side": "tgt"}))
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llrwt", LLRWT)
@@ -818,10 +818,10 @@ class TestTampered(Case):
     self.assertIn("rules optimize forward on src only", done.stdout + done.stderr)
 
   @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
-  def test_a_rule_step_whose_invocation_names_other_rules(self):
+  def test_a_rewrite_step_whose_invocation_names_other_rules(self):
     # The rules llrwt ran and the rules the step claims are one claim, so an
     # invocation that names other rules is a certificate nobody made.
-    self.ruled()
+    self.rewritten()
     package = self.built.write()
     self.built.bend(
       lambda m: m["goals"]["g1"]["steps"][0]["invocation"].update({"rules": ["subi-self-to-zero"]})
@@ -831,11 +831,11 @@ class TestTampered(Case):
     self.assertIn("does not match", done.stdout + done.stderr)
 
   @unittest.skipUnless(HAVE_LLRWT, "needs llrwt and llops")
-  def test_a_rule_step_replays_with_translator_options(self):
+  def test_a_rewrite_step_replays_with_translator_options(self):
     # The recorded translators are gone on this machine, so the replay
     # names where they are instead; falling back to PATH would find a
     # system mlir-translate llrwt does not parse.
-    self.ruled()
+    self.rewritten()
     package = self.built.write()
     self.built.bend(
       lambda m: m["goals"]["g1"]["steps"][0]["invocation"].update(
