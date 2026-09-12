@@ -990,15 +990,23 @@ function multilineFields(value, path = "$", result = []) {
 
 function counterexampleFieldLabel(path) {
   if (/\["inputs?"\]$/.test(path)) {
-    return "INPUT";
+    return "INPUT (LLUBI)";
   }
 
   if (/\["result"\]\["replay"\]\["src"\]\["observations"\]$/.test(path)) {
-    return "SOURCE OUTPUT";
+    return "SOURCE OUTPUT (LLUBI)";
   }
 
   if (/\["result"\]\["replay"\]\["tgt"\]\["observations"\]$/.test(path)) {
-    return "TARGET OUTPUT";
+    return "TARGET OUTPUT (LLUBI)";
+  }
+
+  if (/\["check"\]\["detail"\]$/.test(path)) {
+    return "EXAMPLE (ALIVE2)";
+  }
+
+  if (/\["check"\]\["stdout"\]$/.test(path)) {
+    return "DETAILS (ALIVE2)";
   }
 
   return path;
