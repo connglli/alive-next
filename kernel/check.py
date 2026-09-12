@@ -4,18 +4,21 @@
     python3 check.py [<package>] [--alive-tv PATH] [--llops PATH] [--llubi PATH] [--llrwt PATH] [--mlir-translate PATH] [--mlir-opt PATH] [--smt-to MS]
 
 The package is the directory this script sits in unless one is named. What is
-needed besides Python: alive-tv for a proof, llubi for a counterexample, llrwt
-for a proof that rewrites with pre-proved rules, and llops for the subcommands
-each of them needs. All are taken from the manifest, which records where the
-run found them and which LLVM each one carried; a path that is not there falls
-back to the name on PATH, and an option overrides both.
+needed besides Python: alive-tv for a proof and for a counterexample the
+checker is the source of, llubi for a counterexample that names an input,
+llrwt for a proof that rewrites with pre-proved rules, and llops for the
+subcommands each of them needs. All are taken from the manifest, which records
+where the run found them and which LLVM each one carried; a path that is not
+there falls back to the name on PATH, and an option overrides both.
 
 Nothing here believes the manifest. For a proof it says which pairs the run
 moved through and this reruns every claim about them: the direction of a check
 comes from the side the step moved, the composition rule for a cut is applied
 here, and a program is read only from a file whose name is its hash. For a
-counterexample it names one input, and this runs both programs on it and
-decides for itself whether they diverge.
+counterexample it says which pair was refuted and what certifies it: an
+executed one names one input, and this runs both programs on it and decides
+for itself whether they diverge; one the checker refuted is asked again, and
+the checker's answer decides.
 """
 
 import argparse
@@ -76,7 +79,8 @@ class Package:
 
   def say_toolchain(self) -> None:
     """Name the binaries in use, and say when they are not the recorded ones."""
-    checker = ("alive-tv", self.alive_tv) if self.verdict == "verified" else ("llubi", self.llubi)
+    solver = self.verdict == "verified" or self.source() == "alive2"
+    checker = ("alive-tv", self.alive_tv) if solver else ("llubi", self.llubi)
     names = [checker, ("llops", self.llops)]
     if self.verdict == "verified":
       names.append(("llrwt", self.llrwt))
@@ -130,6 +134,14 @@ class Package:
 
   def refines(self, src: str, tgt: str) -> bool:
     """Ask alive-tv whether the second program refines the first."""
+    return self.ask(src, tgt) == "correct"
+
+  def refutes(self, src: str, tgt: str) -> bool:
+    """Ask alive-tv whether the second program fails to refine the first."""
+    return self.ask(src, tgt) == "incorrect"
+
+  def ask(self, src: str, tgt: str) -> str:
+    """Ask alive-tv about the pair, and answer with its summary."""
     with tempfile.TemporaryDirectory() as scratch:
       paths = []
       for name, item in (("src.ll", src), ("tgt.ll", tgt)):
@@ -156,7 +168,11 @@ class Package:
       )
       self.seconds += time.monotonic() - started
       self.queries += 1
-    return summary(done.stdout) == "correct"
+    return summary(done.stdout)
+
+  def source(self) -> str:
+    """What certifies a counterexample: the checker for the pair, or an input."""
+    return self.manifest.get("source", "llubi")
 
   def ask_llops(self, subcommand: str, request: dict) -> dict:
     done = subprocess.run(
@@ -620,6 +636,24 @@ class Check:
     return "correct" if self.package.refines(src, tgt) else "not correct"
 
 
+class Refutation:
+  """Re-ask alive-tv about the pair, and require the same answer."""
+
+  def __init__(self, package: Package, verbose: bool):
+    self.package = package
+    self.verbose = verbose
+
+  def confirm(self) -> bool:
+    pair = self.package.manifest["pair"]
+    self.package.program(pair["src"])
+    self.package.program(pair["tgt"])
+    refuted = self.package.refutes(pair["src"], pair["tgt"])
+    gid = self.package.manifest["root"]
+    what = "refuted" if refuted else "not refuted"
+    print(f"  {'ok ' if refuted else 'BAD'} {gid:<4} the pair it was asked about   {what}")
+    return refuted
+
+
 # --- the counterexample ------------------------------------------------------
 
 
@@ -859,7 +893,10 @@ def main() -> int:
     print(f"checking {args.package}")
     package.say_toolchain()
     if package.verdict == "counterexample":
-      confirmed = Replay(package, args.verbose).confirm()
+      if package.source() == "alive2":
+        confirmed = Refutation(package, args.verbose).confirm()
+      else:
+        confirmed = Replay(package, args.verbose).confirm()
     else:
       check = Check(package, args.verbose)
       check.goal(package.manifest["root"])
@@ -868,10 +905,23 @@ def main() -> int:
     print(f"refused: {error}", file=sys.stderr)
     return 1
 
-  counted = "runs" if package.verdict == "counterexample" else "solver queries"
+  counted = (
+    "runs"
+    if package.verdict == "counterexample" and package.source() != "alive2"
+    else "solver queries"
+  )
   print(f"{package.queries} {counted} in {package.seconds:.1f}s")
   if package.verdict == "counterexample":
-    print("counterexample" if confirmed else "NOT a counterexample: they do not diverge")
+    said = (
+      "counterexample"
+      if confirmed
+      else (
+        "NOT a counterexample: the pair was not refuted again"
+        if package.source() == "alive2"
+        else "NOT a counterexample: they do not diverge"
+      )
+    )
+    print(said)
     return 0 if confirmed else 1
   if not confirmed:
     print(f"NOT verified: {len(check.failures)} of them did not hold")

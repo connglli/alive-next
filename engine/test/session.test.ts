@@ -25,11 +25,40 @@ const built = await llops
 
 /** A checker that agrees, so a split is all these tests need to set up. */
 class YesMan implements Checker {
+  calls = 0;
   async check(): Promise<CheckResult> {
+    this.calls += 1;
     return {
       outcome: "correct",
       detail: "",
       invocation: { binary: "yes-man", flags: [], timeoutMs: 0 },
+      stdout: "",
+      ms: 0,
+    };
+  }
+}
+
+/** A checker that refutes with the example the real one printed. */
+class NoMan implements Checker {
+  constructor(private readonly stdout: string) {}
+  async check(): Promise<CheckResult> {
+    return {
+      outcome: "incorrect",
+      detail: "Value mismatch",
+      invocation: { binary: "no-man", flags: [], timeoutMs: 0 },
+      stdout: this.stdout,
+      ms: 0,
+    };
+  }
+}
+
+/** A checker that settles nothing. */
+class Maybe implements Checker {
+  async check(): Promise<CheckResult> {
+    return {
+      outcome: "unknown",
+      detail: "",
+      invocation: { binary: "maybe", flags: [], timeoutMs: 0 },
       stdout: "",
       ms: 0,
     };
@@ -51,6 +80,27 @@ const unrewriting = {
     message: "unused in this test",
   }),
 } as unknown as Llrwt;
+
+/** The example a refusal prints, which names the pair it refuted on. */
+const EXAMPLE = `ERROR: Value mismatch
+
+Example:
+i32 noundef %x = #xfffffffb (4294967291, -5)
+
+Source:
+i32 %h = #xfffffffe (4294967294, -2)
+
+Target:
+i32 %h = #xfffffffd (4294967293, -3)
+Source value: #xfffffffe (4294967294, -2)
+Target value: #fffffffd (4294967293, -3)
+
+Summary:
+  0 correct transformations
+  1 incorrect transformations
+  0 failed-to-prove transformations
+  0 Alive2 errors
+`;
 
 let dir: string;
 
@@ -363,5 +413,114 @@ describe.skipIf(!built)("reading a session", () => {
       budgetMs: 1000,
       ms: 10,
     });
+  });
+
+  test("an eager session is checked when it starts", async () => {
+    const run = await Session.start({
+      dir: join(dir, "eager"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+      eager: true,
+    });
+
+    // The pair is already proved, so a search is unnecessary.
+    expect(run.verdict).toBe("verified");
+    expect(run.tree.goals.get("g1")?.status).toBe("proved");
+
+    const checked = log(run).find((entry) => entry.kind === "auto");
+    if (checked?.kind !== "auto") throw new Error("the start check was not logged");
+    expect(checked.action).toBe("eager_check");
+    expect(checked.effects).toEqual([{ effect: "proved", gid: "g1" }]);
+    expect(checked.outcome).toMatchObject({ check: { outcome: "proved" } });
+  });
+
+  test("a session that is not eager is not checked", async () => {
+    const checker = new YesMan();
+    const run = await Session.start({
+      dir: join(dir, "patient"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker,
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+
+    expect(run.verdict).toBe("unknown");
+    expect(checker.calls).toBe(0);
+    expect([...log(run).filter((entry) => entry.kind === "auto")]).toHaveLength(0);
+  });
+
+  test("a check of the pair the run was asked about ends the run", async () => {
+    const run = await Session.start({
+      dir: join(dir, "tool-refuted"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new NoMan(EXAMPLE),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    await run.check("g1");
+
+    expect(run.verdict).toBe("counterexample");
+    expect(run.tree.goals.get("g1")?.status).toBe("refuted");
+    // The refutation came from the tool's check, with no input beside it;
+    // the certificate names the checker.
+    const results = log(run).filter((entry) => entry.kind === "tool_result");
+    const last = results[results.length - 1];
+    if (last?.kind !== "tool_result") throw new Error("no result was logged");
+    expect(last.effects).toEqual([{ effect: "refuted", gid: "g1" }]);
+  });
+
+  test("an eager refutation is of the translation, and ends the run", async () => {
+    const run = await Session.start({
+      dir: join(dir, "refuted"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new NoMan(EXAMPLE),
+      // The replay never runs; the interpreter would throw if it did.
+      interp: noRun,
+      rewriter: unrewriting,
+      eager: true,
+    });
+
+    expect(run.verdict).toBe("counterexample");
+    expect(run.tree.goals.get("g1")?.status).toBe("refuted");
+
+    const checked = log(run).find((entry) => entry.kind === "auto");
+    if (checked?.kind !== "auto") throw new Error("the start check was not logged");
+    expect(checked.effects).toEqual([{ effect: "refuted", gid: "g1" }]);
+    // The checker's answer is the source, so no input was named and no
+    // program was run: nothing beside the check names the counterexample.
+    const outcome = checked.outcome as { check?: unknown; report?: unknown };
+    expect(outcome.check).toMatchObject({ outcome: "refuted" });
+    expect(outcome.report).toBeUndefined();
+  });
+
+  test("an eager check that settled nothing leaves the search its work", async () => {
+    const run = await Session.start({
+      dir: join(dir, "hinted"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new Maybe(),
+      interp: noRun,
+      rewriter: unrewriting,
+      eager: true,
+    });
+
+    expect(run.verdict).toBe("unknown");
+    expect(run.tree.goals.get("g1")?.status).toBe("open");
+
+    const checked = log(run).find((entry) => entry.kind === "auto");
+    if (checked?.kind !== "auto") throw new Error("the start check was not logged");
+    expect(checked.effects).toEqual([]);
+    expect(checked.outcome).toMatchObject({ check: { outcome: "unknown" } });
   });
 });

@@ -23,7 +23,7 @@ export function createReportCexTool(session: Session) {
     name: "run_report_cex",
     label: "Report counterexample",
     description:
-      "Offer one whole program input, an argument per parameter of the pair the run was asked about. Both programs are run on it under llubi, and a divergence seen there refutes the root and ends the run. A refutation from alive2 is not one of these: it speaks about whatever pair it was given, and may be about a state no input reaches.",
+      "Offer one whole program input, an argument per parameter of the pair the run was asked about. Both programs are run on it under llubi, and a divergence seen there refutes the root and ends the run. A refutation another pair got is not one of these: it is about whatever pair it was given, and may be about a state no input reaches.",
     parameters: Type.Object({
       input: Type.Array(Argument, {
         description: "One argument per parameter, in order.",

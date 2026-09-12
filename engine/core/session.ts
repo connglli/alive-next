@@ -139,6 +139,8 @@ export interface SessionOptions {
   /** llrwt, which is what certifies a rewrite without a solver run. */
   rewriter: Llrwt;
   timeouts?: Timeouts;
+  /** Whether the run's first move is an eager check of the root pair. */
+  eager?: boolean;
 }
 
 /** What `start` records about the run, verbatim, in `run_start`. */
@@ -203,6 +205,7 @@ export class Session {
       toolchain: options.toolchain,
       versions: options.versions ?? {},
     });
+    if (options.eager) await session.eagerCheck();
     return session;
   }
 
@@ -484,6 +487,16 @@ export class Session {
   }
 
   /**
+   * Check the pair the run was asked for before a search begins. A proof or a
+   * counterexample the checker finds ends the run; anything else changes
+   * nothing.
+   */
+  private async eagerCheck(): Promise<void> {
+    const check = await this.steps.eagerGoalCheck(this.tree, this.tree.root);
+    this.note("eager_check", { check }, check.effects);
+  }
+
+  /**
    * The caller saying it has nothing left to try. It changes no goal, so the
    * verdict stays whatever the tree says, which is "unknown"; what it adds is
    * a line saying the run ended on purpose rather than on a budget or a crash.
@@ -498,13 +511,14 @@ export class Session {
   }
 
   /**
-   * Something the framework did that no tool call names: a budget spent, a
-   * compaction, a check it ran on its own. It changes no goal, so it carries
-   * no effects, but a trajectory that leaves it out does not say what
-   * happened.
+   * Record an action the framework takes on its own: a budget the run spent,
+   * a compaction, the start check. Effects follow only when the action changed
+   * a goal.
    */
-  note(action: string, outcome: unknown): void {
-    this.append({ kind: "auto", action, outcome });
+  note(action: string, outcome: unknown, effects?: Effect[]): void {
+    this.append(
+      effects ? { kind: "auto", action, outcome, effects } : { kind: "auto", action, outcome },
+    );
   }
 
   /** Close the run with the verdict its tree has reached. */

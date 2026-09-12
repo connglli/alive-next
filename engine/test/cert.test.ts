@@ -74,6 +74,19 @@ function folding(folded: string): Llrwt {
   } as unknown as Llrwt;
 }
 
+/** A checker that refutes everything, so a run can start refuted. */
+class NoMan implements Checker {
+  async check(): Promise<CheckResult> {
+    return {
+      outcome: "incorrect",
+      detail: "Value mismatch",
+      invocation: { binary: "no-man", flags: [], timeoutMs: 0 },
+      stdout: "",
+      ms: 0,
+    };
+  }
+}
+
 /** A body with an addition of zero for the rewriter to fold away. */
 const ADD_ZERO = `define i32 @f(i32 %x) {
 entry:
@@ -288,6 +301,7 @@ describe.skipIf(!built)("the manifest", () => {
       readFileSync(join(certify(session.dir, join(dir, "cex")), "manifest.json"), "utf8"),
     ) as Counterexample;
     expect(manifest.verdict).toBe("counterexample");
+    expect(manifest.source).toBe("llubi");
     expect(manifest.input).toEqual(input);
     expect(manifest.divergence).toContain("i32 -1 in the src and i32 -2 in the tgt");
     // The pair is the one the run started from, and both programs travel.
@@ -317,5 +331,63 @@ describe.skipIf(!built)("the manifest", () => {
     const entries = parse(readFileSync(join(session.dir, "trajectory.jsonl"), "utf8"));
     expect(() => manifestOf(entries, derive(entries))).toThrow(NotCertifiable);
     expect(() => manifestOf(entries, derive(entries))).toThrow(/the root is open/);
+  });
+
+  test("certifies a root the start check proved, with no steps at all", async () => {
+    const session = await Session.start({
+      dir: join(dir, "auto-proved"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+      eager: true,
+    });
+    expect(session.finish()).toBe("verified");
+
+    const manifest = JSON.parse(
+      readFileSync(join(certify(session.dir, join(dir, "auto-ok")), "manifest.json"), "utf8"),
+    ) as Proof;
+    expect(manifest.verdict).toBe("verified");
+    const [goal] = Object.values(manifest.goals);
+    if (!goal) throw new Error("the proof has no goal");
+    expect(goal.steps).toEqual([]);
+    expect(goal.start).toEqual(goal.end);
+  });
+
+  test("a start check's counterexample ships the pair and no input", async () => {
+    // The interpreter refuses, so nothing was replayed and the check alone
+    // refutes the run.
+    const session = await Session.start({
+      dir: join(dir, "auto-refuted"),
+      src: miscompile.src,
+      tgt: miscompile.tgt,
+      llops,
+      checker: new NoMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+      eager: true,
+    });
+    expect(session.finish()).toBe("counterexample");
+
+    const manifest = JSON.parse(
+      readFileSync(join(certify(session.dir, join(dir, "auto-cex")), "manifest.json"), "utf8"),
+    ) as Counterexample;
+    expect(manifest.verdict).toBe("counterexample");
+    expect(manifest.source).toBe("alive2");
+    expect(manifest.input).toBeUndefined();
+    // What the checker printed travels with the package.
+    expect(manifest.divergence).toBe("Value mismatch");
+    const tree = session.tree.goals.get("g1");
+    expect(manifest.pair).toEqual({
+      src: tree?.src.history[0] as string,
+      tgt: tree?.tgt.history[0] as string,
+    });
+    for (const side of ["src", "tgt"] as const) {
+      expect(
+        readFileSync(join(dir, "auto-cex", "programs", `${manifest.pair[side]}.ll`), "utf8").length,
+      ).toBeGreaterThan(0);
+    }
   });
 });

@@ -1,16 +1,12 @@
 // A translation that is wrong, and the input that proves it.
 //
 // Halving a signed integer is not a shift: `sdiv` rounds toward zero and
-// `ashr` rounds down, so the two disagree on every negative odd value. This is
-// the classic form of a real miscompilation, and the run ends the way one
-// should: not with what alive2 said, but with a whole-program input on which
-// the two programs do visibly different things.
+// `ashr` rounds down, so the two disagree on every negative odd value. The
+// check refutes the pair, and the replay on the input below is what the
+// certificate carries.
 //
-// The check is what a search does first, and it comes back refuted with a
-// counterexample of alive2's own. That is a hint and nothing more, so the
-// script does what an agent would do with a hint: it offers a concrete input,
-// and the framework runs both programs on it under llubi. The divergence it
-// sees for itself is what refutes the root.
+// The script first checks the pair, then offers a concrete input. The
+// framework runs both programs on it under llubi and compares the results.
 import { expect, type Scenario } from "../core/scenario.ts";
 
 export const miscompile: Scenario = {
@@ -33,8 +29,8 @@ entry:
 `,
 
   async prove(session) {
-    // A refutation leaves the goal open, because a local counterexample is a
-    // hint about the pair and not yet a fact about the translation.
+    // A check of the pair the run was asked about refutes the run, and no
+    // input has been replayed yet.
     const checked = await session.check("g1");
     expect("the check refutes the pair", checked.outcome === "refuted", checked);
 

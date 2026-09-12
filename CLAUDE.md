@@ -18,9 +18,9 @@ The agent/proof-writer is entirely untrusted. It explores search strategies: whe
 
 * **Rewrite steps** are validated by `alive2` (or verified pre-proved rewrite rules).
 * **Decomposition and interface facts** are validated by `alive2` through faithful outlining and certified call-site assertions.
-* **Counterexamples** are validated by concrete execution replay under the UB-aware interpreter `llubi`.
+* **Counterexamples** are validated under the checker the certificate names: concrete execution replay under the UB-aware interpreter `llubi`, or `alive2` refuting the root's original pair.
 
-A flawed proposal wastes search budget, but can never compromise soundness or yield an incorrect certificate. A run concludes in one of three terminal outcomes: **verified** (with a standalone certificate package replayable without an agent), **refuted** (with a concrete input demonstrating divergence or undefined behavior), or **unknown** (when budgets expire or search exhausts without proof).
+A flawed proposal wastes search budget, but can never compromise soundness or yield an incorrect certificate. A run concludes in one of three terminal outcomes: **verified** (with a standalone certificate package replayable without an agent), **refuted** (with a diverging execution under `llubi`, or `alive2` refuting the original pair), or **unknown** (when budgets expire or search exhausts without proof).
 
 ### Conceptual Model
 

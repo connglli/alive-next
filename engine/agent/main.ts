@@ -122,10 +122,21 @@ const session = await Session.start({
   timeouts,
   config,
   toolchain: built,
+  eager: true,
 });
 
 const started = Date.now();
 let summary: string | undefined;
+
+// The start check can end the run before the model is asked for anything:
+// either verdict settles it. No search is left, so the run is concluded with
+// no assistant to build and no screen to open.
+if (session.verdict !== "unknown") {
+  finishRun();
+  if (summary) process.stdout.write(summary);
+  process.exit(0);
+}
+
 const agent = await createProofAssistant({
   session,
   services,

@@ -1,15 +1,14 @@
 // Certifying a counterexample by execution.
 //
-// alive2 refuting a pair is a hint. The pair may be one the search made rather
-// than the one the run was asked about, and the entry state its counterexample
-// speaks of may be unreachable from any whole-program input. So nothing here
-// reads a refutation: a run is refuted by a concrete input on which the
-// original tgt does something the original src does not allow, run under an
-// interpreter that models UB and poison.
+// A run is refuted two ways: a concrete input on which the original tgt does
+// something the original src does not allow, run under an interpreter that
+// models UB and poison; or the checker's counterexample on the root's
+// original pair. This module replays inputs. A counterexample for another
+// pair is dropped, since the search can produce pairs whose entry state no
+// input reaches.
 //
 // Finding that input is the agent's problem and is untrusted. This takes one
-// and answers what happened, which is the only thing that can mark the root
-// refuted.
+// and answers what happened.
 import type { HarnessArg, Llops } from "../drivers/llops.ts";
 import type { RunResult } from "../drivers/llubi.ts";
 import type { Goal, Side, Tree } from "./goals.ts";
@@ -108,8 +107,8 @@ export class Counterexamples {
    * they diverge.
    *
    * The pair is the root's first, not its current one: a step is free to
-   * overshoot, so a counterexample against a rewritten pair blames the path,
-   * and only the original pair is the translation.
+   * overshoot, so a counterexample against a rewritten pair is a hint, since
+   * only the original pair is the translation.
    */
   async report(tree: Tree, input: HarnessArg[]): Promise<ReportResult> {
     const root = tree.goals.get(tree.root);

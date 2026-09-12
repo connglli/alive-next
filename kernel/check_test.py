@@ -219,6 +219,19 @@ class Built:
     (self.root / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return self.root
 
+  def refuted(self, src: str, tgt: str) -> Path:
+    """A counterexample package the checker itself refuted: the pair, and no input."""
+    manifest = {
+      "version": 1,
+      "verdict": "counterexample",
+      "root": "g1",
+      "source": "alive2",
+      "toolchain": {},
+      "pair": {"src": self.program(src), "tgt": self.program(tgt)},
+    }
+    (self.root / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    return self.root
+
   def bend(self, change) -> None:
     """Rewrite the manifest, which is what a tampered package looks like."""
     path = self.root / "manifest.json"
@@ -942,6 +955,43 @@ class TestCounterexample(unittest.TestCase):
     digest = json.loads((package / "manifest.json").read_text())["pair"]["tgt"]
     (package / "programs" / f"{digest}.ll").write_text(SHIFT.replace("ashr", "lshr"))
     done = self.replay(package)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("is not the program its name claims", done.stdout + done.stderr)
+
+
+@unittest.skipUnless(HAVE, "needs alive-tv and llops")
+class TestRefuted(unittest.TestCase):
+  """The counterexample is the checker's answer, so this re-asks alive-tv."""
+
+  def setUp(self) -> None:
+    self.dir = Path(tempfile.mkdtemp())
+    self.built = Built(self.dir / "package")
+
+  def tearDown(self) -> None:
+    shutil.rmtree(self.dir, ignore_errors=True)
+
+  def re_asked(self, package: Path) -> subprocess.CompletedProcess:
+    return run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS)
+
+  def test_a_pair_the_checker_refutes_again_is_a_counterexample(self):
+    # Halving rounds toward zero and shifting does not, so the two disagree.
+    package = self.built.refuted(HALVE, SHIFT)
+    done = self.re_asked(package)
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertIn("counterexample", done.stdout)
+    self.assertIn("the pair it was asked about", done.stdout)
+
+  def test_a_pair_that_refines_is_not_a_counterexample(self):
+    package = self.built.refuted(SRC, TGT)
+    done = self.re_asked(package)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("NOT a counterexample", done.stdout)
+
+  def test_a_program_that_is_not_what_its_name_says(self):
+    package = self.built.refuted(HALVE, SHIFT)
+    digest = json.loads((package / "manifest.json").read_text())["pair"]["tgt"]
+    (package / "programs" / f"{digest}.ll").write_text(SHIFT.replace("ashr", "lshr"))
+    done = self.re_asked(package)
     self.assertNotEqual(done.returncode, 0, done.stdout)
     self.assertIn("is not the program its name claims", done.stdout + done.stderr)
 

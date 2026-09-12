@@ -226,9 +226,9 @@ export class Steps {
   ) {}
 
   /**
-   * Ask whether a goal's claim holds as it stands. A refutation is a hint
-   * rather than a verdict: a valid step can overshoot, so what it refutes may
-   * be the path rather than the translation.
+   * Ask whether a goal's claim holds as it stands. A proof discharges the
+   * goal. A counterexample refutes the run when the checked pair is the
+   * root's original pair; anywhere else it is only a hint.
    */
   async checkGoal(tree: Tree, gid: string, timeoutMs?: number): Promise<CheckGoalResult> {
     const goal = workable(tree, gid);
@@ -249,9 +249,12 @@ export class Steps {
     const result: CheckGoalResult = {
       outcome,
       check,
-      // Only execution certifies a counterexample, so a refutation changes
-      // nothing here; marking a goal refuted is report_cex's business.
-      effects: check.outcome === "correct" ? [{ effect: "proved", gid }] : [],
+      effects:
+        check.outcome === "correct"
+          ? [{ effect: "proved", gid }]
+          : check.outcome === "incorrect" && rootPair(tree, gid, goal)
+            ? [{ effect: "refuted", gid }]
+            : [],
     };
     if (prior) result.prior = prior;
     if (askedMs > budgetMs) result.cappedFromMs = askedMs;
@@ -625,6 +628,19 @@ export class Steps {
 function goalOutcome(outcome: CheckOutcome): CheckGoalResult["outcome"] {
   if (outcome === "correct") return "proved";
   return outcome === "incorrect" ? "refuted" : "unknown";
+}
+
+/**
+ * Whether the checked pair is the root's original pair, which is what the run
+ * was asked about. A step on either side replaces it with a pair the search
+ * produced.
+ */
+function rootPair(tree: Tree, gid: string, goal: Goal): boolean {
+  return (
+    gid === tree.root &&
+    head(goal, "src") === goal.src.history[0] &&
+    head(goal, "tgt") === goal.tgt.history[0]
+  );
 }
 
 /**

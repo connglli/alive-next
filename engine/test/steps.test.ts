@@ -525,7 +525,7 @@ describe("checking a goal", () => {
     expect(result.effects).toEqual([{ effect: "proved", gid: "g1" }]);
   });
 
-  test("calls a refutation a hint, not a verdict", async () => {
+  test("refutes the run when the pair is the root's original one", async () => {
     const steps = new Steps(
       store,
       new FakeChecker(["incorrect"]),
@@ -535,7 +535,50 @@ describe("checking a goal", () => {
     );
     const result = await steps.checkGoal(await tree(), "g1");
     expect(result.outcome).toBe("refuted");
-    // Only execution certifies a counterexample, so the tree is left alone.
+    // The root's original pair is the one the run was asked about, so the
+    // checker's refutation of it refutes the run
+    expect(result.effects).toEqual([{ effect: "refuted", gid: "g1" }]);
+  });
+
+  test("calls a refutation of a moved root a hint, not a verdict", async () => {
+    // A step has moved the root, so the checked pair is not the original one;
+    // only an executed input can refute the translation.
+    const moved = await store.put(NEW);
+    const steps = new Steps(
+      store,
+      new FakeChecker(["incorrect"]),
+      DEFAULT_TIMEOUTS,
+      llops,
+      unrewriting,
+    );
+    const result = await steps.checkGoal(
+      await tree({
+        kind: "tool_result",
+        id: "1",
+        tool: "commit",
+        effects: [{ effect: "step", gid: "g1", side: "src", to: moved, how: "checked" }],
+        result: null,
+        ms: 1,
+      }),
+      "g1",
+    );
+    expect(result.outcome).toBe("refuted");
+    expect(result.effects).toEqual([]);
+  });
+
+  test("calls a refutation of a child a hint, not a verdict", async () => {
+    // The callee's entry is conservative, so a counterexample there is a hint
+    // about the cut.
+    const steps = new Steps(
+      store,
+      new FakeChecker(["incorrect"]),
+      DEFAULT_TIMEOUTS,
+      llops,
+      unrewriting,
+    );
+    const src = await store.put(SRC);
+    const result = await steps.checkGoal(await tree(cutG1(src, src)), "g3");
+    expect(result.outcome).toBe("refuted");
     expect(result.effects).toEqual([]);
   });
 

@@ -4,8 +4,9 @@
 // only reader that matters. Nothing here is a claim on its own. A proof's
 // every step names the pair it moved and the side it moved, and the checker
 // reruns the check that certified it, in the direction the side implies. A
-// counterexample names the pair the run was asked about and one input, and the
-// checker runs them itself.
+// counterexample names the pair the run was asked about and its source: an
+// input the checker runs both programs on, or the checker's answer on that
+// pair.
 //
 // What the run abandoned does not appear. A goal's chain is the path from the
 // pair it started with to the pair it ended with, which is what the goal tree
@@ -13,7 +14,7 @@
 import type { Attrs, HarnessArg, PredicateAssertion } from "../core/drivers/llops.ts";
 import type { LlrwtInvocation } from "../core/drivers/llrwt.ts";
 import { type Goal, head, type Tree } from "../core/state/goals.ts";
-import type { Effect, Entry, Hash } from "../core/state/trajectory.ts";
+import type { AutoEvent, Effect, Entry, Hash, ToolResult } from "../core/state/trajectory.ts";
 
 export const VERSION = 1;
 
@@ -101,18 +102,20 @@ export interface Proof {
   goals: Record<string, ManifestGoal>;
 }
 
-/** A refutation: one input, and the pair it was run on. */
+/** A refutation: the pair it refutes, and its source. */
 export interface Counterexample {
   version: number;
   verdict: "counterexample";
   root: string;
   toolchain: unknown;
-  /** The pair the run was asked about, which is what the input refutes. */
+  /** The interpreter of an executed one, the solver otherwise. */
+  source: "llubi" | "alive2";
+  /** The pair the run was asked about, which is what the refutation is of. */
   pair: Pair;
-  /** The argument values, as `llops harness` takes them. */
-  input: HarnessArg[];
-  /** What the run saw, which a checker recomputes rather than believes. */
-  divergence: string;
+  /** The argument values, as `llops harness` takes them; an executed one only. */
+  input?: HarnessArg[];
+  /** What diverged on the input, or what the checker printed on the pair. */
+  divergence?: string;
 }
 
 export type Manifest = Proof | Counterexample;
@@ -153,45 +156,92 @@ export function manifestOf(entries: Entry[], tree: Tree): [Manifest, Set<Hash>] 
 }
 
 /**
- * The manifest for a refuted run: the pair it was asked about, and the input
- * the framework saw them diverge on.
+ * The manifest for a refuted run: the pair the run was asked about, the checker
+ * that refuted it, and the input when one was replayed.
  *
- * The steps a run made before the refutation are not part of it. A
- * counterexample is against the original pair, since that is the pair the
- * interpreter was given and the only one the verdict is about.
+ * The steps a run made before the refutation are not part of it. An executed
+ * counterexample carries the input and what diverged. One the checker itself
+ * refuted carries no input, since only the checker's answer backs it.
  */
 function refutation(entries: Entry[], tree: Tree, root: Goal): [Counterexample, Set<Hash>] {
-  const report = reportOf(entries, root.id);
   const pair = { src: first(root, "src"), tgt: first(root, "tgt") };
+  let said: { input: HarnessArg[]; divergence: string } | undefined;
+  let answer: string | undefined;
+  for (const entry of entries) {
+    if (entry.kind !== "tool_result" && entry.kind !== "auto") continue;
+    if (!refutedEffect(entry, root.id)) continue;
+    const found = report(entry);
+    if (found) {
+      said = found;
+    } else {
+      answer = answerOf(entry) ?? answer;
+    }
+  }
+  if (said) {
+    return [
+      {
+        version: VERSION,
+        verdict: "counterexample" as const,
+        root: tree.root,
+        toolchain: toolchainOf(entries),
+        source: "llubi" as const,
+        pair,
+        input: said.input,
+        divergence: said.divergence,
+      },
+      new Set([pair.src, pair.tgt]),
+    ];
+  }
   return [
     {
       version: VERSION,
-      verdict: "counterexample",
+      verdict: "counterexample" as const,
       root: tree.root,
       toolchain: toolchainOf(entries),
+      source: "alive2" as const,
       pair,
-      input: report.input,
-      divergence: report.divergence,
+      divergence: answer ?? "",
     },
     new Set([pair.src, pair.tgt]),
   ];
 }
 
-/** The report that refuted the root, which is the last one that did. */
-function reportOf(entries: Entry[], gid: string): { input: HarnessArg[]; divergence: string } {
-  let found: { input: HarnessArg[]; divergence: string } | undefined;
-  for (const entry of entries) {
-    if (entry.kind !== "tool_result") continue;
-    const refuted = (entry.effects ?? []).some(
-      (effect) => effect.effect === "refuted" && effect.gid === gid,
-    );
-    if (!refuted) continue;
-    const result = entry.result as { input?: HarnessArg[]; divergence?: string } | null;
-    if (!result?.input) continue;
-    found = { input: result.input, divergence: result.divergence ?? "" };
-  }
-  if (!found) throw new NotCertifiable(`nothing in the log says which input refuted ${gid}`);
-  return found;
+/**
+ * The report that refuted the root: the last refuting entry of the log that
+ * carries one.
+ */
+function refutedEffect(entry: ToolResult | AutoEvent, gid: string): boolean {
+  return (entry.effects ?? []).some((effect) => effect.effect === "refuted" && effect.gid === gid);
+}
+
+/** A report the framework recorded, whole, with what it replayed. */
+interface RecordedReport {
+  input?: HarnessArg[];
+  divergence?: string;
+}
+
+/**
+ * The input and divergence a refuting report kept, whether a tool recorded it
+ * or an action of the framework's own did.
+ */
+function report(
+  entry: ToolResult | AutoEvent,
+): { input: HarnessArg[]; divergence: string } | undefined {
+  const said =
+    entry.kind === "tool_result"
+      ? (entry.result as RecordedReport | null)
+      : (entry.outcome as { report?: RecordedReport } | null)?.report;
+  if (!said?.input) return undefined;
+  return { input: said.input, divergence: said.divergence ?? "" };
+}
+
+/** What the checker printed on the pair it refuted, whatever entry holds the check. */
+function answerOf(entry: ToolResult | AutoEvent): string | undefined {
+  const said =
+    entry.kind === "tool_result"
+      ? (entry.result as { check?: { detail?: string } } | null)?.check
+      : (entry.outcome as { check?: { check?: { detail?: string } } } | null)?.check?.check;
+  return said?.detail;
 }
 
 /** Walk what discharged the root, and nothing else. */

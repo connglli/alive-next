@@ -52,7 +52,7 @@ A verdict ends the run. The tool that discharges the root goal, or that certifie
 
 The prompt is replaced rather than extended, through the resource loader's `systemPrompt`, because Pi's default prompt describes a coding assistant and this agent is not one.
 
-It states the rules of the game: what a goal is, what a certified step is, that the framework owns the direction of every check, and that a local counterexample is a hint until execution confirms it.
+It states the rules of the game: what a goal is, what a certified step is, that the framework owns the direction of every check, that a local counterexample is a hint, and that one on the root's original pair refutes the run.
 
 It does not describe the tools. Pi sends each tool's description and schema with every request, so a second copy in the prompt is a copy that drifts.
 

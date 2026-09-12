@@ -57,7 +57,7 @@ The framework state has two parts: an immutable **program store** and a **goal t
 
 **Transactions.** A transaction is an editing session on one side of one goal. Between `begin` and `commit` the agent makes arbitrary edits and gets cheap feedback (parse errors, straightline check, analyses); the intermediate programs are scratch and never enter any certificate. At `commit`, alive2 validates the transaction as a single step, asking about the window the edits touched before falling back to the whole pair. On failure the head is unchanged and the local counterexample is returned as a hint. There is no separate "checked rewrite" concept: a checked rewrite is a transaction with one edit. Likewise, inserting `llvm.assume(c)` on the src side and committing *is* a proof that `c` always holds; annotation is not special machinery. (An assume inserted on the tgt side commits trivially, but the obligation resurfaces in the remaining goal, so it defers work rather than avoiding it.)
 
-**Certificate.** The deliverable of a successful run: a standalone package (IR files, a manifest, a checker script) that replays the whole proof through alive2 with no framework and no agent involved (see "Certificate package"). It contains only the pruned proof, the goals and steps that actually discharged the root; reverted or abandoned search never appears in it. A refuted root has the symmetric package: the input plus a script that replays both programs under llubi and confirms the divergence.
+**Certificate.** The deliverable of a successful run: a standalone package (IR files, a manifest, a checker script) that replays the whole proof through alive2 with no framework and no agent involved (see "Certificate package"). It contains only the pruned proof, the goals and steps that actually discharged the root; reverted or abandoned search never appears in it. A refuted root has the symmetric package: the input for one executed under llubi, or nothing for one the checker itself refuted.
 
 ## Decomposition = outlining
 
@@ -108,17 +108,28 @@ Analyses only propose facts; a fact enters the certificate solely through an ann
 
 "Untrusted" here means one specific thing: a bug in an analysis cannot change a verdict. A false fact can be proposed, but it cannot pass alive2, and `kernel/check.py` never executes an analysis, so certificate consumers do not depend on them at all. This is the proof-assistant architecture: tactics are large and buggy and nobody cares for soundness, because the small kernel checks every proof they produce. Our analyses are tactics; alive2 and `kernel/check.py` are the kernel. Note that untrusted does not mean carelessly built: the success rate of the whole tool rides on analysis quality, so they are engineered and tested like any normal software. They are just not verification-critical.
 
-## Counterexamples: certified by execution, not by SMT chains
+## Counterexamples: certified by execution, or by the root refutation
 
 A local validation failure gives a counterexample for a chunk, but the chunk's entry state may be unreachable from the real program inputs, so a local counterexample is only a hint. We do **not** lift it by backward SMT reachability (dropped from the draft: chaining concrete witnesses backward is incomplete, and carrying symbolic constraints backward regrows the monolithic query).
 
-Instead, a counterexample is certified by replay: a concrete whole-program input on which LHS and RHS are run under a UB/poison-aware interpreter (llubi), and RHS shows a behavior LHS does not allow. That check is cheap, independent of program size, and replayable by anyone.
+A check of the root's original pair is a check of the translation itself: what alive2 refutes there refutes the translation, and the run ends with it. A counterexample from any other pair is dropped, since that pair may be one the search produced.
 
-The search for that input is fully untrusted, so the agent gets full flexibility: infer candidate values from analyses, run chunks forward concretely with `interp`, solve chunk-local inversion queries with `solve`, compute in `bash`, or guess.
+A counterexample the run ends on is certified one of two ways, and the certificate names which:
+
+1. Execution (the `llubi` source): a concrete whole-program input on which LHS and RHS are run under a UB/poison-aware interpreter (llubi), and RHS shows a behavior LHS does not allow. That check is cheap, independent of program size, and replayable by anyone.
+2. The root refutation (the `alive2` source): alive-tv refuting the root's original pair. Replaying it asks alive-tv the same question again under the no-undef flags, where the pair must be refuted again.
+
+The search for an input is fully untrusted, so the agent gets full flexibility: infer candidate values from analyses, run chunks forward concretely with `interp`, solve chunk-local inversion queries with `solve`, compute in `bash`, or guess.
 
 For programs with memory operations, an input means argument values plus the initial contents of the memory the pointer arguments point to; divergence compares the return value, the final observable memory, and UB events.
 
 ## Eager cross-checking
+
+A run can begin with a small-timeout `check` of the root pair. If that check proves or refutes the pair, no search is needed. A worked proof makes every move itself, so it does not check first.
+
+- Proved: the run ends verified without a search.
+- Refuted: the run ends as a counterexample, certified as the section above says.
+- Timeout: the search runs as usual.
 
 A certified step shows the step is valid; it says nothing about whether the path still leads anywhere. So after every certified step (a commit, an apply, a strengthen), the framework immediately runs a small-timeout `check` on the goal's new current pair:
 
@@ -128,7 +139,7 @@ A certified step shows the step is valid; it says nothing about whether the path
 
 Interpreting a refutation depends on where it happens. On a goal whose sides have been rewritten, it may blame only the path: a valid step can overshoot. Example: S returns `poison`, a valid step refines it to S' returning `0`, and T returns `1`. T refines S, and S' refines S, but T does not refine S'; the translation is fine and only the path is dead. On a callee goal, it may instead mean the interface is too weak (strengthen it) or the cut is misplaced (unsplit and cut elsewhere), since the callee's entry is conservative. None of these refute the translation by themselves.
 
-A refutation on the root goal is special, because its counterexample speaks the root input language whether or not steps have been applied. The framework therefore auto-replays it against the original LHS/RHS pair under llubi. If the replay confirms divergence, the run ends with a certified counterexample; this is the common way a real miscompilation surfaces early, and with zero steps applied the replay nearly always confirms. If the replay does not confirm, the counterexample was an artifact of the path and remains a hint. Either way the verdict comes only from the llubi replay, never from alive2's refutation directly, keeping one uniform rule: counterexamples are certified by execution. For callee goals the counterexample speaks the cut language, and lifting it to a root input remains the agent's search problem.
+A refutation on the root goal, after later steps have replaced its pair, is a counterexample against the replaced pair, not the translation: the goal stays open. Before any step, a check of the root's original pair is a check of the translation, and the checker that refuted it is what the certificate replays. For callee goals the same applies, and lifting a counterexample there to a root input remains the agent's search problem.
 
 ## Workflow
 
@@ -137,7 +148,7 @@ A session looks like this:
 1. The framework creates the root goal `(LHS, RHS)`.
 2. The agent inspects (`status`, `show`, `diff`, `analyze`) and picks a strategy: usually, find aligned cut points and `split`, rewriting one side first when no alignment exists yet.
 3. On each open leaf goal: if it looks small enough, `check` it directly. Otherwise rewrite the src toward the tgt (`rewrite`, transactions), `strengthen` interfaces where the callee lacks facts, and `split` further.
-4. A failed commit, a failed check, or an eager cross-check refutation returns a local counterexample as a hint. The agent either treats it as search feedback (revert, try another path) or investigates it as a possible real miscompilation: use `interp`, `solve`, `bash` to hunt for a whole-program input, then `report_cex` to certify it.
+4. A failed commit, a failed check, or an eager cross-check refutation returns a local counterexample as a hint. The agent either treats it as search feedback (revert, try another path) or investigates it as a possible real miscompilation: use `interp`, `solve`, `bash` to hunt for a whole-program input, then `report_cex` to certify it. The exception is the root goal itself: a check on its original pair is a check on the translation, and what it refutes is the run's counterexample.
 5. The session ends when the root goal is proved (verified), the root goal is refuted (counterexample), or the budget runs out (unknown).
 
 ## Tools
@@ -192,7 +203,7 @@ Both children are cross-checked once at the end, after phase 3, and not between 
 
 ### Discharge
 
-- `check(gid, timeout)`: try alpha-equivalence first, then a direct alive2 run on the goal's current pair. Pass: goal proved. Fail: local counterexample hint, goal stays open. Timeout: goal stays open. The timeout is the agent's knob, because spending solver time is a search decision. The framework also runs a small-timeout `check` on its own after every certified step; see "Eager cross-checking".
+- `check(gid, timeout)`: try alpha-equivalence first, then a direct alive2 run on the goal's current pair. Pass: goal proved. Fail: a counterexample. On the root's original pair it refutes the run; anywhere else the goal stays open. Timeout: goal stays open. The timeout is the agent's knob, because spending solver time is a search decision. The framework also runs a small-timeout `check` on its own after every certified step; see "Eager cross-checking".
 
 ### Counterexample search and computation
 
@@ -220,7 +231,7 @@ The script verifies:
 
 The consequence for trust is significant: the framework is now just a search assistant and drops out of the trust base entirely. Anything it gets wrong (bookkeeping, direction, outlining) surfaces as a failed replay. The composition rule and the faithfulness check live in `kernel/check.py`, which is small, standalone, and auditable.
 
-A "counterexample" verdict ships the symmetric package: the two root programs, the input (argument values plus initial memory), and a script that runs both under llubi and confirms that RHS shows a behavior LHS does not allow.
+A "counterexample" verdict ships the symmetric package: the two root programs, what the source needs, and a script that asks the checker named again. For one executed on an input, the input is there for llubi to run both programs on; for one the checker refuted on the pair the run was asked about, there is no input, and the script asks alive-tv the same question again.
 
 Replay cost is the same order as the original validation run (the solver queries are rerun); that is inherent to a certificate whose checker is alive2 itself.
 
@@ -229,7 +240,7 @@ Replay cost is the same order as the original validation run (the solver queries
 Exactly three:
 
 - **verified**: a certificate package replaying the proof through alive2, under the assumption about arguments the run was given and the package states.
-- **counterexample**: a package replaying a concrete input through llubi.
+- **counterexample**: a package replaying an executed input under llubi, or asking alive-tv the same question a root refutation answered.
 - **unknown**: the agent could not close the gap. Local failures along the way are never reported as bugs. No package is produced.
 
 ## Trust base
@@ -238,8 +249,8 @@ Two tiers, drawn by one criterion: can a bug here cause a wrong verdict to be ac
 
 **Tier 1, verdict-critical (trusted).** Exactly what the certificate package depends on:
 
-- alive2, and transitively the SMT solver it trusts (Z3) and the LLVM IR parser/printer it links. This is the largest real-world risk in the whole trust base; everything else of LLVM is out.
-- llubi, for counterexample verdicts only: a llubi bug cannot fake "verified" (that is alive2's side), only "counterexample", and a replay is a single concrete input that is easy to cross-check independently.
+- alive2, and transitively the SMT solver it trusts (Z3) and the LLVM IR parser/printer it links. This is the largest real-world risk in the whole trust base; everything else of LLVM is out. Its proof is trusted for a proof; its refutation is trusted for a counterexample of the root refutation, since the kernel replays the same question.
+- llubi, for counterexample verdicts that name an input: a llubi bug cannot fake "verified", and a replay is a single concrete input that is easy to cross-check independently.
 - The verified rewriter llrwt (used by `kernel/check.py` to replay rule steps), together with the rules' external proofs and the MLIR translators it runs under.
 - `kernel/check.py`: the small standalone checker that encodes chain connectivity, split faithfulness, and tree composition.
 
