@@ -22,7 +22,7 @@ The proof writer (human or agents) is entirely untrusted. It decides *what* to t
 
 * Rewrite steps are validated by alive2 (or applied via pre-proved rules).
 * Decomposition and interface facts are validated by alive2 through faithful outlining and call-site assertions.
-* Counterexamples are validated by concrete execution replay under llubi.
+* Counterexamples are validated under the checker the certificate names: replay under llubi, or a refutation of the root pair by alive2.
 
 A wrong proposal wastes time; it never produces a wrong certificate. Since refinement is transitive, a chain of certified steps from LHS to RHS certifies the whole translation.
 

@@ -139,7 +139,7 @@ export interface ToolResult {
   ms: number;
 }
 
-/** Something the framework did on its own: an eager check, a root replay. */
+/** Something the framework did on its own: the start check, a budget spent, a compaction. */
 export interface AutoEvent {
   kind: "auto";
   action: string;

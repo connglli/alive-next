@@ -161,7 +161,9 @@ export function manifestOf(entries: Entry[], tree: Tree): [Manifest, Set<Hash>] 
  *
  * The steps a run made before the refutation are not part of it. An executed
  * counterexample carries the input and what diverged. One the checker itself
- * refuted carries no input, since only the checker's answer backs it.
+ * refuted carries no input, since only the checker's answer backs it. An
+ * executed input supersedes the checker's answer. The last input wins,
+ * as does the last answer.
  */
 function refutation(entries: Entry[], tree: Tree, root: Goal): [Counterexample, Set<Hash>] {
   const pair = { src: first(root, "src"), tgt: first(root, "tgt") };
@@ -206,10 +208,7 @@ function refutation(entries: Entry[], tree: Tree, root: Goal): [Counterexample, 
   ];
 }
 
-/**
- * The report that refuted the root: the last refuting entry of the log that
- * carries one.
- */
+/** Whether the entry marked the root refuted. */
 function refutedEffect(entry: ToolResult | AutoEvent, gid: string): boolean {
   return (entry.effects ?? []).some((effect) => effect.effect === "refuted" && effect.gid === gid);
 }

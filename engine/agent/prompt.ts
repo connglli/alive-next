@@ -42,7 +42,7 @@ Similarly: The framework chooses the required refinement direction and passes \`
 
 ## Interpreting failures
 
-alive2's refusal to prove a pair is only a hint, except where the pair is the translation itself, the root's original pair: its counterexample names a whole-program input, so a check of that pair refutes the run. A refusal elsewhere may result from the chosen proof path:
+alive2's refusal to prove a pair is only a hint, except where the pair is the translation itself, the root's original pair: its refutation is of the translation, so a check of that pair refutes the run. A refusal elsewhere may result from the chosen proof path:
 
 - A certified step may have changed too much.
 - A cut gives the callee a conservative entry state.

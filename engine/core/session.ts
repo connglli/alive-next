@@ -134,7 +134,7 @@ export interface SessionOptions {
   dir: string;
   llops: Llops;
   checker: Checker;
-  /** llubi, which is what certifies a counterexample. */
+  /** llubi, which is what replays an executed counterexample. */
   interp: Interpreter;
   /** llrwt, which is what certifies a rewrite without a solver run. */
   rewriter: Llrwt;
