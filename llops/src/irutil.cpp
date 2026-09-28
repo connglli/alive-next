@@ -453,12 +453,19 @@ llvm::json::Object moduleResponse(llvm::Module &M) {
   return resp;
 }
 
-llvm::json::Object checkedResponse(llvm::Function &F, llvm::Module &M) {
+std::optional<Diag> departure(llvm::Function &F, llvm::Module &M) {
   auto diags = checkFunction(F);
-  if (diags.empty())
-    diags = checkModule(M);
-  if (!diags.empty())
-    return errResponse(diags.front().code, diags.front().message);
+  if (!diags.empty() && diags.front().code != "cyclic")
+    return diags.front();
+  auto module = checkModule(M);
+  if (!module.empty())
+    return module.front();
+  return std::nullopt;
+}
+
+llvm::json::Object checkedResponse(llvm::Function &F, llvm::Module &M) {
+  if (auto d = departure(F, M))
+    return errResponse(d->code, d->message);
   return moduleResponse(M);
 }
 
@@ -471,7 +478,7 @@ bool plainCall(const llvm::CallInst &call) {
 }
 
 bool parseCmdShape(llvm::json::Object &args, llvm::StringRef cmd, CmdShape &out,
-                   llvm::json::Object &err, bool anyBlocks) {
+                   llvm::json::Object &err) {
   auto text = args.getString("module");
   if (!text) {
     err = errResponse("bad_request", cmd.str() + " needs 'module'");
@@ -489,11 +496,6 @@ bool parseCmdShape(llvm::json::Object &args, llvm::StringRef cmd, CmdShape &out,
   if (!out.F) {
     err = errResponse("shape_error",
                       cmd.str() + " needs the program shape: exactly one defined function");
-    return false;
-  }
-  out.BB = singleBlock(*out.F);
-  if (!out.BB && !anyBlocks) {
-    err = errResponse("shape_error", cmd.str() + " needs a single basic block");
     return false;
   }
   out.refs = std::make_unique<ValueRefs>(*out.F);

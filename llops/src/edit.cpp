@@ -2,6 +2,7 @@
 
 #include "irutil.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/AsmParser/LLLexer.h"
 #include "llvm/AsmParser/Parser.h"
@@ -9,6 +10,7 @@
 #include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -290,15 +292,24 @@ bool joinInsts(const llvm::json::Array &insts, std::string &out, llvm::json::Obj
   return true;
 }
 
-// True when `earlier` comes before `later` in the block, or is `later`.
-bool precedes(llvm::BasicBlock &BB, llvm::Instruction *earlier, llvm::Instruction *later) {
-  for (auto &I : BB) {
-    if (&I == earlier)
-      return true;
-    if (&I == later)
-      return false;
-  }
-  return false;
+// Whether `def` is available at every use of `v`: a value that stands in for
+// another has to be, in whichever block or phi the use sits.
+bool reachesEveryUse(llvm::Value *def, llvm::Value *v) {
+  auto *I = llvm::dyn_cast<llvm::Instruction>(def);
+  if (!I)
+    return true;
+  llvm::DominatorTree DT(*I->getFunction());
+  return llvm::all_of(v->uses(),
+                      [&](const llvm::Use &U) { return U.getUser() != I && DT.dominates(I, U); });
+}
+
+// Where a conversion for use `U` goes: before its user, or for a phi at the
+// end of the block the value comes in from.
+llvm::BasicBlock::iterator beforeUse(const llvm::Use &U) {
+  auto *user = llvm::cast<llvm::Instruction>(U.getUser());
+  if (auto *phi = llvm::dyn_cast<llvm::PHINode>(user))
+    return phi->getIncomingBlock(U)->getTerminator()->getIterator();
+  return user->getIterator();
 }
 
 // ---------------------------------------------------------------------------
@@ -446,12 +457,10 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
 
   CmdShape shape;
   llvm::json::Object shapeErr;
-  // Attributes are on functions and parameters, so they need no block.
-  if (!parseCmdShape(args, "edit", shape, shapeErr, *op == "attrs"))
+  if (!parseCmdShape(args, "edit", shape, shapeErr))
     return shapeErr;
   llvm::Module *M = shape.M;
   llvm::Function *F = shape.F;
-  llvm::BasicBlock *BB = shape.BB;
   ValueRefs refs(*F);
 
   auto missing = [&](llvm::StringRef what) {
@@ -469,11 +478,14 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       return errResponse("not_found", "swap: unknown instruction");
     if (ai == bi)
       return errResponse("invalid", "swap: an instruction cannot swap with itself");
-    if (ai == BB->getTerminator() || bi == BB->getTerminator())
+    if (ai->isTerminator() || bi->isTerminator())
       return errResponse("invalid", "swap: the terminator cannot move");
+    llvm::BasicBlock *BB = ai->getParent();
+    if (bi->getParent() != BB)
+      return errResponse("invalid", "swap: the two instructions are in different blocks");
     // Exchange the two positions: put the later one where the earlier sits,
     // then put the earlier one where the later sat.
-    llvm::Instruction *first = precedes(*BB, ai, bi) ? ai : bi;
+    llvm::Instruction *first = ai->comesBefore(bi) ? ai : bi;
     llvm::Instruction *second = first == ai ? bi : ai;
     auto afterSecond = std::next(second->getIterator());
     BB->splice(first->getIterator(), BB, second->getIterator());
@@ -493,12 +505,12 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       return errResponse("not_found", "move: unknown instruction");
     if (vi == wi)
       return errResponse("invalid", "move: an instruction cannot move relative to itself");
-    if (vi == BB->getTerminator())
+    if (vi->isTerminator())
       return errResponse("invalid", "move: the terminator cannot move");
-    if (wi == BB->getTerminator() && *where == "after")
+    if (wi->isTerminator() && *where == "after")
       return errResponse("invalid", "move: nothing comes after the terminator");
-    BB->splice(*where == "before" ? wi->getIterator() : std::next(wi->getIterator()), BB,
-               vi->getIterator());
+    wi->getParent()->splice(*where == "before" ? wi->getIterator() : std::next(wi->getIterator()),
+                            vi->getParent(), vi->getIterator());
     return checkedResponse(*F, *M);
   }
 
@@ -517,13 +529,10 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       return errResponse("type_mismatch", "substitute: the values have different types");
     // '%b' has to reach every use of '%a', and a use inside '%b' itself would
     // make '%b' its own operand.
-    if (auto *bi = llvm::dyn_cast<llvm::Instruction>(vb))
-      for (llvm::User *u : va->users())
-        if (auto *usi = llvm::dyn_cast<llvm::Instruction>(u))
-          if (usi == bi || !precedes(*BB, bi, usi))
-            return errResponse("dominance", "substitute: '" + refs.print(*vb) +
-                                                "' does not reach every use of '" +
-                                                refs.print(*va) + "'");
+    if (!reachesEveryUse(vb, va))
+      return errResponse("dominance", "substitute: '" + refs.print(*vb) +
+                                          "' does not reach every use of '" + refs.print(*va) +
+                                          "'");
     va->replaceAllUsesWith(vb);
     return checkedResponse(*F, *M);
   }
@@ -536,7 +545,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     llvm::Instruction *oldDef = refs.resolveInst(*v);
     if (!oldDef)
       return errResponse("not_found", "replace: unknown instruction");
-    if (oldDef == BB->getTerminator())
+    if (oldDef->isTerminator())
       return errResponse("invalid", "replace: the terminator cannot be replaced");
     std::string snippet;
     llvm::json::Object err;
@@ -558,7 +567,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     std::string oldName = oldDef->getName().str();
     oldDef->setName("");
     for (auto *inst : s.insts)
-      inst->insertInto(BB, oldDef->getIterator());
+      inst->insertInto(oldDef->getParent(), oldDef->getIterator());
     if (!oldDef->getType()->isVoidTy())
       oldDef->replaceAllUsesWith(last);
     oldDef->eraseFromParent();
@@ -576,7 +585,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     llvm::Instruction *wi = refs.resolveInst(*w);
     if (!wi)
       return errResponse("not_found", "insert: unknown anchor");
-    if (wi == BB->getTerminator() && *where == "after")
+    if (wi->isTerminator() && *where == "after")
       return errResponse("invalid", "insert: nothing comes after the terminator");
     std::string snippet;
     llvm::json::Object err;
@@ -587,7 +596,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       return err;
     auto pos = *where == "before" ? wi->getIterator() : std::next(wi->getIterator());
     for (auto *inst : s.insts)
-      inst->insertInto(BB, pos);
+      inst->insertInto(wi->getParent(), pos);
     return checkedResponse(*F, *M);
   }
 
@@ -599,7 +608,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     llvm::Instruction *vi = refs.resolveInst(*v);
     if (!vi)
       return errResponse("not_found", "erase: unknown instruction");
-    if (vi == BB->getTerminator())
+    if (vi->isTerminator())
       return errResponse("invalid", "erase: the terminator cannot be erased");
     if (!vi->use_empty())
       return errResponse("used", "erase: '" + refs.print(*vi) +
@@ -673,11 +682,14 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       return llvm::Instruction::Trunc;
     };
     auto *conv = llvm::CastInst::Create(opcode(widening), vi, newTy, name);
-    conv->insertInto(BB, std::next(vi->getIterator()));
+    // Phis come first in a block, so a phi's conversion goes after all of them.
+    conv->insertInto(vi->getParent(), llvm::isa<llvm::PHINode>(vi)
+                                          ? vi->getParent()->getFirstInsertionPt()
+                                          : std::next(vi->getIterator()));
     for (llvm::Use *use : uses) {
-      auto *user = llvm::cast<llvm::Instruction>(use->getUser());
       auto *back = llvm::CastInst::Create(opcode(!widening), conv, oldTy);
-      back->insertInto(BB, user->getIterator());
+      auto at = beforeUse(*use);
+      back->insertInto(at->getParent(), at);
       use->set(back);
     }
     return checkedResponse(*F, *M);
@@ -696,14 +708,12 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       return errResponse("invalid", "dedup: the two instructions are the same");
     if (ai->getType() != bi->getType())
       return errResponse("type_mismatch", "dedup: the instructions have different types");
-    if (bi == BB->getTerminator())
+    if (bi->isTerminator())
       return errResponse("invalid", "dedup: the terminator cannot be erased");
-    for (llvm::User *u : bi->users())
-      if (auto *usi = llvm::dyn_cast<llvm::Instruction>(u))
-        if (!precedes(*BB, ai, usi))
-          return errResponse("dominance", "dedup: '" + refs.print(*ai) +
-                                              "' does not reach every use of '" + refs.print(*bi) +
-                                              "'");
+    if (!reachesEveryUse(ai, bi))
+      return errResponse("dominance", "dedup: '" + refs.print(*ai) +
+                                          "' does not reach every use of '" + refs.print(*bi) +
+                                          "'");
     bi->replaceAllUsesWith(ai);
     bi->eraseFromParent();
     return checkedResponse(*F, *M);
@@ -747,7 +757,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
            lexer.next() == llvm::lltok::kw_type)) {
         return errResponse(
             "set_body_contract",
-            "set_body takes the instructions after 'entry:', the final 'ret' included; the "
+            "set_body takes the body after 'entry:', its later blocks included; the "
             "'define' header, braces, declarations, globals, types and attributes stay with "
             "the module");
       }

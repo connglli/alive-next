@@ -80,9 +80,25 @@ function goal(goals: Tree, id: string): Goal {
   return found;
 }
 
-async function tree() {
-  const src = await store.put(PROGRAM);
-  const tgt = await store.put(PROGRAM.replace("%m, %x", "%x, %m"));
+/** A body of several blocks: a multiply on one arm of a branch. */
+const BRANCHING = `define i32 @f(i32 %x, i32 %y) {
+entry:
+  %c = icmp ult i32 %x, %y
+  br i1 %c, label %then, label %done
+
+then:
+  %m = mul i32 %x, %y
+  br label %done
+
+done:
+  %r = phi i32 [ %m, %then ], [ %x, %entry ]
+  ret i32 %r
+}
+`;
+
+async function tree(program = PROGRAM) {
+  const src = await store.put(program);
+  const tgt = await store.put(program.replace("%m, %x", "%x, %m"));
   const events: Event[] = [{ kind: "start", src, tgt, config: {}, versions: {} }];
   return derive(events.map((event) => ({ ...event, time: 0, prev: "" }) as Entry));
 }
@@ -146,6 +162,22 @@ describe.skipIf(!built)("transactions", () => {
     expect(checker.calls[0]?.tgt).toContain("mul i32 %1, %0");
     expect(result.effects[0]).toMatchObject({ effect: "step", gid: "g1", side: "src" });
     expect(transactions.open()).toBeUndefined();
+  });
+
+  test("commits an edit in a later block of a body that branches", async () => {
+    const checker = new FakeChecker(["correct", "unknown"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const transactions = new Transactions(store, llops);
+    const goals = await tree(BRANCHING);
+
+    transactions.begin(goals, "g1", "src");
+    // `#2` is the multiply, the first instruction of the arm.
+    const edited = await transactions.edit({ op: "commute", v: "#2" });
+    expect(edited.kind).toBe("applied");
+    const result = await transactions.commit(goals, steps);
+
+    if (result.kind !== "certified") throw new Error("expected the commit to land");
+    expect(checker.calls[0]?.tgt).toContain("mul i32 %1, %0");
   });
 
   test("a refused commit leaves the head alone and closes by default", async () => {

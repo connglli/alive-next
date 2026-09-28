@@ -28,7 +28,7 @@ llvm::json::Object simplify(llvm::json::Object &args, CmdShape &shape) {
   llvm::Instruction *inst = shape.refs->resolveInst(*v);
   if (!inst)
     return errResponse("not_found", "opt simplify: unknown instruction");
-  if (inst == shape.BB->getTerminator())
+  if (inst->isTerminator())
     return errResponse("invalid", "opt simplify: the terminator cannot be simplified");
 
   llvm::SimplifyQuery Q(shape.M->getDataLayout());
@@ -42,7 +42,7 @@ llvm::json::Object simplify(llvm::json::Object &args, CmdShape &shape) {
   // was, which its operands, being the old instruction's own, all dominate.
   if (auto *created = llvm::dyn_cast<llvm::Instruction>(result))
     if (!created->getParent())
-      created->insertInto(shape.BB, inst->getIterator());
+      created->insertInto(inst->getParent(), inst->getIterator());
 
   inst->replaceAllUsesWith(result);
   inst->eraseFromParent();

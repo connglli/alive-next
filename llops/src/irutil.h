@@ -11,6 +11,7 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,10 @@ std::vector<Diag> validateModule(llvm::Module &M);
 // ending in ret, br, switch or unreachable.
 std::vector<Diag> checkFunction(llvm::Function &F);
 
+// The first departure from the shape other than `cyclic`: a program may loop,
+// however many times, and what it is asked then is the checkers' business.
+std::optional<Diag> departure(llvm::Function &F, llvm::Module &M);
+
 // Everything else that makes IR ill formed, delegated to the LLVM verifier
 // rather than restated here. Every edit ends with this check, so a broken
 // edit is reported instead of handed back as text.
@@ -117,27 +122,26 @@ llvm::json::Object errResponse(llvm::StringRef code, llvm::StringRef message);
 llvm::json::Object moduleResponse(llvm::Module &M);
 
 // The response of an edit that must come out well formed: the shape check,
-// then the LLVM verifier, and only then the module. Every mutating subcommand
-// ends here, so a broken edit is reported rather than handed back as text.
+// loops allowed, then the LLVM verifier, and only then the module. Every
+// mutating subcommand ends here, so a broken edit is reported rather than
+// handed back as text.
 llvm::json::Object checkedResponse(llvm::Function &F, llvm::Module &M);
 
 // The shape that every mutating subcommand needs: one module, one function,
-// one block, and the value references into it. The context that owns the types
-// and constants has to outlive the pointers that use them, so it rides along.
+// and the value references into it. The context that owns the types and
+// constants has to outlive the pointers that use them, so it rides along.
 struct CmdShape {
   std::unique_ptr<ModuleWithCtx> mwc;
   llvm::Module *M = nullptr;
   llvm::Function *F = nullptr;
-  llvm::BasicBlock *BB = nullptr;
   std::unique_ptr<ValueRefs> refs;
 };
 
 // Parse the "module" key of a JSON request into that shape. `cmd` names the
-// subcommand for error messages ("edit", "opt", …). A body of several blocks
-// is refused unless `anyBlocks`, which leaves `BB` null. Returns true on
-// success; on failure fills `err` and leaves `out` in a moved-from state.
+// subcommand for error messages ("edit", "opt", …). Returns true on success;
+// on failure fills `err` and leaves `out` in a moved-from state.
 bool parseCmdShape(llvm::json::Object &args, llvm::StringRef cmd, CmdShape &out,
-                   llvm::json::Object &err, bool anyBlocks = false);
+                   llvm::json::Object &err);
 
 // One entry of a tgt signature: the tgt value `value_map` names for the
 // entry's src value, with the type the entry gives it. Returns nullptr and

@@ -858,8 +858,11 @@ entry:
   def test_set_body_rejects_an_attribute_group(self):
     self.bad(self.edit("set_body", body="#0 = { nounwind }\n"), "set_body_contract")
 
-  def test_set_body_refuses_a_loop(self):
-    self.bad(self.edit("set_body", body="  br label %l\nl:\n  br label %l"), "cyclic")
+  def test_set_body_takes_several_blocks_and_may_loop(self):
+    body = "  br label %l\nl:\n  %i = phi i32 [ %x, %entry ], [ %j, %l ]\n  %j = add i32 %i, %y\n  br label %l"
+    r = self.good(self.edit("set_body", body=body))
+    self.assertIn("%j = add i32 %i, %y", r["module"])
+    self.assertFalse(self.conforms(r["module"]))
 
 
 class TestEditAttrs(Case):
@@ -1965,9 +1968,39 @@ class TestSeveralBlocks(Case):
     r = self.good(run("edit", {"module": CALLEE, **request}))
     self.assertIn("declare i32 @k.ih(i32 noundef, i32, i32)", r["module"])
 
-  def test_other_edits_still_take_one_block(self):
-    r = run("edit", {"module": CALLEE, "op": "commute", "v": "%j.next"})
-    self.bad(r, "shape_error")
+  def test_each_edit_works_in_the_block_of_its_instruction(self):
+    edits = [
+      {"op": "commute", "v": "%j.next"},
+      {"op": "swap", "a": "%j.next", "b": "%i.next"},
+      {"op": "move", "v": "%i.next", "where": "before", "w": "%c"},
+      {"op": "replace", "v": "%d", "insts": ["%d = add i32 %i, %j"]},
+      {"op": "insert", "where": "after", "w": "%odd", "insts": ["%two = shl i32 %odd, 1"]},
+      {"op": "erase", "v": "%inc", "cascade": False},
+      {"op": "flags", "v": "%i.next", "flags": {"nuw": True}},
+    ]
+    for request in edits:
+      with self.subTest(op=request["op"]):
+        r = run("edit", {"module": CALLEE, **request})
+        if request["op"] == "erase":
+          self.bad(r, "used")
+        else:
+          self.assertTrue(self.conforms(self.good(r)["module"]))
+
+  def test_a_value_reaches_uses_in_other_blocks_or_does_not(self):
+    good = run("edit", {"module": CALLEE, "op": "substitute", "a": "%j.next", "b": "%j"})
+    self.assertIn("call i32 @k.ih(i32 %i.next, i32 %j, i32 %n)", self.good(good)["module"])
+    bad = run("edit", {"module": CALLEE, "op": "substitute", "a": "%i", "b": "%i.next"})
+    self.bad(bad, "dominance")
+
+  def test_a_swap_stays_in_one_block(self):
+    r = run("edit", {"module": CALLEE, "op": "swap", "a": "%c", "b": "%odd"})
+    self.bad(r, "invalid")
+
+  def test_an_edit_may_leave_a_loop(self):
+    r = self.good(run("edit", {"module": ROTATED, "op": "retype", "v": "%i.next", "ty": "i64"}))
+    self.assertIn("phi i32 [ 0, %entry ], [ %", r["module"])
+    self.assertFalse(self.conforms(r["module"]))
+    self.good(run("opt", {"module": ROTATED, "what": "instcombine"}))
 
 
 class TestAssume(Case):

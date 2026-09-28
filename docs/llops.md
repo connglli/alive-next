@@ -24,7 +24,7 @@ The exit status repeats that answer, 0 when ok and 1 when not, so a caller can b
 
 A program is a module with exactly one defined function, whose body has no loop and ends every block in `ret`, `br`, `switch` or `unreachable`. Declarations and global variables are free, calls must name a declared function, and inline assembly and indirect calls are refused.
 
-`validate` reports a departure from that shape as a diagnostic. Every subcommand that rewrites a program reports the first departure as an error instead, changes nothing, and takes a body of one block, except `assume` and `edit attrs`.
+`validate` reports a departure from that shape as a diagnostic. Every subcommand that rewrites a program reports the first departure other than `cyclic` as an error instead, and changes nothing; `outline` and `inline` also refuse a program that loops, and take a body of one block.
 
 The LLVM verifier decides what the shape rules do not cover, so a module that comes out of llops parses, has the program shape, and verifies. A refusal is the normal case while an agent searches, not an error path: the diagnostic is the feedback.
 

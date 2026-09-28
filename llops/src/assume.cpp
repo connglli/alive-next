@@ -366,12 +366,7 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
   if (!bundles.empty())
     builder.CreateAssumption(builder.getTrue(), bundles);
 
-  auto diags = checkFunction(*F);
-  if (diags.empty())
-    diags = checkModule(M);
-  if (!diags.empty())
-    return errResponse(diags.front().code, diags.front().message);
-  return moduleResponse(M);
+  return checkedResponse(*F, M);
 }
 
 } // namespace llops

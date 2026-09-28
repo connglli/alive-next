@@ -253,7 +253,7 @@ describe.skipIf(!built)("the tool layer", () => {
       body: "define i32 @f(i32 noundef %x) {\nentry:\n  %a = add i32 %x, 1\n  ret i32 %a\n}\n",
     });
     expect(refused).toContain("set_body_contract");
-    expect(refused).toContain("instructions after 'entry:'");
+    expect(refused).toContain("the body after 'entry:'");
     await call("tx_abort", {});
   });
 

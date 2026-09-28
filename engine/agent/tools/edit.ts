@@ -19,7 +19,7 @@ const Insts = Type.Array(Type.String(), {
 });
 const Body = Type.String({
   description:
-    'The instruction lines of the body, one per line as they follow "entry:", the final "ret" included. Nothing else: no "define" header, no label, no braces, no declarations, globals or attributes; the signature and the rest of the module stay. Example: "  %n = mul i32 %x, %y\\n  ret i32 %n".',
+    'The body as it follows "entry:", one instruction per line, with the label and instructions of each later block. Nothing else: no "define" header, no "entry:" label, no braces, no declarations, globals or attributes; the signature and the rest of the module stay. Example: "  %n = mul i32 %x, %y\\n  ret i32 %n".',
 });
 
 export const Op = Type.Union(

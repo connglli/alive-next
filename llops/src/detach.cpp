@@ -27,18 +27,6 @@ struct Edge {
   unsigned index;
 };
 
-// The first departure from the shape other than a loop: detaching a loop header
-// starts from a program that loops, and its callee may hold an inner loop.
-std::optional<Diag> departure(llvm::Function &F, llvm::Module &M) {
-  auto diags = checkFunction(F);
-  if (!diags.empty() && diags.front().code != "cyclic")
-    return diags.front();
-  auto module = checkModule(M);
-  if (!module.empty())
-    return module.front();
-  return std::nullopt;
-}
-
 std::string operandName(const llvm::Value &V) {
   std::string out;
   llvm::raw_string_ostream os(out);
