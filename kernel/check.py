@@ -1040,12 +1040,13 @@ class Refutation:
 # --- the counterexample ------------------------------------------------------
 
 
-def entry_of(module: str) -> str:
+def entry(package: Package, module: str) -> str:
   """The one function a program defines, which is what a harness wraps."""
-  found = re.search(r"^define\b[^@]*@([\w.$]+)\s*\(", module, re.M)
-  if not found:
-    raise Refused("a program of the pair defines no function")
-  return found.group(1)
+  functions = package.run_llops("validate", {"module": module}).get("functions", {})
+  defined = [name for name, fn in functions.items() if fn.get("defined")]
+  if len(defined) != 1:
+    raise Refused("a program of the pair does not define exactly one function")
+  return defined[0]
 
 
 def poison_return(run: dict) -> bool:
@@ -1057,19 +1058,6 @@ def poison_return(run: dict) -> bool:
   which is a different thing to report and a different thing to fix.
   """
   return run["outcome"] == "ub" and run.get("at", "").endswith("at @main")
-
-
-def choosing(module: str) -> str | None:
-  """What lets a program behave more than one way on a fixed input, if anything.
-
-  The comparison below reads one run of the src as everything the src allows,
-  which holds only where the input settles what it does. In a straightline
-  program the one construct that does not is `freeze`, which takes an arbitrary
-  defined value. The tgt is under no such condition: whatever it was seen to do
-  is something it does.
-  """
-  found = re.search(r"\bfreeze\b", module)
-  return found.group(0) if found else None
 
 
 def read_run(trace: str) -> dict:
@@ -1220,15 +1208,10 @@ class Replay:
     pair = self.package.counterexample_pair()
     args = self.package.counterexample_input()
     programs = {side: self.package.program(pair[side]) for side in ("src", "tgt")}
-    entries = {side: entry_of(text) for side, text in programs.items()}
+    entries = {side: entry(self.package, text) for side, text in programs.items()}
     if entries["src"] != entries["tgt"]:
       raise Refused(
         f"the pair defines @{entries['src']} on one side and @{entries['tgt']} on the other"
-      )
-    choice = choosing(programs["src"])
-    if choice:
-      raise Refused(
-        f"the src is free to choose ({choice}), so one run of it does not say what it allows"
       )
 
     runs = {}

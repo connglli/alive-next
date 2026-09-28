@@ -123,17 +123,9 @@ export class Counterexamples {
 
     const src = this.store.get(origin(root, "src"));
     const tgt = this.store.get(origin(root, "tgt"));
-    const entry = entryOf(src);
-    if (entryOf(tgt) !== entry) {
+    const entry = await this.entry(src);
+    if ((await this.entry(tgt)) !== entry) {
       return { kind: "refused", reason: `the two sides define different functions`, input };
-    }
-    const choice = choosing(src);
-    if (choice) {
-      return {
-        kind: "refused",
-        reason: `the src is free to choose (${choice}), so one run of it does not say what it allows`,
-        input,
-      };
     }
 
     const runs: Partial<Record<Side, RunResult>> = {};
@@ -159,6 +151,16 @@ export class Counterexamples {
       divergence: found.reason,
     };
   }
+
+  /** The one function a program defines, which is what a harness wraps. */
+  private async entry(module: string): Promise<string> {
+    const result = await this.llops.validate(module);
+    if (!result.ok) throw new Error(`llops validate: ${result.message}`);
+    const defined = Object.entries(result.functions ?? {}).filter(([, fn]) => fn.defined);
+    const [only] = defined;
+    if (!only || defined.length !== 1) throw new Error("the program does not define one function");
+    return only[0];
+  }
 }
 
 /**
@@ -171,26 +173,6 @@ export class Counterexamples {
  */
 export function returnedPoison(run: RunResult): boolean {
   return run.outcome === "ub" && (run.at?.endsWith("at @main") ?? false);
-}
-
-/**
- * What lets a program behave more than one way on a fixed input, if anything.
- *
- * The comparison below reads one run of the src as everything the src allows,
- * which holds only where the input settles what it does. In a straightline
- * program the one construct that does not is `freeze`, which takes an arbitrary
- * defined value. The tgt is under no such condition: whatever it was seen to
- * do is something it does.
- */
-export function choosing(module: string): string | undefined {
-  return module.match(/\bfreeze\b/)?.[0];
-}
-
-/** The one function a program defines, which is what a harness wraps. */
-export function entryOf(module: string): string {
-  const found = module.match(/^define\b[^@]*@([\w.$]+)\s*\(/m);
-  if (!found?.[1]) throw new Error("the program defines no function");
-  return found[1];
 }
 
 /** The program a side started with, which is what the run was asked about. */

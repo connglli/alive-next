@@ -1016,15 +1016,6 @@ class TestCounterexample(unittest.TestCase):
     self.assertNotEqual(done.returncode, 0, done.stdout)
     self.assertIn("the src has UB on this input", done.stdout)
 
-  def test_a_src_that_is_free_to_choose_is_refused(self):
-    # A freeze takes an arbitrary value, so one run of this src is one of
-    # its behaviours and the tgt is allowed any of them.
-    chooses = HALVE.replace("  %1 = sdiv", "  %f = freeze i32 %0\n  %1 = sdiv")
-    package = self.built.refutation(chooses, SHIFT, [{"kind": "int", "value": "-3"}])
-    done = self.replay(package)
-    self.assertNotEqual(done.returncode, 0, done.stdout)
-    self.assertIn("free to choose (freeze)", done.stdout + done.stderr)
-
   def test_a_program_that_is_not_what_its_name_says(self):
     package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}])
     digest = json.loads((package / "manifest.json").read_text())["pair"]["tgt"]

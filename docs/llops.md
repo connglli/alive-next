@@ -2,7 +2,7 @@
 
 llops is the half of alive-next that touches LLVM. It is stateless: IR text in, IR text or JSON facts out, one request per process, nothing kept between calls. The language split in [implementation.md](./implementation.md) is why it is a separate binary.
 
-`inline` and `canon` are verdict-critical, because the certificate checker runs them. The other subcommands are tier 2 in the sense of [design.md](./design.md): a bug in one wastes search time and cannot corrupt a verdict. All of them share one library, so the line is documented here rather than enforced by separate binaries.
+The subcommands the certificate checker runs are verdict-critical. The others are tier 2 in the sense of [design.md](./design.md): a bug in one wastes search time and cannot corrupt a verdict. All of them share one library, so the line is documented here rather than enforced by separate binaries.
 
 ## Invocation
 

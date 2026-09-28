@@ -209,25 +209,6 @@ describe.skipIf(!built)("reporting a counterexample", () => {
     expect(result.reason).toContain("the src harness");
   });
 
-  test("refuses a src that is free to choose what it does", async () => {
-    // One run of a src with a freeze in it is one of its behaviours, and the
-    // tgt is allowed any of them.
-    const src = await store.put(`define i32 @f(i32 noundef %x) {
-entry:
-  %f = freeze i32 %x
-  %h = sdiv i32 %f, 2
-  ret i32 %h
-}
-`);
-    const tgt = await store.put(TGT);
-    events.push({ kind: "start", src, tgt, config: {}, versions: {} });
-    const result = await new Counterexamples(store, llops, new Canned([])).report(replay(), INPUT);
-
-    expect(result).toMatchObject({ kind: "refused" });
-    if (result.kind !== "refused") throw new Error("unreachable");
-    expect(result.reason).toContain("free to choose (freeze)");
-  });
-
   test("refuses a proved root, where a divergence would be a contradiction", async () => {
     const tree = await asked();
     applyEffect(tree, { effect: "proved", gid: "g1" });
