@@ -193,6 +193,8 @@ export class Session {
   static async start(options: SessionStartOptions): Promise<Session> {
     const session = new Session(options.dir, options);
     if (session.log.read().length > 0) throw new Error(`${options.dir} already holds a run`);
+    await session.refuseOutsideShape("src", options.src);
+    await session.refuseOutsideShape("tgt", options.tgt);
     // The programs are stored before the event that names them, so a crash
     // leaves an unreferenced program rather than an event pointing at nothing.
     const src = await session.store.put(options.src);
@@ -207,6 +209,16 @@ export class Session {
     });
     if (options.eager) await session.eagerCheck();
     return session;
+  }
+
+  /** Refuse a root program outside the shape `llops validate` defines. */
+  private async refuseOutsideShape(side: Side, text: string): Promise<void> {
+    const result = await this.llops.validate(text);
+    if (!result.ok) throw new Error(`the ${side} program: llops validate: ${result.message}`);
+    if (!result.conforms) {
+      const why = result.diagnostics.map((d) => `${d.code}, ${d.message}`).join("; ");
+      throw new Error(`the ${side} program is outside the program shape: ${why}`);
+    }
   }
 
   /** Pick a run back up from its directory, which replays what it did. */

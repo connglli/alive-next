@@ -438,6 +438,43 @@ describe.skipIf(!built)("reading a session", () => {
     expect(checked.outcome).toMatchObject({ check: { outcome: "proved" } });
   });
 
+  test("a pair outside the program shape is refused before the run starts", async () => {
+    // alive-tv calls this pair correct, though the tgt is one iteration late.
+    const loop = `define i32 @f(i32 noundef %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %loop ]
+  %i.next = add i32 %i, 1
+  %acc.next = add i32 %acc, %i
+  %c = icmp ult i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret i32 %acc
+}
+`;
+    const late = loop.replace("ret i32 %acc\n", "ret i32 %acc.next\n");
+    const checker = new YesMan();
+    const attempt = Session.start({
+      dir: join(dir, "loop"),
+      src: loop,
+      tgt: late,
+      llops,
+      checker,
+      interp: noRun,
+      rewriter: unrewriting,
+      eager: true,
+    });
+
+    await expect(attempt).rejects.toThrow(
+      /src program is outside the program shape: not_straightline/,
+    );
+    expect(checker.calls).toBe(0);
+  });
+
   test("a session that is not eager is not checked", async () => {
     const checker = new YesMan();
     const run = await Session.start({
