@@ -137,6 +137,26 @@ entry:
 }
 """
 
+# A sum the late loop returns one iteration late. They differ from n = 2 on,
+# and alive-tv without an unroll factor calls the pair correct.
+LOOP = """define i32 @f(i32 noundef %0) {
+entry:
+  br label %loop
+
+loop:
+  %1 = phi i32 [ 0, %entry ], [ %3, %loop ]
+  %2 = phi i32 [ 0, %entry ], [ %4, %loop ]
+  %3 = add i32 %1, 1
+  %4 = add i32 %2, %1
+  %5 = icmp ult i32 %3, %0
+  br i1 %5, label %loop, label %exit
+
+exit:
+  ret i32 %2
+}
+"""
+LATE = LOOP.replace("ret i32 %2", "ret i32 %4")
+
 
 def llops(subcommand: str, request: dict) -> dict:
   done = subprocess.run(
@@ -636,6 +656,13 @@ class TestTampered(Case):
     self.built.goal("g1", pair, pair, [], {"kind": "check"})
     self.refused(self.built.write(), "holds an undef value")
 
+  def test_a_pair_that_loops(self):
+    # alive-tv calls this pair correct, which covers the iterations it
+    # unrolls and says nothing of the one where the two part company.
+    pair = {"src": self.built.program(LOOP), "tgt": self.built.program(LATE)}
+    self.built.goal("g1", pair, pair, [], {"kind": "check"})
+    self.refused(self.built.write(), "outside the program shape: not_straightline")
+
   def test_a_program_that_is_not_there(self):
     package = self.leaf()
     (package / "programs" / f"{self.tgt}.ll").unlink()
@@ -999,6 +1026,14 @@ class TestRefuted(unittest.TestCase):
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
     self.assertIn("counterexample", done.stdout)
     self.assertIn("Root refutation", done.stdout)
+
+  def test_a_pair_that_loops_is_not_asked_about(self):
+    # A refutation of a loop rests on how alive-tv treats the iterations it
+    # did not unroll, so it is refused like a proof; llubi certifies a loop's.
+    package = self.built.refuted(LOOP, LATE)
+    done = self.re_asked(package)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("outside the program shape: not_straightline", done.stdout + done.stderr)
 
   def test_a_pair_that_refines_is_not_a_counterexample(self):
     package = self.built.refuted(SRC, TGT)

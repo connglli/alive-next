@@ -176,6 +176,14 @@ class Package:
       raise Refused(f"llops canon: {error.get('message')}")
     return module
 
+  def shape_gate(self, module: str) -> str:
+    """The module, if `llops validate` says it has the shape of a program."""
+    answer = self.run_llops("validate", {"module": module})
+    if not answer.get("conforms"):
+      codes = ", ".join(d.get("code", "?") for d in answer.get("diagnostics", []))
+      raise Refused(f"a program handed to alive-tv is outside the program shape: {codes}")
+    return module
+
   def goal(self, gid: str) -> dict:
     found = self.manifest["goals"].get(gid)
     if found is None:
@@ -208,7 +216,7 @@ class Package:
             " which the no-undef model excludes",
           )
         )
-        path.write_text(text)
+        path.write_text(self.shape_gate(text))
         paths.append(str(path))
       started = time.monotonic()
       done = subprocess.run(
