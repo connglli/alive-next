@@ -8,6 +8,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ModuleSlotTracker.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -132,5 +133,17 @@ struct CmdShape {
 // success; on failure fills `err` and leaves `out` in a moved-from state.
 bool parseCmdShape(llvm::json::Object &args, llvm::StringRef cmd, CmdShape &out,
                    llvm::json::Object &err, bool anyBlocks = false);
+
+// One entry of a tgt signature: the tgt value `value_map` names for the
+// entry's src value, with the type the entry gives it. Returns nullptr and
+// fills `err` when there is no such value.
+llvm::Value *mappedParam(const llvm::json::Value &entry, const llvm::json::Object &valueMap,
+                         llvm::Function &F, ValueRefs &refs, llvm::json::Object &err);
+
+// Map every symbol of `from` but `skip` onto the symbol of the same name in
+// `into`, declaring a function `into` lacks. A global variable `into` lacks
+// is an error when something uses it.
+bool adoptSymbols(llvm::Module &from, llvm::Module &into, const llvm::GlobalValue *skip,
+                  llvm::ValueToValueMapTy &vmap, llvm::json::Object &err);
 
 } // namespace llops

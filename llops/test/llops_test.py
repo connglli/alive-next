@@ -1318,6 +1318,89 @@ entry:
     self.bad(self.outline_tgt({"%m": "%prod", "%x": "%a"}, module=tgt), "invalid")
 
 
+ROTATED = """define i32 @g(i32 noundef %n) {
+entry:
+  %guard = icmp eq i32 %n, 0
+  br i1 %guard, label %exit, label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %loop ]
+  %acc.next = add i32 %acc, %i
+  %i.next = add nuw i32 %i, 1
+  %c = icmp ult i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  %r = phi i32 [ 0, %entry ], [ %acc.next, %loop ]
+  ret i32 %r
+}
+"""
+
+
+class TestDetach(Case):
+  def detach(self, module, block, callee, **tgt):
+    side = "tgt" if tgt else "src"
+    return run("detach", {"module": module, "side": side, "block": block, "callee": callee, **tgt})
+
+  def reattaches(self, whole, half, callee):
+    request = {"outer": half["outer"], "callee": half["callee"], "callee_name": callee}
+    if "hypothesis" in half:
+      request["hypothesis"] = half["hypothesis"]
+    back = self.good(run("reattach", request))["module"]
+    self.assertEqual(self.canon(back), self.canon(whole))
+
+  def test_a_loop_detached_at_its_header_calls_its_hypothesis(self):
+    whole = ROTATED.replace("br i1 %guard, label %exit, label %loop", "br label %loop").replace(
+      "%r = phi i32 [ 0, %entry ], [ %acc.next, %loop ]", "%r = phi i32 [ %acc.next, %loop ]"
+    )
+    src = self.good(self.detach(whole, "%loop", "k"))
+    self.assertEqual([p["live"] for p in src["params"]], ["%i", "%acc", "%n"])
+    self.assertEqual(src["hypothesis"], "k.ih")
+    self.assertTrue(self.conforms(src["callee"]))
+    self.reattaches(whole, src, "k")
+    tgt = self.good(
+      self.detach(
+        whole,
+        "%loop",
+        "k",
+        params=src["params"],
+        value_map={"%i": "%i", "%acc": "%acc", "%n": "%n"},
+      )
+    )
+    self.reattaches(whole, tgt, "k")
+
+  def test_a_rotated_loop_is_detached_at_its_exit_then_its_header(self):
+    self.bad(self.detach(ROTATED, "%loop", "k"), "not_single_entry")
+    exit = self.good(self.detach(ROTATED, "%exit", "k1"))
+    self.assertNotIn("hypothesis", exit)
+    header = self.good(self.detach(exit["outer"], "%loop", "k2"))
+    self.assertIn("call i32 @k1(", header["callee"])
+    self.assertIn("call i32 @k2.ih(", header["callee"])
+    self.assertTrue(self.conforms(header["callee"]))
+    self.reattaches(exit["outer"], header, "k2")
+    self.reattaches(ROTATED, exit, "k1")
+
+  def test_the_entry_block_is_not_detached(self):
+    self.bad(self.detach(ROTATED, "%entry", "k"), "invalid")
+
+  def test_a_tgt_phi_the_map_does_not_cover(self):
+    src = self.good(self.detach(ROTATED, "%exit", "k"))
+    tgt = ROTATED.replace(
+      "%r = phi i32 [ 0, %entry ], [ %acc.next, %loop ]",
+      "%r = phi i32 [ 0, %entry ], [ %acc.next, %loop ]\n  %s = phi i32 [ 1, %entry ], [ %i, %loop ]",
+    )
+    r = self.detach(tgt, "%exit", "k", params=src["params"], value_map={"%r": "%r"})
+    self.bad(r, "invalid")
+
+  def test_canon_orders_phi_incoming_by_block(self):
+    flipped = ROTATED.replace(
+      "%i = phi i32 [ 0, %entry ], [ %i.next, %loop ]",
+      "%i = phi i32 [ %i.next, %loop ], [ 0, %entry ]",
+    )
+    self.assertEqual(self.canon(flipped), self.canon(ROTATED))
+
+
 class TestOutlineWindow(Case):
   # Two bodies that differ only in how the middle value is computed, and in
   # how many instructions that takes. Asking about that middle on its own is

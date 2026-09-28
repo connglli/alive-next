@@ -1,16 +1,17 @@
 // llops: the native, stateless LLVM toolbox behind the agent's tools. One
 // JSON request on stdin, one JSON response on stdout, nothing kept between
 // invocations. See docs/implementation.md for the contract.
+
 #include "analyze.h"
 #include "assume.h"
 #include "canon.h"
+#include "detach.h"
 #include "edit.h"
 #include "harness.h"
 #include "irutil.h"
 #include "opt.h"
 #include "outline.h"
 #include "validate.h"
-
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/JSON.h"
@@ -28,6 +29,8 @@ const char *kUsage = "usage: llops <subcommand> < request.json > response.json\n
                      "  opt        apply one structural optimizer op\n"
                      "  outline    move a suffix or a window into a function\n"
                      "  inline     substitute a callee back into its outer function\n"
+                     "  detach     move a block and all it reaches into a function\n"
+                     "  reattach   turn the calls detach made back into branches\n"
                      "  analyze    known bits, ranges or pointer facts at a program point\n"
                      "  harness    wrap a function in a main that llubi can run\n"
                      "  assume     state a fact about a value before an instruction\n"
@@ -85,6 +88,10 @@ int main(int argc, char **argv) {
     return respond(llops::outlineCmd(*args));
   if (cmd == "inline")
     return respond(llops::inlineCmd(*args));
+  if (cmd == "detach")
+    return respond(llops::detachCmd(*args));
+  if (cmd == "reattach")
+    return respond(llops::reattachCmd(*args));
   if (cmd == "analyze")
     return respond(llops::analyzeCmd(*args));
   if (cmd == "harness")

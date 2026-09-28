@@ -144,38 +144,9 @@ bool readTgtParams(llvm::json::Object &args, llvm::Function &F, ValueRefs &refs,
   }
   llvm::BasicBlock &BB = *singleBlock(F);
   for (const auto &entry : *spec) {
-    const auto *obj = entry.getAsObject();
-    auto live = obj ? obj->getString("live") : std::nullopt;
-    auto type = obj ? obj->getString("type") : std::nullopt;
-    if (!live || !type) {
-      err = errResponse("bad_request", "each params entry needs 'live' and 'type'");
+    llvm::Value *tgtVal = mappedParam(entry, *valueMap, F, refs, err);
+    if (!tgtVal)
       return false;
-    }
-    auto mapped = valueMap->getString(*live);
-    if (!mapped) {
-      err = errResponse("bad_request",
-                        "value_map does not cover the live value '" + live->str() + "'");
-      return false;
-    }
-    llvm::Value *tgtVal = refs.resolve(*mapped);
-    if (!tgtVal) {
-      err = errResponse("not_found", "value_map: '" + mapped->str() + "' is not a tgt value");
-      return false;
-    }
-    llvm::SMDiagnostic smd;
-    llvm::Type *want = llvm::parseType(*type, smd, *F.getParent());
-    if (!want) {
-      err = errResponse("bad_request", "params: '" + type->str() + "' is not a type");
-      return false;
-    }
-    if (tgtVal->getType() != want) {
-      std::string got;
-      llvm::raw_string_ostream os(got);
-      tgtVal->getType()->print(os);
-      err = errResponse("type_mismatch", "value_map: '" + mapped->str() + "' has type " + got +
-                                             " but the signature expects " + type->str());
-      return false;
-    }
     // A value defined at or after the cut cannot be passed into the callee.
     bool inScope = llvm::isa<llvm::Argument>(tgtVal);
     for (auto &I : BB) {
@@ -184,7 +155,8 @@ bool readTgtParams(llvm::json::Object &args, llvm::Function &F, ValueRefs &refs,
       inScope |= &I == tgtVal;
     }
     if (!inScope) {
-      err = errResponse("invalid", "value_map: '" + mapped->str() + "' is not in scope at the cut");
+      err = errResponse("invalid",
+                        "value_map: '" + refs.print(*tgtVal) + "' is not in scope at the cut");
       return false;
     }
     params.push_back(tgtVal);
@@ -415,27 +387,9 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   llvm::ValueToValueMapTy vmap;
   for (unsigned i = 0; i < callee->arg_size(); ++i)
     vmap[std::next(callee->arg_begin(), i)] = call->getArgOperand(i);
-  for (llvm::GlobalValue &gv : calleeMwc->mod->global_values()) {
-    if (&gv == callee)
-      continue;
-    if (auto *fn = llvm::dyn_cast<llvm::Function>(&gv)) {
-      auto *outerFn = outerM.getFunction(fn->getName());
-      if (!outerFn) {
-        outerFn =
-            llvm::Function::Create(fn->getFunctionType(), fn->getLinkage(), fn->getName(), &outerM);
-        outerFn->setAttributes(fn->getAttributes());
-      }
-      vmap[&gv] = outerFn;
-      continue;
-    }
-    if (auto *outerGV = outerM.getNamedValue(gv.getName())) {
-      vmap[&gv] = outerGV;
-      continue;
-    }
-    if (!gv.use_empty())
-      return errResponse("not_found", "the callee refers to '@" + gv.getName().str() +
-                                          "', which the outer module does not have");
-  }
+  llvm::json::Object adoptErr;
+  if (!adoptSymbols(*calleeMwc->mod, outerM, callee, vmap, adoptErr))
+    return adoptErr;
 
   // Instructions move one by one instead of through LLVM's inliner, which
   // would hoist allocas to the entry block. The certificate checker compares

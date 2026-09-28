@@ -4,6 +4,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/CFG.h"
+#include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InstIterator.h"
@@ -86,6 +87,28 @@ void layOutBlocks(llvm::Function &F) {
   }
 }
 
+// A phi's incoming pairs in the order of the blocks they come from, so the
+// order a transformation happened to add them in does not show.
+void sortIncoming(llvm::Function &F) {
+  llvm::DenseMap<const llvm::BasicBlock *, unsigned> position;
+  unsigned next = 0;
+  for (auto &B : F)
+    position[&B] = next++;
+  for (auto &B : F)
+    for (auto &phi : B.phis()) {
+      std::vector<std::pair<llvm::BasicBlock *, llvm::Value *>> incoming;
+      for (unsigned i = 0; i < phi.getNumIncomingValues(); ++i)
+        incoming.push_back({phi.getIncomingBlock(i), phi.getIncomingValue(i)});
+      std::stable_sort(incoming.begin(), incoming.end(), [&](const auto &a, const auto &b) {
+        return position[a.first] < position[b.first];
+      });
+      for (unsigned i = 0; i < incoming.size(); ++i) {
+        phi.setIncomingBlock(i, incoming[i].first);
+        phi.setIncomingValue(i, incoming[i].second);
+      }
+    }
+}
+
 } // namespace
 
 std::string canonModule(llvm::Module &M) {
@@ -93,6 +116,7 @@ std::string canonModule(llvm::Module &M) {
     if (F.isDeclaration())
       continue;
     layOutBlocks(F);
+    sortIncoming(F);
     for (auto &arg : F.args())
       arg.setName("");
     unsigned blockIndex = 0;
@@ -443,6 +467,71 @@ bool parseCmdShape(llvm::json::Object &args, llvm::StringRef cmd, CmdShape &out,
     return false;
   }
   out.refs = std::make_unique<ValueRefs>(*out.F);
+  return true;
+}
+
+llvm::Value *mappedParam(const llvm::json::Value &entry, const llvm::json::Object &valueMap,
+                         llvm::Function &F, ValueRefs &refs, llvm::json::Object &err) {
+  const auto *obj = entry.getAsObject();
+  auto live = obj ? obj->getString("live") : std::nullopt;
+  auto type = obj ? obj->getString("type") : std::nullopt;
+  if (!live || !type) {
+    err = errResponse("bad_request", "each params entry needs 'live' and 'type'");
+    return nullptr;
+  }
+  auto mapped = valueMap.getString(*live);
+  if (!mapped) {
+    err =
+        errResponse("bad_request", "value_map does not cover the live value '" + live->str() + "'");
+    return nullptr;
+  }
+  llvm::Value *tgtVal = refs.resolve(*mapped);
+  if (!tgtVal) {
+    err = errResponse("not_found", "value_map: '" + mapped->str() + "' is not a tgt value");
+    return nullptr;
+  }
+  llvm::SMDiagnostic smd;
+  llvm::Type *want = llvm::parseType(*type, smd, *F.getParent());
+  if (!want) {
+    err = errResponse("bad_request", "params: '" + type->str() + "' is not a type");
+    return nullptr;
+  }
+  if (tgtVal->getType() != want) {
+    std::string got;
+    llvm::raw_string_ostream os(got);
+    tgtVal->getType()->print(os);
+    err = errResponse("type_mismatch", "value_map: '" + mapped->str() + "' has type " + got +
+                                           " but the signature expects " + type->str());
+    return nullptr;
+  }
+  return tgtVal;
+}
+
+bool adoptSymbols(llvm::Module &from, llvm::Module &into, const llvm::GlobalValue *skip,
+                  llvm::ValueToValueMapTy &vmap, llvm::json::Object &err) {
+  for (llvm::GlobalValue &gv : from.global_values()) {
+    if (&gv == skip)
+      continue;
+    if (auto *fn = llvm::dyn_cast<llvm::Function>(&gv)) {
+      auto *mine = into.getFunction(fn->getName());
+      if (!mine) {
+        mine =
+            llvm::Function::Create(fn->getFunctionType(), fn->getLinkage(), fn->getName(), &into);
+        mine->setAttributes(fn->getAttributes());
+      }
+      vmap[&gv] = mine;
+      continue;
+    }
+    if (auto *mine = into.getNamedValue(gv.getName())) {
+      vmap[&gv] = mine;
+      continue;
+    }
+    if (!gv.use_empty()) {
+      err = errResponse("not_found", "the callee refers to '@" + gv.getName().str() +
+                                         "', which the outer module does not have");
+      return false;
+    }
+  }
   return true;
 }
 

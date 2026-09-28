@@ -178,6 +178,20 @@ Request `{ "outer": ..., "callee": ..., "callee_name": "g" }`, response `{ "ok":
 
 The call is replaced by the callee's body in place, and the declaration that carried it is dropped once nothing uses it. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was. That roundtrip is how the certificate checker tests a split for faithfulness, and it is why `outline` is tier 2: what a checker reruns is the inlining, not the cutting.
 
+## detach
+
+Moves a block and every block it reaches into a fresh function, and turns every branch to the block into a call of it. A goal is cut this way at a join or at a loop header.
+
+Request `{ "module": ..., "side": "src", "block": "%bb2", "callee": "k" }`; the tgt side adds `params` and `value_map` as `outline` takes them. Response `{ "ok": true, "outer": ..., "callee": ..., "params": [ ... ], "hypothesis": "k.ih" }`.
+
+The signature is the block's phis, then the values the moved blocks use from outside, in definition order. Every edge into the block becomes an edge into a fresh block that only calls the callee and returns what it answers. An edge from a moved block, which exists when the block heads a loop, calls the declared `hypothesis` instead, so the callee's body does not loop through it; `hypothesis` is absent when there is no such edge. The module may loop, and so may either half when the moved blocks hold a loop of their own. A block entered from outside other than through the named one is refused with `not_single_entry`, and so is the entry block.
+
+## reattach
+
+Request `{ "outer": ..., "callee": ..., "callee_name": "k", "hypothesis": "k.ih" }`, response `{ "ok": true, "module": ... }`.
+
+The inverse of `detach`, which the certificate checker runs. Every block that only calls the callee or its hypothesis and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there; a phi whose incoming values are one value or itself becomes that value. `canon` of the result is `canon` of the module `detach` started from.
+
 ## analyze
 
 Request `{ "module": ..., "kind": ..., "point": ... }`, response `{ "ok": true, "kind": ..., "point": ..., "facts": [ ... ] }`.
@@ -250,6 +264,7 @@ A request that asks for conditions and operand bundles produces two assumes, bec
 | `empty_snippet` | the snippet defines no instructions |
 | `snippet_terminator` | a snippet carries a terminator; the block's own stays |
 | `set_body_contract` | a set_body body is module text, not the body's instructions |
+| `not_single_entry` | a block `detach` would move is entered other than through the named one |
 
 ## Building and testing
 
