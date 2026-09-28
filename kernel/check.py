@@ -1015,17 +1015,17 @@ class Check:
     starts = [(discharge["outer"], name), (discharge["inner"], name)]
     if hypothesis:
       starts.append((discharge["inner"], hypothesis))
-    for gid, fn in starts:
+    for half, fn in starts:
       for side in ("src", "tgt"):
         started = time.monotonic()
-        start = self.package.program(self.package.goal(gid)["start"][side])
+        start = self.package.program(self.package.goal(half)["start"][side])
         self.report(
           result="OK" if bare(self.package, start, fn) else "FAIL",
-          gid=gid,
+          gid=half,
           side=side,
           tool="llops",
           check="Bare callee",
-          notes=f"@{fn} at the start of {gid}",
+          notes=f"@{fn} at the start of {half}",
           ms=elapsed_ms(started),
         )
     for step in self.package.goal(discharge["inner"])["steps"]:
