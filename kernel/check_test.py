@@ -430,7 +430,7 @@ class Case(unittest.TestCase):
     whole = {"src": stored(src), "tgt": stored(tgt)}
     outer = {"src": stored(s["outer"]), "tgt": stored(t["outer"])}
     inner = {"src": stored(s["callee"]), "tgt": stored(t["callee"])}
-    cut = {"kind": "split", "at": "block", "callee": "k", "hypothesis": "k.ih"}
+    cut = {"kind": "split", "detached": True, "callee": "k", "hypothesis": "k.ih"}
     self.built.goal("g1", whole, whole, [], {**cut, "outer": "g2", "inner": "g3"})
     self.built.goal("g2", outer, outer, [], {"kind": "check"})
     self.built.goal("g3", inner, inner, [], {"kind": "check"})

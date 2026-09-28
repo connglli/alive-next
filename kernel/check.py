@@ -937,9 +937,9 @@ class Check:
     inner = self.package.goal(discharge["inner"])
     name = discharge["callee"]
     hypothesis = discharge.get("hypothesis")
-    detached = discharge.get("at") == "block"
+    detached = discharge.get("detached") is True
     if hypothesis and not detached:
-      raise Refused(f"{gid} names a hypothesis for a cut that is not at a block")
+      raise Refused(f"{gid} names a hypothesis for a cut that detached no block")
     rebuild = "reattach" if detached else "inline"
 
     for side in ("src", "tgt"):
