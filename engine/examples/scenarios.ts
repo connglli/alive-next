@@ -14,6 +14,7 @@ import { rewrite } from "./rewrite.ts";
 import { rule } from "./rule.ts";
 import { strengthReduce } from "./strength-reduce.ts";
 import { strengthen } from "./strengthen.ts";
+import { unroll } from "./unroll.ts";
 import { vectorize } from "./vectorize.ts";
 import { widen } from "./widen.ts";
 
@@ -32,6 +33,7 @@ export const scenarios: Scenario[] = [
   miscompile,
   poison,
   widen,
+  unroll,
 ];
 
 export function scenario(name: string): Scenario {

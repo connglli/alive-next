@@ -439,6 +439,33 @@ describe.skipIf(!built)("reading a session", () => {
   });
 
   test("a pair outside the program shape is refused before the run starts", async () => {
+    const branch = `define i32 @f(i32 %x) {
+entry:
+  br label %next
+
+next:
+  ret i32 %x
+}
+`;
+    const checker = new YesMan();
+    const attempt = Session.start({
+      dir: join(dir, "branch"),
+      src: branch,
+      tgt: branch,
+      llops,
+      checker,
+      interp: noRun,
+      rewriter: unrewriting,
+      eager: true,
+    });
+
+    await expect(attempt).rejects.toThrow(
+      /src program is outside the program shape: not_straightline/,
+    );
+    expect(checker.calls).toBe(0);
+  });
+
+  test("a pair that loops is searched for a counterexample and never proved", async () => {
     // alive-tv calls this pair correct, though the tgt is one iteration late.
     const loop = `define i32 @f(i32 noundef %n) {
 entry:
@@ -457,8 +484,21 @@ exit:
 }
 `;
     const late = loop.replace("ret i32 %acc\n", "ret i32 %acc.next\n");
-    const checker = new YesMan();
-    const attempt = Session.start({
+    const asked: string[][] = [];
+    let answer: CheckResult["outcome"] = "correct";
+    const checker: Checker = {
+      async check(_src, _tgt, options) {
+        asked.push(options?.flags ?? []);
+        return {
+          outcome: answer,
+          detail: "",
+          invocation: { binary: "stub", flags: [], timeoutMs: 0 },
+          stdout: "",
+          ms: 0,
+        };
+      },
+    };
+    const run = await Session.start({
       dir: join(dir, "loop"),
       src: loop,
       tgt: late,
@@ -469,8 +509,21 @@ exit:
       eager: true,
     });
 
-    await expect(attempt).rejects.toThrow(/src program is outside the program shape: cyclic/);
-    expect(checker.calls).toBe(0);
+    // Neither the start check nor a check without a factor asks alive-tv.
+    const bare = await run.check("g1");
+    expect(bare.outcome).toBe("unknown");
+    expect(bare.check.detail).toContain("unroll");
+    expect(asked).toHaveLength(0);
+
+    const correct = await run.check("g1", undefined, 2);
+    expect(asked[0]).toEqual(["--disable-undef-input", "--src-unroll=2", "--tgt-unroll=2"]);
+    expect(correct.outcome).toBe("unknown");
+
+    answer = "incorrect";
+    const refuted = await run.check("g1", undefined, 3);
+    expect(refuted.outcome).toBe("refuted");
+    expect(refuted.effects).toEqual([]);
+    expect(run.verdict).toBe("unknown");
   });
 
   test("a session that is not eager is not checked", async () => {

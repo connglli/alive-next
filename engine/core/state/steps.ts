@@ -216,6 +216,7 @@ export interface CheckGoalResult {
 
 export class Steps {
   private readonly history = new Map<string, CheckHistoryEntry>();
+  private readonly looping = new Map<Hash, boolean>();
 
   constructor(
     private readonly store: Store,
@@ -230,27 +231,38 @@ export class Steps {
    * goal. A counterexample refutes the run when the checked pair is the
    * root's original pair; anywhere else it is only a hint.
    */
-  async checkGoal(tree: Tree, gid: string, timeoutMs?: number): Promise<CheckGoalResult> {
+  async checkGoal(
+    tree: Tree,
+    gid: string,
+    timeoutMs?: number,
+    unroll?: number,
+  ): Promise<CheckGoalResult> {
     const goal = workable(tree, gid);
     const srcHash = head(goal, "src");
     const tgtHash = head(goal, "tgt");
-    const key = historyKey(srcHash, tgtHash);
+    // alive-tv answers a loop only for the iterations it unrolls, so a pair
+    // that loops is searched for a counterexample and never proved.
+    const loops = (await this.loops(srcHash)) || (await this.loops(tgtHash));
+    if (loops && unroll === undefined)
+      return { outcome: "unknown", check: noUnroll(), effects: [] };
+    const key = historyKey(srcHash, tgtHash, loops ? unroll : undefined);
     const prior = this.history.get(key);
 
     const askedMs = timeoutMs ?? this.timeouts.checkDefaultMs;
     const budgetMs = this.capped(askedMs);
     const check = await this.check(
       { src: this.store.get(srcHash), tgt: this.store.get(tgtHash) },
-      { timeoutMs: budgetMs },
+      { timeoutMs: budgetMs, ...(loops ? { unroll } : {}) },
     );
-    const outcome = goalOutcome(check.outcome);
+    const outcome = loops && check.outcome === "correct" ? "unknown" : goalOutcome(check.outcome);
     this.history.set(key, { outcome, budgetMs, ms: check.ms });
 
     const result: CheckGoalResult = {
       outcome,
       check,
-      effects:
-        check.outcome === "correct"
+      effects: loops
+        ? []
+        : check.outcome === "correct"
           ? [{ effect: "proved", gid }]
           : check.outcome === "incorrect" && rootPair(tree, gid, goal)
             ? [{ effect: "refuted", gid }]
@@ -583,13 +595,27 @@ export class Steps {
   /** One question to the checker, in the direction the side settled. */
   private check(
     pair: { src: string; tgt: string },
-    options: { timeoutMs: number },
+    options: { timeoutMs: number; unroll?: number },
   ): Promise<CheckResult> {
     // The no-`undef` model: every query is asked with `--disable-undef-input`.
+    const unroll =
+      options.unroll === undefined
+        ? []
+        : [`--src-unroll=${options.unroll}`, `--tgt-unroll=${options.unroll}`];
     return this.checker.check(pair.src, pair.tgt, {
       timeoutMs: options.timeoutMs,
-      flags: ["--disable-undef-input"],
+      flags: ["--disable-undef-input", ...unroll],
     });
+  }
+
+  /** Whether a stored program loops, as `llops validate` says. */
+  private async loops(hash: Hash): Promise<boolean> {
+    const known = this.looping.get(hash);
+    if (known !== undefined) return known;
+    const result = await this.llops.validate(this.store.get(hash));
+    const loops = result.ok && result.diagnostics.some((d) => d.code === "cyclic");
+    this.looping.set(hash, loops);
+    return loops;
   }
 
   /**
@@ -643,6 +669,18 @@ function rootPair(tree: Tree, gid: string, goal: Goal): boolean {
   );
 }
 
+/** A check refused because the pair loops and no unroll factor was given. */
+function noUnroll(): CheckResult {
+  return {
+    outcome: "error",
+    detail:
+      "the pair loops, and alive-tv answers a loop only for the iterations it unrolls; give an unroll factor to search those for a counterexample",
+    invocation: { binary: "", flags: [], timeoutMs: 0 },
+    stdout: "",
+    ms: 0,
+  };
+}
+
 /**
  * A refusal that cost no solver time, shaped like one that did. Its budget is
  * zero because none was spent, which is what tells a reader that no check ran.
@@ -658,6 +696,6 @@ function unchanged(): CheckResult {
   };
 }
 
-function historyKey(src: Hash, tgt: Hash): string {
-  return `${src}\0${tgt}`;
+function historyKey(src: Hash, tgt: Hash, unroll?: number): string {
+  return unroll === undefined ? `${src}\0${tgt}` : `${src}\0${tgt}\0${unroll}`;
 }

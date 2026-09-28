@@ -9,15 +9,21 @@ export function createCheckTool(session: Session) {
     name: "goal_check",
     label: "Check",
     description:
-      "Ask whether a goal's tgt refines its src as the two stand. Proved discharges the goal. Refuted ends the run only when this goal is the root checked against its original pair; elsewhere it is a hint, since a valid step can overshoot and a callee's entry is conservative.",
+      "Ask whether a goal's tgt refines its src as the two stand. Proved discharges the goal. Refuted ends the run only when this goal is the root checked against its original pair; elsewhere it is a hint, since a valid step can overshoot and a callee's entry is conservative. A pair that loops is never proved: with `unroll` it is searched for a counterexample, which is a hint whose input run_report_cex certifies.",
     parameters: Type.Object({
       gid: Type.String({ description: "The goal to check." }),
       timeout_ms: Type.Optional(
         Type.Integer({ description: "Solver budget for this call. Spending it is your decision." }),
       ),
+      unroll: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          description: "For a pair that loops: how many iterations to search.",
+        }),
+      ),
     }),
-    execute: async (_id, { gid, timeout_ms }) => {
-      const checked = await session.check(gid, timeout_ms);
+    execute: async (_id, { gid, timeout_ms, unroll }) => {
+      const checked = await session.check(gid, timeout_ms, unroll);
       const detail = checked.check.detail ? `\n${checked.check.detail}` : "";
       // What it ran on, because a timeout means nothing without the budget it
       // ran out of, and asking for more than the cap is answered by the cap.

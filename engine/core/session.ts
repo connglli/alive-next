@@ -211,12 +211,13 @@ export class Session {
     return session;
   }
 
-  /** Refuse a root program outside the shape `llops validate` defines. */
+  /** Refuse a root program outside the shape `llops validate` defines, but for a loop. */
   private async refuseOutsideShape(side: Side, text: string): Promise<void> {
     const result = await this.llops.validate(text);
     if (!result.ok) throw new Error(`the ${side} program: llops validate: ${result.message}`);
-    if (!result.conforms) {
-      const why = result.diagnostics.map((d) => `${d.code}, ${d.message}`).join("; ");
+    const outside = result.diagnostics.filter((d) => d.code !== "cyclic");
+    if (outside.length > 0) {
+      const why = outside.map((d) => `${d.code}, ${d.message}`).join("; ");
       throw new Error(`the ${side} program is outside the program shape: ${why}`);
     }
   }
@@ -351,10 +352,13 @@ export class Session {
     );
   }
 
-  /** Ask whether a goal's claim holds as it stands. */
-  check(gid: string, timeoutMs?: number): Promise<CheckGoalResult> {
-    return this.act("check", { gid, timeout_ms: timeoutMs }, (tree) =>
-      this.steps.checkGoal(tree, gid, timeoutMs),
+  /**
+   * Ask whether a goal's claim holds as it stands. A pair that loops is only
+   * searched for a counterexample, over the first `unroll` iterations.
+   */
+  check(gid: string, timeoutMs?: number, unroll?: number): Promise<CheckGoalResult> {
+    return this.act("check", { gid, timeout_ms: timeoutMs, unroll }, (tree) =>
+      this.steps.checkGoal(tree, gid, timeoutMs, unroll),
     );
   }
 

@@ -28,7 +28,7 @@ A wrong proposal wastes time; it never produces a wrong certificate. Since refin
 
 ## Scope (v1)
 
-Straightline code (no conditionals, no loops), but **all** features alive2 supports, including memory operations. Target size: >1000 lines. Conditionals and loops are future work and need further design.
+Straightline code (no conditionals, no loops), but **all** features alive2 supports, including memory operations. Target size: >1000 lines. A pair with a loop can be refuted, by running it, and not proved; conditionals and loops need further design.
 
 ## Parameter definedness and the no-undef model
 
@@ -203,7 +203,7 @@ Both children are cross-checked once at the end, after phase 3, and not between 
 
 ### Discharge
 
-- `check(gid, timeout)`: try alpha-equivalence first, then a direct alive2 run on the goal's current pair. Pass: goal proved. Fail: a counterexample. On the root's original pair it refutes the run; anywhere else the goal stays open. Timeout: goal stays open. The timeout is the agent's knob, because spending solver time is a search decision. The framework also runs a small-timeout `check` on its own after every certified step; see "Eager cross-checking".
+- `check(gid, timeout, unroll)`: try alpha-equivalence first, then a direct alive2 run on the goal's current pair. Pass: goal proved. Fail: a counterexample. On the root's original pair it refutes the run; anywhere else the goal stays open. Timeout: goal stays open. A pair that loops is never proved: alive2 searches its first `unroll` iterations, and a counterexample it finds is a hint for `report_cex`. The timeout is the agent's knob, because spending solver time is a search decision. The framework also runs a small-timeout `check` on its own after every certified step; see "Eager cross-checking".
 
 ### Counterexample search and computation
 
