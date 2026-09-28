@@ -364,6 +364,29 @@ bb1:
     self.assertIn("bb2:", canon)
     self.assertEqual(self.canon(canon), canon)
 
+  def test_predecessors_are_listed_in_block_order(self):
+    # Parsed as printed, the join's uses come in the order its branches were
+    # read, which is not the order canon prints its predecessors in.
+    module = """define i64 @f(i64 %x, i64 %y, i1 %c) {
+entry:
+  br i1 %c, label %left, label %right
+
+left:
+  %s = sub i64 %x, %y
+  br label %join
+
+right:
+  %t = or i64 %x, %y
+  br label %join
+
+join:
+  %v = phi i64 [ %s, %left ], [ %t, %right ]
+  ret i64 %v
+}
+"""
+    canon = self.canon(module)
+    self.assertEqual(self.canon(canon), canon)
+
   def test_a_block_the_entry_does_not_reach_goes_last(self):
     module = """define i32 @f(i32 %x) {
 entry:

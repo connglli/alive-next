@@ -87,13 +87,18 @@ void layOutBlocks(llvm::Function &F) {
   }
 }
 
-// A phi's incoming pairs in the order of the blocks they come from, so the
-// order a transformation happened to add them in does not show.
-void sortIncoming(llvm::Function &F) {
+llvm::DenseMap<const llvm::BasicBlock *, unsigned> positions(llvm::Function &F) {
   llvm::DenseMap<const llvm::BasicBlock *, unsigned> position;
   unsigned next = 0;
   for (auto &B : F)
     position[&B] = next++;
+  return position;
+}
+
+// A phi's incoming pairs in the order of the blocks they come from, so the
+// order a transformation happened to add them in does not show.
+void sortIncoming(llvm::Function &F) {
+  auto position = positions(F);
   for (auto &B : F)
     for (auto &phi : B.phis()) {
       std::vector<std::pair<llvm::BasicBlock *, llvm::Value *>> incoming;
@@ -109,6 +114,19 @@ void sortIncoming(llvm::Function &F) {
     }
 }
 
+// A block's uses in the order of the blocks using it, since the printer lists
+// a block's predecessors in use order, which otherwise follows how the module
+// was built or parsed.
+void sortPredecessors(llvm::Function &F) {
+  auto position = positions(F);
+  auto key = [&](const llvm::Use &U) {
+    auto *I = llvm::dyn_cast<llvm::Instruction>(U.getUser());
+    return std::make_pair(I ? position.lookup(I->getParent()) : ~0u, U.getOperandNo());
+  };
+  for (auto &B : F)
+    B.sortUseList([&](const llvm::Use &L, const llvm::Use &R) { return key(L) < key(R); });
+}
+
 } // namespace
 
 std::string canonModule(llvm::Module &M) {
@@ -117,6 +135,7 @@ std::string canonModule(llvm::Module &M) {
       continue;
     layOutBlocks(F);
     sortIncoming(F);
+    sortPredecessors(F);
     for (auto &arg : F.args())
       arg.setName("");
     // Every block loses its name before any gets a new one, since LLVM
