@@ -5,6 +5,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include <string>
 #include <vector>
@@ -297,9 +298,6 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
   llvm::Function *F = singleFunction(M);
   if (!F)
     return errResponse("shape_error", "assume needs the v1 shape: exactly one defined function");
-  llvm::BasicBlock *BB = singleBlock(*F);
-  if (!BB)
-    return errResponse("shape_error", "assume needs a single basic block");
   ValueRefs refs(*F);
   llvm::Instruction *before = nullptr;
   llvm::CallInst *call = nullptr;
@@ -310,12 +308,12 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
       return errResponse("bad_request", "anchor with at 'entry' needs 'fn'");
     if (F->getName() != *fnName)
       return errResponse("not_found", "no function defined with name '@" + fnName->str() + "'");
-    before = &*BB->begin();
+    before = &*F->getEntryBlock().getFirstInsertionPt();
   } else if (*at == "before_call") {
     auto fnName = anchorObj->getString("fn");
     if (!fnName)
       return errResponse("bad_request", "anchor with at 'before_call' needs 'fn'");
-    for (auto &I : *BB) {
+    for (auto &I : llvm::instructions(*F)) {
       auto *candidate = llvm::dyn_cast<llvm::CallInst>(&I);
       if (!candidate || !candidate->getCalledFunction())
         continue;

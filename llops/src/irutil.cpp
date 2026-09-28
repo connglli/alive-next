@@ -120,34 +120,75 @@ bool findUseBeforeDef(llvm::Function &F, llvm::BasicBlock &BB, ValueRefs &refs, 
   return false;
 }
 
+// The block a branch goes back to, if the body loops. Only blocks the entry
+// reaches are searched; the rest never run.
+const llvm::BasicBlock *loopHeader(const llvm::Function &F) {
+  llvm::SmallVector<std::pair<const llvm::BasicBlock *, const llvm::BasicBlock *>> back;
+  llvm::FindFunctionBackedges(F, back);
+  return back.empty() ? nullptr : back.front().second;
+}
+
 } // namespace
 
 std::vector<Diag> checkFunction(llvm::Function &F) {
   std::vector<Diag> diags;
-  auto *BB = singleBlock(F);
-  if (!BB) {
-    diags.push_back({Diag::Severity::Error, "not_straightline",
-                     "function '" + F.getName().str() + "' must have exactly one basic block"});
+  if (auto *header = loopHeader(F)) {
+    std::string name;
+    llvm::raw_string_ostream os(name);
+    header->printAsOperand(os, false);
+    diags.push_back({Diag::Severity::Error, "cyclic",
+                     "function '" + F.getName().str() + "' loops back to '" + name + "'"});
     return diags;
   }
 
-  ValueRefs refs(F);
-  Diag useBeforeDef;
-  if (findUseBeforeDef(F, *BB, refs, useBeforeDef)) {
-    diags.push_back(useBeforeDef);
-    return diags;
+  // Calls must go to a declared function: a call to the one defined function
+  // is recursion, and an indirect call has no callee to check against.
+  for (auto &I : llvm::instructions(F)) {
+    auto *call = llvm::dyn_cast<llvm::CallInst>(&I);
+    if (!call)
+      continue;
+    if (call->isInlineAsm()) {
+      diags.push_back(
+          {Diag::Severity::Error, "inline_asm", "inline assembly is not supported in v1"});
+      return diags;
+    }
+    llvm::Function *callee = call->getCalledFunction();
+    if (!callee) {
+      diags.push_back(
+          {Diag::Severity::Error, "indirect_call", "indirect calls are not supported in v1"});
+      return diags;
+    }
+    if (!callee->isDeclaration()) {
+      diags.push_back({Diag::Severity::Error, "recursive_call",
+                       "call to the defined function '" + callee->getName().str() + "'"});
+      return diags;
+    }
   }
 
-  auto *term = BB->getTerminator();
-  if (!term) {
-    diags.push_back(
-        {Diag::Severity::Error, "no_terminator", "the body does not end in a terminator"});
-    return diags;
+  if (auto *BB = singleBlock(F)) {
+    ValueRefs refs(F);
+    Diag useBeforeDef;
+    if (findUseBeforeDef(F, *BB, refs, useBeforeDef)) {
+      diags.push_back(useBeforeDef);
+      return diags;
+    }
   }
-  if (!llvm::isa<llvm::ReturnInst>(term))
-    diags.push_back({Diag::Severity::Error, "unsupported_terminator",
-                     "straightline v1 bodies must end in ret; found '" +
-                         std::string(term->getOpcodeName()) + "'"});
+
+  for (auto &B : F) {
+    auto *term = B.getTerminator();
+    if (!term) {
+      diags.push_back(
+          {Diag::Severity::Error, "no_terminator", "a block does not end in a terminator"});
+      return diags;
+    }
+    if (!llvm::isa<llvm::ReturnInst, llvm::BranchInst, llvm::SwitchInst, llvm::UnreachableInst>(
+            term)) {
+      diags.push_back({Diag::Severity::Error, "unsupported_terminator",
+                       "a block ends in '" + std::string(term->getOpcodeName()) +
+                           "', not in ret, br, switch or unreachable"});
+      return diags;
+    }
+  }
   return diags;
 }
 
@@ -214,18 +255,6 @@ bool holdsUndef(const llvm::Module &M) {
   return false;
 }
 
-namespace {
-
-// The block a branch goes back to, if the body loops. Only blocks the entry
-// reaches are searched; the rest never run.
-const llvm::BasicBlock *loopHeader(const llvm::Function &F) {
-  llvm::SmallVector<std::pair<const llvm::BasicBlock *, const llvm::BasicBlock *>> back;
-  llvm::FindFunctionBackedges(F, back);
-  return back.empty() ? nullptr : back.front().second;
-}
-
-} // namespace
-
 std::vector<Diag> validateModule(llvm::Module &M) {
   std::vector<Diag> diags;
 
@@ -245,64 +274,10 @@ std::vector<Diag> validateModule(llvm::Module &M) {
     return diags;
   }
 
-  if (auto *header = loopHeader(*F)) {
-    std::string name;
-    llvm::raw_string_ostream os(name);
-    header->printAsOperand(os, false);
-    diags.push_back({Diag::Severity::Error, "cyclic",
-                     "function '" + F->getName().str() + "' loops back to '" + name + "'"});
-    return diags;
-  }
-
-  // Calls must go to a declared function: a call to the one defined function
-  // is recursion, and an indirect call has no callee to check against.
-  for (auto &I : llvm::instructions(*F)) {
-    auto *call = llvm::dyn_cast<llvm::CallInst>(&I);
-    if (!call)
-      continue;
-    if (call->isInlineAsm()) {
-      diags.push_back(
-          {Diag::Severity::Error, "inline_asm", "inline assembly is not supported in v1"});
-      return diags;
-    }
-    llvm::Function *callee = call->getCalledFunction();
-    if (!callee) {
-      diags.push_back(
-          {Diag::Severity::Error, "indirect_call", "indirect calls are not supported in v1"});
-      return diags;
-    }
-    if (!callee->isDeclaration()) {
-      diags.push_back({Diag::Severity::Error, "recursive_call",
-                       "call to the defined function '" + callee->getName().str() + "'"});
-      return diags;
-    }
-  }
-
-  if (auto *BB = singleBlock(*F)) {
-    ValueRefs refs(*F);
-    Diag useBeforeDef;
-    if (findUseBeforeDef(*F, *BB, refs, useBeforeDef)) {
-      diags.push_back(useBeforeDef);
-      return diags;
-    }
-  }
-
-  for (auto &B : *F) {
-    auto *term = B.getTerminator();
-    if (!term) {
-      diags.push_back(
-          {Diag::Severity::Error, "no_terminator", "a block does not end in a terminator"});
-      return diags;
-    }
-    if (!llvm::isa<llvm::ReturnInst, llvm::BranchInst, llvm::SwitchInst, llvm::UnreachableInst>(
-            term)) {
-      diags.push_back({Diag::Severity::Error, "unsupported_terminator",
-                       "a block ends in '" + std::string(term->getOpcodeName()) +
-                           "', not in ret, br, switch or unreachable"});
-      return diags;
-    }
-  }
-  return checkModule(M);
+  diags = checkFunction(*F);
+  if (diags.empty())
+    diags = checkModule(M);
+  return diags;
 }
 
 // ---------------------------------------------------------------------------
@@ -316,12 +291,11 @@ llvm::Value *ValueRefs::resolve(llvm::StringRef ref) {
   if (ref.empty())
     return nullptr;
 
-  auto *BB = singleBlock(fn);
   if (ref.starts_with("#")) {
     unsigned index = 0;
-    if (!BB || ref.drop_front(1).getAsInteger(10, index))
+    if (ref.drop_front(1).getAsInteger(10, index))
       return nullptr;
-    for (auto &I : *BB)
+    for (auto &I : llvm::instructions(fn))
       if (index-- == 0)
         return &I;
     return nullptr;
@@ -340,20 +314,18 @@ llvm::Value *ValueRefs::resolve(llvm::StringRef ref) {
     for (auto &arg : fn.args())
       if (mst.getLocalSlot(&arg) == (int)slot)
         return &arg;
-    if (BB)
-      for (auto &I : *BB)
-        if (!I.getType()->isVoidTy() && mst.getLocalSlot(&I) == (int)slot)
-          return &I;
+    for (auto &I : llvm::instructions(fn))
+      if (!I.getType()->isVoidTy() && mst.getLocalSlot(&I) == (int)slot)
+        return &I;
     return nullptr;
   }
 
   for (auto &arg : fn.args())
     if (arg.getName() == ref)
       return &arg;
-  if (BB)
-    for (auto &I : *BB)
-      if (I.getName() == ref)
-        return &I;
+  for (auto &I : llvm::instructions(fn))
+    if (I.getName() == ref)
+      return &I;
   return nullptr;
 }
 
@@ -368,12 +340,11 @@ std::string ValueRefs::print(const llvm::Value &V) {
   if (const auto *I = llvm::dyn_cast<llvm::Instruction>(&V)) {
     if (!I->hasName() && mst.getLocalSlot(I) < 0) {
       unsigned index = 0;
-      if (auto *BB = singleBlock(fn))
-        for (auto &other : *BB) {
-          if (&other == I)
-            return "#" + std::to_string(index);
-          ++index;
-        }
+      for (auto &other : llvm::instructions(fn)) {
+        if (&other == I)
+          return "#" + std::to_string(index);
+        ++index;
+      }
     }
   }
   std::string out;
@@ -427,7 +398,7 @@ llvm::json::Object checkedResponse(llvm::Function &F, llvm::Module &M) {
 }
 
 bool parseCmdShape(llvm::json::Object &args, llvm::StringRef cmd, CmdShape &out,
-                   llvm::json::Object &err) {
+                   llvm::json::Object &err, bool anyBlocks) {
   auto text = args.getString("module");
   if (!text) {
     err = errResponse("bad_request", cmd.str() + " needs 'module'");
@@ -448,7 +419,7 @@ bool parseCmdShape(llvm::json::Object &args, llvm::StringRef cmd, CmdShape &out,
     return false;
   }
   out.BB = singleBlock(*out.F);
-  if (!out.BB) {
+  if (!out.BB && !anyBlocks) {
     err = errResponse("shape_error", cmd.str() + " needs a single basic block");
     return false;
   }

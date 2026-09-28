@@ -56,13 +56,12 @@ llvm::Function *singleFunction(llvm::Module &M);
 // The single basic block of a straightline function, or nullptr.
 llvm::BasicBlock *singleBlock(llvm::Function &F);
 
-// The v1 module invariants: exactly one defined function, no calls that v1
-// cannot reason about, and a straightline body. An empty result means the
-// module conforms.
+// The module invariants: exactly one defined function whose body has the
+// shape below. An empty result means the module conforms.
 std::vector<Diag> validateModule(llvm::Module &M);
 
-// The v1 body invariants: one block, ending in `ret`, every use after its
-// definition.
+// The body invariants: no loop, no call v1 cannot reason about, every block
+// ending in ret, br, switch or unreachable.
 std::vector<Diag> checkFunction(llvm::Function &F);
 
 // Everything else that makes IR ill formed, delegated to the LLVM verifier
@@ -128,9 +127,10 @@ struct CmdShape {
 };
 
 // Parse the "module" key of a JSON request into the v1 shape. `cmd` names the
-// subcommand for error messages ("edit", "opt", …). Returns true on success;
-// on failure fills `err` and leaves `out` in a moved-from state.
+// subcommand for error messages ("edit", "opt", …). A body of several blocks
+// is refused unless `anyBlocks`, which leaves `BB` null. Returns true on
+// success; on failure fills `err` and leaves `out` in a moved-from state.
 bool parseCmdShape(llvm::json::Object &args, llvm::StringRef cmd, CmdShape &out,
-                   llvm::json::Object &err);
+                   llvm::json::Object &err, bool anyBlocks = false);
 
 } // namespace llops

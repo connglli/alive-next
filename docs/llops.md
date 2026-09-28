@@ -24,9 +24,9 @@ The exit status repeats that answer, 0 when ok and 1 when not, so a caller can b
 
 A program is a module with exactly one defined function, whose body has no loop and ends every block in `ret`, `br`, `switch` or `unreachable`. Declarations and global variables are free, calls must name a declared function, and inline assembly and indirect calls are refused.
 
-`validate` reports a departure from that shape as a diagnostic. Every subcommand that rewrites a program reports the first departure as an error instead, changes nothing, and takes a body of one block.
+`validate` reports a departure from that shape as a diagnostic. Every subcommand that rewrites a program reports the first departure as an error instead, changes nothing, and takes a body of one block, except `assume` and `edit attrs`.
 
-The LLVM verifier decides what the shape rules do not cover, so a module that comes out of llops parses, is straightline, and verifies. A refusal is the normal case while an agent searches, not an error path: the diagnostic is the feedback.
+The LLVM verifier decides what the shape rules do not cover, so a module that comes out of llops parses, has the program shape, and verifies. A refusal is the normal case while an agent searches, not an error path: the diagnostic is the feedback.
 
 ## Value references
 
@@ -34,7 +34,7 @@ A value is named by the token that names it in printed IR, so a request can quot
 
 * `%3` or `3`, an unnamed value by its slot number.
 * `%x` or `x`, a named value; a name LLVM prints quoted is written `%"a b"`.
-* `#7`, the instruction at index 7 of the body, counting from 0 at the first instruction after the block label and including the terminator.
+* `#7`, the instruction at index 7 of the body, counting from 0 at the first instruction of the entry block, through the blocks in the order they are printed, terminators included.
 
 The index form is the only one that reaches an instruction defining no value, such as a store, a void call, or the terminator.
 

@@ -769,8 +769,8 @@ entry:
   def test_set_body_rejects_an_attribute_group(self):
     self.bad(self.edit("set_body", body="#0 = { nounwind }\n"), "set_body_contract")
 
-  def test_set_body_must_stay_straightline(self):
-    self.bad(self.edit("set_body", body="  unreachable"), "unsupported_terminator")
+  def test_set_body_refuses_a_loop(self):
+    self.bad(self.edit("set_body", body="  br label %l\nl:\n  br label %l"), "cyclic")
 
 
 class TestEditAttrs(Case):
@@ -1660,6 +1660,66 @@ entry:
     self.bad(self.harness(module=module, args=self.two_args()), "invalid")
 
 
+# A loop's callee after a cut at its header: the back edge is a call of the
+# hypothesis, so the body branches and does not loop.
+CALLEE = """declare i32 @k.ih(i32, i32, i32)
+
+define i32 @k(i32 %i, i32 %j, i32 %n) {
+head:
+  %c = icmp ult i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %odd = and i32 %i, 1
+  %even = icmp eq i32 %odd, 0
+  %inc = zext i1 %even to i32
+  %j.next = add i32 %j, %inc
+  %i.next = add i32 %i, 1
+  %r = call i32 @k.ih(i32 %i.next, i32 %j.next, i32 %n)
+  ret i32 %r
+
+exit:
+  %d = sub i32 %i, %j
+  ret i32 %d
+}
+"""
+
+
+class TestSeveralBlocks(Case):
+  ORDER = [{"op": "ule", "lhs": {"arg": 1}, "rhs": {"arg": 0}}]
+
+  def assumed(self, anchor, assertions=ORDER):
+    r = self.good(run("assume", {"module": CALLEE, "anchor": anchor, "assertions": assertions}))
+    self.assertTrue(self.conforms(r["module"]), r["module"])
+    return r["module"]
+
+  def test_an_assume_at_the_entry_of_a_callee_that_branches(self):
+    module = self.assumed({"at": "entry", "fn": "k"})
+    head = module[module.index("head:") : module.index("body:")]
+    self.assertIn("icmp ule i32 %j, %i", head)
+    self.assertIn("@llvm.assume", head)
+
+  def test_an_assume_before_a_call_in_a_later_block(self):
+    module = self.assumed({"at": "before_call", "fn": "k.ih"})
+    body = module[module.index("body:") : module.index("exit:")]
+    self.assertIn("icmp ule i32 %j.next, %i.next", body)
+    self.assertLess(body.index("@llvm.assume"), body.index("call i32 @k.ih"))
+
+  def test_a_reference_reaches_into_a_later_block(self):
+    fact = [{"fact": {"range": {"min": 0, "max": 256}}, "val": "%j.next"}]
+    module = self.assumed({"at": "before_inst", "inst": "%r"}, fact)
+    self.assertIn("icmp sge i32 %j.next, 0", module)
+
+  def test_attributes_on_a_module_that_branches(self):
+    request = {"op": "attrs", "fn": "k.ih", "param": 0, "attrs": {"noundef": True}}
+    r = self.good(run("edit", {"module": CALLEE, **request}))
+    self.assertIn("declare i32 @k.ih(i32 noundef, i32, i32)", r["module"])
+
+  def test_other_edits_still_take_one_block(self):
+    r = run("edit", {"module": CALLEE, "op": "commute", "v": "%j.next"})
+    self.bad(r, "shape_error")
+
+
 class TestAssume(Case):
   F = """define i32 @f(i32 %n) {
 entry:
@@ -1806,31 +1866,6 @@ declare i32 @g(i32)
       ),
       "not_found",
     )
-
-  def test_a_call_anchor_needs_a_single_basic_block(self):
-    module = """declare void @g(i32)
-
-define void @f(i32 %x) {
-entry:
-  br label %call
-
-call:
-  call void @g(i32 %x)
-  ret void
-}
-"""
-    r = self.bad(
-      run(
-        "assume",
-        {
-          "module": module,
-          "anchor": {"at": "before_call", "fn": "g"},
-          "assertions": [{"fact": {"noundef": True}, "arg": 0}],
-        },
-      ),
-      "shape_error",
-    )
-    self.assertEqual(r["error"]["message"], "assume needs a single basic block")
 
   def test_an_argument_index_out_of_range(self):
     module = """define i32 @f(i32 %n) {

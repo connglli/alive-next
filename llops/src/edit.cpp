@@ -446,7 +446,8 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
 
   CmdShape shape;
   llvm::json::Object shapeErr;
-  if (!parseCmdShape(args, "edit", shape, shapeErr))
+  // Attributes are on functions and parameters, so they need no block.
+  if (!parseCmdShape(args, "edit", shape, shapeErr, *op == "attrs"))
     return shapeErr;
   llvm::Module *M = shape.M;
   llvm::Function *F = shape.F;
