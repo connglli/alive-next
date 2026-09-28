@@ -59,9 +59,10 @@ export interface OutlineResult {
   result?: { type: string; live: Ref };
 }
 
-/** What `detach` answers: an outline, and the hypothesis a back edge calls. */
+/** What `detach` answers: an outline, the hypothesis, and which parameters were phis. */
 export interface DetachResult extends OutlineResult {
   hypothesis?: string;
+  phis?: number[];
 }
 
 export type AnalyzeKind = "knownbits" | "ranges" | "pointer" | "defined";

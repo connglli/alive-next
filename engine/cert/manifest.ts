@@ -97,6 +97,7 @@ export type Discharge =
       inner: string;
       detached?: true;
       hypothesis?: string;
+      phis?: { src: number[]; tgt: number[] };
     };
 
 /** One goal in a proof, from the pair it started with to the one it proved. */
@@ -296,6 +297,7 @@ function include(
       inner: inner.id,
       ...(outer.detached ? { detached: outer.detached } : {}),
       ...(outer.hypothesis ? { hypothesis: outer.hypothesis } : {}),
+      ...(outer.phis ? { phis: outer.phis } : {}),
     },
   };
   include(tree, outer, effects, goals, programs);

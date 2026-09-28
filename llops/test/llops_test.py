@@ -1377,6 +1377,22 @@ exit:
 }
 """
 
+STILL = """define i32 @g(i32 noundef %n, i32 noundef %x) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %k = phi i32 [ %x, %entry ], [ %k, %loop ]
+  %i.next = add i32 %i, %k
+  %c = icmp ult i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret i32 %i
+}
+"""
+
 
 class TestDetach(Case):
   def detach(self, module, block, callee, **tgt):
@@ -1385,6 +1401,7 @@ class TestDetach(Case):
 
   def reattaches(self, whole, half, callee):
     request = {"outer": half["outer"], "callee": half["callee"], "callee_name": callee}
+    request["phis"] = half["phis"]
     if "hypothesis" in half:
       request["hypothesis"] = half["hypothesis"]
     back = self.good(run("reattach", request))["module"]
@@ -1396,6 +1413,7 @@ class TestDetach(Case):
     )
     src = self.good(self.detach(whole, "%loop", "k"))
     self.assertEqual([p["live"] for p in src["params"]], ["%i", "%acc", "%n"])
+    self.assertEqual(src["phis"], [0, 1])
     self.assertEqual(src["hypothesis"], "k.ih")
     self.assertTrue(self.conforms(src["callee"]))
     self.reattaches(whole, src, "k")
@@ -1421,6 +1439,29 @@ class TestDetach(Case):
     self.reattaches(exit["outer"], header, "k2")
     self.reattaches(ROTATED, exit, "k1")
 
+  def test_a_phi_that_never_changes_comes_back(self):
+    # k is x on every iteration, a phi on the src side and x itself on the
+    # tgt's, so only the list of phis tells the two apart.
+    src = STILL
+    tgt = STILL.replace("  %k = phi i32 [ %x, %entry ], [ %k, %loop ]\n", "").replace(
+      "add i32 %i, %k", "add i32 %i, %x"
+    )
+    s = self.good(self.detach(src, "%loop", "k"))
+    self.assertEqual(s["phis"], [0, 1])
+    self.reattaches(src, s, "k")
+    live = {"%i": "%i", "%k": "%x", "%n": "%n"}
+    t = self.good(self.detach(tgt, "%loop", "k", params=s["params"], value_map=live))
+    self.assertEqual(t["phis"], [0])
+    self.reattaches(tgt, t, "k")
+
+  def test_a_value_from_outside_passed_as_it_changes_is_refused(self):
+    half = self.good(self.detach(STILL, "%loop", "k"))
+    request = {"outer": half["outer"], "callee": half["callee"], "callee_name": "k"}
+    request["hypothesis"] = half["hypothesis"]
+    self.bad(run("reattach", {**request, "phis": [1]}), "invalid")
+    self.bad(run("reattach", {**request, "phis": [3]}), "bad_request")
+    self.bad(run("reattach", request), "bad_request")
+
   def test_the_entry_block_is_not_detached(self):
     self.bad(self.detach(ROTATED, "%entry", "k"), "invalid")
 
@@ -1438,7 +1479,7 @@ class TestDetach(Case):
     marked = half["outer"].replace("call i32 @k(i32 ", "call i32 @k(i32 noundef ")
     self.assertNotEqual(marked, half["outer"])
     request = {"outer": marked, "callee": half["callee"], "callee_name": "k"}
-    self.bad(run("reattach", request), "invalid")
+    self.bad(run("reattach", {**request, "phis": half["phis"]}), "invalid")
 
   def test_canon_orders_phi_incoming_by_block(self):
     flipped = ROTATED.replace(

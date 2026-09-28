@@ -101,6 +101,8 @@ export type Effect =
       detached?: true;
       /** The declaration a detached loop's back edges call in place of the callee. */
       hypothesis?: string;
+      /** Which parameters of the callee were the block's phis, on each side. */
+      phis?: { src: number[]; tgt: number[] };
     }
   /**
    * Both sides of a callee goal gained a strengthened interface contract

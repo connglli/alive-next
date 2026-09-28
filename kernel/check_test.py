@@ -431,6 +431,7 @@ class Case(unittest.TestCase):
     outer = {"src": stored(s["outer"]), "tgt": stored(t["outer"])}
     inner = {"src": stored(s["callee"]), "tgt": stored(t["callee"])}
     cut = {"kind": "split", "detached": True, "callee": "k", "hypothesis": "k.ih"}
+    cut["phis"] = {"src": s["phis"], "tgt": t["phis"]}
     self.built.goal("g1", whole, whole, [], {**cut, "outer": "g2", "inner": "g3"})
     self.built.goal("g2", outer, outer, [], {"kind": "check"})
     self.built.goal("g3", inner, inner, [], {"kind": "check"})
@@ -823,6 +824,11 @@ class TestTampered(Case):
     )
     self.built.goal("g3", inner, {**inner, "src": claimed}, [], {"kind": "check"})
     self.refused(self.built.write(), "Hypothesis signature")
+
+  def test_a_detached_cut_that_names_no_phis(self):
+    self.detached(PARITY, PARITY_NUW)
+    del self.built.goals["g1"]["discharge"]["phis"]
+    self.refused(self.built.write(), "without naming the parameters that were its phis")
 
   def test_an_invariant_no_iteration_is_shown_to_keep(self):
     self.refused(self.invariant(kept=False), "no src step proves the entry predicates before @k.ih")

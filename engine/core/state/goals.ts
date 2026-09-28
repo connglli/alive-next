@@ -34,6 +34,8 @@ export interface Goal {
   detached?: true;
   /** The declaration the callee's back edges call, when it detached a loop. */
   hypothesis?: string;
+  /** Which parameters of the callee were the block's phis, on each side. */
+  phis?: { src: number[]; tgt: number[] };
   src: SideHistory;
   tgt: SideHistory;
   status: Status;
@@ -178,6 +180,7 @@ function apply(tree: Tree, effect: Effect): void {
           callee: effect.name,
           ...(effect.detached ? { detached: effect.detached } : {}),
           ...(effect.hypothesis ? { hypothesis: effect.hypothesis } : {}),
+          ...(effect.phis ? { phis: effect.phis } : {}),
           src: { history: [child.src] },
           tgt: { history: [child.tgt] },
           status: "open",

@@ -7,6 +7,7 @@ import { cut } from "./cut.ts";
 import { exitcond } from "./exitcond.ts";
 import { freeze } from "./freeze.ts";
 import { induction } from "./induction.ts";
+import { invariantphi } from "./invariantphi.ts";
 import { loop } from "./loop.ts";
 import { loopbranch } from "./loopbranch.ts";
 import { loopfreeze } from "./loopfreeze.ts";
@@ -48,6 +49,7 @@ export const scenarios: Scenario[] = [
   loopbranch,
   rotated,
   nested,
+  invariantphi,
   exitcond,
   loopfreeze,
   memloop,

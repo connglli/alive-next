@@ -940,6 +940,11 @@ class Check:
     detached = discharge.get("detached") is True
     if hypothesis and not detached:
       raise Refused(f"{gid} names a hypothesis for a cut that detached no block")
+    # A parameter that never changes is a phi or a value from outside, and
+    # only detach knew which.
+    phis = discharge.get("phis")
+    if detached and not isinstance(phis, dict):
+      raise Refused(f"{gid} detached a block without naming the parameters that were its phis")
     rebuild = "reattach" if detached else "inline"
 
     for side in ("src", "tgt"):
@@ -951,6 +956,8 @@ class Check:
       }
       if hypothesis:
         request["hypothesis"] = hypothesis
+      if detached:
+        request["phis"] = phis.get(side)
       back = self.package.run_llops(rebuild, request)["module"]
       same = self.package.run_llops("canon", {"module": back})["module"]
       whole = self.package.program(goal["end"][side])

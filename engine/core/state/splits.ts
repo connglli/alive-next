@@ -34,6 +34,8 @@ export type SplitPreviewResult =
       detached?: true;
       /** The declaration the callee's back edges call, when it detaches a loop. */
       hypothesis?: string;
+      /** Which parameters of the callee were the block's phis, on each side. */
+      phis?: { src: number[]; tgt: number[] };
       /** Outlined programs if value_map was provided and valid. */
       programs?: {
         outerSrc: string;
@@ -120,6 +122,7 @@ export class Splits {
       params: src.params,
       callee,
       ...detached,
+      ...(atBlock ? { phis: { src: src.phis ?? [], tgt: tgt.phis ?? [] } } : {}),
       programs: {
         outerSrc: src.outer,
         outerTgt: tgt.outer,
@@ -165,6 +168,7 @@ export class Splits {
     const detached = {
       ...(preview.detached ? { detached: preview.detached } : {}),
       ...(preview.hypothesis ? { hypothesis: preview.hypothesis } : {}),
+      ...(preview.phis ? { phis: preview.phis } : {}),
     };
     return {
       kind: "split",

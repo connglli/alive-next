@@ -182,15 +182,15 @@ The call is replaced by the callee's body in place, and the declaration that car
 
 Moves a block and every block it reaches into a fresh function, and turns every branch to the block into a call of it. A goal is cut this way at a join or at a loop header.
 
-Request `{ "module": ..., "side": "src", "block": "%bb2", "callee": "k" }`; the tgt side adds `params` and `value_map` as `outline` takes them. Response `{ "ok": true, "outer": ..., "callee": ..., "params": [ ... ], "hypothesis": "k.ih" }`.
+Request `{ "module": ..., "side": "src", "block": "%bb2", "callee": "k" }`; the tgt side adds `params` and `value_map` as `outline` takes them. Response `{ "ok": true, "outer": ..., "callee": ..., "params": [ ... ], "phis": [ 0, 1 ], "hypothesis": "k.ih" }`.
 
-The signature is the block's phis, then the values the moved blocks use from outside, in definition order. Every edge into the block becomes an edge into a fresh block that only calls the callee and returns what it answers. An edge from a moved block, which exists when the block heads a loop, calls the declared `hypothesis` instead, so the callee's body does not loop through it; `hypothesis` is absent when there is no such edge. The module may loop, and so may either half when the moved blocks hold a loop of their own. A block entered from outside other than through the named one is refused with `not_single_entry`, and so is the entry block.
+The signature is the block's phis, then the values the moved blocks use from outside, in definition order; a tgt side takes the src's, and `phis` gives the positions of the block's phis in it. Every edge into the block becomes an edge into a fresh block that only calls the callee and returns what it answers. An edge from a moved block, which exists when the block heads a loop, calls the declared `hypothesis` instead, so the callee's body does not loop through it; `hypothesis` is absent when there is no such edge. The module may loop, and so may either half when the moved blocks hold a loop of their own. A block entered from outside other than through the named one is refused with `not_single_entry`, and so is the entry block.
 
 ## reattach
 
-Request `{ "outer": ..., "callee": ..., "callee_name": "k", "hypothesis": "k.ih" }`, response `{ "ok": true, "module": ... }`.
+Request `{ "outer": ..., "callee": ..., "callee_name": "k", "phis": [ 0, 1 ], "hypothesis": "k.ih" }`, response `{ "ok": true, "module": ... }`.
 
-The inverse of `detach`, which the certificate checker runs. Every block that only calls the callee or its hypothesis, with a call `inline` accepts, and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there; a phi whose incoming values are one value or itself becomes that value. `canon` of the result is `canon` of the module `detach` started from.
+The inverse of `detach`, which the certificate checker runs. Every block that only calls the callee or its hypothesis, with a call `inline` accepts, and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there. Those `phis` names stay phis, and each other one has to be passed as one value or as itself, and becomes that value. `canon` of the result is `canon` of the module `detach` started from.
 
 ## analyze
 

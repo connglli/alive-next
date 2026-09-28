@@ -148,6 +148,7 @@ describe.skipIf(!built)("splitting", () => {
     const tree = record(result.effects);
     expect(goal(tree, "g3").detached).toBe(true);
     expect(goal(tree, "g3").hypothesis).toBe("outlined_g3.ih");
+    expect(goal(tree, "g3").phis).toEqual({ src: [0], tgt: [0] });
     expect(store.get(head(goal(tree, "g3"), "src"))).toContain("call i32 @outlined_g3.ih(");
   });
 

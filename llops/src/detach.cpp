@@ -248,6 +248,28 @@ llvm::CallInst *onlyCalls(llvm::BasicBlock &Q, llvm::ArrayRef<llvm::Function *> 
   return call;
 }
 
+// The positions of the parameters that are B's phis.
+llvm::json::Array phiPositions(llvm::ArrayRef<llvm::Value *> params, llvm::BasicBlock *B) {
+  llvm::json::Array positions;
+  for (unsigned i = 0; i < params.size(); ++i)
+    if (auto *phi = llvm::dyn_cast<llvm::PHINode>(params[i]); phi && phi->getParent() == B)
+      positions.push_back(i);
+  return positions;
+}
+
+// Which of `count` parameters `list` names as phis, or nothing when it names
+// a position the callee does not have.
+std::optional<std::vector<bool>> phiParams(const llvm::json::Array &list, unsigned count) {
+  std::vector<bool> isPhi(count, false);
+  for (const auto &entry : list) {
+    auto i = entry.getAsInteger();
+    if (!i || *i < 0 || *i >= count)
+      return std::nullopt;
+    isPhi[*i] = true;
+  }
+  return isPhi;
+}
+
 } // namespace
 
 llvm::json::Object detachCmd(llvm::json::Object &args) {
@@ -307,6 +329,7 @@ llvm::json::Object detachCmd(llvm::json::Object &args) {
     paramInfo = *args.getArray("params");
   }
 
+  auto phis = phiPositions(params, B);
   bool recurses = false;
   llvm::Function *k = cutOut(M, *F, region, params, *name, hypothesis, recurses);
   for (unsigned i = 0; i < paramInfo.size(); ++i)
@@ -323,6 +346,7 @@ llvm::json::Object detachCmd(llvm::json::Object &args) {
   resp["outer"] = printModule(*outer);
   resp["callee"] = printModule(*callee);
   resp["params"] = std::move(paramInfo);
+  resp["phis"] = std::move(phis);
   if (recurses)
     resp["hypothesis"] = hypothesis;
   return resp;
@@ -333,8 +357,9 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
   auto calleeText = args.getString("callee");
   auto name = args.getString("callee_name");
   auto hypothesis = args.getString("hypothesis");
-  if (!outerText || !calleeText || !name)
-    return errResponse("bad_request", "reattach needs 'outer', 'callee' and 'callee_name'");
+  auto *phiList = args.getArray("phis");
+  if (!outerText || !calleeText || !name || !phiList)
+    return errResponse("bad_request", "reattach needs 'outer', 'callee', 'callee_name' and 'phis'");
 
   std::string parseErr;
   auto outerMwc = parseModule(*outerText, &parseErr);
@@ -354,6 +379,9 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
   if (!decl || decl->getFunctionType() != K->getFunctionType())
     return errResponse("type_mismatch", "the outer does not declare '@" + name->str() +
                                             "' as the callee defines it");
+  auto isPhi = phiParams(*phiList, K->arg_size());
+  if (!isPhi)
+    return errResponse("bad_request", "'phis' names a parameter the callee does not have");
 
   llvm::ValueToValueMapTy vmap;
   llvm::json::Object err;
@@ -423,13 +451,18 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
   for (llvm::BasicBlock *Q : calls)
     Q->eraseFromParent();
 
-  // A parameter every edge passes as one value, or as itself, was that value.
-  for (llvm::PHINode *phi : phis)
-    if (phi->getNumIncomingValues() > 0)
-      if (llvm::Value *same = phi->hasConstantValue()) {
-        phi->replaceAllUsesWith(same);
-        phi->eraseFromParent();
-      }
+  // A parameter that was not one of the block's phis was a value from
+  // outside, which every edge passes as that value or as itself.
+  for (unsigned i = 0; i < phis.size(); ++i) {
+    if ((*isPhi)[i] || phis[i]->getNumIncomingValues() == 0)
+      continue;
+    llvm::Value *same = phis[i]->hasConstantValue();
+    if (!same)
+      return errResponse("invalid", "parameter " + std::to_string(i) +
+                                        " is not a phi, yet the calls pass it different values");
+    phis[i]->replaceAllUsesWith(same);
+    phis[i]->eraseFromParent();
+  }
   for (llvm::Function *target : targets)
     if (target->use_empty())
       target->eraseFromParent();
