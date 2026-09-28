@@ -1,8 +1,10 @@
 #include "irutil.h"
 
+#include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/CFG.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
@@ -70,10 +72,27 @@ llvm::BasicBlock *singleBlock(llvm::Function &F) {
   return &F.getEntryBlock();
 }
 
+namespace {
+
+// Blocks in reverse postorder from the entry, following each terminator's
+// successors in order, so where a block was printed does not change what the
+// program canonicalizes to. Blocks the entry does not reach follow the rest.
+void layOutBlocks(llvm::Function &F) {
+  llvm::BasicBlock *last = nullptr;
+  for (llvm::BasicBlock *BB : llvm::ReversePostOrderTraversal<llvm::Function *>(&F)) {
+    if (last)
+      BB->moveAfter(last);
+    last = BB;
+  }
+}
+
+} // namespace
+
 std::string canonModule(llvm::Module &M) {
   for (auto &F : M) {
     if (F.isDeclaration())
       continue;
+    layOutBlocks(F);
     for (auto &arg : F.args())
       arg.setName("");
     unsigned blockIndex = 0;

@@ -313,6 +313,55 @@ class TestCanon(Case):
       "}\n",
     )
 
+  def test_blocks_are_laid_out_in_reverse_postorder(self):
+    printed = """define i32 @f(i32 %x) {
+entry:
+  %c = icmp slt i32 %x, 0
+  br i1 %c, label %flip, label %join
+
+flip:
+  %m = sub i32 0, %x
+  br label %join
+
+join:
+  %a = phi i32 [ %m, %flip ], [ %x, %entry ]
+  ret i32 %a
+}
+"""
+    moved = """define i32 @f(i32 %x) {
+entry:
+  %c = icmp slt i32 %x, 0
+  br i1 %c, label %flip, label %join
+
+join:
+  %a = phi i32 [ %m, %flip ], [ %x, %entry ]
+  ret i32 %a
+
+flip:
+  %m = sub i32 0, %x
+  br label %join
+}
+"""
+    canon = self.canon(printed)
+    self.assertEqual(self.canon(moved), canon)
+    self.assertEqual(self.canon(canon), canon)
+    self.assertLess(canon.index("sub i32 0"), canon.index("phi i32"))
+
+  def test_a_block_the_entry_does_not_reach_goes_last(self):
+    module = """define i32 @f(i32 %x) {
+entry:
+  br label %done
+
+dead:
+  br label %done
+
+done:
+  ret i32 %x
+}
+"""
+    canon = self.canon(module)
+    self.assertLess(canon.index("ret i32"), canon.rindex("br label"))
+
   def test_idempotent(self):
     once = self.canon(F_SIMPLE)
     self.assertEqual(once, self.canon(once))

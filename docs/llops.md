@@ -65,7 +65,7 @@ A response is ok when the module parses. `conforms` says whether it is a program
 
 Request `{ "module": "<ir text>" }`, response `{ "ok": true, "module": ... }`.
 
-Every local name is dropped, so LLVM numbers values in definition order with the arguments first, and blocks are named by position starting at `entry`. Two programs that differ only in names canonicalize to identical bytes, which is what makes a content hash a program's identity, and canon over its own output changes nothing.
+Every local name is dropped, so LLVM numbers values in definition order with the arguments first, and blocks, laid out in reverse postorder from the entry, are named by position starting at `entry`. Two programs that differ only in names canonicalize to identical bytes, which is what makes a content hash a program's identity, and canon over its own output changes nothing.
 
 A module holding an `undef` value is refused with the error code `undef`. Canon is the gate text passes through to become a stored program, and every program is reasoned about under the [no-`undef` model](./design.md), so the refusal keeps what is stored inside what any later question can be about. The value, not the word, is what is refused: poison is a value of its own and passes, a local called `%undef` is an ordinary name, and metadata passes, since none of them put an `undef` into a runtime state.
 
