@@ -549,7 +549,18 @@ class Check:
         )
 
     discharge = goal["discharge"]
-    if discharge["kind"] == "check":
+    if discharge["kind"] == "check" and goal["end"]["src"] == goal["end"]["tgt"]:
+      # A program refines itself, so the same program on both sides needs no
+      # solver, and whether it loops does not matter.
+      self.report(
+        result="OK",
+        gid=gid,
+        side="pair",
+        tool="kernel",
+        check="Final refinement",
+        notes="the two sides are the same program",
+      )
+    elif discharge["kind"] == "check":
       self.asked(
         gid,
         "pair",

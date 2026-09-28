@@ -146,7 +146,7 @@ A run can begin with a small-timeout `check` of the root pair. If that check pro
 
 A certified step shows the step is valid; it says nothing about whether the path still leads anywhere. So after every certified step (a commit, an apply, a strengthen), the framework immediately runs a small-timeout `check` on the goal's new current pair:
 
-- Proved: the goal discharges early. In particular, the last step of a successful chain discharges the goal without an explicit `check` call, since alpha-equivalence is tried first.
+- Proved: the goal discharges early. In particular, the last step of a successful chain discharges the goal without an explicit `check` call, since a pair whose sides are the same program is proved without a solver.
 - Timeout: no information, continue.
 - Refuted with a concrete counterexample: the current pair can never be proved, so the framework marks the path dead, forcing a revert or an unsplit, and returns the counterexample as a hint.
 
@@ -216,7 +216,7 @@ Both children are cross-checked once at the end, after phase 3, and not between 
 
 ### Discharge
 
-- `check(gid, timeout, unroll)`: try alpha-equivalence first, then a direct alive2 run on the goal's current pair. Pass: goal proved. Fail: a counterexample. On the root's original pair it refutes the run; anywhere else the goal stays open. Timeout: goal stays open. A pair that loops is never proved: alive2 searches its first `unroll` iterations, and a counterexample it finds is a hint for `report_cex`. The timeout is the agent's knob, because spending solver time is a search decision. The framework also runs a small-timeout `check` on its own after every certified step; see "Eager cross-checking".
+- `check(gid, timeout, unroll)`: a pair whose sides are the same program is proved at once, loop or not; any other is a direct alive2 run on the goal's current pair. Pass: goal proved. Fail: a counterexample. On the root's original pair it refutes the run; anywhere else the goal stays open. Timeout: goal stays open. A pair that loops is never proved: alive2 searches its first `unroll` iterations, and a counterexample it finds is a hint for `report_cex`. The timeout is the agent's knob, because spending solver time is a search decision. The framework also runs a small-timeout `check` on its own after every certified step; see "Eager cross-checking".
 
 ### Counterexample search and computation
 
@@ -239,7 +239,7 @@ The script verifies:
 2. alive2-backed steps and leaf discharges: rerun alive-tv on the recorded pair in the recorded direction; the result must be "correct". Replay timeouts should be more generous than the originals, since solver timing varies across machines.
 3. Rule steps: re-apply the recorded rule at the recorded location and check that the output matches the after-hash.
 4. Split faithfulness: inline the callee back into the outer program at the call site, or reattach a detached one, and check alpha-equivalence against the parent's program, per side. Mechanical.
-5. Alpha-equivalence discharges: recheck syntactic equality.
+5. Identical discharges: a leaf whose two sides are the same program passes without a solver, loop or not.
 6. Composition: the root is verified iff every leaf discharge and every faithfulness check passed and every parent's children are accounted for.
 
 The consequence for trust is significant: the framework is now just a search assistant and drops out of the trust base entirely. Anything it gets wrong (bookkeeping, direction, outlining) surfaces as a failed replay. The composition rule and the faithfulness check live in `kernel/check.py`, which is small, standalone, and auditable.

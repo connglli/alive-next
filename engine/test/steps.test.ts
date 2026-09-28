@@ -74,9 +74,31 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+/** A loop, which alive2 is asked about only with an unroll factor. */
+const LOOP = `define i32 @f(i32 %n) {
+entry:
+  br label %l
+
+l:
+  %i = phi i32 [ 0, %entry ], [ %j, %l ]
+  %j = add i32 %i, 1
+  %c = icmp ult i32 %j, %n
+  br i1 %c, label %l, label %e
+
+e:
+  ret i32 %i
+}
+`;
+/** The same loop, returning one iteration late. */
+const LATE = LOOP.replace("ret i32 %i", "ret i32 %j");
+
 async function tree(...events: Event[]) {
-  const src = await store.put(SRC);
-  const tgt = await store.put(TGT);
+  return treeOf(SRC, TGT, ...events);
+}
+
+async function treeOf(srcText: string, tgtText: string, ...events: Event[]) {
+  const src = await store.put(srcText);
+  const tgt = await store.put(tgtText);
   const start: Event[] = [{ kind: "start", src, tgt, config: {}, versions: {} }];
   return derive([...start, ...events].map((event) => ({ ...event, time: 0, prev: "" }) as Entry));
 }
@@ -200,6 +222,15 @@ describe("rewriting", () => {
     expect(result.effects[1]).toEqual({ effect: "proved", gid: "g1" });
   });
 
+  test("a rule that leaves a loop's two sides the same proves it", async () => {
+    const { steps, checker } = rewriting(LOOP);
+    const result = await steps.rewrite(await treeOf(LATE, LOOP), "g1", "src", ["x"]);
+
+    if (result.kind !== "certified") throw new Error("expected the rewrite to land");
+    expect(result.effects[1]).toEqual({ effect: "proved", gid: "g1" });
+    expect(checker.calls).toHaveLength(0);
+  });
+
   test("an unchanged answer moves nothing and asks nothing", async () => {
     const { steps, checker } = rewriting(SRC);
     const result = await steps.rewrite(await tree(), "g1", "src", ["addi-zero-to-x"]);
@@ -262,21 +293,7 @@ describe("stepping", () => {
   test("puts no program that loops to alive2 without an unroll factor", async () => {
     const checker = new FakeChecker(["correct"]);
     const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
-    const loop = `define i32 @f(i32 %n) {
-entry:
-  br label %l
-
-l:
-  %i = phi i32 [ 0, %entry ], [ %j, %l ]
-  %j = add i32 %i, 1
-  %c = icmp ult i32 %j, %n
-  br i1 %c, label %l, label %e
-
-e:
-  ret i32 %i
-}
-`;
-    const result = await steps.refinementCheck(loop, loop);
+    const result = await steps.refinementCheck(LOOP, LATE);
     expect(result.outcome).toBe("error");
     expect(result.detail).toContain("loops");
     expect(checker.calls).toHaveLength(0);
@@ -548,6 +565,15 @@ describe("checking a goal", () => {
     expect(result.effects).toEqual([{ effect: "proved", gid: "g1" }]);
   });
 
+  test("proves a pair whose sides are the same program, loop or not, with no solver", async () => {
+    const checker = new FakeChecker([]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const result = await steps.checkGoal(await treeOf(LOOP, LOOP), "g1");
+    expect(result.outcome).toBe("proved");
+    expect(result.effects).toEqual([{ effect: "proved", gid: "g1" }]);
+    expect(checker.calls).toHaveLength(0);
+  });
+
   test("refutes the run when the pair is the root's original one", async () => {
     const steps = new Steps(
       store,
@@ -599,8 +625,8 @@ describe("checking a goal", () => {
       llops,
       unrewriting,
     );
-    const src = await store.put(SRC);
-    const result = await steps.checkGoal(await tree(cutG1(src, src)), "g3");
+    const [src, tgt] = [await store.put(SRC), await store.put(TGT)];
+    const result = await steps.checkGoal(await tree(cutG1(src, tgt)), "g3");
     expect(result.outcome).toBe("refuted");
     expect(result.effects).toEqual([]);
   });
@@ -645,10 +671,10 @@ describe("checking a goal", () => {
   test("always passes --disable-undef-input to goal checks", async () => {
     const checker = new FakeChecker(["unknown", "unknown", "unknown"]);
     const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
-    const src = await store.put(SRC);
+    const [src, tgt] = [await store.put(SRC), await store.put(TGT)];
 
     await steps.checkGoal(await tree(), "g1");
-    const withCut = await tree(cutG1(src, src));
+    const withCut = await tree(cutG1(src, tgt));
     await steps.checkGoal(withCut, "g2");
     await steps.checkGoal(withCut, "g3");
     expect(checker.calls[0]?.flags).toEqual(["--disable-undef-input"]);

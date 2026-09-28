@@ -423,13 +423,15 @@ describe.skipIf(!built)("the tool layer", () => {
     const eagerTools = createProofAssistantTools(eagerSession);
 
     await callFrom(eagerTools, "tx_begin", { gid: "g1", side: "src" });
+    // The tgt's shift would leave the two sides the same program, which is
+    // proved without asking; commuting the multiply leaves a question.
     await callFrom(eagerTools, "tx_edit", {
       op: "replace",
       v: "%2",
-      insts: ["%s = shl i32 %1, 3"],
+      insts: ["%s = mul i32 8, %1"],
     });
     const res = await callFrom(eagerTools, "tx_commit", {});
-    expect(res).toContain("certified, head is p2, the new pair is unknown (7ms, 3000ms budget)");
+    expect(res).toContain("certified, head is p3, the new pair is unknown (7ms, 3000ms budget)");
   });
 
   test("tx_commit surfaces counterexample detail when eager check is refuted", async () => {
@@ -458,13 +460,15 @@ describe.skipIf(!built)("the tool layer", () => {
     const eagerTools = createProofAssistantTools(eagerSession);
 
     await callFrom(eagerTools, "tx_begin", { gid: "g1", side: "src" });
+    // The tgt's shift would leave the two sides the same program, which is
+    // proved without asking; commuting the multiply leaves a question.
     await callFrom(eagerTools, "tx_edit", {
       op: "replace",
       v: "%2",
-      insts: ["%s = shl i32 %1, 3"],
+      insts: ["%s = mul i32 8, %1"],
     });
     const res = await callFrom(eagerTools, "tx_commit", {});
-    expect(res).toContain("certified, head is p2, the new pair is refuted (12ms, 3000ms budget)");
+    expect(res).toContain("certified, head is p3, the new pair is refuted (12ms, 3000ms budget)");
     expect(res).toContain("Example:\ni32 %x = 42");
   });
 

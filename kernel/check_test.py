@@ -490,6 +490,12 @@ class TestGolden(Case):
   def test_a_loop_invariant_proved_on_entry_and_kept_verifies(self):
     self.verified(self.invariant())
 
+  def test_a_loop_against_itself_verifies_with_no_solver(self):
+    pair = {"src": self.built.program(LOOP), "tgt": self.built.program(LOOP)}
+    self.built.goal("g1", pair, pair, [], {"kind": "check"})
+    done = self.verified(self.built.write())
+    self.assertIn("0 solver queries", done.stdout)
+
   def test_a_pair_that_branches_without_looping_verifies(self):
     pair = {"src": self.built.program(BRANCH), "tgt": self.built.program(SELECT)}
     self.built.goal("g1", pair, pair, [], {"kind": "check"})

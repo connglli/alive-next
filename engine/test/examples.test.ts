@@ -123,7 +123,6 @@ describe.skipIf(!built)("scenarios, with a stand-in checker", () => {
       });
       await one.prove(session);
       expect(session.finish()).toBe("verified");
-      expect(checker.calls).toBeGreaterThan(0);
 
       // The tree is derived state, so a session picked back up has to be the
       // session that was put down.

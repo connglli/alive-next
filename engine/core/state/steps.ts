@@ -242,9 +242,11 @@ export class Steps {
     const srcHash = head(goal, "src");
     const tgtHash = head(goal, "tgt");
     // alive-tv answers a loop only for the iterations it unrolls, so a pair
-    // that loops is searched for a counterexample and never proved.
+    // that loops is searched for a counterexample and never proved, unless
+    // its two sides are the same program.
     const loops =
-      (await this.loops(this.store.get(srcHash))) || (await this.loops(this.store.get(tgtHash)));
+      srcHash !== tgtHash &&
+      ((await this.loops(this.store.get(srcHash))) || (await this.loops(this.store.get(tgtHash))));
     if (loops && unroll === undefined)
       return {
         outcome: "unknown",
@@ -607,6 +609,9 @@ export class Steps {
     pair: { src: string; tgt: string },
     options: { timeoutMs: number; unroll?: number },
   ): Promise<CheckResult> {
+    // A program refines itself, so the same program on both sides needs no
+    // solver, and whether it loops does not matter.
+    if (pair.src === pair.tgt) return unasked("the two sides are the same program", "correct");
     const cyclic = (await this.loops(pair.src)) || (await this.loops(pair.tgt));
     if (cyclic && options.unroll === undefined) return unasked(LOOPS);
     // The no-`undef` model: every query is asked with `--disable-undef-input`.
@@ -685,12 +690,12 @@ function rootPair(tree: Tree, gid: string, goal: Goal): boolean {
 const LOOPS = "a program loops, and alive-tv answers a loop only for the iterations it unrolls";
 
 /**
- * A refusal that cost no solver time, shaped like one that did. Its budget is
+ * An answer that cost no solver time, shaped like one that did. Its budget is
  * zero because none was spent, which is what tells a reader that no check ran.
  */
-function unasked(detail: string): CheckResult {
+function unasked(detail: string, outcome: CheckOutcome = "error"): CheckResult {
   const invocation: Invocation = { binary: "", flags: [], timeoutMs: 0 };
-  return { outcome: "error", detail, invocation, stdout: "", ms: 0 };
+  return { outcome, detail, invocation, stdout: "", ms: 0 };
 }
 
 function historyKey(src: Hash, tgt: Hash, unroll?: number): string {
