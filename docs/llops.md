@@ -52,7 +52,8 @@ A response is ok when the module parses. `conforms` says whether it is a program
 | --- | --- |
 | `no_define` | the module defines no function |
 | `too_many_defines` | the module defines more than one |
-| `not_straightline` | the body has more than one block |
+| `not_straightline` | the body has more than one block and no loop |
+| `cyclic` | the body has a loop |
 | `no_terminator` | the body does not end in a terminator |
 | `unsupported_terminator` | the body ends in something other than `ret` |
 | `inline_asm` | the body contains inline assembly |

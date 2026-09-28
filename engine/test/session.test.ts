@@ -469,9 +469,7 @@ exit:
       eager: true,
     });
 
-    await expect(attempt).rejects.toThrow(
-      /src program is outside the program shape: not_straightline/,
-    );
+    await expect(attempt).rejects.toThrow(/src program is outside the program shape: cyclic/);
     expect(checker.calls).toBe(0);
   });
 

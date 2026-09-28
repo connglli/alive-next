@@ -687,7 +687,7 @@ class TestTampered(Case):
     # unrolls and says nothing of the one where the two part company.
     pair = {"src": self.built.program(LOOP), "tgt": self.built.program(LATE)}
     self.built.goal("g1", pair, pair, [], {"kind": "check"})
-    self.refused(self.built.write(), "outside the program shape: not_straightline")
+    self.refused(self.built.write(), "outside the program shape: cyclic")
 
   def test_a_program_that_is_not_there(self):
     package = self.leaf()
@@ -1067,7 +1067,7 @@ class TestRefuted(unittest.TestCase):
     package = self.built.refuted(LOOP, LATE)
     done = self.re_asked(package)
     self.assertNotEqual(done.returncode, 0, done.stdout)
-    self.assertIn("outside the program shape: not_straightline", done.stdout + done.stderr)
+    self.assertIn("outside the program shape: cyclic", done.stdout + done.stderr)
 
   def test_a_pair_that_refines_is_not_a_counterexample(self):
     package = self.built.refuted(SRC, TGT)

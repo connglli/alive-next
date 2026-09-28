@@ -2,6 +2,7 @@
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Analysis/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
@@ -213,6 +214,18 @@ bool holdsUndef(const llvm::Module &M) {
   return false;
 }
 
+namespace {
+
+// The block a branch goes back to, if the body loops. Only blocks the entry
+// reaches are searched; the rest never run.
+const llvm::BasicBlock *loopHeader(const llvm::Function &F) {
+  llvm::SmallVector<std::pair<const llvm::BasicBlock *, const llvm::BasicBlock *>> back;
+  llvm::FindFunctionBackedges(F, back);
+  return back.empty() ? nullptr : back.front().second;
+}
+
+} // namespace
+
 std::vector<Diag> validateModule(llvm::Module &M) {
   std::vector<Diag> diags;
 
@@ -234,10 +247,18 @@ std::vector<Diag> validateModule(llvm::Module &M) {
 
   auto *BB = singleBlock(*F);
   if (!BB) {
-    diags.push_back({Diag::Severity::Error, "not_straightline",
-                     "function '" + F->getName().str() +
-                         "' has more than one basic block; v1 is "
-                         "straightline only"});
+    if (auto *header = loopHeader(*F)) {
+      std::string name;
+      llvm::raw_string_ostream os(name);
+      header->printAsOperand(os, false);
+      diags.push_back({Diag::Severity::Error, "cyclic",
+                       "function '" + F->getName().str() + "' loops back to '" + name + "'"});
+    } else {
+      diags.push_back({Diag::Severity::Error, "not_straightline",
+                       "function '" + F->getName().str() +
+                           "' has more than one basic block; v1 is "
+                           "straightline only"});
+    }
     return diags;
   }
 

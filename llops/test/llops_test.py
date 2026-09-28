@@ -221,6 +221,26 @@ next:
     r = self.good(run("validate", {"module": module}))
     self.assertEqual(r["diagnostics"][0]["code"], "not_straightline")
 
+  def test_a_loop(self):
+    module = """define i32 @f(i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %i.next = add i32 %i, 1
+  %c = icmp ult i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret i32 %i
+}
+"""
+    r = self.good(run("validate", {"module": module}))
+    self.assertFalse(r["conforms"])
+    self.assertEqual(r["diagnostics"][0]["code"], "cyclic")
+    self.assertIn("'%loop'", r["diagnostics"][0]["message"])
+
   def test_two_definitions(self):
     module = F_SIMPLE + F_SIMPLE.replace("@f", "@g")
     r = self.good(run("validate", {"module": module}))
