@@ -23,7 +23,7 @@ namespace {
 const char *kUsage = "usage: llops <subcommand> < request.json > response.json\n"
                      "\n"
                      "subcommands:\n"
-                     "  validate   check the straightline v1 invariants\n"
+                     "  validate   check the program shape\n"
                      "  canon      renumber values canonically\n"
                      "  edit       apply one semantic edit op\n"
                      "  opt        apply one structural optimizer op\n"

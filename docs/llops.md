@@ -223,7 +223,7 @@ Response `{ "ok": true, "module": ..., "observations": [ ... ] }`.
 
 Everything worth judging the run on is loaded back under a name beginning `obs.`, because llubi's verbose trace prints each instruction with its result and that is the only channel wide enough: the exit code is the return value truncated to eight bits. The return value goes through memory for the same reason the final bytes do, so every observation is one trace line of the shape `%obs.something = load ... -> value`. `observations` lists those names in the order the harness produces them: the result first when the entry returns one, then the bytes of each pointer argument.
 
-The harness is not a v1 program, since it defines a second function, so `validate` will refuse what this produces. It is an artifact for the interpreter rather than a program under proof.
+The harness does not have the program shape, since it defines a second function, so `validate` will refuse what this produces. It is an artifact for the interpreter rather than a program under proof.
 
 ## assume
 

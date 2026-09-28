@@ -297,7 +297,8 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
 
   llvm::Function *F = singleFunction(M);
   if (!F)
-    return errResponse("shape_error", "assume needs the v1 shape: exactly one defined function");
+    return errResponse("shape_error",
+                       "assume needs the program shape: exactly one defined function");
   ValueRefs refs(*F);
   llvm::Instruction *before = nullptr;
   llvm::CallInst *call = nullptr;

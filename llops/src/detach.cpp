@@ -294,7 +294,8 @@ llvm::json::Object detachCmd(llvm::json::Object &args) {
   llvm::Module &M = *mwc->mod;
   llvm::Function *F = singleFunction(M);
   if (!F)
-    return errResponse("shape_error", "detach needs the v1 shape: exactly one defined function");
+    return errResponse("shape_error",
+                       "detach needs the program shape: exactly one defined function");
   if (auto d = departure(*F, M))
     return errResponse(d->code, d->message);
   std::string hypothesis = name->str() + ".ih";

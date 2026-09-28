@@ -28,7 +28,7 @@ describe.skipIf(!built)("llops", () => {
     expect(await llops.version()).toMatch(/^llops \d/);
   });
 
-  test("validates a v1 program", async () => {
+  test("validates a program", async () => {
     const result = await llops.validate(F);
     if (!result.ok) throw new Error(result.message);
     expect(result.conforms).toBe(true);

@@ -31,7 +31,7 @@ A flawed proposal wastes search budget, but can never compromise soundness or yi
 * **Transactions and Window Narrowing:** Edits occur inside transactions. On commit, the framework isolates the edited instruction window into small outlined subfunctions and validates the narrowed window with `alive2`, falling back to whole-function validation only if needed.
 * **Decomposition via Outlining:** Large functions are cut by outlining a suffix into a fresh shared callee `g`. This yields two smaller goals: an outer goal with an uninterpreted call to `g` (preserving cut-point state and memory refinement), and a callee goal for `g`'s body.
 * **Interface Strengthening:** Callee input preconditions (such as `noundef`, alignment, and known bits) are first proved at the call site in the outer caller before being assumed on callee parameters.
-* **Scope (v1):** Straightline LLVM IR functions (single basic block ending in `ret`), covering all alive2-supported operations (integer/float arithmetic, bit manipulations, vector operations, memory loads/stores, and function calls).
+* **Scope:** LLVM IR functions, branches included and loops proved by induction once split at their headers, covering all alive2-supported operations (integer/float arithmetic, bit manipulations, vector operations, memory loads/stores, and function calls).
 
 ### System Architecture and Language Split
 

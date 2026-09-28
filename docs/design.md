@@ -26,9 +26,18 @@ The proof writer (human or agents) is entirely untrusted. It decides *what* to t
 
 A wrong proposal wastes time; it never produces a wrong certificate. Since refinement is transitive, a chain of certified steps from LHS to RHS certifies the whole translation.
 
-## Scope (v1)
+## Scope
 
-Straightline code (no conditionals, no loops), but **all** features alive2 supports, including memory operations. Target size: >1000 lines. A pair with a loop can be refuted, by running it, and not proved; conditionals and loops need further design.
+**All** features alive2 supports, including memory operations and branches. A loop is proved by induction once split at its header, and refuted by running it.
+
+Induction reaches two loops only where they meet at the header once per iteration with the same state, and where a fact over the callee's parameters relates them there. That leaves out of reach:
+
+* A variable the tgt dropped, such as `%i` after linear function test replacement: the tgt would have to pass the shared hypothesis a value refining the src's.
+* Unrolling with a remainder loop, a loop replaced by a call such as `memset`, and a deleted loop: the tgt makes no call to pair with the src's call of its hypothesis, and alive2 refuses a call on one side only, since it may not return.
+* Reordering transformations (interchange, fusion, fission, tiling, reversal): the two sides agree on memory only at the end, which takes a quantified invariant.
+* An irreducible loop, whose second entry breaks the single entry a split at a block needs.
+* A pointer carried as loop state: a fact compares addresses, not the objects the pointers may access.
+* A loop whose loaded values flow into its hypothesis: sound, but the query times out.
 
 ## Parameter definedness and the no-undef model
 
@@ -75,6 +84,8 @@ The declared `g` must have one signature shared by both sides. The signature is 
 
 The only trusted glue is that the outlining transformation itself is faithful (the outer program plus the callee really is the original program). That is mechanical and small.
 
+A split at a block detaches it instead: the block and every block it reaches become `g`, and each branch to the block becomes a call of `g`. At a loop header, the back edge calls a declared hypothesis `g.ih` in place of `g`, so the callee is one iteration and does not loop. Proving that pair, with `g.ih` an unknown function both sides share, proves the loop by induction: each side calls `g.ih` where it would go around again, so a tgt cannot stop where the src goes on. The glue a checker trusts is `reattach`, the inverse of detaching, as `inline` is of outlining.
+
 A cut leaves the callee's parameters poison-capable, since nothing about a fresh function says its arguments are defined. `strengthen(gid, {param: {noundef}})` is what states otherwise, proved at the call site. The proof fails where the value at the cut can be poison, and then the cut has to move or the program has to be made defined there.
 
 Known cost: alive2 is conservative at function entry (arbitrary memory, arbitrary aliasing) and around unknown calls (code cannot move across the cut). So a bad cut placement produces spurious failures. That is fine: cut placement is the agent's job, and a local failure is feedback to the agent, never a bug report. When a cut fails because facts established before the cut are lost, the fix is interface strengthening (below).
@@ -99,6 +110,8 @@ Putting an attribute on `g` is not free. If the fact were false, the annotated o
 
 1. Prove the fact: insert `llvm.assume(c)` just before the call in the outer src program and validate the insertion with alive2. This query scales with the outer program, because that is where the evidence for `c` lives.
 2. Only then rewrite `g`'s declaration with the attribute, in the outer goal (both sides) and the callee goal's signature. With the assume in place this adds no new UB, and the step is cheap to validate.
+
+A detached loop's callee also calls `g.ih`, so phase 1 is proved there too, before that call in the callee's src with the fact assumed at the entry: the loop's entry establishes the fact and each iteration keeps it, which makes it an invariant. Such a `g` takes no function attribute, since induction cannot prove `willreturn`.
 
 This is the deepest cost item in the design: a fact assumed by a callee is proved in its outer goal. The cost control is hierarchical splitting, so that each fact is proved inside a chunk-sized goal rather than at the top level. Split placement and fact placement therefore interact, and that interaction is part of the agent's search problem.
 
@@ -163,7 +176,7 @@ Every tool call is logged. Tools that create certified steps record enough to re
 
 ### Splitting
 
-- `split(gid, src_cut, tgt_cut, value_map)`: outlines both sides of an open goal at the given cut points (a cut point names a position in the instruction sequence by the value defined there). The src side's live values at the cut define `g`'s signature; `value_map` gives the corresponding tgt values. Creates two child goals (outer and callee); the parent's status becomes `split` and its heads are frozen. The parent is proved automatically when both children are. Fails structurally if the map is ill-typed or the tgt suffix uses values not covered by the map.
+- `split(gid, src_cut, tgt_cut, value_map)`: outlines both sides of an open goal at the given cut points (a cut point names a position in the instruction sequence by the value defined there), or detaches both at a block. The src side's live values at the cut define `g`'s signature; `value_map` gives the corresponding tgt values. Creates two child goals (outer and callee); the parent's status becomes `split` and its heads are frozen. The parent is proved automatically when both children are. Fails structurally if the map is ill-typed or the tgt suffix uses values not covered by the map.
 - `unsplit(gid)`: discards a split goal's children (and their subtrees) and reopens the parent. The way to undo a bad cut.
 
 ### Rewriting
@@ -225,7 +238,7 @@ The script verifies:
 1. Chain connectivity: each step's before-hash matches the current head, starting from the root's LHS and RHS hashes.
 2. alive2-backed steps and leaf discharges: rerun alive-tv on the recorded pair in the recorded direction; the result must be "correct". Replay timeouts should be more generous than the originals, since solver timing varies across machines.
 3. Rule steps: re-apply the recorded rule at the recorded location and check that the output matches the after-hash.
-4. Split faithfulness: inline the callee back into the outer program at the call site and check alpha-equivalence against the parent's program, per side. Mechanical for straightline code.
+4. Split faithfulness: inline the callee back into the outer program at the call site, or reattach a detached one, and check alpha-equivalence against the parent's program, per side. Mechanical.
 5. Alpha-equivalence discharges: recheck syntactic equality.
 6. Composition: the root is verified iff every leaf discharge and every faithfulness check passed and every parent's children are accounted for.
 

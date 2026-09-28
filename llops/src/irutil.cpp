@@ -215,14 +215,12 @@ std::vector<Diag> checkFunction(llvm::Function &F) {
     if (!call)
       continue;
     if (call->isInlineAsm()) {
-      diags.push_back(
-          {Diag::Severity::Error, "inline_asm", "inline assembly is not supported in v1"});
+      diags.push_back({Diag::Severity::Error, "inline_asm", "inline assembly is not supported"});
       return diags;
     }
     llvm::Function *callee = call->getCalledFunction();
     if (!callee) {
-      diags.push_back(
-          {Diag::Severity::Error, "indirect_call", "indirect calls are not supported in v1"});
+      diags.push_back({Diag::Severity::Error, "indirect_call", "indirect calls are not supported"});
       return diags;
     }
     if (!callee->isDeclaration()) {
@@ -331,13 +329,13 @@ std::vector<Diag> validateModule(llvm::Module &M) {
       continue;
     if (F) {
       diags.push_back(
-          {Diag::Severity::Error, "too_many_defines", "v1 modules define exactly one function"});
+          {Diag::Severity::Error, "too_many_defines", "a program defines exactly one function"});
       return diags;
     }
     F = &fn;
   }
   if (!F) {
-    diags.push_back({Diag::Severity::Error, "no_define", "v1 modules define exactly one function"});
+    diags.push_back({Diag::Severity::Error, "no_define", "a program defines exactly one function"});
     return diags;
   }
 
@@ -489,8 +487,8 @@ bool parseCmdShape(llvm::json::Object &args, llvm::StringRef cmd, CmdShape &out,
   out.M = out.mwc->mod.get();
   out.F = singleFunction(*out.M);
   if (!out.F) {
-    err =
-        errResponse("shape_error", cmd.str() + " needs the v1 shape: exactly one defined function");
+    err = errResponse("shape_error",
+                      cmd.str() + " needs the program shape: exactly one defined function");
     return false;
   }
   out.BB = singleBlock(*out.F);

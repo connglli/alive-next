@@ -1,5 +1,5 @@
 // Shared IR plumbing: parsing, printing, canonicalization, value references
-// and the straightline v1 well-formedness checks. Stateless helpers only;
+// and the program shape checks. Stateless helpers only;
 // docs/implementation.md holds the tool contract.
 #pragma once
 
@@ -52,7 +52,7 @@ std::string printModule(llvm::Module &M);
 // the names it is given.
 std::string canonModule(llvm::Module &M);
 
-// The v1 program shape is one defined function; returns it or nullptr.
+// The one function a program defines, or nullptr.
 llvm::Function *singleFunction(llvm::Module &M);
 
 // The single basic block of a straightline function, or nullptr.
@@ -62,7 +62,7 @@ llvm::BasicBlock *singleBlock(llvm::Function &F);
 // shape below. An empty result means the module conforms.
 std::vector<Diag> validateModule(llvm::Module &M);
 
-// The body invariants: no loop, no call v1 cannot reason about, every block
+// The body invariants: no loop, no call to anything but a declared function, every block
 // ending in ret, br, switch or unreachable.
 std::vector<Diag> checkFunction(llvm::Function &F);
 
@@ -116,12 +116,12 @@ llvm::json::Object errResponse(llvm::StringRef code, llvm::StringRef message);
 // A successful response carrying one module: { "ok": true, "module": ... }.
 llvm::json::Object moduleResponse(llvm::Module &M);
 
-// The response of an edit that must come out well formed: the v1 shape check,
+// The response of an edit that must come out well formed: the shape check,
 // then the LLVM verifier, and only then the module. Every mutating subcommand
 // ends here, so a broken edit is reported rather than handed back as text.
 llvm::json::Object checkedResponse(llvm::Function &F, llvm::Module &M);
 
-// The v1 shape that every mutating subcommand needs: one module, one function,
+// The shape that every mutating subcommand needs: one module, one function,
 // one block, and the value references into it. The context that owns the types
 // and constants has to outlive the pointers that use them, so it rides along.
 struct CmdShape {
@@ -132,7 +132,7 @@ struct CmdShape {
   std::unique_ptr<ValueRefs> refs;
 };
 
-// Parse the "module" key of a JSON request into the v1 shape. `cmd` names the
+// Parse the "module" key of a JSON request into that shape. `cmd` names the
 // subcommand for error messages ("edit", "opt", …). A body of several blocks
 // is refused unless `anyBlocks`, which leaves `BB` null. Returns true on
 // success; on failure fills `err` and leaves `out` in a moved-from state.

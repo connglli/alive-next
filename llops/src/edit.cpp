@@ -647,7 +647,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     if (!vi)
       return errResponse("not_found", "retype: unknown instruction");
     if (!vi->getType()->isIntegerTy())
-      return errResponse("invalid", "retype: v1 handles integer types only");
+      return errResponse("invalid", "retype handles integer types only");
     llvm::SMDiagnostic smd;
     llvm::Type *newTy = llvm::parseType(*ty, smd, *M);
     if (!newTy || !newTy->isIntegerTy())

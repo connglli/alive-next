@@ -93,7 +93,8 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
 
   llvm::Function *F = singleFunction(M);
   if (!F)
-    return errResponse("shape_error", "analyze needs the v1 shape: exactly one defined function");
+    return errResponse("shape_error",
+                       "analyze needs the program shape: exactly one defined function");
   llvm::BasicBlock *BB = singleBlock(*F);
   if (!BB)
     return errResponse("shape_error", "analyze needs a single basic block");
