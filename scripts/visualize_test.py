@@ -114,7 +114,7 @@ class TestFold(Case):
     outer, callee = data["nodes"][1], data["nodes"][2]
     self.assertEqual((outer["gid"], outer["parent"], outer["side"]), ("g2", "n0", None))
     self.assertEqual(
-      (callee["gid"], callee["parent"], callee["tool"]), ("g3", "n0", "split callee")
+      (callee["gid"], callee["parent"], callee["tool"]), ("g3", "n0", "split(outline) callee")
     )
     self.assertEqual(nodes["n0"]["gid"], "g1")
 
@@ -232,6 +232,43 @@ class TestFold(Case):
     for nid in ("n1", "n2"):
       for side in ("src", "tgt"):
         self.assertTrue(data["diffs"][nid][side]["birth"])
+
+  def test_a_detached_loop_names_its_hypothesis_and_the_proofs_of_its_contract(self):
+    self.session.result(
+      "split",
+      {
+        "effect": "split",
+        "gid": "g1",
+        "name": "k",
+        "outer": {"gid": "g2", "src": self.src, "tgt": self.tgt},
+        "callee": {"gid": "g3", "src": self.src, "tgt": self.tgt},
+        "detached": True,
+        "hypothesis": "k.ih",
+      },
+    )
+    entered = self.session.program(SRC.replace("mul", "add"))
+    kept = self.session.program(SRC.replace("mul", "sub"))
+    self.session.result(
+      "strengthen",
+      {"effect": "step", "gid": "g2", "side": "src", "to": entered, "how": "check"},
+      {
+        "effect": "strengthen",
+        "gid": "g3",
+        "src": self.src,
+        "tgt": self.tgt,
+        "predicates": [{"op": "ule", "lhs": {"arg": 0}, "rhs": {"arg": 0}}],
+        "by": [{"gid": "g2", "hash": entered}, {"gid": "g3", "hash": kept}],
+      },
+      {"effect": "step", "gid": "g3", "side": "src", "to": kept, "how": "check"},
+    )
+    notes = {(node["gid"], node["tool"]): node["note"] for node in self.data()["nodes"]}
+    self.assertIsNone(notes[("g2", "split(detach) outer")])
+    self.assertEqual(notes[("g3", "split(detach) callee")], "hypothesis @k.ih")
+    self.assertEqual(notes[("g2", "strengthen")], "contract before @k")
+    self.assertEqual(
+      [n["note"] for n in self.data()["nodes"] if n["gid"] == "g3" and n["side"] == "src"],
+      ["contract before @k.ih"],
+    )
 
   def test_an_impossible_effect_stops_the_fold_and_is_reported(self):
     self.session.result("check", {"effect": "proved", "gid": "g9"})

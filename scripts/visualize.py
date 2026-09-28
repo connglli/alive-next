@@ -67,6 +67,10 @@ class Tree:
     self.goals: dict[str, dict] = {}
     self.nodes: list[dict] = []
     self.pnames: dict[str, str] = {}
+    # What each callee goal's contract is proved before: the call in its
+    # outer, and its hypothesis when it detached a loop.
+    self.calls: dict[str, tuple[str, str | None]] = {}
+    self.proofs: list[tuple[str, str, str]] = []
     self.name(src)
     self.name(tgt)
     self.open_goal("g1", None, None, None, src, tgt, at, "start", None, None)
@@ -199,10 +203,19 @@ class Tree:
       self.name(effect["src"])
       self.name(effect["tgt"])
       self.moved(goal, at, "strengthen", "both", attrs_note(effect))
+      callee, hypothesis = self.calls.get(goal["id"], (None, None))
+      by = effect.get("by")
+      for link in by if isinstance(by, list) else [by] if isinstance(by, dict) else []:
+        fn = hypothesis if link.get("gid") == goal["id"] else callee
+        if fn:
+          self.proofs.append((link.get("gid"), link.get("hash"), fn))
     elif kind == "split":
       parent = self.editable(effect["gid"])
+      how = "detach" if effect.get("detached") else "outline"
+      hypothesis = effect.get("hypothesis")
       for role in ("outer", "callee"):
         child = effect[role]
+        note = f"hypothesis @{hypothesis}" if role == "callee" and hypothesis else None
         self.open_goal(
           child["gid"],
           parent["id"],
@@ -211,11 +224,12 @@ class Tree:
           child["src"],
           child["tgt"],
           at,
-          f"split {role}",
+          f"split({how}) {role}",
           None,
-          None,
+          note,
         )
         parent["children"].append(child["gid"])
+      self.calls[effect["callee"]["gid"]] = (effect["name"], hypothesis)
       parent["status"] = "split"
     elif kind == "unsplit":
       parent = self.get(effect["gid"])
@@ -233,6 +247,14 @@ class Tree:
       self.get(effect["gid"])["status"] = "refuted"
     else:
       raise Broken(f"unknown effect {kind}")
+
+  def name_proofs(self) -> None:
+    """Note on each step a strengthen rests on the call it proves the contract before."""
+    for gid, digest, fn in self.proofs:
+      for node in self.nodes:
+        if node["gid"] == gid and node["side"] == "src" and node["src"] == digest:
+          node["note"] = f"contract before @{fn}"
+          break
 
   def snapshot(self) -> dict[str, dict]:
     """What the page draws: where each goal stands, keyed by its id."""
@@ -374,6 +396,8 @@ def replay(grouped: list[list[dict]]) -> Replay:
   while len(snapshots) < len(grouped):
     snapshots.append(snapshots[-1] if snapshots else {})
     focus.append(focus[-1] if focus else None)
+  if tree:
+    tree.name_proofs()
   return Replay(
     snapshots,
     tree.nodes if tree else [],
