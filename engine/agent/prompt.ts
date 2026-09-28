@@ -40,6 +40,8 @@ A cut is made at an instruction or at a block. At an instruction, the callee is 
 
 A cut creates fresh callee parameters. These parameters may be poison, may have ranges, and may have other preconditions. alive2 cannot prove the callee goal until their required preconditions such as non-poison definedness are established. Prove those preconditions in the caller, where the actual arguments are known. Only then is it useful to query the callee goal.
 
+A loop is proved by induction: cut at its header, and the callee is one iteration that calls a hypothesis, standing for the rest of the loop, where it would branch back. A fact that iteration needs about its parameters, such as \`j <= i\` for a \`sub nuw i32 %i, %j\` after the loop, is proved like any precondition, and holds only if the loop's entry establishes it and every iteration keeps it.
+
 Similarly: The framework chooses the required refinement direction and passes \`--disable-undef-input\` when querying the outer goal or the callee goal.
 
 ## Interpreting failures
