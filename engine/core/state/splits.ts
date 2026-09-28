@@ -104,10 +104,16 @@ export class Splits {
     }
 
     const tgtModule = this.store.get(head(goal, "tgt"));
-    const tgt = atBlock
+    const tgt: LlopsResult<DetachResult> = atBlock
       ? await this.llops.detachTgt(tgtModule, tgtCut, callee, src.params, valueMap)
       : await this.llops.outlineTgt(tgtModule, tgtCut, callee, src.params, valueMap);
     if (!tgt.ok) return { kind: "refused", side: "tgt", code: tgt.code, message: tgt.message };
+    // Induction needs the hypothesis on both sides, so a block has to head a
+    // loop on both or on neither.
+    if (src.hypothesis !== tgt.hypothesis) {
+      const message = "the block heads a loop on one side only";
+      return { kind: "refused", side: "tgt", code: "invalid", message };
+    }
 
     return {
       kind: "preview",

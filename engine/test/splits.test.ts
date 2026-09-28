@@ -81,9 +81,9 @@ exit:
 }
 `;
 
-async function start(program = PROGRAM) {
+async function start(program = PROGRAM, other = program) {
   const src = await store.put(program);
-  const tgt = await store.put(program);
+  const tgt = await store.put(other);
   events.push({ kind: "start", src, tgt, config: {}, versions: {} });
   return replay();
 }
@@ -149,6 +149,20 @@ describe.skipIf(!built)("splitting", () => {
     expect(goal(tree, "g3").detached).toBe(true);
     expect(goal(tree, "g3").hypothesis).toBe("outlined_g3.ih");
     expect(store.get(head(goal(tree, "g3"), "src"))).toContain("call i32 @outlined_g3.ih(");
+  });
+
+  test("refuses a block that heads a loop on one side only", async () => {
+    const once = LOOP.replace(", [ %i.next, %loop ]", "").replace(
+      "br i1 %c, label %loop, label %exit",
+      "br label %exit",
+    );
+    const splits = new Splits(store, llops);
+    const result = await splits.split(await start(LOOP, once), "g1", "%bb1", "%bb1", {
+      "%1": "%1",
+      "%0": "%0",
+    });
+    expect(result).toMatchObject({ kind: "refused", code: "invalid" });
+    if (result.kind === "refused") expect(result.message).toContain("one side only");
   });
 
   test("refuses a block on one side and a value on the other", async () => {
