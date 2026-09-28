@@ -59,6 +59,11 @@ export interface OutlineResult {
   result?: { type: string; live: Ref };
 }
 
+/** What `detach` answers: an outline, and the hypothesis a back edge calls. */
+export interface DetachResult extends OutlineResult {
+  hypothesis?: string;
+}
+
 export type AnalyzeKind = "knownbits" | "ranges" | "pointer" | "defined";
 
 /** A fact about one value. Which fields are present follows the kind. */
@@ -186,6 +191,22 @@ export class Llops {
       params,
       value_map: valueMap,
     });
+  }
+
+  /** Detach `block` and every block it reaches on the src side. */
+  detachSrc(module: Module, block: Ref, callee: string): Promise<LlopsResult<DetachResult>> {
+    return this.run("detach", { module, side: "src", block, callee });
+  }
+
+  /** Detach the tgt side against the signature the src side produced. */
+  detachTgt(
+    module: Module,
+    block: Ref,
+    callee: string,
+    params: OutlineParam[],
+    valueMap: Record<Ref, Ref>,
+  ): Promise<LlopsResult<DetachResult>> {
+    return this.run("detach", { module, side: "tgt", block, callee, params, value_map: valueMap });
   }
 
   /**

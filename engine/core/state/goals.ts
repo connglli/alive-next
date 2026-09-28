@@ -30,6 +30,10 @@ export interface Goal {
   role?: "outer" | "callee";
   /** The outlined function this cut made, on both of its children. */
   callee?: string;
+  /** Present on both children when the cut detached a block. */
+  detached?: true;
+  /** The declaration the callee's back edges call, when it detached a loop. */
+  hypothesis?: string;
   src: SideHistory;
   tgt: SideHistory;
   status: Status;
@@ -172,6 +176,8 @@ function apply(tree: Tree, effect: Effect): void {
           parent: parent.id,
           role,
           callee: effect.name,
+          ...(effect.detached ? { detached: effect.detached } : {}),
+          ...(effect.hypothesis ? { hypothesis: effect.hypothesis } : {}),
           src: { history: [child.src] },
           tgt: { history: [child.tgt] },
           status: "open",

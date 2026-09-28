@@ -14,7 +14,11 @@
 // A structural refusal is the useful kind. A tgt suffix that needs a value the
 // map cannot cover means the cut points do not line up yet, which tells the
 // agent to rewrite a side before cutting.
-import type { Llops, OutlineParam } from "../drivers/llops.ts";
+//
+// A cut that names a block detaches it: the block and every block it reaches
+// become the callee, each branch to it a call, and a back edge a call of the
+// hypothesis, the declaration `llops detach` makes to stand for the callee.
+import type { DetachResult, Llops, LlopsResult, OutlineParam } from "../drivers/llops.ts";
 import type { Ref } from "../refs.ts";
 import { type GoalId, head, nextGoalIds, type Tree, workable } from "./goals.ts";
 import type { Store } from "./store.ts";
@@ -26,6 +30,10 @@ export type SplitPreviewResult =
       /** The signature both sides share if cut. */
       params: OutlineParam[];
       callee: string;
+      /** Present when the cut detaches a block. */
+      detached?: true;
+      /** The declaration the callee's back edges call, when it detaches a loop. */
+      hypothesis?: string;
       /** Outlined programs if value_map was provided and valid. */
       programs?: {
         outerSrc: string;
@@ -45,6 +53,8 @@ export type SplitResult =
       children: { outer: GoalId; callee: GoalId };
       /** The name the outlined function has in both modules. */
       callee: string;
+      /** The declaration the callee's back edges call, when it detached a loop. */
+      hypothesis?: string;
     }
   /** A structural refusal from llops while outlining one side. */
   | { kind: "refused"; side: "src" | "tgt"; code: string; message: string };
@@ -74,26 +84,36 @@ export class Splits {
     // fresh by construction and a reader can tell which cut made it.
     const callee = `outlined_${children.callee}`;
 
-    const src = await this.llops.outlineSrc(this.store.get(head(goal, "src")), srcCut, callee);
+    const atBlock = namesBlock(srcCut);
+    if (atBlock !== namesBlock(tgtCut)) {
+      const message = "both cuts name a block, or neither does";
+      return { kind: "refused", side: "tgt", code: "invalid", message };
+    }
+    const srcModule = this.store.get(head(goal, "src"));
+    const src: LlopsResult<DetachResult> = atBlock
+      ? await this.llops.detachSrc(srcModule, srcCut, callee)
+      : await this.llops.outlineSrc(srcModule, srcCut, callee);
     if (!src.ok) return { kind: "refused", side: "src", code: src.code, message: src.message };
+    const detached = {
+      ...(atBlock ? { detached: true as const } : {}),
+      ...(src.hypothesis ? { hypothesis: src.hypothesis } : {}),
+    };
 
     if (!valueMap) {
-      return { kind: "preview", params: src.params, callee };
+      return { kind: "preview", params: src.params, callee, ...detached };
     }
 
-    const tgt = await this.llops.outlineTgt(
-      this.store.get(head(goal, "tgt")),
-      tgtCut,
-      callee,
-      src.params,
-      valueMap,
-    );
+    const tgtModule = this.store.get(head(goal, "tgt"));
+    const tgt = atBlock
+      ? await this.llops.detachTgt(tgtModule, tgtCut, callee, src.params, valueMap)
+      : await this.llops.outlineTgt(tgtModule, tgtCut, callee, src.params, valueMap);
     if (!tgt.ok) return { kind: "refused", side: "tgt", code: tgt.code, message: tgt.message };
 
     return {
       kind: "preview",
       params: src.params,
       callee,
+      ...detached,
       programs: {
         outerSrc: src.outer,
         outerTgt: tgt.outer,
@@ -136,11 +156,16 @@ export class Splits {
       this.store.put(calleeTgt),
     ]);
 
+    const detached = {
+      ...(preview.detached ? { detached: preview.detached } : {}),
+      ...(preview.hypothesis ? { hypothesis: preview.hypothesis } : {}),
+    };
     return {
       kind: "split",
       params: preview.params,
       children,
       callee,
+      ...(preview.hypothesis ? { hypothesis: preview.hypothesis } : {}),
       effects: [
         {
           effect: "split",
@@ -148,6 +173,7 @@ export class Splits {
           name: callee,
           outer: { gid: children.outer, src: outerSrcHash, tgt: outerTgtHash },
           callee: { gid: children.callee, src: calleeSrcHash, tgt: calleeTgtHash },
+          ...detached,
         },
       ],
     };
@@ -160,4 +186,9 @@ export class Splits {
     if (goal.status !== "split") throw new Error(`${gid} is ${goal.status}, not split`);
     return [{ effect: "unsplit", gid }];
   }
+}
+
+/** Whether a reference names a block, which in canonical text is `%bbN`. */
+function namesBlock(ref: Ref): boolean {
+  return /^%?bb\d+$/.test(ref.trim());
 }

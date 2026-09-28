@@ -36,6 +36,8 @@ The framework chooses the required refinement direction, so do not specify it yo
 
 Cuts make large program pairs manageable. alive2 may fail to return when a query requires reasoning about too much computation at once. A useful cut moves the difficult computation into a function that both outer programs call in the same way. The outer proof can then treat that computation as a call instead of analyzing its body.
 
+A cut is made at an instruction or at a block. At an instruction, the callee is the rest of the body from that instruction, and the outer calls it once, where the instruction was. At a block, the cut detaches the block, which does more: the block and every block it reaches move into the callee, the block's phis become the callee's parameters, and every branch to the block becomes a call, so the outer calls the callee once for each edge that entered the block. Detach a join to separate the code before a merge from the code after it.
+
 A cut creates fresh callee parameters. These parameters may be poison, may have ranges, and may have other preconditions. alive2 cannot prove the callee goal until their required preconditions such as non-poison definedness are established. Prove those preconditions in the caller, where the actual arguments are known. Only then is it useful to query the callee goal.
 
 Similarly: The framework chooses the required refinement direction and passes \`--disable-undef-input\` when querying the outer goal or the callee goal.

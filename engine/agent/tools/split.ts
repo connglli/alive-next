@@ -9,14 +9,18 @@ export function createSplitTool(session: Session) {
     name: "tree_split",
     label: "Split",
     description:
-      "Cut a goal at a value on each side, making an outer goal that calls an outlined function and a callee goal that is its body. The value_map assigns a tgt value to each src live-in value crossing the cut. Under the no-`undef` model, callee parameters cannot be `undef`. However, callee parameters may be `poison` until tree_strengthen proves `noundef`, so a cut is usually followed by one.",
+      "Cut a goal at an instruction or a block on each side, making an outer goal that calls a fresh function and a callee goal that is its body. At an instruction (`%N`, or `#N` for the N-th instruction of the body, which also names one defining no value, such as a store), the callee is the rest of the body from it. At a block (`%bbN`), it is the block and every block it reaches, and each branch to the block becomes a call; a loop's back edge calls the hypothesis the result names instead, a declaration standing for the callee. value_map pairs each src value crossing the cut with the tgt value standing for it. Callee parameters may be `poison` until tree_strengthen proves them `noundef`, so a cut is usually followed by one.",
     parameters: Type.Object({
       gid: Type.String(),
-      src_cut: Type.String({ description: "The src value the suffix starts at." }),
-      tgt_cut: Type.String({ description: "The tgt value the suffix starts at." }),
+      src_cut: Type.String({
+        description: "The src instruction (`%N` or `#N`) or block (`%bbN`) the cut is made at.",
+      }),
+      tgt_cut: Type.String({
+        description: "The tgt instruction (`%N` or `#N`) or block (`%bbN`) the cut is made at.",
+      }),
       value_map: Type.Record(Type.String(), Type.String(), {
         description:
-          'Map from each src live-in value (key) to the corresponding tgt value (value) crossing the cut, formatted as { "<src_value>": "<tgt_value>" }.',
+          'Map from each src live-in value (key) to the corresponding tgt value (value) crossing the cut, such as { "%3": "%5" }.',
       }),
     }),
     execute: async (_id, { gid, src_cut, tgt_cut, value_map }) => {
@@ -36,6 +40,7 @@ export function createSplitTool(session: Session) {
         [
           `${gid} is cut into @${split.callee}`,
           `outer ${split.children.outer}, callee ${split.children.callee}`,
+          ...(split.hypothesis ? [`back edges call @${split.hypothesis}`] : []),
           `parameters:\n${params}`,
         ].join("\n"),
         split,

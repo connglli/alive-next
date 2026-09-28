@@ -91,6 +91,10 @@ export type Effect =
       name: string;
       outer: { gid: string; src: Hash; tgt: Hash };
       callee: { gid: string; src: Hash; tgt: Hash };
+      /** Present when a block was detached rather than a suffix outlined. */
+      detached?: true;
+      /** The declaration a detached loop's back edges call in place of the callee. */
+      hypothesis?: string;
     }
   /**
    * Both sides of a callee goal gained a strengthened interface contract

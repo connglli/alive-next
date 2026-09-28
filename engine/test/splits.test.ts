@@ -65,9 +65,25 @@ function record(effects: Effect[]): Tree {
   return replay();
 }
 
-async function start() {
-  const src = await store.put(PROGRAM);
-  const tgt = await store.put(PROGRAM);
+// Its header is %bb1 in canonical form, and %1 its phi.
+const LOOP = `define i32 @f(i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %i.next = add i32 %i, 1
+  %c = icmp ult i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret i32 %i
+}
+`;
+
+async function start(program = PROGRAM) {
+  const src = await store.put(program);
+  const tgt = await store.put(program);
   events.push({ kind: "start", src, tgt, config: {}, versions: {} });
   return replay();
 }
@@ -118,6 +134,27 @@ describe.skipIf(!built)("splitting", () => {
     const canonical = await llops.canon(back.module);
     if (!canonical.ok) throw new Error(canonical.message);
     expect(canonical.module).toBe(before);
+  });
+
+  test("naming a block detaches it, and a loop's back edge calls the hypothesis", async () => {
+    const splits = new Splits(store, llops);
+    const result = await splits.split(await start(LOOP), "g1", "%bb1", "%bb1", {
+      "%1": "%1",
+      "%0": "%0",
+    });
+    if (result.kind !== "split") throw new Error(result.message);
+    expect(result.hypothesis).toBe("outlined_g3.ih");
+
+    const tree = record(result.effects);
+    expect(goal(tree, "g3").detached).toBe(true);
+    expect(goal(tree, "g3").hypothesis).toBe("outlined_g3.ih");
+    expect(store.get(head(goal(tree, "g3"), "src"))).toContain("call i32 @outlined_g3.ih(");
+  });
+
+  test("refuses a block on one side and a value on the other", async () => {
+    const splits = new Splits(store, llops);
+    const result = await splits.split(await start(LOOP), "g1", "%bb1", "%2", { "%1": "%1" });
+    expect(result).toMatchObject({ kind: "refused", code: "invalid" });
   });
 
   test("refuses a cut point that is not there, naming the side", async () => {

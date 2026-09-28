@@ -2,6 +2,7 @@
 // mechanism to the one before it.
 
 import type { Scenario } from "../core/scenario.ts";
+import { branch } from "./branch.ts";
 import { cut } from "./cut.ts";
 import { freeze } from "./freeze.ts";
 import { miscompile } from "./miscompile.ts";
@@ -33,6 +34,7 @@ export const scenarios: Scenario[] = [
   miscompile,
   poison,
   widen,
+  branch,
   unroll,
 ];
 

@@ -9,15 +9,19 @@ export function createSplitPreviewTool(session: Session) {
     name: "tree_split_preview",
     label: "Split Preview",
     description:
-      "Preview cutting a goal at a value on each side without modifying the goal tree. If value_map is omitted, discovers and returns the src live-in parameters required across the cut. If value_map is provided, validates whether the tgt suffix lines up cleanly with the signature.",
+      "Preview tree_split at an instruction (`%N` or `#N`) or a block (`%bbN`) on each side without changing the goal tree. Without value_map, it answers with the src values that would cross the cut; with one, it says whether the tgt side lines up with them.",
     parameters: Type.Object({
       gid: Type.String(),
-      src_cut: Type.String({ description: "The src value the suffix starts at." }),
-      tgt_cut: Type.String({ description: "The tgt value the suffix starts at." }),
+      src_cut: Type.String({
+        description: "The src instruction (`%N` or `#N`) or block (`%bbN`) the cut is made at.",
+      }),
+      tgt_cut: Type.String({
+        description: "The tgt instruction (`%N` or `#N`) or block (`%bbN`) the cut is made at.",
+      }),
       value_map: Type.Optional(
         Type.Record(Type.String(), Type.String(), {
           description:
-            'Optional. Map from each src live-in value (key) to the corresponding tgt value (value) crossing the cut, formatted as { "<src_value>": "<tgt_value>" }.',
+            'Optional. Map from each src live-in value (key) to the corresponding tgt value (value) crossing the cut, such as { "%3": "%5" }.',
         }),
       ),
     }),

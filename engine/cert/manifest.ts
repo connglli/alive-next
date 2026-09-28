@@ -89,7 +89,14 @@ export interface Pair {
 /** How a goal was discharged. */
 export type Discharge =
   | { kind: "check" }
-  | { kind: "split"; callee: string; outer: string; inner: string };
+  | {
+      kind: "split";
+      callee: string;
+      outer: string;
+      inner: string;
+      detached?: true;
+      hypothesis?: string;
+    };
 
 /** One goal in a proof, from the pair it started with to the one it proved. */
 export interface ManifestGoal {
@@ -286,6 +293,8 @@ function include(
       callee: (outer.callee ?? goal.callee) as string,
       outer: outer.id,
       inner: inner.id,
+      ...(outer.detached ? { detached: outer.detached } : {}),
+      ...(outer.hypothesis ? { hypothesis: outer.hypothesis } : {}),
     },
   };
   include(tree, outer, effects, goals, programs);
