@@ -196,9 +196,9 @@ The inverse of `detach`, which the certificate checker runs. Every block that on
 
 Request `{ "module": ..., "kind": ..., "point": ... }`, response `{ "ok": true, "kind": ..., "point": ..., "facts": [ ... ] }`.
 
-Facts are reported for every argument and every value defined before the point that the analysis applies to, and they hold just before the point runs. The point defaults to the end of the body.
+Facts are reported for every argument and every value that dominates the point, which in one block is every value before it, that the analysis applies to, and they hold just before the point runs. The point defaults to the end of a body of one block; a body of several needs one.
 
-The point is also the context for assumptions, so an `llvm.assume` earlier in the body counts, and one at the point itself does not, because it has not run yet.
+The point is also the context for assumptions, so an `llvm.assume` that dominates it counts, and one at the point itself does not, because it has not run yet.
 
 Every fact carries `value` and `type`. The kind decides the rest:
 

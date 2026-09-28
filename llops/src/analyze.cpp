@@ -8,6 +8,7 @@
 #include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/KnownBits.h"
 #include "llvm/Support/raw_ostream.h"
@@ -25,12 +26,13 @@ std::string apToString(const llvm::APInt &V, unsigned radix, bool isSigned) {
 // Known bits, as three masks over the value's width. A bit is unknown when it
 // is neither known zero nor known one.
 void knownBitsFact(llvm::Value &V, const llvm::DataLayout &DL, llvm::AssumptionCache &AC,
-                   const llvm::Instruction *point, llvm::json::Object &fact) {
+                   const llvm::DominatorTree &DT, const llvm::Instruction *point,
+                   llvm::json::Object &fact) {
   llvm::KnownBits KB(V.getType()->getIntegerBitWidth());
 #if LLVM_VERSION_MAJOR >= 21
-  llvm::computeKnownBits(&V, KB, DL, &AC, point);
+  llvm::computeKnownBits(&V, KB, DL, &AC, point, &DT);
 #else
-  llvm::computeKnownBits(&V, KB, DL, /*Depth=*/0, &AC, point);
+  llvm::computeKnownBits(&V, KB, DL, /*Depth=*/0, &AC, point, &DT);
 #endif
   fact["zero_bits"] = "0x" + apToString(KB.Zero, 16, false);
   fact["one_bits"] = "0x" + apToString(KB.One, 16, false);
@@ -39,12 +41,12 @@ void knownBitsFact(llvm::Value &V, const llvm::DataLayout &DL, llvm::AssumptionC
 
 // The signed and the unsigned range are computed separately: LLVM reasons
 // about one interpretation at a time and the two answers differ.
-void rangeFact(llvm::Value &V, llvm::AssumptionCache &AC, const llvm::Instruction *point,
-               llvm::json::Object &fact) {
+void rangeFact(llvm::Value &V, llvm::AssumptionCache &AC, const llvm::DominatorTree &DT,
+               const llvm::Instruction *point, llvm::json::Object &fact) {
   llvm::ConstantRange S = llvm::computeConstantRange(&V, /*ForSigned=*/true,
-                                                     /*UseInstrInfo=*/true, &AC, point);
+                                                     /*UseInstrInfo=*/true, &AC, point, &DT);
   llvm::ConstantRange U = llvm::computeConstantRange(&V, /*ForSigned=*/false,
-                                                     /*UseInstrInfo=*/true, &AC, point);
+                                                     /*UseInstrInfo=*/true, &AC, point, &DT);
   fact["signed_min"] = apToString(S.getSignedMin(), 10, true);
   fact["signed_max"] = apToString(S.getSignedMax(), 10, true);
   fact["unsigned_min"] = apToString(U.getUnsignedMin(), 10, false);
@@ -91,24 +93,24 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
     return errResponse("parse_error", parseErr);
   llvm::Module &M = *mwc->mod;
 
+  if (auto d = departure(M))
+    return errResponse(d->code, d->message);
   llvm::Function *F = singleFunction(M);
-  if (!F)
-    return errResponse("shape_error",
-                       "analyze needs the program shape: exactly one defined function");
-  llvm::BasicBlock *BB = singleBlock(*F);
-  if (!BB)
-    return errResponse("shape_error", "analyze needs a single basic block");
   ValueRefs refs(*F);
 
   // Facts hold just before the analysis point runs, which defaults to the end
-  // of the body. The point is also the context for assumptions, so an
-  // llvm.assume earlier in the block is taken into account.
-  llvm::Instruction *point = BB->getTerminator();
+  // of a body of one block; a body of several has no one end. The point is
+  // also the context for assumptions, so an llvm.assume that dominates it is
+  // taken into account.
+  llvm::BasicBlock *BB = singleBlock(*F);
+  llvm::Instruction *point = BB ? BB->getTerminator() : nullptr;
   if (auto p = args.getString("point")) {
     point = refs.resolveInst(*p);
     if (!point)
       return errResponse("not_found", "analyze: '" + p->str() + "' is not an instruction");
   }
+  if (!point)
+    return errResponse("bad_request", "analyze needs a 'point' in a body of several blocks");
 
   const llvm::DataLayout &DL = M.getDataLayout();
   llvm::AssumptionCache AC(*F);
@@ -132,9 +134,9 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
     V.getType()->print(os);
     fact["type"] = std::move(ty);
     if (*kind == "knownbits")
-      knownBitsFact(V, DL, AC, point, fact);
+      knownBitsFact(V, DL, AC, DT, point, fact);
     else if (*kind == "ranges")
-      rangeFact(V, AC, point, fact);
+      rangeFact(V, AC, DT, point, fact);
     else if (*kind == "defined")
       definedFact(V, AC, DT, point, fact);
     else
@@ -142,14 +144,13 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
     facts.emplace_back(std::move(fact));
   };
 
+  // What is defined at the point is what dominates it, which in one block is
+  // what comes before it.
   for (auto &arg : F->args())
     addFact(arg);
-  for (auto &I : *BB) {
-    if (&I == point)
-      break;
-    if (!I.getType()->isVoidTy())
+  for (auto &I : llvm::instructions(*F))
+    if (&I != point && !I.getType()->isVoidTy() && DT.dominates(&I, point))
       addFact(I);
-  }
 
   llvm::json::Object resp;
   resp["ok"] = true;

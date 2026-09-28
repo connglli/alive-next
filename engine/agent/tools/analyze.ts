@@ -18,7 +18,10 @@ export function createAnalyzeTool(session: Session) {
       side: Type.Union([Type.Literal("src"), Type.Literal("tgt")]),
       kind: Type.Union(KINDS.map((kind) => Type.Literal(kind))),
       point: Type.Optional(
-        Type.String({ description: "Ask at this value rather than over the whole body." }),
+        Type.String({
+          description:
+            "Ask just before this instruction rather than at the end of the body; a body of several blocks needs one.",
+        }),
       ),
     }),
     execute: async (_id, { gid, side, kind, point }) => {

@@ -2049,6 +2049,25 @@ join:
     request = {"module": CALLEE, "cut": "%c", "to": "%odd", "callee": "w"}
     self.bad(run("outline", request), "invalid")
 
+  def facts(self, module, kind, point):
+    r = self.good(run("analyze", {"module": module, "kind": kind, "point": point}))
+    return {fact["value"]: fact for fact in r["facts"]}
+
+  def test_analyze_answers_for_what_dominates_its_point(self):
+    facts = self.facts(CALLEE, "knownbits", "%r")
+    self.assertEqual(facts["%odd"]["zero_bits"], "0xFFFFFFFE")
+    self.assertIn("%c", facts)
+    self.assertNotIn("%d", facts)
+
+  def test_analyze_inside_the_body_of_a_loop(self):
+    facts = self.facts(ROTATED, "defined", "%c")
+    self.assertTrue(facts["%n"]["noundef"])
+    self.assertIn("%acc.next", facts)
+    self.assertNotIn("%r", facts)
+
+  def test_analyze_needs_a_point_in_a_body_of_several_blocks(self):
+    self.bad(run("analyze", {"module": CALLEE, "kind": "ranges"}), "bad_request")
+
   def test_a_value_reaches_uses_in_other_blocks_or_does_not(self):
     good = run("edit", {"module": CALLEE, "op": "substitute", "a": "%j.next", "b": "%j"})
     self.assertIn("call i32 @k.ih(i32 %i.next, i32 %j, i32 %n)", self.good(good)["module"])
