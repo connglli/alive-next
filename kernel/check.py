@@ -687,36 +687,42 @@ class Check:
       head[side] = step["to"][side]
 
   def predicates(self, discharge: dict, step: dict) -> None:
-    """The outer src step that assumed a strengthen step's predicates before the call."""
-    outer, role = discharge["outer"], discharge["callee"]
-    facts = parameter_facts(step.get("param_attrs") or {})
+    """The src step that assumed a strengthen step's predicates before each call of the callee.
+
+    The outer calls it once; a recursive callee also calls its hypothesis, where
+    the proof is that one iteration keeps what the entry assumed.
+    """
+    name = discharge["callee"]
+    sites = [(discharge["outer"], name)]
+    if discharge.get("hypothesis"):
+      sites.append((discharge["inner"], discharge["hypothesis"]))
     by = step.get("by")
-    proved = by.get("hash") if isinstance(by, dict) and by.get("gid") == outer else None
-    steps = self.package.goal(outer)["steps"]
-    proofs = [s for s in steps if s.get("side") == "src" and proved and s.get("to") == proved]
-    if not proofs:
-      self.fail(outer, "src", "Predicate proof", "no src step proves the entry predicates")
-      return
-    started = time.monotonic()
-    assumed = self.package.run_llops(
-      "assume",
-      {
-        "module": self.package.program(proofs[0]["from"]),
-        "anchor": {"at": "before_call", "fn": role},
-        "assertions": [{"fact": fact, "arg": param} for param, fact in facts] + step["predicates"],
-      },
-    )["module"]
-    same = self.package.run_llops("canon", {"module": assumed})["module"]
-    matches = same == self.package.program(proofs[0]["to"])
-    self.compared(
-      outer,
-      "src",
-      "llops",
-      "Predicate proof",
-      f"assume before @{role}",
-      matches,
-      elapsed_ms(started),
-    )
+    links = [link for link in (by if isinstance(by, list) else [by]) if isinstance(link, dict)]
+    facts = parameter_facts(step.get("param_attrs") or {})
+    for gid, fn in sites:
+      proved = next((link.get("hash") for link in links if link.get("gid") == gid), None)
+      steps = self.package.goal(gid)["steps"]
+      proofs = [s for s in steps if s.get("side") == "src" and proved and s.get("to") == proved]
+      if not proofs:
+        self.fail(
+          gid, "src", "Predicate proof", f"no src step proves the entry predicates before @{fn}"
+        )
+        continue
+      started = time.monotonic()
+      assumed = self.package.run_llops(
+        "assume",
+        {
+          "module": self.package.program(proofs[0]["from"]),
+          "anchor": {"at": "before_call", "fn": fn},
+          "assertions": [{"fact": fact, "arg": param} for param, fact in facts]
+          + step["predicates"],
+        },
+      )["module"]
+      same = self.package.run_llops("canon", {"module": assumed})["module"]
+      matches = same == self.package.program(proofs[0]["to"])
+      self.compared(
+        gid, "src", "llops", "Predicate proof", f"assume before @{fn}", matches, elapsed_ms(started)
+      )
 
   def window(self, gid: str, step: dict, head: dict) -> str:
     """A step narrowed to a window, optionally with proved preconditions.
@@ -926,21 +932,26 @@ class Check:
     return step["to"]
 
   def split(self, gid: str, goal: dict, discharge: dict) -> None:
-    """A cut holds when it inlines back to the pair it was made on."""
+    """A cut holds when it inlines, or reattaches, back to the pair it was made on."""
     outer = self.package.goal(discharge["outer"])
     inner = self.package.goal(discharge["inner"])
     name = discharge["callee"]
+    hypothesis = discharge.get("hypothesis")
+    detached = discharge.get("at") == "block"
+    if hypothesis and not detached:
+      raise Refused(f"{gid} names a hypothesis for a cut that is not at a block")
+    rebuild = "reattach" if detached else "inline"
 
     for side in ("src", "tgt"):
       started = time.monotonic()
-      back = self.package.run_llops(
-        "inline",
-        {
-          "outer": self.package.program(outer["start"][side]),
-          "callee": self.package.program(inner["start"][side]),
-          "callee_name": name,
-        },
-      )["module"]
+      request = {
+        "outer": self.package.program(outer["start"][side]),
+        "callee": self.package.program(inner["start"][side]),
+        "callee_name": name,
+      }
+      if hypothesis:
+        request["hypothesis"] = hypothesis
+      back = self.package.run_llops(rebuild, request)["module"]
       same = self.package.run_llops("canon", {"module": back})["module"]
       whole = self.package.program(goal["end"][side])
       matches = same == whole
@@ -950,7 +961,7 @@ class Check:
         side,
         "llops",
         "Split reconstruction",
-        f"inline {discharge['outer']} + {discharge['inner']} at parent end",
+        f"{rebuild} {discharge['outer']} + {discharge['inner']} at parent end",
         matches,
         ms,
       )
@@ -982,24 +993,50 @@ class Check:
         ms=ms,
       )
 
+    # The hypothesis stands for the callee within its own body, so it says
+    # what the definition says, no more.
+    if hypothesis:
+      for side in ("src", "tgt"):
+        started = time.monotonic()
+        end = self.package.program(inner["end"][side])
+        matches = signature(self.package, end, hypothesis) == signature(self.package, end, name)
+        self.report(
+          result="OK" if matches else "FAIL",
+          gid=discharge["inner"],
+          side=side,
+          tool="llops",
+          check="Hypothesis signature",
+          notes=f"@{hypothesis} declared as @{name} is defined",
+          ms=elapsed_ms(started),
+        )
+
     # A cut adds no facts: each attribute on the callee arrives by a step,
-    # and each entry predicate by an assume the outer proves before the call.
-    for gid in (discharge["outer"], discharge["inner"]):
+    # and each entry predicate by an assume proved before each call.
+    starts = [(discharge["outer"], name), (discharge["inner"], name)]
+    if hypothesis:
+      starts.append((discharge["inner"], hypothesis))
+    for gid, fn in starts:
       for side in ("src", "tgt"):
         started = time.monotonic()
         start = self.package.program(self.package.goal(gid)["start"][side])
         self.report(
-          result="OK" if bare(self.package, start, name) else "FAIL",
+          result="OK" if bare(self.package, start, fn) else "FAIL",
           gid=gid,
           side=side,
           tool="llops",
           check="Bare callee",
-          notes=f"@{name} at the start of {gid}",
+          notes=f"@{fn} at the start of {gid}",
           ms=elapsed_ms(started),
         )
     for step in self.package.goal(discharge["inner"])["steps"]:
-      if step.get("kind") == "strengthen" and step.get("predicates"):
+      if step.get("kind") != "strengthen":
+        continue
+      if step.get("predicates"):
         self.predicates(discharge, step)
+      # Induction cannot prove willreturn, so a recursive callee takes no
+      # function attribute at all.
+      if hypothesis and step.get("fn_attrs"):
+        self.fail(discharge["inner"], "pair", "Recursive callee", "takes no function attributes")
 
     # The outer half keeps the entry the cut was made in; the callee's
     # parameters are values computed before it, so it is asked about them

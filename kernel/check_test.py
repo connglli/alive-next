@@ -186,6 +186,37 @@ exit:
 LATE = LOOP.replace("ret i32 %2", "ret i32 %4")
 
 
+# j counts the even numbers below n and i all of them, so j <= i on every
+# iteration. The nuw on i.next holds by the branch into the body; the nuw on
+# the final sub needs that invariant.
+PARITY = """define i32 @f(i32 noundef %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %j = phi i32 [ 0, %entry ], [ %j.next, %body ]
+  %c = icmp ult i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %odd = and i32 %i, 1
+  %even = icmp eq i32 %odd, 0
+  %inc = zext i1 %even to i32
+  %j.next = add i32 %j, %inc
+  %i.next = add i32 %i, 1
+  br label %head
+
+exit:
+  %d = sub i32 %i, %j
+  ret i32 %d
+}
+"""
+PARITY_NUW = PARITY.replace("%i.next = add i32", "%i.next = add nuw i32")
+PARITY_SUB_NUW = PARITY_NUW.replace("%d = sub i32", "%d = sub nuw i32")
+ORDER = [{"op": "ule", "lhs": {"arg": 1}, "rhs": {"arg": 0}}]
+
+
 def llops(subcommand: str, request: dict) -> dict:
   done = subprocess.run(
     [LLOPS, subcommand], input=json.dumps(request), capture_output=True, text=True
@@ -386,6 +417,55 @@ class Case(unittest.TestCase):
     )
     return step
 
+  def detached(self, src: str, tgt: str) -> dict:
+    """A root loop cut at its header, both halves as detach leaves them."""
+    s = llops("detach", {"module": src, "side": "src", "block": "%head", "callee": "k"})
+    live = {p["live"]: p["live"] for p in s["params"]}
+    request = {"module": tgt, "side": "tgt", "block": "%head", "callee": "k"}
+    t = llops("detach", {**request, "params": s["params"], "value_map": live})
+
+    def stored(text: str) -> str:
+      return self.built.program(llops("canon", {"module": text})["module"])
+
+    whole = {"src": stored(src), "tgt": stored(tgt)}
+    outer = {"src": stored(s["outer"]), "tgt": stored(t["outer"])}
+    inner = {"src": stored(s["callee"]), "tgt": stored(t["callee"])}
+    cut = {"kind": "split", "at": "block", "callee": "k", "hypothesis": "k.ih"}
+    self.built.goal("g1", whole, whole, [], {**cut, "outer": "g2", "inner": "g3"})
+    self.built.goal("g2", outer, outer, [], {"kind": "check"})
+    self.built.goal("g3", inner, inner, [], {"kind": "check"})
+    return {"outer": outer, "inner": inner}
+
+  def invariant(self, kept: bool = True) -> Path:
+    """The parity loop proved with j <= i, assumed at the callee's entry and
+    proved before each call: the outer's (on entry) and k.ih's (each
+    iteration), unless `kept` is false."""
+    halves = self.detached(PARITY, PARITY_SUB_NUW)
+    outer, inner = halves["outer"], halves["inner"]
+
+    def text(digest: str) -> str:
+      return (self.built.root / "programs" / f"{digest}.ll").read_text()
+
+    def assumed(digest: str, anchor: dict) -> str:
+      module = llops("assume", {"module": text(digest), "anchor": anchor, "assertions": ORDER})
+      return self.built.program(llops("canon", {"module": module["module"]})["module"])
+
+    entered = assumed(outer["src"], {"at": "before_call", "fn": "k"})
+    initiation = {"kind": "check", "side": "src", "from": outer["src"], "to": entered}
+    self.built.goal(
+      "g2", outer, {"src": entered, "tgt": outer["tgt"]}, [initiation], {"kind": "check"}
+    )
+
+    strong = {side: assumed(inner[side], {"at": "entry", "fn": "k"}) for side in ("src", "tgt")}
+    kept_by = assumed(strong["src"], {"at": "before_call", "fn": "k.ih"})
+    by = [{"gid": "g2", "hash": entered}] + ([{"gid": "g3", "hash": kept_by}] if kept else [])
+    steps = [{"kind": "strengthen", "from": inner, "to": strong, "predicates": ORDER, "by": by}]
+    if kept:
+      steps.append({"kind": "check", "side": "src", "from": strong["src"], "to": kept_by})
+    end = {"src": kept_by if kept else strong["src"], "tgt": strong["tgt"]}
+    self.built.goal("g3", inner, end, steps, {"kind": "check"})
+    return self.built.write()
+
   def verified(self, package: Path, saying: str = "VERIFIED - root") -> subprocess.CompletedProcess:
     done = named(package)
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -401,6 +481,13 @@ class Case(unittest.TestCase):
 class TestGolden(Case):
   def test_a_leaf_verifies(self):
     self.verified(self.leaf())
+
+  def test_a_loop_cut_at_its_header_verifies_by_induction(self):
+    self.detached(PARITY, PARITY_NUW)
+    self.verified(self.built.write())
+
+  def test_a_loop_invariant_proved_on_entry_and_kept_verifies(self):
+    self.verified(self.invariant())
 
   def test_a_pair_that_branches_without_looping_verifies(self):
     pair = {"src": self.built.program(BRANCH), "tgt": self.built.program(SELECT)}
@@ -718,6 +805,43 @@ class TestTampered(Case):
     pair = {"src": self.built.program(LOOP), "tgt": self.built.program(LATE)}
     self.built.goal("g1", pair, pair, [], {"kind": "check"})
     self.refused(self.built.write(), "outside the program shape: cyclic")
+
+  def test_a_detached_cut_whose_halves_do_not_reattach(self):
+    # The tgt's callee in the src's place reattaches to the tgt, not the src.
+    halves = self.detached(PARITY, PARITY_NUW)
+    swapped = {**halves["inner"], "src": halves["inner"]["tgt"]}
+    self.built.goal("g3", swapped, swapped, [], {"kind": "check"})
+    self.refused(self.built.write(), "recorded program differs")
+
+  def test_a_hypothesis_that_claims_more_than_the_callee(self):
+    halves = self.detached(PARITY, PARITY_NUW)
+    inner = halves["inner"]
+    text = (self.built.root / "programs" / f"{inner['src']}.ll").read_text()
+    attrs = {"module": text, "op": "attrs", "fn": "k.ih", "param": 0, "attrs": {"noundef": True}}
+    claimed = self.built.program(
+      llops("canon", {"module": llops("edit", attrs)["module"]})["module"]
+    )
+    self.built.goal("g3", inner, {**inner, "src": claimed}, [], {"kind": "check"})
+    self.refused(self.built.write(), "Hypothesis signature")
+
+  def test_an_invariant_no_iteration_is_shown_to_keep(self):
+    self.refused(self.invariant(kept=False), "no src step proves the entry predicates before @k.ih")
+
+  def test_a_recursive_callee_with_a_function_attribute(self):
+    halves = self.detached(PARITY, PARITY_NUW)
+    inner = halves["inner"]
+
+    def marked(digest: str) -> str:
+      text = (self.built.root / "programs" / f"{digest}.ll").read_text()
+      module = llops(
+        "edit", {"module": text, "op": "attrs", "fn": "k", "attrs": {"nounwind": True}}
+      )
+      return self.built.program(llops("canon", {"module": module["module"]})["module"])
+
+    to = {side: marked(inner[side]) for side in ("src", "tgt")}
+    step = {"kind": "strengthen", "from": inner, "to": to, "fn_attrs": {"nounwind": True}}
+    self.built.goal("g3", inner, to, [step], {"kind": "check"})
+    self.refused(self.built.write(), "Recursive callee")
 
   def test_a_program_that_is_not_there(self):
     package = self.leaf()
