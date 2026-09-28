@@ -347,6 +347,23 @@ flip:
     self.assertEqual(self.canon(canon), canon)
     self.assertLess(canon.index("sub i32 0"), canon.index("phi i32"))
 
+  def test_block_names_that_collide_with_positions(self):
+    module = """define i32 @f(i32 %x) {
+entry:
+  br label %bb2
+
+bb2:
+  br label %bb1
+
+bb1:
+  ret i32 %x
+}
+"""
+    canon = self.canon(module)
+    self.assertIn("bb1:", canon)
+    self.assertIn("bb2:", canon)
+    self.assertEqual(self.canon(canon), canon)
+
   def test_a_block_the_entry_does_not_reach_goes_last(self):
     module = """define i32 @f(i32 %x) {
 entry:

@@ -119,6 +119,10 @@ std::string canonModule(llvm::Module &M) {
     sortIncoming(F);
     for (auto &arg : F.args())
       arg.setName("");
+    // Every block loses its name before any gets a new one, since LLVM
+    // renames a block that takes a name another block still holds.
+    for (auto &BB : F)
+      BB.setName("");
     unsigned blockIndex = 0;
     for (auto &BB : F) {
       // Blocks keep a name, because an unnamed block consumes a slot number
