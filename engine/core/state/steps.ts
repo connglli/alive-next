@@ -246,7 +246,11 @@ export class Steps {
     const loops =
       (await this.loops(this.store.get(srcHash))) || (await this.loops(this.store.get(tgtHash)));
     if (loops && unroll === undefined)
-      return { outcome: "unknown", check: noUnroll(), effects: [] };
+      return {
+        outcome: "unknown",
+        check: unasked(`${LOOPS}; give an unroll factor to search those`),
+        effects: [],
+      };
     const key = historyKey(srcHash, tgtHash, loops ? unroll : undefined);
     const prior = this.history.get(key);
 
@@ -294,7 +298,7 @@ export class Steps {
 
     if (afterText === beforeText) {
       // Nothing moved, so there is nothing to certify and nothing to record.
-      return { kind: "refused", check: unchanged() };
+      return { kind: "refused", check: unasked("the program is the one already there") };
     }
 
     const narrowed = options.narrowed;
@@ -604,7 +608,7 @@ export class Steps {
     options: { timeoutMs: number; unroll?: number },
   ): Promise<CheckResult> {
     const cyclic = (await this.loops(pair.src)) || (await this.loops(pair.tgt));
-    if (cyclic && options.unroll === undefined) return loops();
+    if (cyclic && options.unroll === undefined) return unasked(LOOPS);
     // The no-`undef` model: every query is asked with `--disable-undef-input`.
     const unroll =
       options.unroll === undefined
@@ -678,42 +682,15 @@ function rootPair(tree: Tree, gid: string, goal: Goal): boolean {
   );
 }
 
-/** A question not put to alive-tv, because a program in it loops. */
-function loops(): CheckResult {
-  return {
-    outcome: "error",
-    detail: "a program loops, and alive-tv answers a loop only for the iterations it unrolls",
-    invocation: { binary: "", flags: [], timeoutMs: 0 },
-    stdout: "",
-    ms: 0,
-  };
-}
-
-/** A check refused because the pair loops and no unroll factor was given. */
-function noUnroll(): CheckResult {
-  return {
-    outcome: "error",
-    detail:
-      "the pair loops, and alive-tv answers a loop only for the iterations it unrolls; give an unroll factor to search those for a counterexample",
-    invocation: { binary: "", flags: [], timeoutMs: 0 },
-    stdout: "",
-    ms: 0,
-  };
-}
+const LOOPS = "a program loops, and alive-tv answers a loop only for the iterations it unrolls";
 
 /**
  * A refusal that cost no solver time, shaped like one that did. Its budget is
  * zero because none was spent, which is what tells a reader that no check ran.
  */
-function unchanged(): CheckResult {
+function unasked(detail: string): CheckResult {
   const invocation: Invocation = { binary: "", flags: [], timeoutMs: 0 };
-  return {
-    outcome: "error",
-    detail: "the program is the one already there",
-    invocation,
-    stdout: "",
-    ms: 0,
-  };
+  return { outcome: "error", detail, invocation, stdout: "", ms: 0 };
 }
 
 function historyKey(src: Hash, tgt: Hash, unroll?: number): string {
