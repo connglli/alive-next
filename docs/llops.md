@@ -163,10 +163,10 @@ The callee is declared with no attributes. An attribute is an assumption the cal
 ```json
 { "ok": true, "outer": "...", "callee": "...",
   "params": [ { "param": "%p0", "type": "i32", "live": "%p1" } ],
-  "result": { "type": "i32", "live": "%v2" } }
+  "result": { "type": "i32", "live": [ "%v2" ] } }
 ```
 
-`result` is absent when nothing outside the window uses what it defines, and the callee then answers with `void`. A window that hands out two values is refused, since a call answers with one. So is one that takes the terminator with it: leaving `to` out is how a suffix is cut away.
+`result` is absent when nothing outside the window uses what it defines, and the callee then answers with `void`. A window whose values are used after it answers with them all: one as it is, several as a struct in the order the window defines them, which the outer takes apart with `extractvalue` right after the call. A window that takes the terminator with it is refused: leaving `to` out is how a suffix is cut away.
 
 What a window is for is asking about a local edit locally. Two versions of a body that differ only inside one window come out as the same outer and two small functions, so the small pair is the whole question, and the outers being byte-identical is what says the difference is confined to the window. Neither the instruction count nor the names have to line up for that. This is one program's own business rather than an agreement between two, so a window takes no `side`, `params` or `value_map`, and is refused if it is given one.
 
@@ -176,7 +176,7 @@ A window may hold memory. Its pair is then asked about an arbitrary entry state,
 
 Request `{ "outer": ..., "callee": ..., "callee_name": "g" }`, response `{ "ok": true, "module": ... }`.
 
-The call is replaced by the callee's body in place, and the declaration that carried it is dropped once nothing uses it. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, since the body put in its place would not have the UB or poison it adds. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was. That roundtrip is how the certificate checker tests a split for faithfulness, and it is why `outline` is tier 2: what a checker reruns is the inlining, not the cutting.
+The call is replaced by the callee's body in place, each part of a struct the outer takes apart goes back to where it is used, and the declaration that carried the call is dropped once nothing uses it. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, since the body put in its place would not have the UB or poison it adds. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was. That roundtrip is how the certificate checker tests a split for faithfulness, and it is why `outline` is tier 2: what a checker reruns is the inlining, not the cutting.
 
 ## detach
 

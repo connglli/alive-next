@@ -2,13 +2,16 @@
 
 #include "irutil.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/AsmParser/Parser.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include <string>
 #include <vector>
 
@@ -63,19 +66,24 @@ std::vector<llvm::Value *> liveInto(llvm::Function &F,
 // A window that ends the function takes the terminator with it, so the callee
 // answers with what the function answers with and the outer needs a return of
 // its own. A window in the middle leaves the terminator where it is and hands
-// back the one value the rest of the body still uses, if there is one.
+// back the values the rest of the body still uses: one as it is, several as a
+// struct the outer takes apart right after the call.
 llvm::Function *moveOut(llvm::Module &M, llvm::Function &F, llvm::BasicBlock &BB,
                         llvm::ArrayRef<llvm::Instruction *> window,
                         const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside,
                         llvm::StringRef calleeName, llvm::ArrayRef<llvm::Value *> params,
-                        llvm::Instruction *result) {
+                        llvm::ArrayRef<llvm::Instruction *> results) {
   bool takesTheEnd = window.back()->isTerminator();
   std::vector<llvm::Type *> paramTys;
   for (auto *v : params)
     paramTys.push_back(v->getType());
-  auto *retTy = takesTheEnd ? F.getReturnType()
-                : result    ? result->getType()
-                            : llvm::Type::getVoidTy(M.getContext());
+  std::vector<llvm::Type *> resultTys;
+  for (auto *r : results)
+    resultTys.push_back(r->getType());
+  llvm::Type *retTy = takesTheEnd           ? F.getReturnType()
+                      : results.empty()     ? llvm::Type::getVoidTy(M.getContext())
+                      : results.size() == 1 ? resultTys.front()
+                                            : llvm::StructType::get(M.getContext(), resultTys);
   auto *FTy = llvm::FunctionType::get(retTy, paramTys, /*isVarArg=*/false);
   auto *callee = llvm::Function::Create(FTy, llvm::Function::ExternalLinkage, calleeName, &M);
   auto *calleeBB = llvm::BasicBlock::Create(M.getContext(), "entry", callee);
@@ -94,23 +102,33 @@ llvm::Function *moveOut(llvm::Module &M, llvm::Function &F, llvm::BasicBlock &BB
   // window move to it: the ones inside are what the callee body still is.
   std::vector<llvm::Value *> callArgs(params.begin(), params.end());
   auto *call = llvm::CallInst::Create(callee, callArgs, "", window.front()->getIterator());
-  if (result) {
+  for (unsigned k = 0; k < results.size(); ++k) {
+    llvm::Value *answer = call;
+    if (results.size() > 1)
+      answer = llvm::ExtractValueInst::Create(call, {k}, "", window.front()->getIterator());
     std::vector<llvm::Use *> outside;
-    for (llvm::Use &U : result->uses()) {
+    for (llvm::Use &U : results[k]->uses()) {
       auto *user = llvm::dyn_cast<llvm::Instruction>(U.getUser());
       if (!user || !inside.contains(user))
         outside.push_back(&U);
     }
     for (auto *U : outside)
-      U->set(call);
+      U->set(answer);
   }
 
   calleeBB->splice(calleeBB->end(), &BB, window.front()->getIterator(),
                    std::next(window.back()->getIterator()));
-  if (takesTheEnd)
+  if (takesTheEnd) {
     llvm::ReturnInst::Create(F.getContext(), F.getReturnType()->isVoidTy() ? nullptr : call, &BB);
-  else
-    llvm::ReturnInst::Create(M.getContext(), result, calleeBB);
+  } else {
+    llvm::Value *answer = results.size() == 1 ? results.front() : nullptr;
+    if (results.size() > 1) {
+      answer = llvm::PoisonValue::get(retTy);
+      for (unsigned k = 0; k < results.size(); ++k)
+        answer = llvm::InsertValueInst::Create(answer, results[k], {k}, "", calleeBB);
+    }
+    llvm::ReturnInst::Create(M.getContext(), answer, calleeBB);
+  }
   // Named after the move, so that a body value of the same name is the one
   // LLVM renames rather than the parameter the response reports.
   for (unsigned i = 0; i < params.size(); ++i)
@@ -207,6 +225,34 @@ liveOutOf(llvm::ArrayRef<llvm::Instruction *> window,
   return live;
 }
 
+// The values a struct is built of, when it is built one field at a time from
+// poison, each field once, as a window builds what it hands back; otherwise
+// nothing.
+std::vector<llvm::Value *> partsOf(llvm::Value *v) {
+  auto *ty = v ? llvm::dyn_cast<llvm::StructType>(v->getType()) : nullptr;
+  if (!ty)
+    return {};
+  std::vector<llvm::Value *> parts(ty->getNumElements(), nullptr);
+  while (auto *insert = llvm::dyn_cast<llvm::InsertValueInst>(v)) {
+    unsigned k = insert->getIndices().front();
+    if (insert->getNumIndices() != 1 || parts[k])
+      return {};
+    parts[k] = insert->getInsertedValueOperand();
+    v = insert->getAggregateOperand();
+  }
+  if (!llvm::isa<llvm::PoisonValue>(v) || llvm::is_contained(parts, nullptr))
+    return {};
+  return parts;
+}
+
+// Whether every use of the call takes one field of it apart.
+bool takenApart(llvm::CallInst &call, unsigned fields) {
+  return llvm::all_of(call.users(), [&](llvm::User *user) {
+    auto *part = llvm::dyn_cast<llvm::ExtractValueInst>(user);
+    return part && part->getNumIndices() == 1 && part->getIndices().front() < fields;
+  });
+}
+
 } // namespace
 
 llvm::json::Object outlineCmd(llvm::json::Object &args) {
@@ -267,17 +313,8 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
   }
   llvm::SmallPtrSet<llvm::Instruction *, 16> inside = setOf(window);
 
-  // Nothing follows a suffix, so only a window can hand a value back, and it
-  // can hand back one: a call answers with one value.
+  // Nothing follows a suffix, so only a window can hand values back.
   std::vector<llvm::Instruction *> out = liveOutOf(window, inside);
-  if (out.size() > 1) {
-    std::string named;
-    for (auto *I : out)
-      named += (named.empty() ? "" : ", ") + refs.print(*I);
-    return errResponse("invalid", "the window defines " + named +
-                                      ", and the rest of the body uses them all; a call answers "
-                                      "with one value");
-  }
 
   std::vector<llvm::Value *> params;
   llvm::json::Array paramInfo;
@@ -301,17 +338,12 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
     paramInfo = *args.getArray("params");
   }
 
-  llvm::json::Object resultInfo;
-  if (!out.empty()) {
-    std::string ty;
-    llvm::raw_string_ostream os(ty);
-    out.front()->getType()->print(os);
-    resultInfo["type"] = std::move(ty);
-    resultInfo["live"] = refs.print(*out.front());
-  }
+  // Named before the move, while the references still resolve in one body.
+  llvm::json::Array live;
+  for (auto *I : out)
+    live.push_back(refs.print(*I));
 
-  llvm::Function *callee =
-      moveOut(M, *F, *BB, window, inside, *calleeName, params, out.empty() ? nullptr : out.front());
+  llvm::Function *callee = moveOut(M, *F, *BB, window, inside, *calleeName, params, out);
   for (unsigned i = 0; i < paramInfo.size(); ++i)
     (*paramInfo[i].getAsObject())["param"] =
         "%" + std::next(callee->arg_begin(), i)->getName().str();
@@ -321,8 +353,12 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
   resp["outer"] = printWithoutBody(M, callee->getName());
   resp["callee"] = printWithoutBody(M, F->getName());
   resp["params"] = std::move(paramInfo);
-  if (!resultInfo.empty())
-    resp["result"] = std::move(resultInfo);
+  if (!out.empty()) {
+    std::string ty;
+    llvm::raw_string_ostream os(ty);
+    callee->getReturnType()->print(os);
+    resp["result"] = llvm::json::Object{{"type", std::move(ty)}, {"live", std::move(live)}};
+  }
   return resp;
 }
 
@@ -415,9 +451,20 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
     if (it != vmap.end())
       retVal = it->second;
   }
+  // A window that handed back several values answers with a struct the outer
+  // takes apart at once, so each part goes back to where it is used.
+  if (auto parts = partsOf(retVal); !parts.empty() && takenApart(*call, parts.size())) {
+    for (auto *user : llvm::make_early_inc_range(call->users())) {
+      auto *part = llvm::cast<llvm::ExtractValueInst>(user);
+      part->replaceAllUsesWith(parts[part->getIndices().front()]);
+      part->eraseFromParent();
+    }
+  }
   if (!call->getType()->isVoidTy())
     call->replaceAllUsesWith(retVal);
   call->eraseFromParent();
+  if (auto *built = llvm::dyn_cast_or_null<llvm::Instruction>(retVal))
+    llvm::RecursivelyDeleteTriviallyDeadInstructions(built);
   // The declaration exists only to carry the call, so drop it once the call
   // is gone. Otherwise the result could not match the program it came from.
   if (decl->use_empty())

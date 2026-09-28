@@ -349,7 +349,7 @@ class Case(unittest.TestCase):
     self.built.goal("g1", pair, pair, [], {"kind": "check"})
     return self.built.write()
 
-  def windowed(self, was: str = "", now: str = "", at: str = "#0") -> dict:
+  def windowed(self, was: str = "", now: str = "", at: str = "#0", to: str = "") -> dict:
     """A goal whose one step was narrowed to the window it changed.
 
     The body is longer than the window on purpose: what the step claims is
@@ -362,7 +362,7 @@ class Case(unittest.TestCase):
     was = llops("canon", {"module": was or f"{head}  %1 = mul i32 %0, 2\n{tail}"})["module"]
     now = llops("canon", {"module": now or f"{head}  %1 = shl i32 %0, 1\n{tail}"})["module"]
     cut = [
-      llops("outline", {"module": module, "cut": at, "to": at, "callee": "w"})
+      llops("outline", {"module": module, "cut": at, "to": to or at, "callee": "w"})
       for module in (was, now)
     ]
     outer = llops("canon", {"module": cut[0]["outer"]})["module"]
@@ -546,6 +546,11 @@ class TestGolden(Case):
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
     self.assertIn("VERIFIED - root", done.stdout)
     self.assertIn("1 solver query ", done.stdout)
+
+  def test_a_window_that_hands_back_both_values_a_loop_reads_verifies(self):
+    now = LOOP.replace("add i32 %1, 1", "add i32 1, %1").replace("add i32 %2, %1", "add i32 %1, %2")
+    self.windowed(LOOP, now, "#3", "#4")
+    self.verified(self.built.write())
 
   def test_a_conditioned_window_step_verifies(self):
     head = "define i32 @f(i32 noundef %0) {\nentry:\n  %1 = and i32 %0, 255\n"

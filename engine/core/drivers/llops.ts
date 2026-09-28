@@ -56,7 +56,7 @@ export interface OutlineResult {
   callee: Module;
   params: OutlineParam[];
   /** The one value a window hands back, absent when nothing outside uses it. */
-  result?: { type: string; live: Ref };
+  result?: { type: string; live: Ref[] };
 }
 
 /** What `detach` answers: an outline, the hypothesis, and which parameters were phis. */

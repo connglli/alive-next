@@ -1545,7 +1545,7 @@ entry:
         {"param": "%p1", "type": "i32", "live": "%y"},
       ],
     )
-    self.assertEqual(r["result"], {"type": "i32", "live": "%m"})
+    self.assertEqual(r["result"], {"type": "i32", "live": ["%m"]})
     self.assertTrue(self.conforms(r["outer"]))
     self.assertTrue(self.conforms(r["callee"]))
 
@@ -1605,7 +1605,7 @@ entry:
     )
     self.assertEqual(self.canon(back["module"]), self.canon(F_MEMORY))
 
-  def test_a_window_that_hands_out_two_values_is_refused(self):
+  def test_a_window_that_hands_out_two_values_answers_with_both(self):
     module = """define i32 @f(i32 %x) {
 entry:
   %a = add i32 %x, 1
@@ -1614,9 +1614,12 @@ entry:
   ret i32 %c
 }
 """
-    r = self.bad(run("outline", {"module": module, "cut": "a", "to": "b", "callee": "r"}))
-    self.assertIn("%a", r["error"]["message"])
-    self.assertIn("%b", r["error"]["message"])
+    r = self.good(run("outline", {"module": module, "cut": "a", "to": "b", "callee": "r"}))
+    self.assertEqual(r["result"], {"type": "{ i32, i32 }", "live": ["%a", "%b"]})
+    self.assertIn("extractvalue { i32, i32 }", r["outer"])
+    request = {"outer": r["outer"], "callee": r["callee"], "callee_name": "r"}
+    back = self.good(run("inline", request))["module"]
+    self.assertEqual(self.canon(back), self.canon(module))
 
   def test_a_window_cannot_take_the_terminator(self):
     self.bad(run("outline", {"module": F_SIMPLE, "cut": "s", "to": "#2", "callee": "r"}), "invalid")
@@ -2001,6 +2004,10 @@ class TestSeveralBlocks(Case):
     r = self.windowed(ROTATED, "%acc.next", "%acc.next")
     self.assertFalse(self.conforms(r["outer"]))
     self.assertTrue(self.conforms(r["callee"]))
+
+  def test_a_window_hands_back_both_values_a_loop_header_reads(self):
+    r = self.windowed(ROTATED, "%acc.next", "%i.next")
+    self.assertIn("{ i32, i32 }", r["outer"])
 
   def test_a_window_stays_in_one_block(self):
     request = {"module": CALLEE, "cut": "%c", "to": "%odd", "callee": "w"}

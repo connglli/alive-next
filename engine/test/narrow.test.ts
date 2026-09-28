@@ -158,6 +158,33 @@ exit:
     expect(await inlined(found.outer, found.after)).toBe(await canon(after));
   });
 
+  test("narrows a step that changes both values a loop's header reads", async () => {
+    const before = `define i32 @f(i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %s = phi i32 [ 0, %entry ], [ %s.next, %loop ]
+  %s.next = add i32 %s, %i
+  %i.next = add i32 %i, 1
+  %c = icmp ult i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret i32 %s
+}
+`;
+    const after = before
+      .replace("add i32 %s, %i", "add i32 %i, %s")
+      .replace("add i32 %i, 1", "add i32 1, %i");
+    const found = await narrow(llops, await canon(before), await canon(after));
+    if (!found) throw new Error("expected the step to narrow");
+    expect(found.before).toContain("ret { i32, i32 }");
+    expect(await inlined(found.outer, found.before)).toBe(await canon(before));
+    expect(await inlined(found.outer, found.after)).toBe(await canon(after));
+  });
+
   test("says nothing when the first instruction is the one that changed", async () => {
     // Nothing is shared at either end, so the window is the body and the
     // whole function is the only question there is.

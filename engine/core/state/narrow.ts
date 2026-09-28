@@ -9,8 +9,9 @@
 // What makes that sound is not the search. The two outers coming out identical
 // is what says the difference is confined to the window, and `llops inline`
 // puts each side back together, so a window that is wrong is caught rather
-// than believed. The search here is free to guess: a bad guess costs a couple
-// of llops calls and falls back to the whole function.
+// than believed; the search puts them back too, so it proposes no window a
+// checker would refuse. It is free to guess: a bad guess costs a few llops
+// calls and falls back to the whole function.
 //
 // A window is a run of instructions in one block, the block where the two
 // bodies first disagree, and it guesses twice there. The tight window runs
@@ -211,6 +212,11 @@ async function outlineBoth(
   const [oldOuter, newOuter] = await Promise.all([llops.canon(was.outer), llops.canon(now.outer)]);
   if (!oldOuter.ok || !newOuter.ok) return undefined;
   if (oldOuter.module !== newOuter.module) return undefined;
+  const back = await Promise.all([
+    putBack(llops, oldOuter.module, was.callee, before),
+    putBack(llops, oldOuter.module, now.callee, after),
+  ]);
+  if (back.includes(false)) return undefined;
   return {
     outer: oldOuter.module,
     before: was.callee,
@@ -219,4 +225,12 @@ async function outlineBoth(
     at: { before: oldAt, after: newAt },
     params: was.params,
   };
+}
+
+/** Whether a half inlined back into the outer is the program it came out of. */
+async function putBack(llops: Llops, outer: Module, half: Module, whole: Module): Promise<boolean> {
+  const back = await llops.inline(outer, half, CALLEE);
+  if (!back.ok) return false;
+  const same = await llops.canon(back.module);
+  return same.ok && same.module === whole;
 }
