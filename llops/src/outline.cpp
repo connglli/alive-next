@@ -352,6 +352,8 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
     if (window.back()->isTerminator())
       return errResponse("invalid", "a window cannot take the terminator with it; leave 'to' out "
                                     "to cut the suffix away instead");
+    if (llvm::isa<llvm::PHINode>(window.front()))
+      return errResponse("invalid", "a window cannot take a phi, which belongs to its block");
   } else {
     window = suffixFrom(*BB, cutInst);
   }

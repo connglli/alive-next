@@ -185,6 +185,37 @@ exit:
     expect(await inlined(found.outer, found.after)).toBe(await canon(after));
   });
 
+  test("finds the window in a loop's body when the header's phis are renumbered", async () => {
+    // The step moves the test above the add, so the body renumbers and the
+    // header's phis, which read the body, print differently too.
+    const before = `define i32 @f(i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %lo = phi i32 [ 0, %entry ], [ %lo.next, %loop ]
+  %hi = phi i32 [ 0, %entry ], [ %hi.next, %loop ]
+  %lo.next = add i32 %lo, 3
+  %wrap = icmp ult i32 %lo.next, 3
+  %carry = zext i1 %wrap to i32
+  %hi.next = add i32 %hi, %carry
+  %c = icmp ult i32 %hi.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret i32 %hi
+}
+`;
+    const after = before.replace(
+      "  %lo.next = add i32 %lo, 3\n  %wrap = icmp ult i32 %lo.next, 3\n",
+      "  %wrap = icmp ugt i32 %lo, -4\n  %lo.next = add i32 %lo, 3\n",
+    );
+    const found = await narrow(llops, await canon(before), await canon(after));
+    if (!found) throw new Error("expected the step to narrow");
+    expect(body(found.before)).not.toContain("phi");
+    expect(await inlined(found.outer, found.after)).toBe(await canon(after));
+  });
+
   test("says nothing when the first instruction is the one that changed", async () => {
     // Nothing is shared at either end, so the window is the body and the
     // whole function is the only question there is.

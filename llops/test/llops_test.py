@@ -2045,6 +2045,10 @@ join:
     self.bad(self.cut(ROTATED, "%acc.next"), "not_single_entry")
     self.bad(self.cut(join, "%a"), "invalid")
 
+  def test_a_window_does_not_take_a_phi(self):
+    request = {"module": ROTATED, "cut": "%i", "to": "%acc", "callee": "w"}
+    self.bad(run("outline", request), "invalid")
+
   def test_a_window_stays_in_one_block(self):
     request = {"module": CALLEE, "cut": "%c", "to": "%odd", "callee": "w"}
     self.bad(run("outline", request), "invalid")

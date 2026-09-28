@@ -127,11 +127,17 @@ function resolveWindow(
  * stay in the block that happens in, which is the same block on both sides.
  */
 function candidates(oldBlocks: string[][], newBlocks: string[][]): [Window, Window][] {
-  const block = oldBlocks.findIndex((lines, i) => lines.join("\n") !== newBlocks[i]?.join("\n"));
-  const [oldLines, newLines] = [oldBlocks[block], newBlocks[block]];
+  // Phis are left out: no window holds one, and in a loop the header's phis
+  // read what the body defines, so renumbering the body changes their text.
+  const block = oldBlocks.findIndex(
+    (lines, i) => afterPhis(lines).join("\n") !== afterPhis(newBlocks[i] ?? []).join("\n"),
+  );
+  const [oldLines, newLines] = [
+    afterPhis(oldBlocks[block] ?? []),
+    afterPhis(newBlocks[block] ?? []),
+  ];
   const [oldSpan, newSpan] = [spans(oldBlocks)[block], spans(newBlocks)[block]];
-  if (oldBlocks.length !== newBlocks.length || !oldLines || !newLines || !oldSpan || !newSpan)
-    return [];
+  if (oldBlocks.length !== newBlocks.length || !oldSpan || !newSpan) return [];
   // The terminator is the block's last line and cannot go into a window.
   const oldLast = oldLines.length - 2;
   const newLast = newLines.length - 2;
@@ -158,14 +164,25 @@ function candidates(oldBlocks: string[][], newBlocks: string[][]): [Window, Wind
   return tries;
 }
 
-/** Where each block starts among the instructions laid end to end, and its last before the terminator. */
+/**
+ * Where each block's instructions after its phis start among the instructions
+ * laid end to end, and its last before the terminator.
+ */
 function spans(blocks: string[][]): { start: number; last: number }[] {
   let start = 0;
   return blocks.map((lines) => {
-    const span = { start, last: start + lines.length - 2 };
+    const span = {
+      start: start + (lines.length - afterPhis(lines).length),
+      last: start + lines.length - 2,
+    };
     start += lines.length;
     return span;
   });
+}
+
+/** A block's lines after its phis. */
+function afterPhis(lines: string[]): string[] {
+  return lines.slice(lines.findIndex((line) => !/^%[\w.$-]+ = phi /.test(line)));
 }
 
 function at(from: number, to: number): Window {
