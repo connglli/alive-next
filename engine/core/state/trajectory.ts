@@ -21,6 +21,12 @@ import { sha256 } from "./hash.ts";
 /** Programs are named by their store hash wherever an event mentions one. */
 export type Hash = string;
 
+/** A certified step in a goal's chain, named by the program it produced. */
+export interface StepRef {
+  gid: string;
+  hash: Hash;
+}
+
 /** The pair a run was asked about, with the config and the toolchain that produced the run. */
 export interface StartEvent {
   kind: "start";
@@ -112,7 +118,8 @@ export type Effect =
       param_attrs?: Record<number, Attrs>;
       fn_attrs?: Attrs;
       predicates?: PredicateAssertion[];
-      by?: { gid: string; hash: Hash };
+      /** The steps proving the contract before each call: one, or two for a loop. */
+      by?: StepRef | StepRef[];
     }
   /** A split was undone, discarding both children and their subtrees. */
   | { effect: "unsplit"; gid: string }

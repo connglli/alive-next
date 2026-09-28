@@ -124,6 +124,111 @@ async function cutting(srcText: string, tgtText: string, map: Record<string, str
   return record(result.effects);
 }
 
+// Its header is %bb1 in canonical form: i is %1, the bound %0, so the callee
+// is k(i, n) and a contract such as i <=u n compares parameters 0 and 1.
+const LOOP = `define i32 @f(i32 noundef %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %i.next = add i32 %i, 1
+  %c = icmp ult i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret i32 %i
+}
+`;
+const WITHIN = [{ op: "ule" as const, lhs: { arg: 0 }, rhs: { arg: 1 } }];
+
+/** The loop detached at its header, so the callee calls its hypothesis. */
+async function detached(): Promise<Tree> {
+  const src = await store.put(LOOP);
+  events.push({ kind: "start", src, tgt: src, config: {}, versions: {} });
+  const map = { "%1": "%1", "%0": "%0" };
+  const result = await new Splits(store, llops).split(replay(), "g1", "%bb1", "%bb1", map);
+  if (result.kind !== "split") throw new Error(result.message);
+  return record(result.effects);
+}
+
+/** The tree once the effects a move returned are in the log. */
+function replayWith(effects: Effect[]): Tree {
+  events.push({ kind: "tool_result", id: "2", tool: "strengthen", effects, result: null, ms: 1 });
+  return replay();
+}
+
+function strengthening(checker: FakeChecker): Strengthen {
+  return new Strengthen(
+    store,
+    llops,
+    new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
+  );
+}
+
+describe.skipIf(!built)("strengthening a loop", () => {
+  test("a callee that calls its hypothesis takes no function attributes", async () => {
+    const checker = new FakeChecker([]);
+    const tree = await detached();
+    const result = await strengthening(checker).strengthen(tree, "g1", {
+      fn_attrs: { nounwind: true },
+    });
+    expect(result).toMatchObject({ kind: "refused", phase: "callee_attr", effects: [] });
+    expect(checker.calls).toHaveLength(0);
+  });
+
+  test("a contract one iteration does not keep lands nothing", async () => {
+    const checker = new FakeChecker(["incorrect"]);
+    const tree = await detached();
+    const result = await strengthening(checker).strengthen(tree, "g1", { predicates: WITHIN });
+    expect(result).toMatchObject({ kind: "refused", phase: "hypothesis", effects: [] });
+    // The one question asked is the iteration's, before the outer's.
+    expect(checker.calls).toHaveLength(1);
+    expect(checker.calls[0]?.tgt).toContain("@outlined_g3.ih(");
+  });
+
+  test("a contract is proved before both calls, the loop's in the callee's chain", async () => {
+    // The iteration's question, the outer's, then the two goals' checks: the
+    // iteration's step lands on its own answer rather than a second one.
+    const checker = new FakeChecker(["correct", "correct", "unknown", "unknown"]);
+    const tree = await detached();
+    const result = await strengthening(checker).strengthen(tree, "g1", { predicates: WITHIN });
+    if (result.kind !== "strengthened") throw new Error(result.reason);
+
+    const claim = result.effects.find((effect) => effect.effect === "strengthen");
+    if (claim?.effect !== "strengthen") throw new Error("expected a strengthen effect");
+    if (!Array.isArray(claim.by)) throw new Error("a loop's contract names two proofs");
+    expect(claim.by.map((proof) => proof.gid)).toEqual(["g2", "g3"]);
+    const kept = result.effects.find((effect) => effect.effect === "step" && effect.gid === "g3");
+    expect(kept).toMatchObject({ side: "src", to: claim.by[1]?.hash });
+  });
+
+  test("parameter facts go on the hypothesis too, on both sides", async () => {
+    // The iteration's question, the outer's, its two declarations, the
+    // hypothesis's two declarations, then the two goals' checks.
+    const checker = new FakeChecker([
+      "correct",
+      "correct",
+      "correct",
+      "correct",
+      "correct",
+      "correct",
+    ]);
+    const tree = await detached();
+    const result = await strengthening(checker).strengthen(tree, "g1", {
+      param_attrs: { 0: { noundef: true }, 1: { noundef: true } },
+    });
+    if (result.kind !== "strengthened") throw new Error(result.reason);
+
+    const after = replayWith(result.effects);
+    for (const side of ["src", "tgt"] as const) {
+      const text = store.get(head(goal(after, "g3"), side));
+      expect(text).toContain("declare i32 @outlined_g3.ih(i32 noundef, i32 noundef)");
+      expect(text).toContain("define i32 @outlined_g3(i32 noundef %0, i32 noundef %1)");
+    }
+  });
+});
+
 describe.skipIf(!built)("strengthening", () => {
   test("proves the fact, then attributes it in four programs", async () => {
     const checker = new FakeChecker(["correct", "correct", "correct", "unknown", "unknown"]);
@@ -169,8 +274,7 @@ describe.skipIf(!built)("strengthening", () => {
     if (last?.effect !== "strengthen") throw new Error("expected a strengthen effect");
     expect(last.gid).toBe("g3");
     // It names the step that makes it sound, which is what a replay re-checks.
-    expect(last.by?.gid).toBe("g2");
-    expect(last.by?.hash).toBe((result.effects[0] as { to: string }).to);
+    expect(last.by).toEqual({ gid: "g2", hash: (result.effects[0] as { to: string }).to });
   });
 
   test("checks both goals once at the end", async () => {

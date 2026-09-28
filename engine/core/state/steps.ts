@@ -13,6 +13,7 @@ import { type Llops, moduleLines } from "../drivers/llops.ts";
 import type { Llrwt, LlrwtInvocation, RuleInfo } from "../drivers/llrwt.ts";
 import { definedRefAt, named, resolveRef } from "../refs.ts";
 import { type Goal, head, type Side, type Tree, workable } from "./goals.ts";
+import { sha256 } from "./hash.ts";
 import type { Narrowed, Window } from "./narrow.ts";
 import type { Store } from "./store.ts";
 import type { Effect, Hash } from "./trajectory.ts";
@@ -242,7 +243,8 @@ export class Steps {
     const tgtHash = head(goal, "tgt");
     // alive-tv answers a loop only for the iterations it unrolls, so a pair
     // that loops is searched for a counterexample and never proved.
-    const loops = (await this.loops(srcHash)) || (await this.loops(tgtHash));
+    const loops =
+      (await this.loops(this.store.get(srcHash))) || (await this.loops(this.store.get(tgtHash)));
     if (loops && unroll === undefined)
       return { outcome: "unknown", check: noUnroll(), effects: [] };
     const key = historyKey(srcHash, tgtHash, loops ? unroll : undefined);
@@ -592,11 +594,17 @@ export class Steps {
     return { kind: "checked", check: condCheck, preconditions: mappedFacts };
   }
 
-  /** One question to the checker, in the direction the side settled. */
-  private check(
+  /**
+   * One question to the checker, in the direction the side settled. A program
+   * that loops is asked about only with an unroll factor, which is a search:
+   * no step or refinement is certified on one.
+   */
+  private async check(
     pair: { src: string; tgt: string },
     options: { timeoutMs: number; unroll?: number },
   ): Promise<CheckResult> {
+    const cyclic = (await this.loops(pair.src)) || (await this.loops(pair.tgt));
+    if (cyclic && options.unroll === undefined) return loops();
     // The no-`undef` model: every query is asked with `--disable-undef-input`.
     const unroll =
       options.unroll === undefined
@@ -608,11 +616,12 @@ export class Steps {
     });
   }
 
-  /** Whether a stored program loops, as `llops validate` says. */
-  private async loops(hash: Hash): Promise<boolean> {
+  /** Whether a program loops, as `llops validate` says. */
+  private async loops(module: string): Promise<boolean> {
+    const hash = sha256(module);
     const known = this.looping.get(hash);
     if (known !== undefined) return known;
-    const result = await this.llops.validate(this.store.get(hash));
+    const result = await this.llops.validate(module);
     const loops = result.ok && result.diagnostics.some((d) => d.code === "cyclic");
     this.looping.set(hash, loops);
     return loops;
@@ -667,6 +676,17 @@ function rootPair(tree: Tree, gid: string, goal: Goal): boolean {
     head(goal, "src") === goal.src.history[0] &&
     head(goal, "tgt") === goal.tgt.history[0]
   );
+}
+
+/** A question not put to alive-tv, because a program in it loops. */
+function loops(): CheckResult {
+  return {
+    outcome: "error",
+    detail: "a program loops, and alive-tv answers a loop only for the iterations it unrolls",
+    invocation: { binary: "", flags: [], timeoutMs: 0 },
+    stdout: "",
+    ms: 0,
+  };
 }
 
 /** A check refused because the pair loops and no unroll factor was given. */

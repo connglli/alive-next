@@ -21,6 +21,7 @@ import type {
   Entry,
   FrameworkEvent,
   Hash,
+  StepRef,
   ToolResultEvent,
 } from "../core/state/trajectory.ts";
 
@@ -78,7 +79,7 @@ export type Step =
       param_attrs?: Record<number, Attrs>;
       fn_attrs?: Attrs;
       predicates?: PredicateAssertion[];
-      by?: { gid: string; hash: Hash };
+      by?: StepRef | StepRef[];
     };
 
 export interface Pair {

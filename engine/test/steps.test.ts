@@ -259,6 +259,29 @@ describe("stepping", () => {
     expect(checker.calls[0]).toMatchObject({ src: NEW, tgt: TGT });
   });
 
+  test("puts no program that loops to alive2 without an unroll factor", async () => {
+    const checker = new FakeChecker(["correct"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const loop = `define i32 @f(i32 %n) {
+entry:
+  br label %l
+
+l:
+  %i = phi i32 [ 0, %entry ], [ %j, %l ]
+  %j = add i32 %i, 1
+  %c = icmp ult i32 %j, %n
+  br i1 %c, label %l, label %e
+
+e:
+  ret i32 %i
+}
+`;
+    const result = await steps.refinementCheck(loop, loop);
+    expect(result.outcome).toBe("error");
+    expect(result.detail).toContain("loops");
+    expect(checker.calls).toHaveLength(0);
+  });
+
   test("refuses a step alive2 will not certify, leaving the head alone", async () => {
     const checker = new FakeChecker(["incorrect"]);
     const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);

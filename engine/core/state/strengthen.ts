@@ -37,12 +37,20 @@
 // (`callee.src` and `callee.tgt`) gain the parameter attributes, function attributes,
 // and entry relational predicates. This transition is recorded as an atomic `strengthen`
 // effect linked to the justifying caller step (`by`).
+//
+// A callee cut at a loop header also calls itself, through its hypothesis, so
+// its contract is proved there too: one iteration has to keep it, with the
+// contract assumed at the callee's entry. That question is asked before
+// anything lands, and its step lands in the callee's chain right after the
+// claim. The hypothesis is declared with the parameter facts, as the outer's
+// declaration is, and the callee takes no function attribute: induction
+// cannot prove willreturn.
 import type { CheckResult } from "../drivers/alive2.ts";
 import type { Assertion, Attrs, Llops, PredicateAssertion } from "../drivers/llops.ts";
 import { applyEffect, type Goal, head, type Side, type Tree } from "./goals.ts";
 import type { Steps } from "./steps.ts";
 import type { Store } from "./store.ts";
-import type { Effect, Hash } from "./trajectory.ts";
+import type { Effect, Hash, StepRef } from "./trajectory.ts";
 
 /**
  * A full interface strengthening specification for an outlined callee.
@@ -64,7 +72,7 @@ export type StrengthenResult =
   | {
       kind: "refused";
       /** Which validation phase failed, identifying why the proposal was rejected. */
-      phase: "assume" | "attribute" | "callee_attr";
+      phase: "assume" | "attribute" | "callee_attr" | "hypothesis";
       reason: string;
       /** Detailed diagnostic explanation for humans and agents. */
       explanation?: string;
@@ -134,20 +142,71 @@ export class Strengthen {
         };
       }
     }
+    const hypothesis = callee.hypothesis;
+    if (hypothesis && hasFnAttrs) {
+      const reason = `@${name} calls @${hypothesis}, so it takes no function attributes: induction cannot prove willreturn`;
+      return { kind: "refused", phase: "callee_attr", reason, effects: [] };
+    }
 
     const landed: Effect[] = [];
     const checks: CheckResult[] = [];
-    let by: { gid: string; hash: Hash } | undefined;
+    let by: StepRef | undefined;
+    const assertions: Assertion[] = [
+      ...params.map((p) => ({ fact: rawParamAttrs[p] as Attrs, arg: p })),
+      ...predicates,
+    ];
+
+    // The callee with the contract at its entry, as Phase 3 materializes it.
+    const applyToCallee = async (mod: string) => {
+      let current = mod;
+      if (hasParamAttrs || hasFnAttrs) {
+        const attrRes = await this.attribute(current, name, params, rawParamAttrs, fnAttrs);
+        if (typeof attrRes !== "string") return attrRes;
+        current = attrRes;
+      }
+      if (hasPredicates) {
+        const assumeRes = await this.llops.assume(current, { at: "entry", fn: name }, predicates);
+        if (!assumeRes.ok) {
+          return {
+            kind: "refused" as const,
+            phase: "attribute" as const,
+            reason: `entry predicates failed on callee: ${assumeRes.message}`,
+          };
+        }
+        current = assumeRes.module;
+      }
+      return current;
+    };
+
+    // Phase 0, for a loop: the contract has to hold again where the callee
+    // calls its hypothesis, with the contract assumed at its entry. That is
+    // one iteration keeping it, asked before anything lands, so a contract the
+    // loop does not keep changes nothing.
+    let kept: { from: Hash; hash: Hash } | undefined;
+    if (hypothesis && (hasParamAttrs || hasPredicates)) {
+      const entered = await applyToCallee(this.store.get(head(callee, "src")));
+      if (typeof entered !== "string") return { ...entered, effects: [] };
+      const next = await this.llops.assume(
+        entered,
+        { at: "before_call", fn: hypothesis },
+        assertions,
+      );
+      if (!next.ok)
+        return { kind: "refused", phase: "hypothesis", reason: next.message, effects: [] };
+      const check = await this.steps.refinementCheck(entered, next.module);
+      if (check.outcome !== "correct") {
+        const reason = `one iteration of @${name} is not shown to keep the contract before @${hypothesis}`;
+        return { kind: "refused", phase: "hypothesis", reason, check, effects: [] };
+      }
+      checks.push(check);
+      kept = { from: await this.store.put(entered), hash: await this.store.put(next.module) };
+    }
 
     // Phase 1: Prove caller preconditions (param_attrs & predicates) in outer src.
     // Preconditions are inserted as `llvm.assume` before the `@callee` call site.
     // Proving `outer.src + assumes <= outer.src` certifies that the assumptions
     // hold across all feasible executions of the caller prefix.
     if (hasParamAttrs || hasPredicates) {
-      const assertions: Assertion[] = [
-        ...params.map((p) => ({ fact: rawParamAttrs[p] as Attrs, arg: p })),
-        ...predicates,
-      ];
       const one = await this.llops.assume(
         this.store.get(head(outer, "src")),
         { at: "before_call", fn: name },
@@ -247,27 +306,6 @@ export class Strengthen {
     // Attaching parameter attributes, function attributes, and entry relational
     // predicates to callee definitions introduces assumptions justified by Phase 1 & 2.
     // Both sides advance simultaneously under one atomic `strengthen` effect.
-    const applyToCallee = async (mod: string) => {
-      let current = mod;
-      if (hasParamAttrs || hasFnAttrs) {
-        const attrRes = await this.attribute(current, name, params, rawParamAttrs, fnAttrs);
-        if (typeof attrRes !== "string") return attrRes;
-        current = attrRes;
-      }
-      if (hasPredicates) {
-        const assumeRes = await this.llops.assume(current, { at: "entry", fn: name }, predicates);
-        if (!assumeRes.ok) {
-          return {
-            kind: "refused" as const,
-            phase: "attribute" as const,
-            reason: `entry predicates failed on callee: ${assumeRes.message}`,
-          };
-        }
-        current = assumeRes.module;
-      }
-      return current;
-    };
-
     const srcRes = await applyToCallee(this.store.get(head(callee, "src")));
     if (typeof srcRes !== "string") return { ...srcRes, effects: landed };
     const tgtRes = await applyToCallee(this.store.get(head(callee, "tgt")));
@@ -282,9 +320,46 @@ export class Strengthen {
         ...(hasParamAttrs ? { param_attrs: rawParamAttrs } : {}),
         ...(hasFnAttrs ? { fn_attrs: fnAttrs } : {}),
         ...(hasPredicates ? { predicates } : {}),
-        ...(by ? { by } : {}),
+        ...(by ? { by: kept ? [by, { gid: callee.id, hash: kept.hash }] : by } : {}),
       },
     ]);
+
+    // Phase 3, for a loop: the step Phase 0 certified lands in the callee's
+    // chain on that answer, so the claim never stands without it, and the
+    // hypothesis is declared with the parameter facts.
+    if (kept) {
+      if (head(callee, "src") !== kept.from) {
+        throw new Error(`${callee.id} moved while it was strengthened`);
+      }
+      this.land(tree, landed, [
+        { effect: "step", gid: callee.id, side: "src", to: kept.hash, how: "check" },
+      ]);
+    }
+    if (hypothesis && hasParamAttrs) {
+      for (const side of ["src", "tgt"] as Side[]) {
+        const attributed = await this.attribute(
+          this.store.get(head(callee, side)),
+          hypothesis,
+          params,
+          rawParamAttrs,
+        );
+        if (typeof attributed !== "string") return { ...attributed, effects: landed };
+        const step = await this.steps.checkStep(tree, callee.id, side, attributed, {
+          eager: false,
+        });
+        if (step.kind !== "certified") {
+          return {
+            kind: "refused",
+            phase: "attribute",
+            reason: `the attributes on @${hypothesis} in the callee's ${side} were not certified`,
+            check: step.check,
+            effects: landed,
+          };
+        }
+        this.land(tree, landed, step.effects);
+        checks.push(step.check);
+      }
+    }
 
     // Phase 4: Eager goal cross-checks.
     // Once both halves are attributed, both goals are checked. If the newly
