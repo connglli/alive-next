@@ -13,7 +13,7 @@ Interactive translation validation framework with agent-driven, alive2-certified
 
 The proof writer is untrusted. Every decomposition step, subproof, rewrite, and interface fact it proposes is validated with respect to operational semantics by alive2 before it counts, and every counterexample by running both programs on a concrete input under llubi. A bad proposal wastes time and never produces a wrong answer. A run ends verified, with a package anyone can replay; refuted, with the input that shows it; or unknown.
 
-Straightline code for now, memory operations included. Conditionals and loops need further design.
+Branches, loops and memory operations included.
 
 ## Build
 

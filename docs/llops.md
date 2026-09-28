@@ -121,7 +121,7 @@ Request `{ "module": ..., "what": "<op>", ... }`, response `{ "ok": true, "modul
 
 ## outline
 
-Moves part of a body into a fresh function and leaves a call where it was. Without a `to` the part is the rest of the body from the cut, which is how a goal is cut in two: in a body of several blocks, the rest of the cut's block and every block that reaches, which no other block may enter (`not_single_entry`), and the outer keeps the head of the block and ends it in the call; with one it is the window between them, which is how a local edit is asked about locally.
+Moves part of a body into a fresh function and leaves a call where it was. Without a `to` the part is everything the cut reaches, which no block outside it may enter (`not_single_entry`), and is how a goal is cut in two; with one it is the window between them, which is how a local edit is asked about locally.
 
 The instructions before the cut stay in the outer function, which gains a call, and the instructions from the cut onwards become the body of a fresh function. The cut instruction itself is the first instruction of the callee.
 
@@ -138,7 +138,7 @@ The response carries the two modules and the signature:
   "params": [ { "param": "%p0", "type": "i32", "live": "%3" } ] }
 ```
 
-The signature is the src side's live-in set, the values the suffix uses from the prefix or from the arguments, in the order they are defined.
+The signature is the src side's live-in set, the values the moved instructions use from before them: instructions in the order they are printed, then arguments.
 
 The tgt side is cut against that same signature, with a value map naming the tgt value that stands in for each src live value:
 
@@ -154,7 +154,7 @@ The callee is declared with no attributes. An attribute is an assumption the cal
 
 ### A window rather than a suffix
 
-`to` names the far end, in the same block, and the outlined instructions are the ones from `cut` to there, in whichever block of a body that may loop. The terminator stays where it is, and the callee hands back the one value the rest of the body still uses:
+`to` names the far end, in the same block, and the outlined instructions are the ones from `cut` to there. The terminator stays where it is, and the callee hands back what the rest of the body still uses:
 
 ```json
 { "module": "...", "cut": "%v1", "to": "%v2", "callee": "r" }
@@ -166,7 +166,7 @@ The callee is declared with no attributes. An attribute is an assumption the cal
   "result": { "type": "i32", "live": [ "%v2" ] } }
 ```
 
-`result` is absent when nothing outside the window uses what it defines, and the callee then answers with `void`. A window whose values are used after it answers with them all: one as it is, several as a struct in the order the window defines them, which the outer takes apart with `extractvalue` right after the call. A window that takes the terminator with it is refused: leaving `to` out is how a suffix is cut away.
+`result` is absent when nothing outside the window uses what it defines, and the callee then answers with `void`; several values come back as a struct, in the order the window defines them, which the outer takes apart right after the call. A window that takes the terminator with it is refused: leaving `to` out is how the rest is cut away.
 
 What a window is for is asking about a local edit locally. Two versions of a body that differ only inside one window come out as the same outer and two small functions, so the small pair is the whole question, and the outers being byte-identical is what says the difference is confined to the window. Neither the instruction count nor the names have to line up for that. This is one program's own business rather than an agreement between two, so a window takes no `side`, `params` or `value_map`, and is refused if it is given one.
 
@@ -176,7 +176,7 @@ A window may hold memory. Its pair is then asked about an arbitrary entry state,
 
 Request `{ "outer": ..., "callee": ..., "callee_name": "g" }`, response `{ "ok": true, "module": ... }`.
 
-The call is replaced by the callee's body in place, each part of a struct the outer takes apart goes back to where it is used, a callee of several blocks goes back at a call its block returns, its entry joining that block, and the declaration that carried the call is dropped once nothing uses it. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, since the body put in its place would not have the UB or poison it adds. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was. That roundtrip is how the certificate checker tests a split for faithfulness, and it is why `outline` is tier 2: what a checker reruns is the inlining, not the cutting.
+The call is replaced by the callee's body in place, the parts of a struct it answered with going back to their uses, and the declaration that carried it is dropped once nothing uses it. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, since the body put in its place would not have the UB or poison it adds. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was. That roundtrip is how the certificate checker tests a split for faithfulness, and it is why `outline` is tier 2: what a checker reruns is the inlining, not the cutting.
 
 ## detach
 
@@ -196,7 +196,7 @@ The inverse of `detach`, which the certificate checker runs. Every block that on
 
 Request `{ "module": ..., "kind": ..., "point": ... }`, response `{ "ok": true, "kind": ..., "point": ..., "facts": [ ... ] }`.
 
-Facts are reported for every argument and every value that dominates the point, which in one block is every value before it, that the analysis applies to, and they hold just before the point runs. The point defaults to the end of a body of one block; a body of several needs one.
+Facts are reported for every argument and every value that dominates the point that the analysis applies to, and they hold just before the point runs. The point defaults to the end of a body of one block.
 
 The point is also the context for assumptions, so an `llvm.assume` that dominates it counts, and one at the point itself does not, because it has not run yet.
 
@@ -251,7 +251,7 @@ A request that asks for conditions and operand bundles produces two assumes, bec
 | `bad_json` | the request is not JSON |
 | `bad_request` | a field is missing, or has the wrong type |
 | `parse_error` | the module does not parse |
-| `shape_error` | the module is not one defined straightline function |
+| `shape_error` | the module does not define exactly one function |
 | `undef` | the module holds an `undef` value |
 | `not_found` | a reference names nothing |
 | `invalid` | the operation does not apply here |

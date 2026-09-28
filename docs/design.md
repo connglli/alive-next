@@ -62,7 +62,7 @@ The framework state has two parts: an immutable **program store** and a **goal t
 - A step on the `src` side replaces S with S' and must show S' refines S (alive2 with src=S, tgt=S'). Then "tgt refines S'" plus this step gives "tgt refines S" by transitivity. This is optimizing the source forward.
 - A step on the `tgt` side replaces T with T' and must show T refines T' (alive2 with src=T', tgt=T). Then "T' refines src" plus this step gives "T refines src". This is deoptimizing the target backward.
 
-**Steps.** A step is a certified transition on one side of one goal. A step is certified in one of two ways: by applying a pre-proved rewrite rule (no alive2 run needed), or by an alive2 check in the side-appropriate direction, of either the before/after pair or the window it differs in (see "Narrowing a step to what it changed"). The head of a side is the latest program in its history; all tools operate on heads.
+**Steps.** A step is a certified transition on one side of one goal. A step is certified in one of two ways: by applying a pre-proved rewrite rule (no alive2 run needed), or by an alive2 check in the side-appropriate direction, of either the before/after pair or the window it differs in, which never loops (see "Narrowing a step to what it changed"). The head of a side is the latest program in its history; all tools operate on heads.
 
 **Transactions.** A transaction is an editing session on one side of one goal. Between `begin` and `commit` the agent makes arbitrary edits and gets cheap feedback (parse errors, shape check, analyses); the intermediate programs are scratch and never enter any certificate. At `commit`, alive2 validates the transaction as a single step, asking about the window the edits touched before falling back to the whole pair. On failure the head is unchanged and the local counterexample is returned as a hint. There is no separate "checked rewrite" concept: a checked rewrite is a transaction with one edit. Likewise, inserting `llvm.assume(c)` on the src side and committing *is* a proof that `c` always holds; annotation is not special machinery. (An assume inserted on the tgt side commits trivially, but the obligation resurfaces in the remaining goal, so it defers work rather than avoiding it.)
 
@@ -70,7 +70,7 @@ The framework state has two parts: an immutable **program store** and a **goal t
 
 ## Decomposition = outlining
 
-Cutting a program in two while memory flows across the cut needs a notion of "the state at the cut in RHS refines the state in LHS", including memory. We do not define that ourselves. Instead, `split` outlines the rest of the body from the cut point, the rest of its block and every block that reaches when the body branches:
+Cutting a program in two while memory flows across the cut needs a notion of "the state at the cut in RHS refines the state in LHS", including memory. We do not define that ourselves. Instead, `split` outlines everything the cut point reaches:
 
 - Outer program: `A; call g(...)`, where `g` is a fresh declared function.
 - Callee: a function `g` whose body is `B`.
@@ -100,7 +100,7 @@ Two things make it hold, and neither is the search that found the window. The ou
 
 A window is not simply cheaper. Its parameters are values the program computed, and under the no-`undef` model they cannot be `undef`, so it is asked with `--disable-undef-input` exactly as every other query is. Neither question is the easier one in general, so a commit asks the window first on a small budget and falls back to the whole function on the step's own budget. The vector rewrite in that same example is the other way round: unprovable as a window, and a tenth of a second whole.
 
-Automatic narrowing tries two window candidates in the block where the canonicalized bodies first disagree: a tight window from the first instruction line they disagree on to the last in that block (effective when the edit preserves instruction count), and a wide window extending from the first disagreement to the end of the block (effective when length changes renumber downstream instructions). A window never holds a loop, so a step inside a loop's body is asked this way even though the body around it loops. When an explicit window `[from, to]` is specified, references are resolved in the pre-edit program. Because insertions or deletions change the number of instructions inside the window, the post-edit window is mapped using the surrounding shared context: the post-edit start is `fromIdx`, the unchanged suffix length within the block is `suffix = oldLast - toIdx`, and the post-edit end is `newLast - suffix`, `oldLast` and `newLast` being the block's last instruction before its terminator. Outlining extracts both slices and verifies that their shared outer frames are byte-identical.
+Automatic narrowing tries two window candidates in the block where the canonicalized bodies first disagree: a tight window from the first instruction line they disagree on to the last (effective when the edit preserves instruction count), and a wide window extending from the first disagreement to the end of the block (effective when length changes renumber downstream instructions). When an explicit window `[from, to]` is specified, references are resolved in the pre-edit program. Because insertions or deletions change the number of instructions inside the window, the post-edit window is mapped using the surrounding shared context: the post-edit start is `fromIdx`, the unchanged suffix length is `suffix = oldLast - toIdx`, and the post-edit end is `newLast - suffix`. Outlining extracts both slices and verifies that their shared outer frames are byte-identical.
 
 ## Interface facts are proved where the evidence lives
 
@@ -146,7 +146,7 @@ A run can begin with a small-timeout `check` of the root pair. If that check pro
 
 A certified step shows the step is valid; it says nothing about whether the path still leads anywhere. So after every certified step (a commit, an apply, a strengthen), the framework immediately runs a small-timeout `check` on the goal's new current pair:
 
-- Proved: the goal discharges early. In particular, the last step of a successful chain discharges the goal without an explicit `check` call, since a pair whose sides are the same program is proved without a solver.
+- Proved: the goal discharges early. In particular, the last step of a successful chain discharges the goal without an explicit `check` call, since identical sides are proved without a solver.
 - Timeout: no information, continue.
 - Refuted with a concrete counterexample: the current pair can never be proved, so the framework marks the path dead, forcing a revert or an unsplit, and returns the counterexample as a hint.
 
@@ -195,7 +195,7 @@ Every tool call is logged. Tools that create certified steps record enough to re
   - `dedup(%a, %b)`: merge duplicate computations: erase `%b` and substitute its uses with `%a`.
   - `set_body(text)`: the whole-body escape hatch.
 
-  Each edit gets cheap feedback (parses, keeps the program shape, loops allowed); no alive2 involved, and every edit stays uncertified until `commit`.
+  Each edit gets cheap feedback (parses and verifies); no alive2 involved, and every edit stays uncertified until `commit`.
 - `commit()`: validate the transaction's whole before/after pair with alive2 in the side-appropriate direction. Success: one certified step, head advances. Failure: head unchanged, local counterexample returned as a hint.
 - `abort()`: discard the transaction.
 - `revert(gid, side, pid)`: move the head of an open goal's side back to an earlier program in its history. Later steps are abandoned (kept in the log, unused).
@@ -216,7 +216,7 @@ Both children are cross-checked once at the end, after phase 3, and not between 
 
 ### Discharge
 
-- `check(gid, timeout, unroll)`: a pair whose sides are the same program is proved at once, loop or not; any other is a direct alive2 run on the goal's current pair. Pass: goal proved. Fail: a counterexample. On the root's original pair it refutes the run; anywhere else the goal stays open. Timeout: goal stays open. A pair that loops is never proved: alive2 searches its first `unroll` iterations, and a counterexample it finds is a hint for `report_cex`. The timeout is the agent's knob, because spending solver time is a search decision. The framework also runs a small-timeout `check` on its own after every certified step; see "Eager cross-checking".
+- `check(gid, timeout, unroll)`: identical sides are proved at once; otherwise a direct alive2 run on the goal's current pair. Pass: goal proved. Fail: a counterexample. On the root's original pair it refutes the run; anywhere else the goal stays open. Timeout: goal stays open. Any other pair that loops is never proved: alive2 searches its first `unroll` iterations, and a counterexample it finds is a hint for `report_cex`. The timeout is the agent's knob, because spending solver time is a search decision. The framework also runs a small-timeout `check` on its own after every certified step; see "Eager cross-checking".
 
 ### Counterexample search and computation
 
@@ -239,7 +239,7 @@ The script verifies:
 2. alive2-backed steps and leaf discharges: rerun alive-tv on the recorded pair in the recorded direction; the result must be "correct". Replay timeouts should be more generous than the originals, since solver timing varies across machines.
 3. Rule steps: re-apply the recorded rule at the recorded location and check that the output matches the after-hash.
 4. Split faithfulness: inline the callee back into the outer program at the call site, or reattach a detached one, and check alpha-equivalence against the parent's program, per side. Mechanical.
-5. Identical discharges: a leaf whose two sides are the same program passes without a solver, loop or not.
+5. Identical discharges: a leaf whose two sides are the same program needs no solver.
 6. Composition: the root is verified iff every leaf discharge and every faithfulness check passed and every parent's children are accounted for.
 
 The consequence for trust is significant: the framework is now just a search assistant and drops out of the trust base entirely. Anything it gets wrong (bookkeeping, direction, outlining) surfaces as a failed replay. The composition rule and the faithfulness check live in `kernel/check.py`, which is small, standalone, and auditable.
