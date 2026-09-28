@@ -267,6 +267,8 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
 
   llvm::Function *F = singleFunction(M);
   llvm::BasicBlock *BB = singleBlock(*F);
+  if (!BB)
+    return errResponse("shape_error", "outline needs a single basic block");
   ValueRefs refs(*F);
   llvm::Instruction *cutInst = refs.resolveInst(*cut);
   if (!cutInst)

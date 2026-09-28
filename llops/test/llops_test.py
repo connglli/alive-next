@@ -209,17 +209,32 @@ entry:
     self.assertFalse(r["conforms"])
     self.assertEqual(r["diagnostics"][0]["code"], "dominance")
 
-  def test_two_blocks(self):
+  def test_branches_without_a_loop(self):
     module = """define i32 @f(i32 %x) {
 entry:
-  br label %next
+  %c = icmp slt i32 %x, 0
+  br i1 %c, label %neg, label %join
 
-next:
-  ret i32 %x
+neg:
+  %m = sub i32 0, %x
+  br label %join
+
+join:
+  %a = phi i32 [ %m, %neg ], [ %x, %entry ]
+  switch i32 %a, label %done [
+    i32 0, label %never
+  ]
+
+never:
+  unreachable
+
+done:
+  ret i32 %a
 }
 """
-    r = self.good(run("validate", {"module": module}))
-    self.assertEqual(r["diagnostics"][0]["code"], "not_straightline")
+    self.assertTrue(self.conforms(module))
+    r = run("outline", {"module": module, "side": "src", "cut": "%a", "callee": "g"})
+    self.bad(r, "shape_error")
 
   def test_a_loop(self):
     module = """define i32 @f(i32 %n) {
@@ -271,9 +286,12 @@ entry:
     self.assertEqual(r["diagnostics"][0]["code"], "recursive_call")
 
   def test_unsupported_terminator(self):
-    module = """define i32 @f(i32 %x) {
+    module = """define i32 @f(ptr %p) {
 entry:
-  unreachable
+  indirectbr ptr %p, [label %next]
+
+next:
+  ret i32 0
 }
 """
     r = self.good(run("validate", {"module": module}))

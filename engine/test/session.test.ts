@@ -439,19 +439,21 @@ describe.skipIf(!built)("reading a session", () => {
   });
 
   test("a pair outside the program shape is refused before the run starts", async () => {
-    const branch = `define i32 @f(i32 %x) {
+    const two = `define i32 @f(i32 %x) {
 entry:
-  br label %next
+  ret i32 %x
+}
 
-next:
+define i32 @g(i32 %x) {
+entry:
   ret i32 %x
 }
 `;
     const checker = new YesMan();
     const attempt = Session.start({
-      dir: join(dir, "branch"),
-      src: branch,
-      tgt: branch,
+      dir: join(dir, "two"),
+      src: two,
+      tgt: two,
       llops,
       checker,
       interp: noRun,
@@ -460,7 +462,7 @@ next:
     });
 
     await expect(attempt).rejects.toThrow(
-      /src program is outside the program shape: not_straightline/,
+      /src program is outside the program shape: too_many_defines/,
     );
     expect(checker.calls).toBe(0);
   });

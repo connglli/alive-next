@@ -36,18 +36,24 @@ describe.skipIf(!built)("llops", () => {
   });
 
   test("reports why a program does not conform", async () => {
-    const twoBlocks = `define i32 @f(i32 %x) {
+    const loop = `define i32 @f(i32 %n) {
 entry:
-  br label %next
+  br label %loop
 
-next:
-  ret i32 %x
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %i.next = add i32 %i, 1
+  %c = icmp ult i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret i32 %i
 }
 `;
-    const result = await llops.validate(twoBlocks);
+    const result = await llops.validate(loop);
     if (!result.ok) throw new Error(result.message);
     expect(result.conforms).toBe(false);
-    expect(result.diagnostics[0]?.code).toBe("not_straightline");
+    expect(result.diagnostics[0]?.code).toBe("cyclic");
   });
 
   test("canonicalizes, and does it idempotently", async () => {

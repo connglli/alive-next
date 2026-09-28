@@ -245,26 +245,18 @@ std::vector<Diag> validateModule(llvm::Module &M) {
     return diags;
   }
 
-  auto *BB = singleBlock(*F);
-  if (!BB) {
-    if (auto *header = loopHeader(*F)) {
-      std::string name;
-      llvm::raw_string_ostream os(name);
-      header->printAsOperand(os, false);
-      diags.push_back({Diag::Severity::Error, "cyclic",
-                       "function '" + F->getName().str() + "' loops back to '" + name + "'"});
-    } else {
-      diags.push_back({Diag::Severity::Error, "not_straightline",
-                       "function '" + F->getName().str() +
-                           "' has more than one basic block; v1 is "
-                           "straightline only"});
-    }
+  if (auto *header = loopHeader(*F)) {
+    std::string name;
+    llvm::raw_string_ostream os(name);
+    header->printAsOperand(os, false);
+    diags.push_back({Diag::Severity::Error, "cyclic",
+                     "function '" + F->getName().str() + "' loops back to '" + name + "'"});
     return diags;
   }
 
   // Calls must go to a declared function: a call to the one defined function
   // is recursion, and an indirect call has no callee to check against.
-  for (auto &I : *BB) {
+  for (auto &I : llvm::instructions(*F)) {
     auto *call = llvm::dyn_cast<llvm::CallInst>(&I);
     if (!call)
       continue;
@@ -286,11 +278,31 @@ std::vector<Diag> validateModule(llvm::Module &M) {
     }
   }
 
-  auto bodyDiags = checkFunction(*F);
-  diags.insert(diags.end(), bodyDiags.begin(), bodyDiags.end());
-  if (diags.empty())
-    diags = checkModule(M);
-  return diags;
+  if (auto *BB = singleBlock(*F)) {
+    ValueRefs refs(*F);
+    Diag useBeforeDef;
+    if (findUseBeforeDef(*F, *BB, refs, useBeforeDef)) {
+      diags.push_back(useBeforeDef);
+      return diags;
+    }
+  }
+
+  for (auto &B : *F) {
+    auto *term = B.getTerminator();
+    if (!term) {
+      diags.push_back(
+          {Diag::Severity::Error, "no_terminator", "a block does not end in a terminator"});
+      return diags;
+    }
+    if (!llvm::isa<llvm::ReturnInst, llvm::BranchInst, llvm::SwitchInst, llvm::UnreachableInst>(
+            term)) {
+      diags.push_back({Diag::Severity::Error, "unsupported_terminator",
+                       "a block ends in '" + std::string(term->getOpcodeName()) +
+                           "', not in ret, br, switch or unreachable"});
+      return diags;
+    }
+  }
+  return checkModule(M);
 }
 
 // ---------------------------------------------------------------------------

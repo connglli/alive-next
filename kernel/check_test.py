@@ -140,6 +140,31 @@ entry:
 # True of every i32, so the outer can prove it before any call.
 PREDICATE = {"op": "sle", "lhs": {"arg": 0}, "rhs": {"const": 2147483647}}
 
+# Negating through a branch and through a select, which alive-tv decides
+# because neither one loops.
+BRANCH = """define i32 @f(i32 noundef %0) {
+entry:
+  %1 = icmp slt i32 %0, 0
+  br i1 %1, label %flip, label %join
+
+flip:
+  %2 = sub i32 0, %0
+  br label %join
+
+join:
+  %3 = phi i32 [ %2, %flip ], [ %0, %entry ]
+  ret i32 %3
+}
+"""
+SELECT = """define i32 @f(i32 noundef %0) {
+entry:
+  %1 = icmp slt i32 %0, 0
+  %2 = sub i32 0, %0
+  %3 = select i1 %1, i32 %2, i32 %0
+  ret i32 %3
+}
+"""
+
 # A sum the late loop returns one iteration late. They differ from n = 2 on,
 # and alive-tv without an unroll factor calls the pair correct.
 LOOP = """define i32 @f(i32 noundef %0) {
@@ -376,6 +401,11 @@ class Case(unittest.TestCase):
 class TestGolden(Case):
   def test_a_leaf_verifies(self):
     self.verified(self.leaf())
+
+  def test_a_pair_that_branches_without_looping_verifies(self):
+    pair = {"src": self.built.program(BRANCH), "tgt": self.built.program(SELECT)}
+    self.built.goal("g1", pair, pair, [], {"kind": "check"})
+    self.verified(self.built.write())
 
   def test_a_chain_verifies(self):
     # One certified step, then the pair it was left with.
