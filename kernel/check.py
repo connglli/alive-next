@@ -387,12 +387,34 @@ def signature(package: Package, module: str, name: str) -> str:
   they have to say the same thing about the arguments and semantic attributes:
   what the outer was checked against is what the callee has to be.
   """
-  res = package.run_llops("validate", {"module": module})
-  funcs = res.get("functions", {})
-  fn = funcs.get(name)
+  return function(package, module, name)["signature"]
+
+
+def parameter_facts(param_attrs: dict) -> list[tuple[int, dict]]:
+  """A strengthen step's parameter facts, by index, in the order the engine assumes them."""
+  facts: list[tuple[int, dict]] = []
+  for key, fact in param_attrs.items():
+    # JSON object keys are always strings; require the exact format the engine emits.
+    if not isinstance(key, (str, int)) or not re.fullmatch(r"(?:0|[1-9]\d*)", str(key)):
+      raise Refused(f"a strengthen parameter is not a non-negative integer index: {key!r}")
+    if not isinstance(fact, dict):
+      raise Refused(f"a strengthen fact for parameter {key} is not an object")
+    facts.append((int(key), fact))
+  return sorted(facts, key=lambda item: item[0])
+
+
+def bare(package: Package, module: str, name: str) -> bool:
+  """Whether a function is declared or defined without any attribute."""
+  fn = function(package, module, name)
+  return not fn["fn_attrs"] and not any(param["attrs"] for param in fn["params"])
+
+
+def function(package: Package, module: str, name: str) -> dict:
+  """What `llops validate` says about one function the module names."""
+  fn = package.run_llops("validate", {"module": module}).get("functions", {}).get(name)
   if not fn:
     raise Refused(f"@{name} is neither declared nor defined where it has to be")
-  return fn["signature"]
+  return fn
 
 
 # --- the proof ---------------------------------------------------------------
@@ -603,15 +625,7 @@ class Check:
         "a strengthen step has no parameter attributes, function attributes, or predicates"
       )
 
-    replayable: list[tuple[int, dict]] = []
-    for key, fact in param_attrs.items():
-      # JSON object keys are always strings; require the exact format the engine emits.
-      if not isinstance(key, (str, int)) or not re.fullmatch(r"(?:0|[1-9]\d*)", str(key)):
-        raise Refused(f"a strengthen parameter is not a non-negative integer index: {key!r}")
-      if not isinstance(fact, dict):
-        raise Refused(f"a strengthen fact for parameter {key} is not an object")
-      replayable.append((int(key), fact))
-    replayable.sort(key=lambda item: item[0])
+    replayable = parameter_facts(param_attrs)
 
     replayed = ", ".join(
       (["parameter attributes"] if param_attrs else [])
@@ -671,6 +685,38 @@ class Check:
         ms,
       )
       head[side] = step["to"][side]
+
+  def predicates(self, discharge: dict, step: dict) -> None:
+    """The outer src step that assumed a strengthen step's predicates before the call."""
+    outer, role = discharge["outer"], discharge["callee"]
+    facts = parameter_facts(step.get("param_attrs") or {})
+    by = step.get("by")
+    proved = by.get("hash") if isinstance(by, dict) and by.get("gid") == outer else None
+    steps = self.package.goal(outer)["steps"]
+    proofs = [s for s in steps if s.get("side") == "src" and proved and s.get("to") == proved]
+    if not proofs:
+      self.fail(outer, "src", "Predicate proof", "no src step proves the entry predicates")
+      return
+    started = time.monotonic()
+    assumed = self.package.run_llops(
+      "assume",
+      {
+        "module": self.package.program(proofs[0]["from"]),
+        "anchor": {"at": "before_call", "fn": role},
+        "assertions": [{"fact": fact, "arg": param} for param, fact in facts] + step["predicates"],
+      },
+    )["module"]
+    same = self.package.run_llops("canon", {"module": assumed})["module"]
+    matches = same == self.package.program(proofs[0]["to"])
+    self.compared(
+      outer,
+      "src",
+      "llops",
+      "Predicate proof",
+      f"assume before @{role}",
+      matches,
+      elapsed_ms(started),
+    )
 
   def window(self, gid: str, step: dict, head: dict) -> str:
     """A step narrowed to a window, optionally with proved preconditions.
@@ -935,6 +981,25 @@ class Check:
         ),
         ms=ms,
       )
+
+    # A cut adds no facts: each attribute on the callee arrives by a step,
+    # and each entry predicate by an assume the outer proves before the call.
+    for gid in (discharge["outer"], discharge["inner"]):
+      for side in ("src", "tgt"):
+        started = time.monotonic()
+        start = self.package.program(self.package.goal(gid)["start"][side])
+        self.report(
+          result="OK" if bare(self.package, start, name) else "FAIL",
+          gid=gid,
+          side=side,
+          tool="llops",
+          check="Bare callee",
+          notes=f"@{name} at the start of {gid}",
+          ms=elapsed_ms(started),
+        )
+    for step in self.package.goal(discharge["inner"])["steps"]:
+      if step.get("kind") == "strengthen" and step.get("predicates"):
+        self.predicates(discharge, step)
 
     # The outer half keeps the entry the cut was made in; the callee's
     # parameters are values computed before it, so it is asked about them

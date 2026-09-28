@@ -137,6 +137,9 @@ entry:
 }
 """
 
+# True of every i32, so the outer can prove it before any call.
+PREDICATE = {"op": "sle", "lhs": {"arg": 0}, "rhs": {"const": 2147483647}}
+
 # A sum the late loop returns one iteration late. They differ from n = 2 on,
 # and alive-tv without an unroll factor calls the pair correct.
 LOOP = """define i32 @f(i32 noundef %0) {
@@ -572,8 +575,9 @@ class TestGolden(Case):
     self.built.goal("g3", inner, inner, [], {"kind": "check"})
     return self.built.write()
 
-  def test_strengthen_with_attrs_and_predicates_verifies(self):
-    package = self.cut()
+  def strengthened(self, proved: bool = True) -> Path:
+    """A cut whose callee gained a parameter fact, a function attribute and a predicate."""
+    package = TestGolden.cut(self)
     inner = self.built.goals["g3"]["start"]
     outer = self.built.goals["g2"]["start"]
     src_mod = (package / "programs" / f"{inner['src']}.ll").read_text()
@@ -594,7 +598,7 @@ class TestGolden(Case):
         {
           "module": m,
           "anchor": {"at": "entry", "fn": "g"},
-          "assertions": [{"op": "ne", "lhs": {"arg": 0}, "rhs": {"const": 0}}],
+          "assertions": [PREDICATE],
         },
       )["module"]
       return llops("canon", {"module": m})["module"]
@@ -613,12 +617,32 @@ class TestGolden(Case):
     new_tgt = self.built.program(transform_callee(tgt_mod))
     strengthened = {"src": new_src, "tgt": new_tgt}
 
-    new_outer_src = self.built.program(transform_outer(outer_src_mod))
+    # The outer proves the facts before the call, then declares the callee
+    # with them, in the order the engine takes the two steps. Unproved, it
+    # only declares them.
+    assumed = llops(
+      "assume",
+      {
+        "module": outer_src_mod,
+        "anchor": {"at": "before_call", "fn": "g"},
+        "assertions": [{"fact": {"noundef": True}, "arg": 0}, PREDICATE],
+      },
+    )["module"]
+    assumed_src = llops("canon", {"module": assumed})["module"]
+    proof = self.built.program(assumed_src)
+    declaring = assumed_src if proved else outer_src_mod
+    new_outer_src = self.built.program(transform_outer(declaring))
     new_outer_tgt = self.built.program(transform_outer(outer_tgt_mod))
     outer_strengthened = {"src": new_outer_src, "tgt": new_outer_tgt}
 
+    src_steps = [
+      {"kind": "check", "side": "src", "from": outer["src"], "to": proof},
+      {"kind": "check", "side": "src", "from": proof, "to": new_outer_src},
+    ]
+    if not proved:
+      src_steps = [{"kind": "check", "side": "src", "from": outer["src"], "to": new_outer_src}]
     outer_steps = [
-      {"kind": "check", "side": "src", "from": outer["src"], "to": new_outer_src},
+      *src_steps,
       {"kind": "check", "side": "tgt", "from": outer["tgt"], "to": new_outer_tgt},
     ]
     self.built.goal("g2", outer, outer_strengthened, outer_steps, {"kind": "check"})
@@ -629,12 +653,14 @@ class TestGolden(Case):
       "to": strengthened,
       "param_attrs": {"0": {"noundef": True}},
       "fn_attrs": {"nounwind": True},
-      "predicates": [{"op": "ne", "lhs": {"arg": 0}, "rhs": {"const": 0}}],
-      "by": {"gid": "g2", "hash": "dummy"},
+      "predicates": [PREDICATE],
+      "by": {"gid": "g2", "hash": proof},
     }
     self.built.goal("g3", inner, strengthened, [step], {"kind": "check"})
-    self.built.write()
+    return self.built.write()
 
+  def test_strengthen_with_attrs_and_predicates_verifies(self):
+    package = self.strengthened()
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
     self.assertIn("VERIFIED - root", done.stdout)
@@ -748,6 +774,23 @@ class TestTampered(Case):
       {"kind": "check"},
     )
     self.refused(self.built.write(), "not a callee")
+
+  def test_a_predicate_the_outer_never_proved(self):
+    package = TestGolden.strengthened(self, proved=False)
+    self.refused(package, "no src step proves the entry predicates")
+
+  def test_a_cut_that_starts_with_attributes(self):
+    # memory(none) on a callee that writes makes its src UB on every input,
+    # so any tgt refines it; only a step may bring the attribute.
+    package = TestGolden.cut(self)
+    for gid in ("g2", "g3"):
+      goal = self.built.goals[gid]
+      for side in ("src", "tgt"):
+        text = (package / "programs" / f"{goal['start'][side]}.ll").read_text()
+        attrs = {"module": text, "op": "attrs", "fn": "g", "attrs": {"memory": "none"}}
+        marked = llops("canon", {"module": llops("edit", attrs)["module"]})["module"]
+        goal["start"][side] = goal["end"][side] = self.built.program(marked)
+    self.refused(self.built.write(), "Bare callee")
 
   def test_a_strengthen_step_cannot_rewrite_the_callee_body(self):
     package = TestGolden.cut(self)
