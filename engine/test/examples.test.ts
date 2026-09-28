@@ -10,9 +10,11 @@
 // The second pass is the real one, and needs alive-tv and llubi installed.
 // Only the rule scenario needs llrwt on top of those.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { certify } from "../cert/main.ts";
 import { loadConfig } from "../core/config.ts";
 import { AliveTv, type CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
@@ -47,6 +49,16 @@ const rewriterBuilt = await rewriter
   .version()
   .then((line) => line.length > 0)
   .catch(() => false);
+
+// What the kernel replays with: the binaries the run used.
+const tools = Object.entries({
+  "alive-tv": toolchain.path("alive-tv"),
+  llops: toolchain.path("llops"),
+  llubi: toolchain.path("llubi"),
+  llrwt: toolchain.path("llrwt"),
+  "mlir-translate": toolchain.mlir("mlir-translate"),
+  "mlir-opt": toolchain.mlir("mlir-opt"),
+}).flatMap(([tool, path]) => [`--${tool}`, path]);
 
 /** A stand-in for llrwt that refuses any use, for scenarios that never rewrite. */
 const noRewriter = {
@@ -146,7 +158,13 @@ describe.skipIf(!built || !installed)("scenarios, checked by the toolchain", () 
           timeouts,
         });
         await one.prove(session);
-        expect(session.finish()).toBe(one.verdict ?? "verified");
+        expect(session.finish()).toBe(one.verdict);
+        // The engine's verdict is a claim until the kernel replays it.
+        const certificate = join(dir, "certificate");
+        certify(dir, certificate);
+        const check = join(certificate, "check.py");
+        const replay = spawnSync("python3", [check, certificate, ...tools], { encoding: "utf8" });
+        if (replay.status !== 0) throw new Error(replay.stdout + replay.stderr);
       },
       { timeout: timeouts.alive2Ms * 4 },
     );
