@@ -5,6 +5,7 @@ import type { Scenario } from "../core/scenario.ts";
 import { branch } from "./branch.ts";
 import { copiedphi } from "./copiedphi.ts";
 import { cut } from "./cut.ts";
+import { digits } from "./digits.ts";
 import { exitcond } from "./exitcond.ts";
 import { freeze } from "./freeze.ts";
 import { induction } from "./induction.ts";
@@ -55,6 +56,7 @@ export const scenarios: Scenario[] = [
   exitcond,
   loopfreeze,
   memloop,
+  digits,
   unroll,
 ];
 
