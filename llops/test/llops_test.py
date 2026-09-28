@@ -233,8 +233,6 @@ done:
 }
 """
     self.assertTrue(self.conforms(module))
-    r = run("outline", {"module": module, "side": "src", "cut": "%a", "callee": "g"})
-    self.bad(r, "shape_error")
 
   def test_a_loop(self):
     module = """define i32 @f(i32 %n) {
@@ -2008,6 +2006,44 @@ class TestSeveralBlocks(Case):
   def test_a_window_hands_back_both_values_a_loop_header_reads(self):
     r = self.windowed(ROTATED, "%acc.next", "%i.next")
     self.assertIn("{ i32, i32 }", r["outer"])
+
+  def cut(self, module, at, **tgt):
+    side = "tgt" if tgt else "src"
+    request = {"module": module, "side": side, "cut": at, "callee": "rest", **tgt}
+    return run("outline", request)
+
+  def test_the_rest_of_a_body_that_branches_goes_out_and_back(self):
+    r = self.good(self.cut(CALLEE, "%c"))
+    self.assertEqual([p["live"] for p in r["params"]], ["%i", "%j", "%n"])
+    self.assertIn("call i32 @rest(i32 %i, i32 %j, i32 %n)", r["outer"])
+    self.assertTrue(self.conforms(r["outer"]))
+    request = {"outer": r["outer"], "callee": r["callee"], "callee_name": "rest"}
+    back = self.good(run("inline", request))["module"]
+    self.assertEqual(self.canon(back), self.canon(CALLEE))
+
+  def test_the_tgt_side_cuts_against_the_src_signature(self):
+    s = self.good(self.cut(CALLEE, "%odd"))
+    live = {p["live"]: p["live"] for p in s["params"]}
+    self.good(self.cut(CALLEE, "%odd", params=s["params"], value_map=live))
+
+  def test_a_cut_before_a_join_inside_a_loop_or_at_a_phi_is_refused(self):
+    join = """define i32 @f(i32 %x) {
+entry:
+  %c = icmp slt i32 %x, 0
+  br i1 %c, label %neg, label %join
+
+neg:
+  %m = sub i32 0, %x
+  br label %join
+
+join:
+  %a = phi i32 [ %m, %neg ], [ %x, %entry ]
+  ret i32 %a
+}
+"""
+    self.bad(self.cut(join, "%m"), "not_single_entry")
+    self.bad(self.cut(ROTATED, "%acc.next"), "not_single_entry")
+    self.bad(self.cut(join, "%a"), "invalid")
 
   def test_a_window_stays_in_one_block(self):
     request = {"module": CALLEE, "cut": "%c", "to": "%odd", "callee": "w"}

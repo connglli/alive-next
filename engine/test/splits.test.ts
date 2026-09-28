@@ -152,6 +152,30 @@ describe.skipIf(!built)("splitting", () => {
     expect(store.get(head(goal(tree, "g3"), "src"))).toContain("call i32 @outlined_g3.ih(");
   });
 
+  test("cuts a body that branches at an instruction, taking the blocks after it", async () => {
+    const branching = `define i32 @f(i32 %x) {
+entry:
+  %c = icmp slt i32 %x, 0
+  br i1 %c, label %flip, label %join
+
+flip:
+  %m = sub i32 0, %x
+  br label %join
+
+join:
+  %a = phi i32 [ %m, %flip ], [ %x, %entry ]
+  ret i32 %a
+}
+`;
+    const splits = new Splits(store, llops);
+    const result = await splits.split(await start(branching), "g1", "%1", "%1", { "%0": "%0" });
+    if (result.kind !== "split") throw new Error(result.message);
+    const tree = record(result.effects);
+    expect(store.get(head(goal(tree, "g2"), "src"))).toContain("call i32 @outlined_g3(i32 %0)");
+    expect(store.get(head(goal(tree, "g3"), "src"))).toContain("br i1");
+    expect(goal(tree, "g3").detached).toBeUndefined();
+  });
+
   test("refuses a block that heads a loop on one side only", async () => {
     const once = LOOP.replace(", [ %i.next, %loop ]", "").replace(
       "br i1 %c, label %loop, label %exit",

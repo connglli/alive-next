@@ -15,6 +15,9 @@
 // the request and response.
 #pragma once
 
+#include "irutil.h"
+
+#include "llvm/IR/Module.h"
 #include "llvm/Support/JSON.h"
 
 namespace llops {
@@ -22,5 +25,11 @@ namespace llops {
 llvm::json::Object detachCmd(llvm::json::Object &args);
 
 llvm::json::Object reattachCmd(llvm::json::Object &args);
+
+// What `outline` answers for a cut at an instruction of a body of several
+// blocks: the rest of that block and every block it reaches, entered only
+// through the cut, move into `name`. `M` is changed in the process.
+llvm::json::Object outlineRest(llvm::json::Object &args, llvm::Module &M, llvm::Function &F,
+                               ValueRefs &refs, llvm::Instruction *cut, llvm::StringRef name);
 
 } // namespace llops

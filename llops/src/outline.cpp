@@ -1,5 +1,6 @@
 #include "outline.h"
 
+#include "detach.h"
 #include "irutil.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -253,6 +254,48 @@ bool takenApart(llvm::CallInst &call, unsigned fields) {
   });
 }
 
+// Put a callee of several blocks back at a call its block returns, which is
+// where a cut left it: the callee's entry joins the call's block, its other
+// blocks follow, and a phi that named the entry names that block again.
+bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F,
+                 llvm::ValueToValueMapTy &vmap) {
+  auto *ret = llvm::dyn_cast_or_null<llvm::ReturnInst>(call.getNextNode());
+  if (!ret || ret->getReturnValue() != (call.getType()->isVoidTy() ? nullptr : &call))
+    return false;
+  llvm::BasicBlock *head = call.getParent();
+  ret->eraseFromParent();
+  call.eraseFromParent();
+  std::vector<llvm::Instruction *> clones;
+  for (auto &B : callee) {
+    llvm::BasicBlock *into = &B == &callee.getEntryBlock()
+                                 ? head
+                                 : llvm::BasicBlock::Create(F.getContext(), B.getName(), &F);
+    vmap[&B] = into;
+    for (auto &I : B) {
+      auto *clone = I.clone();
+      clone->setName(I.getName());
+      clone->insertInto(into, into->end());
+      vmap[&I] = clone;
+      clones.push_back(clone);
+    }
+  }
+  for (auto *clone : clones)
+    llvm::RemapInstruction(clone, vmap,
+                           llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs);
+  return true;
+}
+
+// The outer once the callee is back: the declaration that carried the call is
+// dropped, since otherwise the result could not match the program it came
+// from, and what is left has to be a program.
+llvm::json::Object inlined(llvm::Module &M, llvm::Function &decl) {
+  if (decl.use_empty())
+    decl.eraseFromParent();
+  if (auto d = departure(M))
+    return errResponse(d->code, d->message);
+  return moduleResponse(M);
+}
+
 } // namespace
 
 llvm::json::Object outlineCmd(llvm::json::Object &args) {
@@ -283,14 +326,15 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
   llvm::Function *F = singleFunction(M);
   if (M.getNamedValue(*calleeName))
     return errResponse("invalid", "the name '@" + calleeName->str() + "' is already taken");
-  // A window is a run of instructions in one block, wherever the block is; a
-  // cut takes the rest of the body, which is a suffix only in a body of one.
-  if (!to && !singleBlock(*F))
-    return errResponse("shape_error", "a cut at an instruction needs a single basic block");
   ValueRefs refs(*F);
   llvm::Instruction *cutInst = refs.resolveInst(*cut);
   if (!cutInst)
     return errResponse("not_found", "the cut point '" + cut->str() + "' does not exist");
+  // A window is a run of instructions in one block, wherever the block is; a
+  // cut takes the rest of the body, which is more than a suffix when the body
+  // has several blocks.
+  if (!to && !singleBlock(*F))
+    return outlineRest(args, M, *F, refs, cutInst, *calleeName);
   llvm::BasicBlock *BB = cutInst->getParent();
 
   // Without a far end the window runs to the end of the body, which is the
@@ -389,10 +433,6 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
     return errResponse("not_found", "'@" + calleeName->str() +
                                         "' is not defined in the callee "
                                         "module");
-  llvm::BasicBlock *calleeBB = singleBlock(*callee);
-  if (!calleeBB)
-    return errResponse("shape_error", "the callee must be straightline");
-
   llvm::Function *F = singleFunction(outerM);
   if (!F)
     return errResponse("shape_error", "the outer module must define exactly one function");
@@ -427,9 +467,17 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   if (!adoptSymbols(*calleeMwc->mod, outerM, callee, vmap, adoptErr))
     return adoptErr;
 
+  if (callee->size() > 1) {
+    if (!putBackRest(*call, *callee, *F, vmap))
+      return errResponse("invalid", "a callee of several blocks goes back only at a call whose "
+                                    "block returns what it answers");
+    return inlined(outerM, *decl);
+  }
+
   // Instructions move one by one instead of through LLVM's inliner, which
   // would hoist allocas to the entry block. The certificate checker compares
   // the result against the original program, so the order has to survive.
+  llvm::BasicBlock *calleeBB = &callee->getEntryBlock();
   std::vector<llvm::Instruction *> clones;
   for (auto &I : *calleeBB) {
     if (llvm::isa<llvm::ReturnInst>(&I))
@@ -465,14 +513,7 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   call->eraseFromParent();
   if (auto *built = llvm::dyn_cast_or_null<llvm::Instruction>(retVal))
     llvm::RecursivelyDeleteTriviallyDeadInstructions(built);
-  // The declaration exists only to carry the call, so drop it once the call
-  // is gone. Otherwise the result could not match the program it came from.
-  if (decl->use_empty())
-    decl->eraseFromParent();
-
-  if (auto d = departure(outerM))
-    return errResponse(d->code, d->message);
-  return moduleResponse(outerM);
+  return inlined(outerM, *decl);
 }
 
 } // namespace llops

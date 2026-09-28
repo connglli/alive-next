@@ -527,6 +527,27 @@ class TestGolden(Case):
   def test_a_cut_verifies(self):
     self.verified(self.cut())
 
+  def test_a_cut_at_an_instruction_of_a_body_that_branches_verifies(self):
+    # The src's callee is the rest of its entry block and both blocks after
+    # it; the kernel puts it back with inline, at the call its block returns.
+    src = llops("canon", {"module": BRANCH})["module"]
+    tgt = llops("canon", {"module": SELECT})["module"]
+    s = llops("outline", {"module": src, "side": "src", "cut": "%1", "callee": "g"})
+    request = {"module": tgt, "side": "tgt", "cut": "%1", "callee": "g", "params": s["params"]}
+    t = llops("outline", {**request, "value_map": {"%0": "%0"}})
+
+    def stored(text: str) -> str:
+      return self.built.program(llops("canon", {"module": text})["module"])
+
+    whole = {"src": stored(src), "tgt": stored(tgt)}
+    outer = {"src": stored(s["outer"]), "tgt": stored(t["outer"])}
+    inner = {"src": stored(s["callee"]), "tgt": stored(t["callee"])}
+    cut = {"kind": "split", "callee": "g", "outer": "g2", "inner": "g3"}
+    self.built.goal("g1", whole, whole, [], cut)
+    self.built.goal("g2", outer, outer, [], {"kind": "check"})
+    self.built.goal("g3", inner, inner, [], {"kind": "check"})
+    self.verified(self.built.write())
+
   def test_a_narrowed_step_verifies(self):
     self.windowed()
     done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")

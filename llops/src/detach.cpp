@@ -9,6 +9,7 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include <optional>
 #include <string>
@@ -263,6 +264,67 @@ std::optional<std::vector<bool>> phiParams(const llvm::json::Array &list, unsign
   return isPhi;
 }
 
+// Move `region` into `name` and answer with the two halves. The src side's
+// signature is what the region needs, the tgt side's what `args` maps it to.
+// `joined`, the block the region was split off from, takes back the block that
+// calls `name`, so a cut at an instruction leaves one block where it cut.
+llvm::json::Object moveRegion(llvm::json::Object &args, llvm::Module &M, llvm::Function &F,
+                              ValueRefs &refs, const Region &region, llvm::StringRef name,
+                              llvm::BasicBlock *joined) {
+  std::vector<llvm::Value *> params;
+  llvm::json::Array paramInfo;
+  if (args.getString("side") == "src") {
+    params = needed(F, region);
+    for (llvm::Value *v : params) {
+      llvm::json::Object p;
+      std::string type;
+      llvm::raw_string_ostream os(type);
+      v->getType()->print(os);
+      p["type"] = std::move(type);
+      p["live"] = refs.print(*v);
+      paramInfo.emplace_back(std::move(p));
+    }
+  } else {
+    llvm::json::Object err;
+    if (!tgtParams(args, F, refs, region, params, err))
+      return err;
+    paramInfo = *args.getArray("params");
+  }
+
+  auto phis = phiPositions(params, region.front());
+  std::string hypothesis = name.str() + ".ih";
+  bool recurses = false;
+  llvm::Function *k = cutOut(M, F, region, params, name, hypothesis, recurses);
+  for (unsigned i = 0; i < paramInfo.size(); ++i)
+    (*paramInfo[i].getAsObject())["param"] = "%" + k->getArg(i)->getName().str();
+  if (joined)
+    llvm::MergeBlockIntoPredecessor(joined->getSingleSuccessor());
+
+  auto outer = half(M, k->getName(), hypothesis);
+  auto callee = half(M, F.getName(), "");
+  for (llvm::Module *view : {outer.get(), callee.get()})
+    if (auto d = departure(*view))
+      return errResponse(d->code, d->message);
+
+  llvm::json::Object resp;
+  resp["ok"] = true;
+  resp["outer"] = printModule(*outer);
+  resp["callee"] = printModule(*callee);
+  resp["params"] = std::move(paramInfo);
+  if (!joined)
+    resp["phis"] = std::move(phis);
+  if (recurses)
+    resp["hypothesis"] = hypothesis;
+  return resp;
+}
+
+// The error for a region entered other than through its first block.
+llvm::json::Object secondEntryError(llvm::BasicBlock &other) {
+  return errResponse("not_single_entry",
+                     "'" + operandName(other) +
+                         "' is entered from outside the blocks the cut reaches; cut there first");
+}
+
 } // namespace
 
 llvm::json::Object detachCmd(llvm::json::Object &args) {
@@ -280,16 +342,12 @@ llvm::json::Object detachCmd(llvm::json::Object &args) {
   if (!mwc)
     return errResponse("parse_error", parseErr);
   llvm::Module &M = *mwc->mod;
-  llvm::Function *F = singleFunction(M);
-  if (!F)
-    return errResponse("shape_error",
-                       "detach needs the program shape: exactly one defined function");
   if (auto d = departure(M))
     return errResponse(d->code, d->message);
-  std::string hypothesis = name->str() + ".ih";
-  if (M.getNamedValue(*name) || M.getNamedValue(hypothesis))
-    return errResponse("invalid",
-                       "the name '@" + name->str() + "' or '@" + hypothesis + "' is already taken");
+  llvm::Function *F = singleFunction(M);
+  if (M.getNamedValue(*name) || M.getNamedValue(name->str() + ".ih"))
+    return errResponse("invalid", "the name '@" + name->str() + "' or '@" + name->str() +
+                                      ".ih' is already taken");
 
   llvm::BasicBlock *B = blockNamed(*F, *block);
   if (!B)
@@ -298,52 +356,22 @@ llvm::json::Object detachCmd(llvm::json::Object &args) {
     return errResponse("invalid", "nothing branches to the entry block; cut at an instruction");
   Region region = reachedFrom(B);
   if (llvm::BasicBlock *other = secondEntry(*F, region))
-    return errResponse("not_single_entry", "'" + operandName(*other) +
-                                               "' is entered from outside the blocks '" +
-                                               block->str() + "' reaches; cut there first");
-
+    return secondEntryError(*other);
   ValueRefs refs(*F);
-  std::vector<llvm::Value *> params;
-  llvm::json::Array paramInfo;
-  if (*side == "src") {
-    params = needed(*F, region);
-    for (llvm::Value *v : params) {
-      llvm::json::Object p;
-      std::string type;
-      llvm::raw_string_ostream os(type);
-      v->getType()->print(os);
-      p["type"] = std::move(type);
-      p["live"] = refs.print(*v);
-      paramInfo.emplace_back(std::move(p));
-    }
-  } else {
-    llvm::json::Object err;
-    if (!tgtParams(args, *F, refs, region, params, err))
-      return err;
-    paramInfo = *args.getArray("params");
-  }
+  return moveRegion(args, M, *F, refs, region, *name, nullptr);
+}
 
-  auto phis = phiPositions(params, B);
-  bool recurses = false;
-  llvm::Function *k = cutOut(M, *F, region, params, *name, hypothesis, recurses);
-  for (unsigned i = 0; i < paramInfo.size(); ++i)
-    (*paramInfo[i].getAsObject())["param"] = "%" + k->getArg(i)->getName().str();
-
-  auto outer = half(M, k->getName(), hypothesis);
-  auto callee = half(M, F->getName(), "");
-  for (llvm::Module *view : {outer.get(), callee.get()})
-    if (auto d = departure(*view))
-      return errResponse(d->code, d->message);
-
-  llvm::json::Object resp;
-  resp["ok"] = true;
-  resp["outer"] = printModule(*outer);
-  resp["callee"] = printModule(*callee);
-  resp["params"] = std::move(paramInfo);
-  resp["phis"] = std::move(phis);
-  if (recurses)
-    resp["hypothesis"] = hypothesis;
-  return resp;
+llvm::json::Object outlineRest(llvm::json::Object &args, llvm::Module &M, llvm::Function &F,
+                               ValueRefs &refs, llvm::Instruction *cut, llvm::StringRef name) {
+  if (llvm::isa<llvm::PHINode>(cut))
+    return errResponse("invalid", "a cut at a phi leaves the other phis behind; cut at the block");
+  // `refs` was read before the split, which names its new block so that it
+  // takes no slot of its own.
+  llvm::BasicBlock *head = cut->getParent();
+  Region region = reachedFrom(head->splitBasicBlock(cut, "rest"));
+  if (llvm::BasicBlock *other = secondEntry(F, region))
+    return secondEntryError(*other);
+  return moveRegion(args, M, F, refs, region, name, head);
 }
 
 llvm::json::Object reattachCmd(llvm::json::Object &args) {

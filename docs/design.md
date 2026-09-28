@@ -70,7 +70,7 @@ The framework state has two parts: an immutable **program store** and a **goal t
 
 ## Decomposition = outlining
 
-Cutting a program in two while memory flows across the cut needs a notion of "the state at the cut in RHS refines the state in LHS", including memory. We do not define that ourselves. Instead, `split` outlines the suffix:
+Cutting a program in two while memory flows across the cut needs a notion of "the state at the cut in RHS refines the state in LHS", including memory. We do not define that ourselves. Instead, `split` outlines the rest of the body from the cut point, the rest of its block and every block that reaches when the body branches:
 
 - Outer program: `A; call g(...)`, where `g` is a fresh declared function.
 - Callee: a function `g` whose body is `B`.

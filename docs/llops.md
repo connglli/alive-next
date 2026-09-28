@@ -24,7 +24,7 @@ The exit status repeats that answer, 0 when ok and 1 when not, so a caller can b
 
 A program is a module with exactly one defined function, whose body has no loop and ends every block in `ret`, `br`, `switch` or `unreachable`. Declarations and global variables are free, calls must name a declared function, and inline assembly and indirect calls are refused.
 
-`validate` reports a departure from that shape as a diagnostic. Every subcommand that rewrites a program reports the first departure other than `cyclic` as an error instead, and changes nothing; a cut at an instruction takes a body of one block, and `inline` a callee of one block.
+`validate` reports a departure from that shape as a diagnostic. Every subcommand that rewrites a program reports the first departure other than `cyclic` as an error instead, and changes nothing.
 
 The LLVM verifier decides what the shape rules do not cover, so a module that comes out of llops parses, has the program shape, and verifies. A refusal is the normal case while an agent searches, not an error path: the diagnostic is the feedback.
 
@@ -121,7 +121,7 @@ Request `{ "module": ..., "what": "<op>", ... }`, response `{ "ok": true, "modul
 
 ## outline
 
-Moves part of a body into a fresh function and leaves a call where it was. Without a `to` the part is the suffix from the cut, which is how a goal is cut in two; with one it is the window between them, which is how a local edit is asked about locally.
+Moves part of a body into a fresh function and leaves a call where it was. Without a `to` the part is the rest of the body from the cut, which is how a goal is cut in two: in a body of several blocks, the rest of the cut's block and every block that reaches, which no other block may enter (`not_single_entry`), and the outer keeps the head of the block and ends it in the call; with one it is the window between them, which is how a local edit is asked about locally.
 
 The instructions before the cut stay in the outer function, which gains a call, and the instructions from the cut onwards become the body of a fresh function. The cut instruction itself is the first instruction of the callee.
 
@@ -176,7 +176,7 @@ A window may hold memory. Its pair is then asked about an arbitrary entry state,
 
 Request `{ "outer": ..., "callee": ..., "callee_name": "g" }`, response `{ "ok": true, "module": ... }`.
 
-The call is replaced by the callee's body in place, each part of a struct the outer takes apart goes back to where it is used, and the declaration that carried the call is dropped once nothing uses it. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, since the body put in its place would not have the UB or poison it adds. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was. That roundtrip is how the certificate checker tests a split for faithfulness, and it is why `outline` is tier 2: what a checker reruns is the inlining, not the cutting.
+The call is replaced by the callee's body in place, each part of a struct the outer takes apart goes back to where it is used, a callee of several blocks goes back at a call its block returns, its entry joining that block, and the declaration that carried the call is dropped once nothing uses it. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, since the body put in its place would not have the UB or poison it adds. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was. That roundtrip is how the certificate checker tests a split for faithfulness, and it is why `outline` is tier 2: what a checker reruns is the inlining, not the cutting.
 
 ## detach
 
@@ -264,7 +264,7 @@ A request that asks for conditions and operand bundles produces two assumes, bec
 | `empty_snippet` | the snippet defines no instructions |
 | `snippet_terminator` | a snippet carries a terminator; the block's own stays |
 | `set_body_contract` | a set_body body is module text, not the body's instructions |
-| `not_single_entry` | a block `detach` would move is entered other than through the named one |
+| `not_single_entry` | a block a cut would move is entered other than where the cut is made |
 
 ## Building and testing
 
