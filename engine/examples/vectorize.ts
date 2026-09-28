@@ -23,6 +23,7 @@ import { expect, type Scenario } from "../core/scenario.ts";
 export const vectorize: Scenario = {
   name: "vectorize",
   about: "a masked field and a chain of multiplies, gathered into one vector",
+  verdict: "verified",
 
   src: `define i32 @fun(i32 %p0, i32 %p1, i32 %p2, i32 %p3) {
 entry:

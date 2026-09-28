@@ -9,6 +9,7 @@ import { expect, type Scenario } from "../core/scenario.ts";
 export const strengthReduce: Scenario = {
   name: "strength-reduce",
   about: "one check discharges the root",
+  verdict: "verified",
 
   src: `define i32 @f(i32 noundef %x) {
 entry:

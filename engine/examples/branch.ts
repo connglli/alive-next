@@ -11,6 +11,7 @@ import { expect, type Scenario } from "../core/scenario.ts";
 export const branch: Scenario = {
   name: "branch",
   about: "a branch detached at its join, where one check gives no answer",
+  verdict: "verified",
 
   src: `define i64 @f(i64 noundef %x, i64 noundef %y, i1 noundef %c) {
 entry:

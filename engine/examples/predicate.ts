@@ -31,6 +31,7 @@ import { expect, type Scenario } from "../core/scenario.ts";
 export const predicate: Scenario = {
   name: "predicate",
   about: "strengthening with a relational comparison predicate across cut arguments",
+  verdict: "verified",
 
   src: `define i32 @f(i32 noundef %x, i32 noundef %y, i32 noundef %step) {
 entry:

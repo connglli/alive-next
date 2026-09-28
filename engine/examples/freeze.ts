@@ -14,6 +14,7 @@ import { expect, type Scenario } from "../core/scenario.ts";
 export const freeze: Scenario = {
   name: "freeze",
   about: "freezing a potentially poisonous input to give a callee noundef parameters",
+  verdict: "verified",
 
   src: `define i32 @f(i32 %x) {
 entry:

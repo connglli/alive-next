@@ -19,6 +19,7 @@ import { expect, type Scenario } from "../core/scenario.ts";
 export const nuw: Scenario = {
   name: "nuw",
   about: "stripping a nuw flag using a conditioned window",
+  verdict: "verified",
 
   src: `define i32 @f(i32 noundef %x) {
 entry:

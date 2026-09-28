@@ -18,6 +18,7 @@ import { expect, type Scenario } from "../core/scenario.ts";
 export const cut: Scenario = {
   name: "cut",
   about: "a split, and a check on each half",
+  verdict: "verified",
 
   src: `define i32 @f(i32 noundef %x) {
 entry:

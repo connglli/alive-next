@@ -69,7 +69,7 @@ export async function prove(one: Scenario, options: ProveOptions = {}): Promise<
   // Both verdicts are delivered as a package, so a run that earns one writes
   // it; only "unknown" has nothing to hand over.
   if (outcome !== "unknown") console.log(`  ${certify(dir, join(dir, "certificate"))}`);
-  return outcome === (one.verdict ?? "verified");
+  return outcome === one.verdict;
 }
 
 /** A directory name that sorts by when it was made. */

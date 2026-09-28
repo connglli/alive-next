@@ -95,7 +95,7 @@ afterEach(() => {
 // the toolchain has none built.
 describe.skipIf(!built)("scenarios, with a stand-in checker", () => {
   for (const one of scenarios.filter(
-    (one) => (one.verdict ?? "verified") === "verified" && (one.name !== "rule" || rewriterBuilt),
+    (one) => one.verdict === "verified" && (one.name !== "rule" || rewriterBuilt),
   )) {
     test(`${one.name} makes every move`, async () => {
       const checker = new YesMan();
@@ -133,7 +133,7 @@ describe.skipIf(!built || !installed)("scenarios, checked by the toolchain", () 
   // where the toolchain has none built.
   for (const one of scenarios.filter((one) => one.name !== "rule" || rewriterBuilt)) {
     test(
-      `${one.name} reaches ${one.verdict ?? "verified"}`,
+      `${one.name} reaches ${one.verdict}`,
       async () => {
         const session = await Session.start({
           dir,

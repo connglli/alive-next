@@ -7,6 +7,7 @@ import { expect, type Scenario } from "../core/scenario.ts";
 export const rule: Scenario = {
   name: "rule",
   about: "one verified-rewriter step, discharged by the check that follows it",
+  verdict: "verified",
 
   src: `define i32 @f(i32 noundef %x, i32 noundef %y) {
 entry:

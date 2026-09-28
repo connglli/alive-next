@@ -31,6 +31,7 @@ import { expect, type Scenario } from "../core/scenario.ts";
 export const reassociate: Scenario = {
   name: "reassociate",
   about: "two cuts keep an sdiv out of every query alive2 is asked",
+  verdict: "verified",
 
   src: `define i64 @f(i64 noundef %p0, i64 noundef %p1, i64 noundef %p2) {
 entry:

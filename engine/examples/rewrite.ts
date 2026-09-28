@@ -10,6 +10,7 @@ import { expect, type Scenario } from "../core/scenario.ts";
 export const rewrite: Scenario = {
   name: "rewrite",
   about: "one certified step, discharged by the check that follows it",
+  verdict: "verified",
 
   src: `define i32 @f(i32 noundef %x, i32 noundef %y) {
 entry:

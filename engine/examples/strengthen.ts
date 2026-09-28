@@ -24,6 +24,7 @@ import { expect, type Scenario } from "../core/scenario.ts";
 export const strengthen: Scenario = {
   name: "strengthen",
   about: "a cut the callee cannot survive without a fact from its caller",
+  verdict: "verified",
 
   src: `define i32 @f(i32 noundef %n) {
 entry:
