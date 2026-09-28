@@ -5,6 +5,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ModuleSlotTracker.h"
 #include "llvm/Support/JSON.h"
@@ -101,6 +102,10 @@ private:
   llvm::Function &fn;
   llvm::ModuleSlotTracker mst;
 };
+
+// Whether a call is as outline and detach make it, with nothing on it that
+// could add UB or poison the body put back in its place would not have.
+bool plainCall(const llvm::CallInst &call);
 
 // Render diagnostics into a response object under "diagnostics".
 void addDiagnostics(llvm::json::Object &O, llvm::ArrayRef<Diag> diags);

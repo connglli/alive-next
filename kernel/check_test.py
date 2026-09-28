@@ -933,6 +933,47 @@ class TestTampered(Case):
     package = TestGolden.strengthened(self, proved=False)
     self.refused(package, "no src step proves the entry predicates")
 
+  def test_a_cut_whose_call_assumes_more_than_the_parent(self):
+    # The tgt drops a freeze, which a poison x refutes. A `noundef` on the
+    # outer's call makes its src UB there and still inlines back to the
+    # parent, so the fact it lets the callee assume would prove the drop.
+    src = "define i32 @f(i32 %x) {\n  %a = add i32 %x, 1\n  %b = freeze i32 %a\n  ret i32 %b\n}\n"
+    tgt = "define i32 @f(i32 %x) {\n  %a = add i32 %x, 1\n  ret i32 %a\n}\n"
+    s = llops("outline", {"module": src, "side": "src", "cut": "%b", "callee": "g"})
+    request = {"module": tgt, "side": "tgt", "cut": "#1", "callee": "g", "params": s["params"]}
+    t = llops("outline", {**request, "value_map": {"%a": "%a"}})
+
+    def stored(text: str) -> str:
+      return self.built.program(llops("canon", {"module": text})["module"])
+
+    def declared(text: str) -> str:
+      edit = {"module": text, "op": "attrs", "fn": "g", "param": 0, "attrs": {"noundef": True}}
+      return stored(llops("edit", edit)["module"])
+
+    whole = {"src": stored(src), "tgt": stored(tgt)}
+    marked = s["outer"].replace("@g(i32 %", "@g(i32 noundef %")
+    outer = {"src": stored(marked), "tgt": stored(t["outer"])}
+    outer_end = {"src": declared(marked), "tgt": declared(t["outer"])}
+    outer_steps = [
+      {"kind": "check", "side": side, "from": outer[side], "to": outer_end[side]}
+      for side in ("src", "tgt")
+    ]
+    inner = {"src": stored(s["callee"]), "tgt": stored(t["callee"])}
+    inner_end = {"src": declared(s["callee"]), "tgt": declared(t["callee"])}
+    step = {
+      "kind": "strengthen",
+      "from": inner,
+      "to": inner_end,
+      "param_attrs": {"0": {"noundef": True}},
+      "by": {"gid": "g2", "hash": outer_end["src"]},
+    }
+    self.built.goal(
+      "g1", whole, whole, [], {"kind": "split", "callee": "g", "outer": "g2", "inner": "g3"}
+    )
+    self.built.goal("g2", outer, outer_end, outer_steps, {"kind": "check"})
+    self.built.goal("g3", inner, inner_end, [step], {"kind": "check"})
+    self.refused(self.built.write(), "not a plain call")
+
   def test_a_cut_that_starts_with_attributes(self):
     # memory(none) on a callee that writes makes its src UB on every input,
     # so any tgt refines it; only a step may bring the attribute.

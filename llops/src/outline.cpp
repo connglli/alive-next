@@ -377,6 +377,8 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
       }
   if (!call)
     return errResponse("not_found", "the outer does not call '@" + calleeName->str() + "'");
+  if (!plainCall(*call))
+    return errResponse("invalid", "the call of '@" + calleeName->str() + "' is not a plain call");
   if (call->arg_size() != callee->arg_size())
     return errResponse("type_mismatch", "the call and the callee disagree on the argument count");
 

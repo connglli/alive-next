@@ -9,6 +9,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
@@ -461,6 +462,14 @@ llvm::json::Object checkedResponse(llvm::Function &F, llvm::Module &M) {
   if (!diags.empty())
     return errResponse(diags.front().code, diags.front().message);
   return moduleResponse(M);
+}
+
+bool plainCall(const llvm::CallInst &call) {
+  auto *fp = llvm::dyn_cast<llvm::FPMathOperator>(&call);
+  return call.getAttributes().isEmpty() && !call.hasMetadata() && !call.hasOperandBundles() &&
+         call.getCallingConv() == llvm::CallingConv::C &&
+         call.getTailCallKind() == llvm::CallInst::TCK_None &&
+         !(fp && fp->getFastMathFlags().any());
 }
 
 bool parseCmdShape(llvm::json::Object &args, llvm::StringRef cmd, CmdShape &out,

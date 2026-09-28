@@ -411,6 +411,9 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
       return errResponse("invalid", "the outer's entry only calls '@" + name->str() +
                                         "', which is outline's suffix, not a detached block");
     llvm::CallInst *call = onlyCalls(*Q, targets);
+    if (!plainCall(*call))
+      return errResponse("invalid", "the call of '@" + call->getCalledFunction()->getName().str() +
+                                        "' is not a plain call");
     for (Edge e : edgesInto(*F, Q)) {
       e.from->getTerminator()->setSuccessor(e.index, entry);
       for (unsigned i = 0; i < phis.size(); ++i)

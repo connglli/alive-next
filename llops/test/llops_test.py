@@ -1433,6 +1433,13 @@ class TestDetach(Case):
     r = self.detach(tgt, "%exit", "k", params=src["params"], value_map={"%r": "%r"})
     self.bad(r, "invalid")
 
+  def test_a_call_with_anything_on_it_is_not_reattached(self):
+    half = self.good(self.detach(ROTATED, "%exit", "k"))
+    marked = half["outer"].replace("call i32 @k(i32 ", "call i32 @k(i32 noundef ")
+    self.assertNotEqual(marked, half["outer"])
+    request = {"outer": marked, "callee": half["callee"], "callee_name": "k"}
+    self.bad(run("reattach", request), "invalid")
+
   def test_canon_orders_phi_incoming_by_block(self):
     flipped = ROTATED.replace(
       "%i = phi i32 [ 0, %entry ], [ %i.next, %loop ]",
@@ -1598,6 +1605,21 @@ class TestInline(Case):
       with self.subTest(cut=cut):
         _, back = self.roundtrip(F_SIMPLE, cut)
         self.assertEqual(self.canon(back["module"]), self.canon(F_SIMPLE))
+
+  def test_a_call_with_anything_on_it_is_not_inlined(self):
+    out, _ = self.roundtrip(F_SIMPLE, "s")
+    plain = "call i32 @g(i32 %"
+    for marked in (
+      "call i32 @g(i32 noundef %",
+      "call noundef i32 @g(i32 %",
+      "tail call i32 @g(i32 %",
+      "call fastcc i32 @g(i32 %",
+    ):
+      with self.subTest(marked=marked):
+        self.assertIn(plain, out["outer"])
+        outer = out["outer"].replace(plain, marked)
+        request = {"outer": outer, "callee": out["callee"], "callee_name": "g"}
+        self.bad(run("inline", request), "invalid")
 
   def test_roundtrip_with_memory(self):
     _, back = self.roundtrip(F_MEMORY, "l")

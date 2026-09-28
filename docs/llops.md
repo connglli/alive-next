@@ -176,7 +176,7 @@ A window may hold memory. Its pair is then asked about an arbitrary entry state,
 
 Request `{ "outer": ..., "callee": ..., "callee_name": "g" }`, response `{ "ok": true, "module": ... }`.
 
-The call is replaced by the callee's body in place, and the declaration that carried it is dropped once nothing uses it. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was. That roundtrip is how the certificate checker tests a split for faithfulness, and it is why `outline` is tier 2: what a checker reruns is the inlining, not the cutting.
+The call is replaced by the callee's body in place, and the declaration that carried it is dropped once nothing uses it. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, since the body put in its place would not have the UB or poison it adds. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was. That roundtrip is how the certificate checker tests a split for faithfulness, and it is why `outline` is tier 2: what a checker reruns is the inlining, not the cutting.
 
 ## detach
 
@@ -190,7 +190,7 @@ The signature is the block's phis, then the values the moved blocks use from out
 
 Request `{ "outer": ..., "callee": ..., "callee_name": "k", "hypothesis": "k.ih" }`, response `{ "ok": true, "module": ... }`.
 
-The inverse of `detach`, which the certificate checker runs. Every block that only calls the callee or its hypothesis and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there; a phi whose incoming values are one value or itself becomes that value. `canon` of the result is `canon` of the module `detach` started from.
+The inverse of `detach`, which the certificate checker runs. Every block that only calls the callee or its hypothesis, with a call `inline` accepts, and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there; a phi whose incoming values are one value or itself becomes that value. `canon` of the result is `canon` of the module `detach` started from.
 
 ## analyze
 
