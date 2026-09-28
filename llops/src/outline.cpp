@@ -226,9 +226,7 @@ liveOutOf(llvm::ArrayRef<llvm::Instruction *> window,
   return live;
 }
 
-// The values a struct is built of, when it is built one field at a time from
-// poison, each field once, as a window builds what it hands back; otherwise
-// nothing.
+// The fields of a struct built one at a time from poison, as a window builds one, or nothing.
 std::vector<llvm::Value *> partsOf(llvm::Value *v) {
   auto *ty = v ? llvm::dyn_cast<llvm::StructType>(v->getType()) : nullptr;
   if (!ty)
@@ -254,9 +252,7 @@ bool takenApart(llvm::CallInst &call, unsigned fields) {
   });
 }
 
-// Put a callee of several blocks back at a call its block returns, which is
-// where a cut left it: the callee's entry joins the call's block, its other
-// blocks follow, and a phi that named the entry names that block again.
+// Put a callee of several blocks back at a call its block returns, its entry joining that block.
 bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F,
                  llvm::ValueToValueMapTy &vmap) {
   auto *ret = llvm::dyn_cast_or_null<llvm::ReturnInst>(call.getNextNode());
@@ -285,9 +281,7 @@ bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F
   return true;
 }
 
-// The outer once the callee is back: the declaration that carried the call is
-// dropped, since otherwise the result could not match the program it came
-// from, and what is left has to be a program.
+// The outer once its callee is back, the declaration dropped and the program checked.
 llvm::json::Object inlined(llvm::Module &M, llvm::Function &decl) {
   if (decl.use_empty())
     decl.eraseFromParent();

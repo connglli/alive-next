@@ -26,9 +26,7 @@ llvm::json::Object detachCmd(llvm::json::Object &args);
 
 llvm::json::Object reattachCmd(llvm::json::Object &args);
 
-// What `outline` answers for a cut at an instruction of a body of several
-// blocks: the rest of that block and every block it reaches, entered only
-// through the cut, move into `name`. `M` is changed in the process.
+// What `outline` answers for a cut at an instruction of a body of several blocks.
 llvm::json::Object outlineRest(llvm::json::Object &args, llvm::Module &M, llvm::Function &F,
                                ValueRefs &refs, llvm::Instruction *cut, llvm::StringRef name);
 

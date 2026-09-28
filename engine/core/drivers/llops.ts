@@ -304,11 +304,7 @@ export class Llops {
   }
 }
 
-/**
- * The instructions of a module's one function, block by block as printed,
- * labels dropped: an instruction's place in the blocks laid end to end is the
- * `#N` llops names it by.
- */
+/** The one function's instructions, block by block, labels dropped, so an index is llops' `#N`. */
 export function moduleBlocks(module: Module): string[][] | undefined {
   const lines = module.split("\n");
   const entry = lines.indexOf("entry:");
@@ -316,9 +312,14 @@ export function moduleBlocks(module: Module): string[][] | undefined {
   const end = lines.indexOf("}", entry);
   if (end < 0) return undefined;
   const blocks: string[][] = [[]];
+  let open = false;
   for (const line of lines.slice(entry + 1, end).map((l) => l.trim())) {
-    if (/^("[^"]*"|[\w.$-]+):(\s|$)/.test(line)) blocks.push([]);
-    else if (line) blocks[blocks.length - 1]?.push(line);
+    const block = blocks[blocks.length - 1] as string[];
+    // A switch prints its cases on lines of their own, up to a closing `]`.
+    if (open) block[block.length - 1] += ` ${line}`;
+    else if (/^("[^"]*"|[\w.$-]+):(\s|$)/.test(line)) blocks.push([]);
+    else if (line) block.push(line);
+    open = (open || line.endsWith("[")) && line !== "]";
   }
   return blocks;
 }

@@ -292,8 +292,7 @@ bool joinInsts(const llvm::json::Array &insts, std::string &out, llvm::json::Obj
   return true;
 }
 
-// Whether `def` is available at every use of `v`: a value that stands in for
-// another has to be, in whichever block or phi the use sits.
+// Whether `def` is available at every use of `v`, uses in phis included.
 bool reachesEveryUse(llvm::Value *def, llvm::Value *v) {
   auto *I = llvm::dyn_cast<llvm::Instruction>(def);
   if (!I)
@@ -303,8 +302,7 @@ bool reachesEveryUse(llvm::Value *def, llvm::Value *v) {
                       [&](const llvm::Use &U) { return U.getUser() != I && DT.dominates(I, U); });
 }
 
-// Where a conversion for use `U` goes: before its user, or for a phi at the
-// end of the block the value comes in from.
+// Where a conversion for use `U` goes: before its user, or ending a phi's incoming block.
 llvm::BasicBlock::iterator beforeUse(const llvm::Use &U) {
   auto *user = llvm::cast<llvm::Instruction>(U.getUser());
   if (auto *phi = llvm::dyn_cast<llvm::PHINode>(user))

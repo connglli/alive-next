@@ -146,28 +146,25 @@ function candidates(oldBlocks: string[][], newBlocks: string[][]): [Window, Wind
   const shared = common(oldLines, newLines);
   const from = Math.min(shared.prefix, oldLast, newLast);
   const tail = Math.min(shared.suffix, oldLast - from, newLast - from);
-  const start = oldSpan.start + from;
+  const [oldStart, newStart] = [oldSpan.start + from, newSpan.start + from];
 
   const tries: [Window, Window][] = [];
   if (tail > 0) {
     tries.push([
-      at(start, oldSpan.start + oldLast - tail),
-      at(start, newSpan.start + newLast - tail),
+      at(oldStart, oldSpan.start + oldLast - tail),
+      at(newStart, newSpan.start + newLast - tail),
     ]);
   }
   // The wide window is what a change in the number of instructions leaves,
   // and it is worth asking only while it leaves something out: from the first
   // line of a lone block to its last is the whole function under another name.
-  if (start > 0 || oldBlocks.length > 1) {
-    tries.push([at(start, oldSpan.start + oldLast), at(start, newSpan.start + newLast)]);
+  if (oldStart > 0 || oldBlocks.length > 1) {
+    tries.push([at(oldStart, oldSpan.start + oldLast), at(newStart, newSpan.start + newLast)]);
   }
   return tries;
 }
 
-/**
- * Where each block's instructions after its phis start among the instructions
- * laid end to end, and its last before the terminator.
- */
+/** Each block's first index after its phis, and its last before the terminator. */
 function spans(blocks: string[][]): { start: number; last: number }[] {
   let start = 0;
   return blocks.map((lines) => {

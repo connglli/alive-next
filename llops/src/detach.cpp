@@ -264,10 +264,7 @@ std::optional<std::vector<bool>> phiParams(const llvm::json::Array &list, unsign
   return isPhi;
 }
 
-// Move `region` into `name` and answer with the two halves. The src side's
-// signature is what the region needs, the tgt side's what `args` maps it to.
-// `joined`, the block the region was split off from, takes back the block that
-// calls `name`, so a cut at an instruction leaves one block where it cut.
+// Move `region` into `name` and answer with the two halves; `joined` takes back the call.
 llvm::json::Object moveRegion(llvm::json::Object &args, llvm::Module &M, llvm::Function &F,
                               ValueRefs &refs, const Region &region, llvm::StringRef name,
                               llvm::BasicBlock *joined) {

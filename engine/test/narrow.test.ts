@@ -216,6 +216,33 @@ exit:
     expect(await inlined(found.outer, found.after)).toBe(await canon(after));
   });
 
+  test("counts a switch and its cases as one instruction", async () => {
+    // The cases print on lines of their own, which are not instructions: the
+    // window in the block after the switch has to be named as llops counts.
+    const before = `define i32 @f(i32 %x) {
+entry:
+  switch i32 %x, label %other [
+    i32 0, label %zero
+    i32 1, label %zero
+  ]
+
+zero:
+  %h = lshr i32 %x, 4
+  %a = mul i32 %h, 2
+  %b = add i32 %a, 1
+  ret i32 %b
+
+other:
+  ret i32 0
+}
+`;
+    const after = before.replace("mul i32 %h, 2", "shl i32 %h, 1");
+    const found = await narrow(llops, await canon(before), await canon(after));
+    if (!found) throw new Error("expected the step to narrow");
+    expect(body(found.before)).toEqual(["%0 = mul i32 %p0, 2", "ret i32 %0"]);
+    expect(await inlined(found.outer, found.after)).toBe(await canon(after));
+  });
+
   test("says nothing when the first instruction is the one that changed", async () => {
     // Nothing is shared at either end, so the window is the body and the
     // whole function is the only question there is.

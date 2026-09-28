@@ -67,8 +67,7 @@ std::vector<Diag> validateModule(llvm::Module &M);
 // ending in ret, br, switch or unreachable.
 std::vector<Diag> checkFunction(llvm::Function &F);
 
-// The first departure from the shape other than `cyclic`: a program may loop,
-// however many times, and what it is asked then is the checkers' business.
+// The first departure from the shape other than `cyclic`, if any.
 std::optional<Diag> departure(llvm::Module &M);
 
 // Everything else that makes IR ill formed, delegated to the LLVM verifier
