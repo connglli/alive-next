@@ -162,13 +162,18 @@ std::vector<Edge> edgesInto(llvm::Function &F, llvm::BasicBlock *B) {
 }
 
 // Route one edge into a fresh block that calls `target` with what the
-// parameters are on that edge, and returns what it answers.
+// parameters are on that edge, and returns what it answers. On a back edge
+// from inside `k`, a parameter that is not a phi passes itself on, even when
+// the tgt's value map made one value two parameters.
 llvm::BasicBlock *callInstead(Edge e, llvm::BasicBlock *B, llvm::Function *target,
-                              llvm::ArrayRef<llvm::Value *> params) {
+                              llvm::ArrayRef<llvm::Value *> params, llvm::Function *k) {
   std::vector<llvm::Value *> args;
-  for (llvm::Value *p : params) {
-    auto *phi = llvm::dyn_cast<llvm::PHINode>(p);
-    args.push_back(phi && phi->getParent() == B ? phi->getIncomingValueForBlock(e.from) : p);
+  for (unsigned i = 0; i < params.size(); ++i) {
+    auto *phi = llvm::dyn_cast<llvm::PHINode>(params[i]);
+    if (phi && phi->getParent() == B)
+      args.push_back(phi->getIncomingValueForBlock(e.from));
+    else
+      args.push_back(k ? k->getArg(i) : params[i]);
   }
   llvm::Function *F = e.from->getParent();
   auto *Q = llvm::BasicBlock::Create(F->getContext(), "", F);
@@ -197,7 +202,7 @@ llvm::Function *cutOut(llvm::Module &M, llvm::Function &F, const Region &region,
     bool back = region.contains(e.from);
     if (back && !ih)
       ih = llvm::Function::Create(type, llvm::Function::ExternalLinkage, hypothesis, &M);
-    llvm::BasicBlock *Q = callInstead(e, B, back ? ih : k, params);
+    llvm::BasicBlock *Q = callInstead(e, B, back ? ih : k, params, back ? k : nullptr);
     if (back)
       moving.insert(Q);
   }

@@ -1454,6 +1454,21 @@ class TestDetach(Case):
     self.assertEqual(t["phis"], [0])
     self.reattaches(tgt, t, "k")
 
+  def test_one_tgt_value_for_two_parameters_comes_back(self):
+    # k copies n on the src side, so the tgt's n stands for both, and each
+    # has to go around the loop in its own position.
+    src = STILL.replace("i32 noundef %n, i32 noundef %x", "i32 noundef %n").replace(
+      "[ %x, %entry ]", "[ %n, %entry ]"
+    )
+    tgt = src.replace("  %k = phi i32 [ %n, %entry ], [ %k, %loop ]\n", "").replace(
+      "add i32 %i, %k", "add i32 %i, %n"
+    )
+    s = self.good(self.detach(src, "%loop", "k"))
+    live = {"%i": "%i", "%k": "%n", "%n": "%n"}
+    t = self.good(self.detach(tgt, "%loop", "k", params=s["params"], value_map=live))
+    self.assertIn("@k.ih(i32 %i.next, i32 %p1, i32 %p2)", t["callee"])
+    self.reattaches(tgt, t, "k")
+
   def test_a_value_from_outside_passed_as_it_changes_is_refused(self):
     half = self.good(self.detach(STILL, "%loop", "k"))
     request = {"outer": half["outer"], "callee": half["callee"], "callee_name": "k"}
