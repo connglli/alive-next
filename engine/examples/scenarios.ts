@@ -3,6 +3,7 @@
 
 import type { Scenario } from "../core/scenario.ts";
 import { branch } from "./branch.ts";
+import { carry } from "./carry.ts";
 import { copiedphi } from "./copiedphi.ts";
 import { cut } from "./cut.ts";
 import { digits } from "./digits.ts";
@@ -12,7 +13,11 @@ import { induction } from "./induction.ts";
 import { invariantphi } from "./invariantphi.ts";
 import { loop } from "./loop.ts";
 import { loopbranch } from "./loopbranch.ts";
+import { loopdiv } from "./loopdiv.ts";
 import { loopfreeze } from "./loopfreeze.ts";
+import { loopstep } from "./loopstep.ts";
+import { loopvector } from "./loopvector.ts";
+import { loopwindow } from "./loopwindow.ts";
 import { memloop } from "./memloop.ts";
 import { miscompile } from "./miscompile.ts";
 import { nested } from "./nested.ts";
@@ -24,6 +29,7 @@ import { reassociate } from "./reassociate.ts";
 import { rewrite } from "./rewrite.ts";
 import { rotated } from "./rotated.ts";
 import { rule } from "./rule.ts";
+import { strchr } from "./strchr.ts";
 import { strengthReduce } from "./strength-reduce.ts";
 import { strengthen } from "./strengthen.ts";
 import { unroll } from "./unroll.ts";
@@ -57,6 +63,12 @@ export const scenarios: Scenario[] = [
   loopfreeze,
   memloop,
   digits,
+  loopstep,
+  carry,
+  loopwindow,
+  loopvector,
+  loopdiv,
+  strchr,
   unroll,
 ];
 
