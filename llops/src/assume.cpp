@@ -366,7 +366,7 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
   if (!bundles.empty())
     builder.CreateAssumption(builder.getTrue(), bundles);
 
-  return checkedResponse(*F, M);
+  return checkedResponse(M);
 }
 
 } // namespace llops

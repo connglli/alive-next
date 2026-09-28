@@ -69,7 +69,7 @@ std::vector<Diag> checkFunction(llvm::Function &F);
 
 // The first departure from the shape other than `cyclic`: a program may loop,
 // however many times, and what it is asked then is the checkers' business.
-std::optional<Diag> departure(llvm::Function &F, llvm::Module &M);
+std::optional<Diag> departure(llvm::Module &M);
 
 // Everything else that makes IR ill formed, delegated to the LLVM verifier
 // rather than restated here. Every edit ends with this check, so a broken
@@ -125,7 +125,7 @@ llvm::json::Object moduleResponse(llvm::Module &M);
 // loops allowed, then the LLVM verifier, and only then the module. Every
 // mutating subcommand ends here, so a broken edit is reported rather than
 // handed back as text.
-llvm::json::Object checkedResponse(llvm::Function &F, llvm::Module &M);
+llvm::json::Object checkedResponse(llvm::Module &M);
 
 // The shape that every mutating subcommand needs: one module, one function,
 // and the value references into it. The context that owns the types and

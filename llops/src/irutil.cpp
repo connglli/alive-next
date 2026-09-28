@@ -453,18 +453,21 @@ llvm::json::Object moduleResponse(llvm::Module &M) {
   return resp;
 }
 
-std::optional<Diag> departure(llvm::Function &F, llvm::Module &M) {
-  auto diags = checkFunction(F);
-  if (!diags.empty() && diags.front().code != "cyclic")
+std::optional<Diag> departure(llvm::Module &M) {
+  auto diags = validateModule(M);
+  if (diags.empty())
+    return std::nullopt;
+  if (diags.front().code != "cyclic")
     return diags.front();
-  auto module = checkModule(M);
-  if (!module.empty())
-    return module.front();
+  // A loop stops the shape check before the verifier runs, so run it here.
+  auto verifier = checkModule(M);
+  if (!verifier.empty())
+    return verifier.front();
   return std::nullopt;
 }
 
-llvm::json::Object checkedResponse(llvm::Function &F, llvm::Module &M) {
-  if (auto d = departure(F, M))
+llvm::json::Object checkedResponse(llvm::Module &M) {
+  if (auto d = departure(M))
     return errResponse(d->code, d->message);
   return moduleResponse(M);
 }

@@ -105,6 +105,59 @@ entry:
     expect(await inlined(found.outer, found.after)).toBe(await canon(after));
   });
 
+  test("finds the window in the arm of a branch, whatever the arm's length", async () => {
+    const before = `define i32 @f(i32 %x, i32 %y) {
+entry:
+  %c = icmp ult i32 %x, %y
+  br i1 %c, label %then, label %done
+
+then:
+  %h = lshr i32 %x, 4
+  %a = mul i32 %h, 2
+  %b = add i32 %a, %y
+  br label %done
+
+done:
+  %r = phi i32 [ %b, %then ], [ %x, %entry ]
+  ret i32 %r
+}
+`;
+    const after = before
+      .replace("mul i32 %h, 2", "shl i32 %h, 1\n  %z = add i32 %a, 0")
+      .replace("add i32 %a, %y", "add i32 %z, %y");
+    const found = await narrow(llops, await canon(before), await canon(after));
+    if (!found) throw new Error("expected the step to narrow");
+    expect(found.outer).toContain("br i1");
+    expect(body(found.before)).not.toContain("br i1");
+    expect(await inlined(found.outer, found.before)).toBe(await canon(before));
+    expect(await inlined(found.outer, found.after)).toBe(await canon(after));
+  });
+
+  test("finds the window inside the body of a loop", async () => {
+    const before = `define i32 @f(i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %s = phi i32 [ 0, %entry ], [ %s.next, %loop ]
+  %d = mul i32 %i, 4
+  %s.next = add i32 %s, %d
+  %i.next = add i32 %i, 1
+  %c = icmp ult i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret i32 %s
+}
+`;
+    const after = before.replace("mul i32 %i, 4", "shl i32 %i, 2");
+    const found = await narrow(llops, await canon(before), await canon(after));
+    if (!found) throw new Error("expected the step to narrow");
+    expect(body(found.before)).toEqual(["%0 = mul i32 %p0, 4", "ret i32 %0"]);
+    expect(await inlined(found.outer, found.after)).toBe(await canon(after));
+  });
+
   test("says nothing when the first instruction is the one that changed", async () => {
     // Nothing is shared at either end, so the window is the body and the
     // whole function is the only question there is.

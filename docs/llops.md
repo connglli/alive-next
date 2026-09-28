@@ -24,7 +24,7 @@ The exit status repeats that answer, 0 when ok and 1 when not, so a caller can b
 
 A program is a module with exactly one defined function, whose body has no loop and ends every block in `ret`, `br`, `switch` or `unreachable`. Declarations and global variables are free, calls must name a declared function, and inline assembly and indirect calls are refused.
 
-`validate` reports a departure from that shape as a diagnostic. Every subcommand that rewrites a program reports the first departure other than `cyclic` as an error instead, and changes nothing; `outline` and `inline` also refuse a program that loops, and take a body of one block.
+`validate` reports a departure from that shape as a diagnostic. Every subcommand that rewrites a program reports the first departure other than `cyclic` as an error instead, and changes nothing; a cut at an instruction takes a body of one block, and `inline` a callee of one block.
 
 The LLVM verifier decides what the shape rules do not cover, so a module that comes out of llops parses, has the program shape, and verifies. A refusal is the normal case while an agent searches, not an error path: the diagnostic is the feedback.
 
@@ -154,7 +154,7 @@ The callee is declared with no attributes. An attribute is an assumption the cal
 
 ### A window rather than a suffix
 
-`to` names the far end, and the outlined instructions are the ones from `cut` to there. The terminator stays where it is, and the callee hands back the one value the rest of the body still uses:
+`to` names the far end, in the same block, and the outlined instructions are the ones from `cut` to there, in whichever block of a body that may loop. The terminator stays where it is, and the callee hands back the one value the rest of the body still uses:
 
 ```json
 { "module": "...", "cut": "%v1", "to": "%v2", "callee": "r" }

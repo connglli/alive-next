@@ -1986,6 +1986,26 @@ class TestSeveralBlocks(Case):
         else:
           self.assertTrue(self.conforms(self.good(r)["module"]))
 
+  def windowed(self, module, frm, to):
+    r = self.good(run("outline", {"module": module, "cut": frm, "to": to, "callee": "w"}))
+    request = {"outer": r["outer"], "callee": r["callee"], "callee_name": "w"}
+    back = self.good(run("inline", request))["module"]
+    self.assertEqual(self.canon(back), self.canon(module))
+    return r
+
+  def test_a_window_in_the_arm_of_a_branch_goes_out_and_back(self):
+    r = self.windowed(CALLEE, "%odd", "%even")
+    self.assertIn("call i1 @w(i32 %i)", r["outer"])
+
+  def test_a_window_in_the_body_of_a_loop_goes_out_and_back(self):
+    r = self.windowed(ROTATED, "%acc.next", "%acc.next")
+    self.assertFalse(self.conforms(r["outer"]))
+    self.assertTrue(self.conforms(r["callee"]))
+
+  def test_a_window_stays_in_one_block(self):
+    request = {"module": CALLEE, "cut": "%c", "to": "%odd", "callee": "w"}
+    self.bad(run("outline", request), "invalid")
+
   def test_a_value_reaches_uses_in_other_blocks_or_does_not(self):
     good = run("edit", {"module": CALLEE, "op": "substitute", "a": "%j.next", "b": "%j"})
     self.assertIn("call i32 @k.ih(i32 %i.next, i32 %j, i32 %n)", self.good(good)["module"])

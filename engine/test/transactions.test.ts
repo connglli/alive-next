@@ -164,7 +164,7 @@ describe.skipIf(!built)("transactions", () => {
     expect(transactions.open()).toBeUndefined();
   });
 
-  test("commits an edit in a later block of a body that branches", async () => {
+  test("commits an edit in a later block of a body that branches, asked as a window", async () => {
     const checker = new FakeChecker(["correct", "unknown"]);
     const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const transactions = new Transactions(store, llops);
@@ -177,7 +177,9 @@ describe.skipIf(!built)("transactions", () => {
     const result = await transactions.commit(goals, steps);
 
     if (result.kind !== "certified") throw new Error("expected the commit to land");
-    expect(checker.calls[0]?.tgt).toContain("mul i32 %1, %0");
+    // What alive2 saw is the multiply alone, out of the arm it sits in.
+    expect(checker.calls[0]?.tgt).toContain("define i32 @outlined_window(");
+    expect(checker.calls[0]?.tgt).toContain("mul i32 %p1, %p0");
   });
 
   test("a refused commit leaves the head alone and closes by default", async () => {

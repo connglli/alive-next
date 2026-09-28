@@ -284,7 +284,7 @@ llvm::json::Object detachCmd(llvm::json::Object &args) {
   if (!F)
     return errResponse("shape_error",
                        "detach needs the program shape: exactly one defined function");
-  if (auto d = departure(*F, M))
+  if (auto d = departure(M))
     return errResponse(d->code, d->message);
   std::string hypothesis = name->str() + ".ih";
   if (M.getNamedValue(*name) || M.getNamedValue(hypothesis))
@@ -332,7 +332,7 @@ llvm::json::Object detachCmd(llvm::json::Object &args) {
   auto outer = half(M, k->getName(), hypothesis);
   auto callee = half(M, F->getName(), "");
   for (llvm::Module *view : {outer.get(), callee.get()})
-    if (auto d = departure(*singleFunction(*view), *view))
+    if (auto d = departure(*view))
       return errResponse(d->code, d->message);
 
   llvm::json::Object resp;
@@ -461,7 +461,7 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
     if (target->use_empty())
       target->eraseFromParent();
 
-  if (auto d = departure(*F, outerM))
+  if (auto d = departure(outerM))
     return errResponse(d->code, d->message);
   return moduleResponse(outerM);
 }

@@ -305,19 +305,25 @@ export class Llops {
 }
 
 /**
- * The instruction lines of a program's body block, terminator included.
- * Scans for entry: and closing brace. A body too small to be worth narrowing
- * is returned as-is: it is the callers, who know what they can outline, that
- * decline it.
+ * The instructions of a module's one function, block by block as printed,
+ * labels dropped: an instruction's place in the blocks laid end to end is the
+ * `#N` llops names it by.
  */
-export function moduleLines(module: Module): string[] | undefined {
+export function moduleBlocks(module: Module): string[][] | undefined {
   const lines = module.split("\n");
   const entry = lines.indexOf("entry:");
   if (entry < 0) return undefined;
   const end = lines.indexOf("}", entry);
   if (end < 0) return undefined;
-  return lines
-    .slice(entry + 1, end)
-    .map((l) => l.trim())
-    .filter(Boolean);
+  const blocks: string[][] = [[]];
+  for (const line of lines.slice(entry + 1, end).map((l) => l.trim())) {
+    if (/^("[^"]*"|[\w.$-]+):(\s|$)/.test(line)) blocks.push([]);
+    else if (line) blocks[blocks.length - 1]?.push(line);
+  }
+  return blocks;
+}
+
+/** The instructions of a module's one function, in the order they are printed. */
+export function moduleLines(module: Module): string[] | undefined {
+  return moduleBlocks(module)?.flat();
 }

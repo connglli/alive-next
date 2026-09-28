@@ -12,13 +12,14 @@
 // than believed. The search here is free to guess: a bad guess costs a couple
 // of llops calls and falls back to the whole function.
 //
-// It guesses twice. The tight window runs from the first line the two bodies
-// disagree on to the last, which is right whenever the edit kept the number of
-// instructions, since then nothing after it is renumbered. The wide one runs
-// from that first disagreement to the end of the body, which is what a change
-// in length leaves, and is still smaller than the whole function by the prefix
-// they share.
-import { type Llops, type Module, moduleLines, type OutlineParam } from "../drivers/llops.ts";
+// A window is a run of instructions in one block, the block where the two
+// bodies first disagree, and it guesses twice there. The tight window runs
+// from the first line they disagree on to the last in that block, which is
+// right whenever the edit kept the number of instructions, since then nothing
+// after it is renumbered. The wide one runs from that first disagreement to
+// the end of the block, which is what a change in length leaves, and is still
+// smaller than the whole function by everything it does not take.
+import { type Llops, type Module, moduleBlocks, type OutlineParam } from "../drivers/llops.ts";
 import { type Ref, resolveRef } from "../refs.ts";
 
 /** The name the outlined window has in both halves. */
@@ -63,11 +64,11 @@ export async function narrow(
   // would otherwise look like two programs that differ everywhere.
   const [was, now] = await Promise.all([llops.canon(before), llops.canon(after)]);
   if (!was.ok || !now.ok) return undefined;
-  const oldBody = moduleLines(was.module);
-  const newBody = moduleLines(now.module);
-  if (!oldBody || !newBody) return undefined;
+  const oldBlocks = moduleBlocks(was.module);
+  const newBlocks = moduleBlocks(now.module);
+  if (!oldBlocks || !newBlocks) return undefined;
 
-  for (const [oldAt, newAt] of candidates(oldBody, newBody)) {
+  for (const [oldAt, newAt] of candidates(oldBlocks, newBlocks)) {
     const found = await outlineBoth(llops, was.module, now.module, oldAt, newAt);
     if (found) return found;
   }
@@ -83,23 +84,24 @@ export async function narrowAt(
   after: Module,
   userWindow: Window,
 ): Promise<Narrowed | undefined> {
-  const rawBody = moduleLines(before);
+  const rawBody = moduleBlocks(before)?.flat();
   if (!rawBody) return undefined;
   const resolved = resolveWindow(rawBody, userWindow);
   if (!resolved) return undefined;
 
   const [was, now] = await Promise.all([llops.canon(before), llops.canon(after)]);
   if (!was.ok || !now.ok) return undefined;
-  const oldBody = moduleLines(was.module);
-  const newBody = moduleLines(now.module);
-  if (!oldBody || !newBody) return undefined;
+  const oldBlocks = moduleBlocks(was.module);
+  const newBlocks = moduleBlocks(now.module);
+  if (!oldBlocks || !newBlocks || oldBlocks.length !== newBlocks.length) return undefined;
 
-  const oldLast = oldBody.length - 2;
-  const newLast = newBody.length - 2;
-  if (oldLast < 0 || newLast < 0) return undefined;
-
-  const suffix = oldLast - resolved.toIdx;
-  const newAt: Window = at(resolved.fromIdx, newLast - suffix);
+  // The window ends as far before its block's terminator on the new side as
+  // it did on the old, since the edit sits inside it.
+  const block = spans(oldBlocks).findIndex((span) => resolved.toIdx <= span.last);
+  const oldSpan = spans(oldBlocks)[block];
+  const newSpan = spans(newBlocks)[block];
+  if (!oldSpan || !newSpan) return undefined;
+  const newAt: Window = at(resolved.fromIdx, newSpan.last - (oldSpan.last - resolved.toIdx));
 
   const found = await outlineBoth(llops, was.module, now.module, resolved.window, newAt);
   if (!found) return undefined;
@@ -120,25 +122,49 @@ function resolveWindow(
 
 /**
  * The windows worth trying, tightest first. Both start where the two bodies
- * first disagree, since everything before that is shared by construction.
+ * first disagree, since everything before that is shared by construction, and
+ * stay in the block that happens in, which is the same block on both sides.
  */
-function candidates(oldBody: string[], newBody: string[]): [Window, Window][] {
-  // The terminator is the last line and cannot go into a window.
-  const oldLast = oldBody.length - 2;
-  const newLast = newBody.length - 2;
+function candidates(oldBlocks: string[][], newBlocks: string[][]): [Window, Window][] {
+  const block = oldBlocks.findIndex((lines, i) => lines.join("\n") !== newBlocks[i]?.join("\n"));
+  const [oldLines, newLines] = [oldBlocks[block], newBlocks[block]];
+  const [oldSpan, newSpan] = [spans(oldBlocks)[block], spans(newBlocks)[block]];
+  if (oldBlocks.length !== newBlocks.length || !oldLines || !newLines || !oldSpan || !newSpan)
+    return [];
+  // The terminator is the block's last line and cannot go into a window.
+  const oldLast = oldLines.length - 2;
+  const newLast = newLines.length - 2;
   if (oldLast < 0 || newLast < 0) return [];
 
-  const shared = common(oldBody, newBody);
+  const shared = common(oldLines, newLines);
   const from = Math.min(shared.prefix, oldLast, newLast);
   const tail = Math.min(shared.suffix, oldLast - from, newLast - from);
+  const start = oldSpan.start + from;
 
   const tries: [Window, Window][] = [];
-  if (tail > 0) tries.push([at(from, oldLast - tail), at(from, newLast - tail)]);
+  if (tail > 0) {
+    tries.push([
+      at(start, oldSpan.start + oldLast - tail),
+      at(start, newSpan.start + newLast - tail),
+    ]);
+  }
   // The wide window is what a change in the number of instructions leaves,
-  // and it is worth asking only while the two still share a prefix: from the
-  // first line to the last is the whole function under another name.
-  if (from > 0) tries.push([at(from, oldLast), at(from, newLast)]);
+  // and it is worth asking only while it leaves something out: from the first
+  // line of a lone block to its last is the whole function under another name.
+  if (start > 0 || oldBlocks.length > 1) {
+    tries.push([at(start, oldSpan.start + oldLast), at(start, newSpan.start + newLast)]);
+  }
   return tries;
+}
+
+/** Where each block starts among the instructions laid end to end, and its last before the terminator. */
+function spans(blocks: string[][]): { start: number; last: number }[] {
+  let start = 0;
+  return blocks.map((lines) => {
+    const span = { start, last: start + lines.length - 2 };
+    start += lines.length;
+    return span;
+  });
 }
 
 function at(from: number, to: number): Window {

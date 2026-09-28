@@ -4,6 +4,7 @@
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/AsmParser/Parser.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
@@ -39,16 +40,16 @@ std::vector<llvm::Instruction *> suffixFrom(llvm::BasicBlock &BB, llvm::Instruct
 }
 
 // The values a window uses from outside it, in definition order: instructions
-// before it first, then arguments. The order is what makes the signature
-// reproducible from the program alone.
-std::vector<llvm::Value *> liveInto(llvm::Function &F, llvm::BasicBlock &BB,
+// in the order they are printed first, then arguments. The order is what makes
+// the signature reproducible from the program alone.
+std::vector<llvm::Value *> liveInto(llvm::Function &F,
                                     const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside) {
   llvm::SmallPtrSet<llvm::Value *, 32> used;
   for (auto *I : inside)
     for (const llvm::Use &U : I->operands())
       used.insert(U.get());
   std::vector<llvm::Value *> live;
-  for (auto &I : BB)
+  for (auto &I : llvm::instructions(F))
     if (!inside.contains(&I) && used.contains(&I))
       live.push_back(&I);
   for (auto &arg : F.args())
@@ -163,7 +164,7 @@ bool readTgtParams(llvm::json::Object &args, llvm::Function &F, ValueRefs &refs,
   }
 
   // Anything the tgt suffix reads and the map does not carry has no way in.
-  for (llvm::Value *v : liveInto(F, BB, setOf(suffixFrom(BB, cut))))
+  for (llvm::Value *v : liveInto(F, setOf(suffixFrom(BB, cut))))
     if (!llvm::is_contained(params, v)) {
       err = errResponse("invalid", "the tgt suffix uses '" + refs.print(*v) +
                                        "', which the value map does not cover");
@@ -231,20 +232,20 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
     return errResponse("parse_error", parseErr);
   llvm::Module &M = *mwc->mod;
 
-  auto diags = validateModule(M);
-  if (!diags.empty())
-    return errResponse(diags.front().code, diags.front().message);
+  if (auto d = departure(M))
+    return errResponse(d->code, d->message);
+  llvm::Function *F = singleFunction(M);
   if (M.getNamedValue(*calleeName))
     return errResponse("invalid", "the name '@" + calleeName->str() + "' is already taken");
-
-  llvm::Function *F = singleFunction(M);
-  llvm::BasicBlock *BB = singleBlock(*F);
-  if (!BB)
-    return errResponse("shape_error", "outline needs a single basic block");
+  // A window is a run of instructions in one block, wherever the block is; a
+  // cut takes the rest of the body, which is a suffix only in a body of one.
+  if (!to && !singleBlock(*F))
+    return errResponse("shape_error", "a cut at an instruction needs a single basic block");
   ValueRefs refs(*F);
   llvm::Instruction *cutInst = refs.resolveInst(*cut);
   if (!cutInst)
     return errResponse("not_found", "the cut point '" + cut->str() + "' does not exist");
+  llvm::BasicBlock *BB = cutInst->getParent();
 
   // Without a far end the window runs to the end of the body, which is the
   // cut every split makes; with one it stops there, which is how a local edit
@@ -256,8 +257,8 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
       return errResponse("not_found", "'" + to->str() + "' does not exist");
     window = windowOf(*BB, cutInst, last);
     if (window.empty())
-      return errResponse("invalid",
-                         "'" + to->str() + "' does not come at or after '" + cut->str() + "'");
+      return errResponse("invalid", "'" + to->str() + "' does not come at or after '" + cut->str() +
+                                        "' in its block");
     if (window.back()->isTerminator())
       return errResponse("invalid", "a window cannot take the terminator with it; leave 'to' out "
                                     "to cut the suffix away instead");
@@ -281,7 +282,7 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
   std::vector<llvm::Value *> params;
   llvm::json::Array paramInfo;
   if (!side || *side == "src") {
-    params = liveInto(*F, *BB, inside);
+    params = liveInto(*F, inside);
     for (auto *v : params) {
       llvm::json::Object p;
       std::string ty;
@@ -359,15 +360,12 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   llvm::Function *F = singleFunction(outerM);
   if (!F)
     return errResponse("shape_error", "the outer module must define exactly one function");
-  llvm::BasicBlock *BB = singleBlock(*F);
-  if (!BB)
-    return errResponse("shape_error", "the outer function must be straightline");
 
   llvm::Function *decl = outerM.getFunction(*calleeName);
   if (!decl)
     return errResponse("not_found", "the outer does not call '@" + calleeName->str() + "'");
   llvm::CallInst *call = nullptr;
-  for (auto &I : *BB)
+  for (auto &I : llvm::instructions(*F))
     if (auto *c = llvm::dyn_cast<llvm::CallInst>(&I))
       if (c->getCalledFunction() == decl) {
         if (call)
@@ -406,7 +404,7 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
     clones.push_back(clone);
   }
   for (auto *clone : clones) {
-    clone->insertInto(BB, call->getIterator());
+    clone->insertInto(call->getParent(), call->getIterator());
     llvm::RemapInstruction(clone, vmap,
                            llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs);
   }
@@ -425,11 +423,8 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   if (decl->use_empty())
     decl->eraseFromParent();
 
-  auto diags = checkFunction(*F);
-  if (diags.empty())
-    diags = checkModule(outerM);
-  if (!diags.empty())
-    return errResponse(diags.front().code, diags.front().message);
+  if (auto d = departure(outerM))
+    return errResponse(d->code, d->message);
   return moduleResponse(outerM);
 }
 

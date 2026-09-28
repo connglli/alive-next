@@ -490,7 +490,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     auto afterSecond = std::next(second->getIterator());
     BB->splice(first->getIterator(), BB, second->getIterator());
     BB->splice(afterSecond, BB, first->getIterator());
-    return checkedResponse(*F, *M);
+    return checkedResponse(*M);
   }
 
   if (*op == "move") {
@@ -511,7 +511,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       return errResponse("invalid", "move: nothing comes after the terminator");
     wi->getParent()->splice(*where == "before" ? wi->getIterator() : std::next(wi->getIterator()),
                             vi->getParent(), vi->getIterator());
-    return checkedResponse(*F, *M);
+    return checkedResponse(*M);
   }
 
   if (*op == "substitute") {
@@ -534,7 +534,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
                                           "' does not reach every use of '" + refs.print(*va) +
                                           "'");
     va->replaceAllUsesWith(vb);
-    return checkedResponse(*F, *M);
+    return checkedResponse(*M);
   }
 
   if (*op == "replace") {
@@ -573,7 +573,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     oldDef->eraseFromParent();
     if (last->getName().empty())
       last->setName(oldName);
-    return checkedResponse(*F, *M);
+    return checkedResponse(*M);
   }
 
   if (*op == "insert") {
@@ -597,7 +597,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     auto pos = *where == "before" ? wi->getIterator() : std::next(wi->getIterator());
     for (auto *inst : s.insts)
       inst->insertInto(wi->getParent(), pos);
-    return checkedResponse(*F, *M);
+    return checkedResponse(*M);
   }
 
   if (*op == "erase") {
@@ -620,7 +620,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     } else {
       vi->eraseFromParent();
     }
-    return checkedResponse(*F, *M);
+    return checkedResponse(*M);
   }
 
   if (*op == "commute") {
@@ -641,7 +641,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     } else {
       return errResponse("invalid", "commute: the operation is not commutative");
     }
-    return checkedResponse(*F, *M);
+    return checkedResponse(*M);
   }
 
   if (*op == "retype") {
@@ -692,7 +692,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       back->insertInto(at->getParent(), at);
       use->set(back);
     }
-    return checkedResponse(*F, *M);
+    return checkedResponse(*M);
   }
 
   if (*op == "dedup") {
@@ -716,7 +716,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
                                           "'");
     bi->replaceAllUsesWith(ai);
     bi->eraseFromParent();
-    return checkedResponse(*F, *M);
+    return checkedResponse(*M);
   }
 
   if (*op == "set_body") {
@@ -797,7 +797,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     if (!newF)
       return errResponse("shape_error", "set_body: the new module must define exactly one "
                                         "function");
-    return checkedResponse(*newF, *newMwc->mod);
+    return checkedResponse(*newMwc->mod);
   }
 
   if (*op == "attrs") {
@@ -825,7 +825,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
           return err;
       }
     }
-    return checkedResponse(*F, *M);
+    return checkedResponse(*M);
   }
 
   if (*op == "flags") {
@@ -904,7 +904,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
         vi->setFastMathFlags(fmf);
       }
     }
-    return checkedResponse(*F, *M);
+    return checkedResponse(*M);
   }
 
   return errResponse("bad_request", "unknown edit op '" + op->str() + "'");

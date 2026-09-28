@@ -46,7 +46,7 @@ llvm::json::Object simplify(llvm::json::Object &args, CmdShape &shape) {
 
   inst->replaceAllUsesWith(result);
   inst->eraseFromParent();
-  return checkedResponse(*shape.F, *shape.M);
+  return checkedResponse(*shape.M);
 }
 
 llvm::json::Object instcombine(llvm::json::Object &args, CmdShape &shape) {
@@ -93,7 +93,7 @@ llvm::json::Object instcombine(llvm::json::Object &args, CmdShape &shape) {
   FPM.addPass(llvm::InstCombinePass(options));
   FPM.run(*shape.F, FAM);
 
-  return checkedResponse(*shape.F, *shape.M);
+  return checkedResponse(*shape.M);
 }
 
 } // namespace

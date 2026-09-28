@@ -349,18 +349,20 @@ class Case(unittest.TestCase):
     self.built.goal("g1", pair, pair, [], {"kind": "check"})
     return self.built.write()
 
-  def windowed(self, tail: str = "  %2 = add i32 %1, 1\n  ret i32 %2\n") -> dict:
+  def windowed(self, was: str = "", now: str = "", at: str = "#0") -> dict:
     """A goal whose one step was narrowed to the window it changed.
 
     The body is longer than the window on purpose: what the step claims is
     that everything outside those lines came through untouched, and what
-    says so is the two halves inlining back into one outer.
+    says so is the two halves inlining back into one outer. Without a pair,
+    a multiply becomes a shift at the head of a short body.
     """
     head = "define i32 @f(i32 %0) {\nentry:\n"
-    was = llops("canon", {"module": f"{head}  %1 = mul i32 %0, 2\n{tail}}}\n"})["module"]
-    now = llops("canon", {"module": f"{head}  %1 = shl i32 %0, 1\n{tail}}}\n"})["module"]
+    tail = "  %2 = add i32 %1, 1\n  ret i32 %2\n}\n"
+    was = llops("canon", {"module": was or f"{head}  %1 = mul i32 %0, 2\n{tail}"})["module"]
+    now = llops("canon", {"module": now or f"{head}  %1 = shl i32 %0, 1\n{tail}"})["module"]
     cut = [
-      llops("outline", {"module": module, "cut": "#0", "to": "#0", "callee": "w"})
+      llops("outline", {"module": module, "cut": at, "to": at, "callee": "w"})
       for module in (was, now)
     ]
     outer = llops("canon", {"module": cut[0]["outer"]})["module"]
@@ -535,6 +537,15 @@ class TestGolden(Case):
     self.assertEqual(
       done.stdout.count("inline the from half") + done.stdout.count("inline the to half"), 2
     )
+
+  def test_a_window_step_inside_a_loop_verifies(self):
+    # The outer loops and is only compared; alive-tv is asked about the two
+    # windows, which do not.
+    self.windowed(LOOP, LOOP.replace("add i32 %2, %1", "add i32 %1, %2"), "#4")
+    done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertIn("VERIFIED - root", done.stdout)
+    self.assertIn("1 solver query ", done.stdout)
 
   def test_a_conditioned_window_step_verifies(self):
     head = "define i32 @f(i32 noundef %0) {\nentry:\n  %1 = and i32 %0, 255\n"
