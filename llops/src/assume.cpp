@@ -131,13 +131,18 @@ bool buildPredicate(const llvm::json::Object &predObj, const Site &site, ValueRe
     return false;
   }
 
-  llvm::Value *lhs = resolveOperand(*lhsJson, site, refs, nullptr, err);
-  if (!lhs)
+  // A constant takes its type from the other operand, whichever side it is on.
+  const auto *lhsObj = lhsJson->getAsObject();
+  bool constFirst = lhsObj && lhsObj->getInteger("const");
+  llvm::Value *first = resolveOperand(constFirst ? *rhsJson : *lhsJson, site, refs, nullptr, err);
+  if (!first)
     return false;
-
-  llvm::Value *rhs = resolveOperand(*rhsJson, site, refs, lhs->getType(), err);
-  if (!rhs)
+  llvm::Value *second =
+      resolveOperand(constFirst ? *lhsJson : *rhsJson, site, refs, first->getType(), err);
+  if (!second)
     return false;
+  llvm::Value *lhs = constFirst ? second : first;
+  llvm::Value *rhs = constFirst ? first : second;
 
   if (lhs->getType() != rhs->getType()) {
     err = errResponse("type_mismatch", "predicate operands must have identical types");

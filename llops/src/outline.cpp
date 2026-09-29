@@ -218,10 +218,12 @@ bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F
   return true;
 }
 
-// The outer once its callee is back, the declaration dropped and the program checked.
+// The outer once its callee is back, the declaration dropped and the program
+// checked. A use left over would name the callee as something else.
 llvm::json::Object inlined(llvm::Module &M, llvm::Function &decl) {
-  if (decl.use_empty())
-    decl.eraseFromParent();
+  if (!decl.use_empty())
+    return errResponse("invalid", "'@" + decl.getName().str() + "' is used other than by the call");
+  decl.eraseFromParent();
   if (auto d = departure(M))
     return errResponse(d->code, d->message);
   return moduleResponse(M);

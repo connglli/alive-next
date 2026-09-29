@@ -1755,6 +1755,15 @@ class TestInline(Case):
         request = {"outer": outer, "callee": out["callee"], "callee_name": "g"}
         self.bad(run("inline", request), "invalid")
 
+  def test_a_callee_used_other_than_by_the_call_is_not_inlined(self):
+    out, _ = self.roundtrip(F_MEMORY, "l")
+    call = "  %0 = call i32 @g(ptr %p)"
+    self.assertIn(call, out["outer"])
+    outer = out["outer"].replace(call, "  store ptr @g, ptr %p, align 8\n" + call)
+    request = {"outer": outer, "callee": out["callee"], "callee_name": "g"}
+    r = self.bad(run("inline", request), "invalid")
+    self.assertIn("used other than by the call", r["error"]["message"])
+
   def test_roundtrip_with_memory(self):
     _, back = self.roundtrip(F_MEMORY, "l")
     self.assertEqual(self.canon(back["module"]), self.canon(F_MEMORY))
@@ -2544,6 +2553,17 @@ entry:
       ),
       "type_mismatch",
     )
+
+  def test_a_constant_takes_the_type_of_the_other_operand(self):
+    module = "define i64 @f(i64 %x) {\nentry:\n  ret i64 %x\n}\n"
+    for lhs, rhs, said in (
+      ({"const": 5}, {"val": "%x"}, "icmp ult i64 5, %x"),
+      ({"val": "%x"}, {"const": 5}, "icmp ult i64 %x, 5"),
+    ):
+      with self.subTest(lhs=lhs):
+        request = {"module": module, "anchor": {"at": "start", "fn": "f"}}
+        request["assertions"] = [{"op": "ult", "lhs": lhs, "rhs": rhs}]
+        self.assertIn(said, self.good(run("assume", request))["module"])
 
   def test_unknown_predicate_operator(self):
     module = """define i32 @f(i32 %x, i32 %y) {
