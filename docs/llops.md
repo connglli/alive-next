@@ -165,7 +165,7 @@ The callee is declared with no attributes. An attribute is an assumption the cal
   "result": { "type": "i32", "live": [ "%v2" ] } }
 ```
 
-`result` is absent when nothing outside the window uses what it defines, and the callee then answers with `void`; several values come back as a struct, in the order the window defines them, which the outer takes apart right after the call. A window that takes a phi or the terminator is refused: leaving `to` out is how the rest is cut away.
+`result` is absent when nothing outside the window uses what it defines, and the callee then answers with `void`; several values come back as a struct, in the order the rest of the body first uses them, which the outer takes apart right after the call. A window that takes a phi or the terminator is refused: leaving `to` out is how the rest is cut away.
 
 A window asks about a local edit locally. Two versions of a body that differ only inside one window come out as the same outer and two small functions, so the small pair is the whole question, and byte-identical outers show that the difference is confined to the window. Neither the instruction count nor the names have to line up for that. This is one program's own business rather than an agreement between two, so a window takes no `side`, `params` or `value_map`, and is refused if it is given one.
 

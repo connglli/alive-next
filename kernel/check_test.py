@@ -581,6 +581,16 @@ class TestGolden(Case):
     self.windowed(LOOP, now, "#3", "#4")
     self.verified(self.built.write())
 
+  def test_a_window_step_that_swaps_two_values_a_loop_reads_verifies(self):
+    named = LOOP.replace("%3", "%a").replace("%4", "%b")
+    now = named.replace(
+      "  %a = add i32 %1, 1\n  %b = add i32 %2, %1\n",
+      "  %b = add i32 %2, %1\n  %a = add i32 %1, 1\n",
+    )
+    self.assertNotEqual(now, named)
+    self.windowed(LOOP, now, "#3", "#4")
+    self.verified(self.built.write())
+
   def test_a_conditioned_window_step_verifies(self):
     head = "define i32 @f(i32 noundef %0) {\nentry:\n  %1 = and i32 %0, 255\n"
     tail = "  ret i32 %2\n"

@@ -13,6 +13,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -146,21 +147,34 @@ std::vector<llvm::Instruction *> windowOf(llvm::BasicBlock &BB, llvm::Instructio
   return {};
 }
 
-// The window values that something outside it uses. A call answers with one
-// value, so a window that hands out two cannot become one.
+// The window values that something outside it uses, in the order the rest of
+// the body first uses them, which two versions differing only inside the
+// window share.
 std::vector<llvm::Instruction *>
-liveOutOf(llvm::ArrayRef<llvm::Instruction *> window,
+liveOutOf(llvm::Function &F, llvm::ArrayRef<llvm::Instruction *> window,
           const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside) {
-  std::vector<llvm::Instruction *> live;
-  for (auto *I : window)
+  llvm::DenseMap<const llvm::Instruction *, unsigned> position;
+  unsigned next = 0;
+  for (auto &I : llvm::instructions(F))
+    position[&I] = next++;
+  // Where a value is first used: the user's position, then the operand's.
+  std::vector<std::pair<std::pair<unsigned, unsigned>, llvm::Instruction *>> live;
+  for (auto *I : window) {
+    std::optional<std::pair<unsigned, unsigned>> first;
     for (const llvm::Use &U : I->uses()) {
-      auto *user = llvm::dyn_cast<llvm::Instruction>(U.getUser());
-      if (user && inside.contains(user))
-        continue;
-      live.push_back(I);
-      break;
+      auto *user = llvm::cast<llvm::Instruction>(U.getUser());
+      std::pair<unsigned, unsigned> at{position.lookup(user), U.getOperandNo()};
+      if (!inside.contains(user) && (!first || at < *first))
+        first = at;
     }
-  return live;
+    if (first)
+      live.push_back({*first, I});
+  }
+  llvm::sort(live, [](const auto &a, const auto &b) { return a.first < b.first; });
+  std::vector<llvm::Instruction *> out;
+  for (auto &entry : live)
+    out.push_back(entry.second);
+  return out;
 }
 
 // The fields of a struct built one at a time from poison, as a window builds one, or nothing.
@@ -281,7 +295,7 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
   if (llvm::isa<llvm::PHINode>(window.front()))
     return errResponse("invalid", "a window cannot take a phi, which belongs to its block");
   llvm::SmallPtrSet<llvm::Instruction *, 16> inside = setOf(window);
-  std::vector<llvm::Instruction *> out = liveOutOf(window, inside);
+  std::vector<llvm::Instruction *> out = liveOutOf(*F, window, inside);
 
   std::vector<llvm::Value *> params = liveInto(*F, inside);
   llvm::json::Array paramInfo;

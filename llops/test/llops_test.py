@@ -1579,6 +1579,24 @@ exit:
     self.assertEqual(self.canon(flipped), self.canon(ROTATED))
 
 
+SWAPPED_LOOP = """define i32 @f(i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %j = phi i32 [ 0, %entry ], [ %j.next, %loop ]
+  %i.next = add i32 %i, 1
+  %j.next = add i32 %j, 2
+  %c = icmp ult i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret i32 %j
+}
+"""
+
+
 class TestOutlineWindow(Case):
   # Two bodies that differ only in how the middle value is computed, and in
   # how many instructions that takes. Asking about that middle on its own is
@@ -1602,6 +1620,20 @@ entry:
 
   def window(self, module=F_SIMPLE, frm="m", to="m", callee="r"):
     return self.good(run("outline", {"module": module, "cut": frm, "to": to, "callee": callee}))
+
+  def test_values_come_back_in_the_order_the_rest_uses_them(self):
+    # Swapping where two values are defined leaves their uses alone, so both
+    # versions hand them back alike and their outers agree.
+    swapped = SWAPPED_LOOP.replace(
+      "  %i.next = add i32 %i, 1\n  %j.next = add i32 %j, 2\n",
+      "  %j.next = add i32 %j, 2\n  %i.next = add i32 %i, 1\n",
+    )
+    outers = []
+    for module, frm, to in ((SWAPPED_LOOP, "i.next", "j.next"), (swapped, "j.next", "i.next")):
+      r = self.window(module=module, frm=frm, to=to, callee="w")
+      self.assertEqual(r["result"]["live"], ["%i.next", "%j.next"])
+      outers.append(self.canon(r["outer"]))
+    self.assertEqual(outers[0], outers[1])
 
   def test_a_window_becomes_a_call_where_it_was(self):
     r = self.window()

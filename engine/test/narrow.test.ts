@@ -185,6 +185,33 @@ exit:
     expect(await inlined(found.outer, found.after)).toBe(await canon(after));
   });
 
+  test("narrows a step that swaps two values a loop's header reads", async () => {
+    const before = `define i32 @f(i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %j = phi i32 [ 0, %entry ], [ %j.next, %loop ]
+  %i.next = add i32 %i, 1
+  %j.next = add i32 %j, 2
+  %c = icmp ult i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret i32 %j
+}
+`;
+    const after = before.replace(
+      "  %i.next = add i32 %i, 1\n  %j.next = add i32 %j, 2\n",
+      "  %j.next = add i32 %j, 2\n  %i.next = add i32 %i, 1\n",
+    );
+    const found = await narrow(llops, await canon(before), await canon(after));
+    if (!found) throw new Error("expected the step to narrow");
+    expect(await inlined(found.outer, found.before)).toBe(await canon(before));
+    expect(await inlined(found.outer, found.after)).toBe(await canon(after));
+  });
+
   test("finds the window in a loop's body when the header's phis are renumbered", async () => {
     // The step moves the test above the add, so the body renumbers and the
     // header's phis, which read the body, print differently too.
