@@ -232,13 +232,15 @@ States facts about values or relational comparisons between values at a program 
 Request `{ "module": ..., "anchor": { ... }, "assertions": [ ... ] }`, response `{ "ok": true, "module": ... }`.
 
 `anchor` specifies the insertion point:
-* `{ "at": "entry", "fn": "<name>" }`: at the start of the defined function's entry block.
+* `{ "at": "start", "fn": "<name>" }`: at the start of the defined function's entry block.
 * `{ "at": "before_call", "fn": "<name>" }`: immediately before the unique call to `<name>`.
 * `{ "at": "before_inst", "inst": "<ref>" }`: immediately before the instruction `<ref>`.
 
 `assertions` is a list of assertions to assume at the anchor:
 * Unary fact on an argument or local value: `{ "fact": { ... }, "arg": <n> }` or `{ "fact": { ... }, "val": "<ref>" }`. Facts use the vocabulary of `edit attrs` (`range`, `noundef`, `nonnull`, `align`, `dereferenceable`). `noalias` is refused.
 * Relational comparison: `{ "op": "<icmp_pred>", "lhs": <operand>, "rhs": <operand> }`, where `op` is an integer comparison (`eq`, `ne`, `slt`, `sle`, `sgt`, `sge`, `ult`, `ule`, `ugt`, `uge`), and operands are `{ "arg": n }`, `{ "val": "<ref>" }`, or `{ "const": n }`. Mismatched operand types are refused with `type_mismatch`.
+
+`arg` n is parameter n of the function at `start`, and argument n of the call at `before_call`. `val` names a value at `before_inst`. Other pairings are refused with `bad_request`.
 
 A request that asks for conditions and operand bundles produces two assumes, because an assume carrying operand bundles has to have `true` as its condition.
 

@@ -2016,8 +2016,8 @@ class TestSeveralBlocks(Case):
     self.assertTrue(self.conforms(r["module"]), r["module"])
     return r["module"]
 
-  def test_an_assume_at_the_entry_of_a_callee_that_branches(self):
-    module = self.assumed({"at": "entry", "fn": "k"})
+  def test_an_assume_at_the_start_of_a_callee_that_branches(self):
+    module = self.assumed({"at": "start", "fn": "k"})
     head = module[module.index("head:") : module.index("body:")]
     self.assertIn("icmp ule i32 %j, %i", head)
     self.assertIn("@llvm.assume", head)
@@ -2340,11 +2340,29 @@ declare i32 @g(i32)
     )
     self.bad(run("assume", {"module": self.F, "assertions": []}), "bad_request")
 
+  def test_a_contract_names_parameters_not_values(self):
+    module = """define i32 @f(i32 %n) {
+entry:
+  %r = call i32 @g(i32 %n)
+  ret i32 %r
+}
+
+declare i32 @g(i32)
+"""
+    for anchor in ({"at": "start", "fn": "f"}, {"at": "before_call", "fn": "g"}):
+      for assertion in (
+        {"fact": {"noundef": True}, "val": "%n"},
+        {"op": "ne", "lhs": {"val": "%n"}, "rhs": {"const": 0}},
+      ):
+        with self.subTest(anchor=anchor, assertion=assertion):
+          r = run("assume", {"module": module, "anchor": anchor, "assertions": [assertion]})
+          self.bad(r, "bad_request")
+
   def test_an_anchor_or_value_that_is_not_there(self):
     self.bad(self.assume(before="%nope"), "not_found")
     self.bad(self.assume(value="%nope"), "not_found")
 
-  def test_entry_anchor_with_fact(self):
+  def test_start_anchor_with_fact(self):
     module = """define i32 @f(i32 %x, i32 %y) {
 entry:
   %a = add i32 %x, %y
@@ -2356,7 +2374,7 @@ entry:
         "assume",
         {
           "module": module,
-          "anchor": {"at": "entry", "fn": "f"},
+          "anchor": {"at": "start", "fn": "f"},
           "assertions": [{"fact": {"noundef": True}, "arg": 0}],
         },
       )
@@ -2365,7 +2383,7 @@ entry:
     self.assertEqual(body[0], 'call void @llvm.assume(i1 true) [ "noundef"(i32 %x) ]')
     self.assertEqual(body[1], "%a = add i32 %x, %y")
 
-  def test_entry_anchor_with_predicate(self):
+  def test_start_anchor_with_predicate(self):
     module = """define i32 @f(i32 %x, i32 %y) {
 entry:
   %a = add i32 %x, %y
@@ -2377,7 +2395,7 @@ entry:
         "assume",
         {
           "module": module,
-          "anchor": {"at": "entry", "fn": "f"},
+          "anchor": {"at": "start", "fn": "f"},
           "assertions": [{"op": "slt", "lhs": {"arg": 0}, "rhs": {"arg": 1}}],
         },
       )
@@ -2422,7 +2440,7 @@ entry:
         "assume",
         {
           "module": module,
-          "anchor": {"at": "entry", "fn": "f"},
+          "anchor": {"at": "start", "fn": "f"},
           "assertions": [
             {"fact": {"noundef": True}, "arg": 0},
             {"fact": {"noundef": True}, "arg": 1},
@@ -2450,7 +2468,7 @@ entry:
         "assume",
         {
           "module": module,
-          "anchor": {"at": "entry", "fn": "f"},
+          "anchor": {"at": "start", "fn": "f"},
           "assertions": [{"op": "eq", "lhs": {"arg": 0}, "rhs": {"arg": 1}}],
         },
       ),
@@ -2468,7 +2486,7 @@ entry:
         "assume",
         {
           "module": module,
-          "anchor": {"at": "entry", "fn": "f"},
+          "anchor": {"at": "start", "fn": "f"},
           "assertions": [{"op": "bogus", "lhs": {"arg": 0}, "rhs": {"arg": 1}}],
         },
       ),
@@ -2499,7 +2517,7 @@ entry:
     self.assertEqual(body[3], "call void @llvm.assume(i1 %0)")
     self.assertEqual(body[4], "%c = add i32 %a, %b")
 
-  def test_before_inst_with_predicate_comparing_local_value_and_arg(self):
+  def test_before_inst_with_predicate_comparing_a_local_and_a_parameter(self):
     module = """define i32 @f(i32 %x) {
 entry:
   %a = add i32 %x, 1
@@ -2513,7 +2531,7 @@ entry:
         {
           "module": module,
           "anchor": {"at": "before_inst", "inst": "%b"},
-          "assertions": [{"op": "sgt", "lhs": {"val": "%a"}, "rhs": {"arg": 0}}],
+          "assertions": [{"op": "sgt", "lhs": {"val": "%a"}, "rhs": {"val": "%x"}}],
         },
       )
     )
@@ -2533,7 +2551,7 @@ entry:
         "assume",
         {
           "module": module,
-          "anchor": {"at": "entry", "fn": "f"},
+          "anchor": {"at": "start", "fn": "f"},
           "assertions": [{"op": "ne", "lhs": {"arg": 0}, "rhs": {"arg": 1}}],
         },
       )
@@ -2553,27 +2571,35 @@ entry:
         "assume",
         {
           "module": module,
-          "anchor": {"at": "entry", "fn": "f"},
+          "anchor": {"at": "start", "fn": "f"},
           "assertions": [{"op": "eq", "lhs": {"arg": 0}, "rhs": {"arg": 1}}],
         },
       ),
       "invalid",
     )
 
-  def test_fact_on_before_inst_with_arg(self):
+  def test_a_point_names_a_parameter_as_a_value(self):
     module = """define i32 @f(i32 %x) {
 entry:
   %a = add i32 %x, 1
   ret i32 %a
 }
 """
+    anchor = {"at": "before_inst", "inst": "%a"}
+    for assertion in (
+      {"fact": {"noundef": True}, "arg": 0},
+      {"op": "ne", "lhs": {"arg": 0}, "rhs": {"const": 0}},
+    ):
+      with self.subTest(assertion=assertion):
+        r = run("assume", {"module": module, "anchor": anchor, "assertions": [assertion]})
+        self.bad(r, "bad_request")
     r = self.good(
       run(
         "assume",
         {
           "module": module,
-          "anchor": {"at": "before_inst", "inst": "%a"},
-          "assertions": [{"fact": {"noundef": True}, "arg": 0}],
+          "anchor": anchor,
+          "assertions": [{"fact": {"noundef": True}, "val": "%x"}],
         },
       )
     )
@@ -2592,7 +2618,7 @@ entry:
         "assume",
         {
           "module": module,
-          "anchor": {"at": "entry", "fn": "f"},
+          "anchor": {"at": "start", "fn": "f"},
           "assertions": [{"fact": {"noundef": True}, "arg": 5}],
         },
       ),
@@ -2610,7 +2636,7 @@ entry:
         "assume",
         {
           "module": module,
-          "anchor": {"at": "entry", "fn": "f"},
+          "anchor": {"at": "start", "fn": "f"},
           "assertions": [{"invalid_key": True}],
         },
       ),

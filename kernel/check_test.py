@@ -459,7 +459,7 @@ class Case(unittest.TestCase):
       "g2", outer, {"src": entered, "tgt": outer["tgt"]}, [initiation], {"kind": "check"}
     )
 
-    strong = {side: assumed(inner[side], {"at": "entry", "fn": "k"}) for side in ("src", "tgt")}
+    strong = {side: assumed(inner[side], {"at": "start", "fn": "k"}) for side in ("src", "tgt")}
     kept_by = assumed(strong["src"], {"at": "before_call", "fn": "k.ih"})
     by = [{"gid": "g2", "hash": entered}] + ([{"gid": "g3", "hash": kept_by}] if kept else [])
     steps = [{"kind": "strengthen", "from": inner, "to": strong, "predicates": ORDER, "by": by}]
@@ -758,7 +758,7 @@ class TestGolden(Case):
         "assume",
         {
           "module": m,
-          "anchor": {"at": "entry", "fn": "g"},
+          "anchor": {"at": "start", "fn": "g"},
           "assertions": [PREDICATE],
         },
       )["module"]

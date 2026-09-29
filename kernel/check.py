@@ -680,7 +680,7 @@ class Check:
           "assume",
           {
             "module": attributed,
-            "anchor": {"at": "entry", "fn": role},
+            "anchor": {"at": "start", "fn": role},
             "assertions": predicates,
           },
         )["module"]

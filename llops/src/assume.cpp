@@ -67,62 +67,62 @@ llvm::CmpInst::Predicate parseICmpPred(llvm::StringRef op) {
   return llvm::CmpInst::BAD_ICMP_PREDICATE;
 }
 
-llvm::Value *resolveOperand(const llvm::json::Value &v, llvm::Function *F, llvm::CallInst *call,
-                            ValueRefs &refs, llvm::Type *expectedType, llvm::json::Object &err) {
-  if (auto num = v.getAsInteger()) {
-    if (expectedType && expectedType->isIntegerTy()) {
-      unsigned bits = expectedType->getIntegerBitWidth();
-      return llvm::ConstantInt::get(expectedType, llvm::APInt(bits, (uint64_t)*num, true));
-    }
+// Where the assumes go, and the parameters `arg` n picks from; before_inst has none.
+struct Site {
+  llvm::Instruction *before;
+  std::optional<std::vector<llvm::Value *>> params;
+};
+
+llvm::Value *param(const Site &site, int64_t index, llvm::json::Object &err) {
+  if (!site.params) {
+    err = errResponse("bad_request", "'arg' is refused at before_inst; name the value with 'val'");
+    return nullptr;
   }
+  if (index < 0 || (uint64_t)index >= site.params->size()) {
+    err = errResponse("invalid", "arg " + std::to_string(index) + " is out of range");
+    return nullptr;
+  }
+  return (*site.params)[index];
+}
+
+llvm::Value *local(const Site &site, llvm::StringRef ref, ValueRefs &refs,
+                   llvm::json::Object &err) {
+  if (site.params) {
+    err =
+        errResponse("bad_request", "'val' is only for before_inst; name the parameter with 'arg'");
+    return nullptr;
+  }
+  llvm::Value *value = refs.resolve(ref);
+  if (!value)
+    err = errResponse("not_found", "'" + ref.str() + "' is not a value");
+  return value;
+}
+
+llvm::Value *resolveOperand(const llvm::json::Value &v, const Site &site, ValueRefs &refs,
+                            llvm::Type *expectedType, llvm::json::Object &err) {
   const auto *obj = v.getAsObject();
   if (!obj) {
     err = errResponse("invalid",
                       "predicate operand must be an object (e.g. {\"arg\": 0}, {\"const\": 0})");
     return nullptr;
   }
-  if (auto argIdx = obj->getInteger("arg")) {
-    if (call) {
-      if (*argIdx < 0 || (uint64_t)*argIdx >= call->arg_size()) {
-        err = errResponse("invalid", "arg index out of range for call");
-        return nullptr;
-      }
-      return call->getArgOperand((unsigned)*argIdx);
-    }
-    if (F) {
-      if (*argIdx < 0 || (uint64_t)*argIdx >= F->arg_size()) {
-        err = errResponse("invalid", "arg index out of range for function");
-        return nullptr;
-      }
-      return F->getArg((unsigned)*argIdx);
-    }
-    err = errResponse("invalid", "cannot resolve argument without a function or call context");
-    return nullptr;
-  }
-  if (auto valRef = obj->getString("val")) {
-    auto *val = refs.resolve(*valRef);
-    if (!val) {
-      err = errResponse("not_found", "'" + valRef->str() + "' is not a value");
-      return nullptr;
-    }
-    return val;
-  }
+  if (auto index = obj->getInteger("arg"))
+    return param(site, *index, err);
+  if (auto ref = obj->getString("val"))
+    return local(site, *ref, refs, err);
   if (auto cVal = obj->getInteger("const")) {
     if (expectedType && expectedType->isIntegerTy()) {
       unsigned bits = expectedType->getIntegerBitWidth();
       return llvm::ConstantInt::get(expectedType, llvm::APInt(bits, (uint64_t)*cVal, true));
     }
-    if (F) {
-      return llvm::ConstantInt::get(llvm::Type::getInt32Ty(F->getContext()), *cVal, true);
-    }
+    return llvm::ConstantInt::get(llvm::Type::getInt32Ty(site.before->getContext()), *cVal, true);
   }
   err = errResponse("invalid", "unrecognized predicate operand");
   return nullptr;
 }
 
-bool buildPredicate(const llvm::json::Object &predObj, llvm::Function *F, llvm::CallInst *call,
-                    ValueRefs &refs, llvm::IRBuilder<> &builder, llvm::Value *&cond,
-                    llvm::json::Object &err) {
+bool buildPredicate(const llvm::json::Object &predObj, const Site &site, ValueRefs &refs,
+                    llvm::IRBuilder<> &builder, llvm::Value *&cond, llvm::json::Object &err) {
   auto op = predObj.getString("op");
   auto *lhsJson = predObj.get("lhs");
   auto *rhsJson = predObj.get("rhs");
@@ -136,11 +136,11 @@ bool buildPredicate(const llvm::json::Object &predObj, llvm::Function *F, llvm::
     return false;
   }
 
-  llvm::Value *lhs = resolveOperand(*lhsJson, F, call, refs, nullptr, err);
+  llvm::Value *lhs = resolveOperand(*lhsJson, site, refs, nullptr, err);
   if (!lhs)
     return false;
 
-  llvm::Value *rhs = resolveOperand(*rhsJson, F, call, refs, lhs->getType(), err);
+  llvm::Value *rhs = resolveOperand(*rhsJson, site, refs, lhs->getType(), err);
   if (!rhs)
     return false;
 
@@ -158,50 +158,27 @@ bool buildPredicate(const llvm::json::Object &predObj, llvm::Function *F, llvm::
   return true;
 }
 
-bool applyAssertion(const llvm::json::Object &item, llvm::Function *F, llvm::CallInst *call,
-                    ValueRefs &refs, llvm::LLVMContext &ctx, llvm::IRBuilder<> &builder,
-                    llvm::Value *&condition, std::vector<llvm::OperandBundleDef> &bundles,
-                    llvm::json::Object &err) {
+bool applyAssertion(const llvm::json::Object &item, const Site &site, ValueRefs &refs,
+                    llvm::IRBuilder<> &builder, llvm::Value *&condition,
+                    std::vector<llvm::OperandBundleDef> &bundles, llvm::json::Object &err) {
+  llvm::LLVMContext &ctx = builder.getContext();
   auto *facts = item.getObject("fact");
   auto op = item.getString("op");
-  auto *predicateObj = item.getObject("predicate");
 
   if (facts) {
     if (facts->empty()) {
       err = errResponse("bad_request", "fact object cannot be empty");
       return false;
     }
-    llvm::Value *value = nullptr;
-    auto argIdx = item.getInteger("arg");
-    auto valRef = item.getString("val");
-
-    if (argIdx.has_value()) {
-      if (call) {
-        if (*argIdx < 0 || (uint64_t)*argIdx >= call->arg_size()) {
-          err = errResponse("invalid", "arg index out of range for call");
-          return false;
-        }
-        value = call->getArgOperand((unsigned)*argIdx);
-      } else if (F) {
-        if (*argIdx < 0 || (uint64_t)*argIdx >= F->arg_size()) {
-          err = errResponse("invalid", "arg index out of range for function");
-          return false;
-        }
-        value = F->getArg((unsigned)*argIdx);
-      } else {
-        err = errResponse("bad_request", "arg index cannot be used with before_inst; use 'val'");
-        return false;
-      }
-    } else if (valRef.has_value()) {
-      value = refs.resolve(*valRef);
-      if (!value) {
-        err = errResponse("not_found", "'" + valRef->str() + "' is not a value");
-        return false;
-      }
-    } else {
+    auto index = item.getInteger("arg");
+    auto ref = item.getString("val");
+    if (!index && !ref) {
       err = errResponse("bad_request", "fact assertion needs 'arg' or 'val'");
       return false;
     }
+    llvm::Value *value = index ? param(site, *index, err) : local(site, *ref, refs, err);
+    if (!value)
+      return false;
 
     auto *i64 = llvm::Type::getInt64Ty(ctx);
     auto conjoin = [&](llvm::Value *next) {
@@ -265,12 +242,8 @@ bool applyAssertion(const llvm::json::Object &item, llvm::Function *F, llvm::Cal
     return true;
   }
 
-  if (op.has_value()) {
-    return buildPredicate(item, F, call, refs, builder, condition, err);
-  }
-  if (predicateObj) {
-    return buildPredicate(*predicateObj, F, call, refs, builder, condition, err);
-  }
+  if (op.has_value())
+    return buildPredicate(item, site, refs, builder, condition, err);
 
   err = errResponse("bad_request", "assertion must specify 'fact' or 'op'");
   return false;
@@ -287,7 +260,7 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
   auto at = anchorObj->getString("at");
   if (!at)
     return errResponse("bad_request",
-                       "anchor needs 'at' ('entry', 'before_call', or 'before_inst')");
+                       "anchor needs 'at' ('start', 'before_call', or 'before_inst')");
 
   std::string parseErr;
   auto mwc = parseModule(*text, &parseErr);
@@ -300,20 +273,23 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
     return errResponse("shape_error",
                        "assume needs the program shape: exactly one defined function");
   ValueRefs refs(*F);
-  llvm::Instruction *before = nullptr;
-  llvm::CallInst *call = nullptr;
+  Site site{nullptr, std::nullopt};
 
-  if (*at == "entry") {
+  if (*at == "start") {
     auto fnName = anchorObj->getString("fn");
     if (!fnName)
-      return errResponse("bad_request", "anchor with at 'entry' needs 'fn'");
+      return errResponse("bad_request", "anchor with at 'start' needs 'fn'");
     if (F->getName() != *fnName)
       return errResponse("not_found", "no function defined with name '@" + fnName->str() + "'");
-    before = &*F->getEntryBlock().getFirstInsertionPt();
+    std::vector<llvm::Value *> params;
+    for (llvm::Argument &arg : F->args())
+      params.push_back(&arg);
+    site = {&*F->getEntryBlock().getFirstInsertionPt(), params};
   } else if (*at == "before_call") {
     auto fnName = anchorObj->getString("fn");
     if (!fnName)
       return errResponse("bad_request", "anchor with at 'before_call' needs 'fn'");
+    llvm::CallInst *call = nullptr;
     for (auto &I : llvm::instructions(*F)) {
       auto *candidate = llvm::dyn_cast<llvm::CallInst>(&I);
       if (!candidate || !candidate->getCalledFunction())
@@ -326,14 +302,15 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
     }
     if (!call)
       return errResponse("not_found", "no call to '@" + fnName->str() + "'");
-    before = call;
+    site = {call, std::vector<llvm::Value *>(call->arg_begin(), call->arg_end())};
   } else if (*at == "before_inst") {
     auto instRef = anchorObj->getString("inst");
     if (!instRef)
       return errResponse("bad_request", "anchor with at 'before_inst' needs 'inst'");
-    before = refs.resolveInst(*instRef);
-    if (!before)
+    llvm::Instruction *inst = refs.resolveInst(*instRef);
+    if (!inst)
       return errResponse("not_found", "'" + instRef->str() + "' is not an instruction");
+    site = {inst, std::nullopt};
   } else {
     return errResponse("bad_request", "unknown anchor at '" + at->str() + "'");
   }
@@ -350,14 +327,13 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
     items.push_back(obj);
   }
 
-  llvm::LLVMContext &ctx = M.getContext();
-  llvm::IRBuilder<> builder(before);
+  llvm::IRBuilder<> builder(site.before);
   llvm::Value *condition = nullptr;
   std::vector<llvm::OperandBundleDef> bundles;
 
   for (const auto *item : items) {
     llvm::json::Object err;
-    if (!applyAssertion(*item, F, call, refs, ctx, builder, condition, bundles, err))
+    if (!applyAssertion(*item, site, refs, builder, condition, bundles, err))
       return err;
   }
 

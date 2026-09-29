@@ -129,7 +129,7 @@ export type OptOp =
   | { what: "instcombine"; max_iterations?: number; debug_counter?: number };
 
 export type AssumeAnchor =
-  | { at: "entry"; fn: string }
+  | { at: "start"; fn: string }
   | { at: "before_call"; fn: string }
   | { at: "before_inst"; inst: Ref };
 

@@ -165,7 +165,7 @@ export class Strengthen {
         current = attrRes;
       }
       if (hasPredicates) {
-        const assumeRes = await this.llops.assume(current, { at: "entry", fn: name }, predicates);
+        const assumeRes = await this.llops.assume(current, { at: "start", fn: name }, predicates);
         if (!assumeRes.ok) {
           return {
             kind: "refused" as const,

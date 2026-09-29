@@ -246,7 +246,7 @@ entry:
     expect(result.point).toBe("#2");
   });
 
-  test("assume: supports entry anchor and relational predicates", async () => {
+  test("assume: supports start anchor and relational predicates", async () => {
     const module = `define i32 @f(i32 %x, i32 %y) {
 entry:
   %a = add i32 %x, %y
@@ -255,7 +255,7 @@ entry:
 `;
     const withEntryFact = await llops.assume(
       module,
-      { at: "entry", fn: "f" },
+      { at: "start", fn: "f" },
       { arg: 0, fact: { noundef: true } },
     );
     if (!withEntryFact.ok) throw new Error(withEntryFact.message);
@@ -263,7 +263,7 @@ entry:
 
     const withPred = await llops.assume(
       module,
-      { at: "entry", fn: "f" },
+      { at: "start", fn: "f" },
       { op: "slt", lhs: { arg: 0 }, rhs: { arg: 1 } },
     );
     if (!withPred.ok) throw new Error(withPred.message);
@@ -297,7 +297,7 @@ entry:
   ret i32 %a
 }
 `;
-    const result = await llops.assume(module, { at: "entry", fn: "f" }, [
+    const result = await llops.assume(module, { at: "start", fn: "f" }, [
       { arg: 0, fact: { noundef: true } },
       { arg: 1, fact: { noundef: true } },
       { op: "slt", lhs: { arg: 0 }, rhs: { arg: 1 } },
@@ -316,7 +316,7 @@ entry:
 `;
     const result = await llops.assume(
       module,
-      { at: "entry", fn: "f" },
+      { at: "start", fn: "f" },
       { op: "eq", lhs: { arg: 0 }, rhs: { arg: 1 } },
     );
     if (result.ok) throw new Error("expected a refusal");
@@ -350,7 +350,7 @@ entry:
 `;
     const result = await llops.assume(
       module,
-      { at: "entry", fn: "f" },
+      { at: "start", fn: "f" },
       { op: "ne", lhs: { arg: 0 }, rhs: { arg: 1 } },
     );
     if (!result.ok) throw new Error(result.message);
