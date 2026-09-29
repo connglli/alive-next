@@ -547,7 +547,7 @@ export class Steps {
     }));
     const res = await this.llops.assume(
       narrowed.outer,
-      { at: "before_call", fn: narrowed.callee },
+      { at: "before_calls", fn: narrowed.callee },
       assertions,
     );
     if (!res.ok)

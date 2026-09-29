@@ -459,7 +459,7 @@ class Case(unittest.TestCase):
       module = llops("assume", request)
       return self.built.program(llops("canon", {"module": module["module"]})["module"])
 
-    entered = assumed(outer["src"], {"at": "before_call", "fn": "k"})
+    entered = assumed(outer["src"], {"at": "before_calls", "fn": "k"})
     initiation = {"kind": "check", "side": "src", "from": outer["src"], "to": entered}
     self.built.goal(
       "g2", outer, {"src": entered, "tgt": outer["tgt"]}, [initiation], {"kind": "check"}
@@ -468,7 +468,7 @@ class Case(unittest.TestCase):
     start = {"at": "start", "fn": "k"}
     order = [{"op": "ule", "lhs": {"val": "%1"}, "rhs": {"val": "%0"}}]
     strong = {side: assumed(inner[side], start, order) for side in ("src", "tgt")}
-    kept_by = assumed(strong["src"], {"at": "before_call", "fn": "k.ih"})
+    kept_by = assumed(strong["src"], {"at": "before_calls", "fn": "k.ih"})
     by = [{"gid": "g2", "hash": entered}] + ([{"gid": "g3", "hash": kept_by}] if kept else [])
     steps = [{"kind": "strengthen", "from": inner, "to": strong, "predicates": ORDER, "by": by}]
     if kept:
@@ -793,7 +793,7 @@ class TestGolden(Case):
       "assume",
       {
         "module": outer_src_mod,
-        "anchor": {"at": "before_call", "fn": "g"},
+        "anchor": {"at": "before_calls", "fn": "g"},
         "assertions": [{"fact": {"noundef": True}, "arg": 0}, PREDICATE],
       },
     )["module"]

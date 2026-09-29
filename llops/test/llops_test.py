@@ -2024,7 +2024,7 @@ class TestSeveralBlocks(Case):
     self.assertIn("@llvm.assume", head)
 
   def test_an_assume_before_a_call_in_a_later_block(self):
-    module = self.assumed({"at": "before_call", "fn": "k.ih"})
+    module = self.assumed({"at": "before_calls", "fn": "k.ih"})
     body = module[module.index("body:") : module.index("exit:")]
     self.assertIn("icmp ule i32 %j.next, %i.next", body)
     self.assertLess(body.index("@llvm.assume"), body.index("call i32 @k.ih"))
@@ -2282,7 +2282,7 @@ declare i32 @g(i32)
         "assume",
         {
           "module": module,
-          "anchor": {"at": "before_call", "fn": "g"},
+          "anchor": {"at": "before_calls", "fn": "g"},
           "assertions": [{"fact": {"range": {"min": 0, "max": 256}}, "arg": 0}],
         },
       )
@@ -2293,13 +2293,41 @@ declare i32 @g(i32)
     self.assertEqual(body[4], "call void @llvm.assume(i1 %2)")
     self.assertTrue(body[5].endswith("call i32 @g(i32 %m)"))
 
+  def test_before_calls_assumes_before_each_call(self):
+    module = """define i32 @f(i32 %n, i1 %c) {
+entry:
+  br i1 %c, label %a, label %b
+
+a:
+  %x = and i32 %n, 255
+  %r = call i32 @g(i32 %x)
+  ret i32 %r
+
+b:
+  %y = and i32 %n, 15
+  %s = call i32 @g(i32 %y)
+  ret i32 %s
+}
+
+declare i32 @g(i32)
+"""
+    below = {"op": "ule", "lhs": {"arg": 0}, "rhs": {"val": "%n"}}
+    anchor = {"at": "before_calls", "fn": "g"}
+    text = self.good(run("assume", {"module": module, "anchor": anchor, "assertions": [below]}))[
+      "module"
+    ]
+    for block, arg, end in (("a:", "%x", "b:"), ("b:", "%y", "}")):
+      body = text[text.index(block) : text.index(end, text.index(block))]
+      self.assertIn(f"icmp ule i32 {arg}, %n", body)
+      self.assertLess(body.index("@llvm.assume"), body.index(f"call i32 @g(i32 {arg})"))
+
   def test_a_call_that_is_not_there(self):
     self.bad(
       run(
         "assume",
         {
           "module": self.F,
-          "anchor": {"at": "before_call", "fn": "g"},
+          "anchor": {"at": "before_calls", "fn": "g"},
           "assertions": [{"fact": {"noundef": True}, "arg": 0}],
         },
       ),
@@ -2320,7 +2348,7 @@ declare i32 @g(i32)
         "assume",
         {
           "module": module,
-          "anchor": {"at": "before_call", "fn": "g"},
+          "anchor": {"at": "before_calls", "fn": "g"},
           "assertions": [{"fact": {"noundef": True}, "arg": 4}],
         },
       ),
@@ -2355,7 +2383,7 @@ declare i32 @g(i32)
     def assume(anchor, assertion):
       return run("assume", {"module": module, "anchor": anchor, "assertions": [assertion]})
 
-    start, call = {"at": "start", "fn": "f"}, {"at": "before_call", "fn": "g"}
+    start, call = {"at": "start", "fn": "f"}, {"at": "before_calls", "fn": "g"}
     below = {"op": "ult", "lhs": {"arg": 0}, "rhs": {"val": "%k"}}
     self.assertIn("icmp ult i32 %m, %k", self.good(assume(call, below))["module"])
     self.bad(assume(start, below), "bad_request")
@@ -2408,7 +2436,7 @@ entry:
     self.assertEqual(body[0], "%0 = icmp slt i32 %x, %y")
     self.assertEqual(body[1], "call void @llvm.assume(i1 %0)")
 
-  def test_before_call_with_predicate(self):
+  def test_before_calls_with_predicate(self):
     module = """declare i32 @g(i32, i32)
 
 define i32 @f(i32 %x, i32 %y) {
@@ -2422,7 +2450,7 @@ entry:
         "assume",
         {
           "module": module,
-          "anchor": {"at": "before_call", "fn": "g"},
+          "anchor": {"at": "before_calls", "fn": "g"},
           "assertions": [{"op": "ne", "lhs": {"arg": 0}, "rhs": {"const": 0}}],
         },
       )

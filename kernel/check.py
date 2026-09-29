@@ -726,7 +726,7 @@ class Check:
   def predicates(self, discharge: dict, step: dict) -> None:
     """The src step that assumed a strengthen step's predicates before each call of the callee.
 
-    The outer calls it once; a recursive callee also calls its hypothesis, where
+    The outer calls it; a recursive callee also calls its hypothesis, where
     the proof is that one iteration keeps what the entry assumed.
     """
     name = discharge["callee"]
@@ -750,7 +750,7 @@ class Check:
         "assume",
         {
           "module": self.package.program(proofs[0]["from"]),
-          "anchor": {"at": "before_call", "fn": fn},
+          "anchor": {"at": "before_calls", "fn": fn},
           "assertions": [{"fact": fact, "arg": param} for param, fact in facts]
           + contract_predicates(step),
         },
@@ -831,7 +831,7 @@ class Check:
         "assume",
         {
           "module": self.package.program(window["outer"]),
-          "anchor": {"at": "before_call", "fn": window["callee"]},
+          "anchor": {"at": "before_calls", "fn": window["callee"]},
           "assertions": assertions,
         },
       )

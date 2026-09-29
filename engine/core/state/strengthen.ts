@@ -213,7 +213,7 @@ export class Strengthen {
       if (typeof entered !== "string") return { ...entered, effects: [] };
       const next = await this.llops.assume(
         entered,
-        { at: "before_call", fn: hypothesis },
+        { at: "before_calls", fn: hypothesis },
         assertions,
       );
       if (!next.ok)
@@ -228,13 +228,13 @@ export class Strengthen {
     }
 
     // Phase 1: Prove caller preconditions (param_attrs & predicates) in outer src.
-    // Preconditions are inserted as `llvm.assume` before the `@callee` call site.
+    // Preconditions are inserted as `llvm.assume` before the `@callee` call sites.
     // Proving `outer.src + assumes <= outer.src` certifies that the assumptions
     // hold across all feasible executions of the caller prefix.
     if (hasParamAttrs || hasPredicates) {
       const one = await this.llops.assume(
         this.store.get(head(outer, "src")),
-        { at: "before_call", fn: name },
+        { at: "before_calls", fn: name },
         assertions,
       );
       if (!one.ok) {

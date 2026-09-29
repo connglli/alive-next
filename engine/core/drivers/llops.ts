@@ -130,7 +130,7 @@ export type OptOp =
 
 export type AssumeAnchor =
   | { at: "start"; fn: string }
-  | { at: "before_call"; fn: string }
+  | { at: "before_calls"; fn: string }
   | { at: "before_inst"; inst: Ref };
 
 export type PredicateOperand = { arg: number } | { val: Ref } | { const: number };

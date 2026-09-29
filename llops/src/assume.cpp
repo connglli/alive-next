@@ -76,7 +76,7 @@ struct Site {
 llvm::Value *argument(const Site &site, int64_t index, llvm::json::Object &err) {
   if (!site.call) {
     err =
-        errResponse("bad_request", "'arg' names a call's argument, so it is only for before_call");
+        errResponse("bad_request", "'arg' names a call's argument, so it is only for before_calls");
     return nullptr;
   }
   if (index < 0 || (uint64_t)index >= site.call->arg_size()) {
@@ -244,6 +244,22 @@ bool applyAssertion(const llvm::json::Object &item, const Site &site, ValueRefs 
   return false;
 }
 
+// The assertions as assumes just before the site.
+bool assumeAt(const Site &site, llvm::ArrayRef<const llvm::json::Object *> items, ValueRefs &refs,
+              llvm::json::Object &err) {
+  llvm::IRBuilder<> builder(site.before);
+  llvm::Value *condition = nullptr;
+  std::vector<llvm::OperandBundleDef> bundles;
+  for (const auto *item : items)
+    if (!applyAssertion(*item, site, refs, builder, condition, bundles, err))
+      return false;
+  if (condition)
+    builder.CreateAssumption(condition);
+  if (!bundles.empty())
+    builder.CreateAssumption(builder.getTrue(), bundles);
+  return true;
+}
+
 } // namespace
 
 llvm::json::Object assumeCmd(llvm::json::Object &args) {
@@ -255,7 +271,7 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
   auto at = anchorObj->getString("at");
   if (!at)
     return errResponse("bad_request",
-                       "anchor needs 'at' ('start', 'before_call', or 'before_inst')");
+                       "anchor needs 'at' ('start', 'before_calls', or 'before_inst')");
 
   std::string parseErr;
   auto mwc = parseModule(*text, &parseErr);
@@ -268,7 +284,7 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
     return errResponse("shape_error",
                        "assume needs the program shape: exactly one defined function");
   ValueRefs refs(*F);
-  Site site{nullptr, nullptr};
+  std::vector<Site> sites;
 
   if (*at == "start") {
     auto fnName = anchorObj->getString("fn");
@@ -276,25 +292,18 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
       return errResponse("bad_request", "anchor with at 'start' needs 'fn'");
     if (F->getName() != *fnName)
       return errResponse("not_found", "no function defined with name '@" + fnName->str() + "'");
-    site = {&*F->getEntryBlock().getFirstInsertionPt(), nullptr};
-  } else if (*at == "before_call") {
+    sites.push_back({&*F->getEntryBlock().getFirstInsertionPt(), nullptr});
+  } else if (*at == "before_calls") {
     auto fnName = anchorObj->getString("fn");
     if (!fnName)
-      return errResponse("bad_request", "anchor with at 'before_call' needs 'fn'");
-    llvm::CallInst *call = nullptr;
+      return errResponse("bad_request", "anchor with at 'before_calls' needs 'fn'");
     for (auto &I : llvm::instructions(*F)) {
-      auto *candidate = llvm::dyn_cast<llvm::CallInst>(&I);
-      if (!candidate || !candidate->getCalledFunction())
-        continue;
-      if (candidate->getCalledFunction()->getName() != *fnName)
-        continue;
-      if (call)
-        return errResponse("invalid", "more than one call to '@" + fnName->str() + "'");
-      call = candidate;
+      auto *call = llvm::dyn_cast<llvm::CallInst>(&I);
+      if (call && call->getCalledFunction() && call->getCalledFunction()->getName() == *fnName)
+        sites.push_back({call, call});
     }
-    if (!call)
+    if (sites.empty())
       return errResponse("not_found", "no call to '@" + fnName->str() + "'");
-    site = {call, call};
   } else if (*at == "before_inst") {
     auto instRef = anchorObj->getString("inst");
     if (!instRef)
@@ -302,7 +311,7 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
     llvm::Instruction *inst = refs.resolveInst(*instRef);
     if (!inst)
       return errResponse("not_found", "'" + instRef->str() + "' is not an instruction");
-    site = {inst, nullptr};
+    sites.push_back({inst, nullptr});
   } else {
     return errResponse("bad_request", "unknown anchor at '" + at->str() + "'");
   }
@@ -319,21 +328,11 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
     items.push_back(obj);
   }
 
-  llvm::IRBuilder<> builder(site.before);
-  llvm::Value *condition = nullptr;
-  std::vector<llvm::OperandBundleDef> bundles;
-
-  for (const auto *item : items) {
+  for (const Site &site : sites) {
     llvm::json::Object err;
-    if (!applyAssertion(*item, site, refs, builder, condition, bundles, err))
+    if (!assumeAt(site, items, refs, err))
       return err;
   }
-
-  if (condition)
-    builder.CreateAssumption(condition);
-  if (!bundles.empty())
-    builder.CreateAssumption(builder.getTrue(), bundles);
-
   return checkedResponse(M);
 }
 

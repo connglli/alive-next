@@ -271,7 +271,7 @@ entry:
     expect(withPred.module).toContain("call void @llvm.assume");
   });
 
-  test("assume: supports before_call with predicate and constant operand", async () => {
+  test("assume: supports before_calls with predicate and constant operand", async () => {
     const module = `declare i32 @g(i32)
 
 define i32 @f(i32 %x) {
@@ -282,7 +282,7 @@ entry:
 `;
     const result = await llops.assume(
       module,
-      { at: "before_call", fn: "g" },
+      { at: "before_calls", fn: "g" },
       { op: "ne", lhs: { arg: 0 }, rhs: { const: 0 } },
     );
     if (!result.ok) throw new Error(result.message);

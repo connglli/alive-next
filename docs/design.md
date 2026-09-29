@@ -108,7 +108,7 @@ To make a callee goal provable, it may need facts about its inputs: `noundef`, `
 
 Putting an attribute on `g` is not free. If the fact were false, the annotated outer program would have UB where the original does not, and outlining would stop being faithful. The sound recipe has two phases, both certified steps:
 
-1. Prove the fact: insert `llvm.assume(c)` just before the call in the outer src program and validate the insertion with alive2. This query scales with the outer program, because that is where the evidence for `c` lives.
+1. Prove the fact: insert `llvm.assume(c)` just before each call in the outer src program and validate the insertion with alive2. This query scales with the outer program, because that is where the evidence for `c` lives.
 2. Only then rewrite `g`'s declaration with the attribute, in the outer goal (both sides) and the callee goal's signature. With the assume in place this adds no new UB, and the step is cheap to validate.
 
 A detached loop's callee also calls `g.ih`, so phase 1 is proved there too, before that call in the callee's src with the fact assumed at the entry: the loop's entry establishes the fact and each iteration keeps it, which makes it an invariant. Such a `g` takes no function attribute, since induction cannot prove `willreturn`.
@@ -204,7 +204,7 @@ A step may move a goal that has already been proved. The goal reopens, and every
 
 ### Interface strengthening
 
-- `strengthen(gid, contract)`: enrich a split goal's interface with parameter attributes (`param_attrs`), semantic function attributes (`fn_attrs`), and relational entry preconditions (`predicates`). Phase 1 proves caller preconditions as `llvm.assume` assertions before the call in `outer.src` certified by alive2. Phase 2 certifies callee function attributes via refinement checks on both `callee.src` and `callee.tgt`. Phase 3 materializes the parameter and function attributes on caller declarations (`outer.src` and `outer.tgt`), and applies parameter attributes, function attributes, and entry relational predicates to callee definitions (`callee.src` and `callee.tgt`).
+- `strengthen(gid, contract)`: enrich a split goal's interface with parameter attributes (`param_attrs`), semantic function attributes (`fn_attrs`), and relational entry preconditions (`predicates`). Phase 1 proves caller preconditions as `llvm.assume` assertions before each call in `outer.src` certified by alive2. Phase 2 certifies callee function attributes via refinement checks on both `callee.src` and `callee.tgt`. Phase 3 materializes the parameter and function attributes on caller declarations (`outer.src` and `outer.tgt`), and applies parameter attributes, function attributes, and entry relational predicates to callee definitions (`callee.src` and `callee.tgt`).
 
 An interface is strengthened as a whole rather than one attribute at a time, so the solver cost is bounded: caller assumption steps, callee attribute checks, and eager cross-checks.
 

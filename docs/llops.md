@@ -233,14 +233,14 @@ Request `{ "module": ..., "anchor": { ... }, "assertions": [ ... ] }`, response 
 
 `anchor` specifies the insertion point:
 * `{ "at": "start", "fn": "<name>" }`: at the start of the defined function's entry block.
-* `{ "at": "before_call", "fn": "<name>" }`: immediately before the unique call to `<name>`.
+* `{ "at": "before_calls", "fn": "<name>" }`: immediately before each call to `<name>`.
 * `{ "at": "before_inst", "inst": "<ref>" }`: immediately before the instruction `<ref>`.
 
 `assertions` is a list of assertions to assume at the anchor:
 * Unary fact on a call's argument or a value: `{ "fact": { ... }, "arg": <n> }` or `{ "fact": { ... }, "val": "<ref>" }`. Facts use the vocabulary of `edit attrs` (`range`, `noundef`, `nonnull`, `align`, `dereferenceable`). `noalias` is refused.
 * Relational comparison: `{ "op": "<icmp_pred>", "lhs": <operand>, "rhs": <operand> }`, where `op` is an integer comparison (`eq`, `ne`, `slt`, `sle`, `sgt`, `sge`, `ult`, `ule`, `ugt`, `uge`), and operands are `{ "arg": n }`, `{ "val": "<ref>" }`, or `{ "const": n }`. Mismatched operand types are refused with `type_mismatch`.
 
-`arg` n is argument n of the call at `before_call`, and is refused elsewhere. `val` names a value of the function the assumes go into, a parameter or a local, at every anchor.
+`arg` n is argument n of each call at `before_calls`, and is refused elsewhere. `val` names a value of the function the assumes go into, a parameter or a local, at every anchor.
 
 A request that asks for conditions and operand bundles produces two assumes, because an assume carrying operand bundles has to have `true` as its condition.
 
