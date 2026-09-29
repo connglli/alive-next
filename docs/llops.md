@@ -190,7 +190,7 @@ The signature is the block's phis, then the values the moved blocks use from out
 
 Request `{ "outer": ..., "callee": ..., "callee_name": "k", "phis": [ 0, 1 ], "hypothesis": "k.ih" }`, response `{ "ok": true, "module": ... }`.
 
-The inverse of `detach`, which the certificate checker runs; it refuses what `inline` refuses. Every block that only calls the callee or its hypothesis and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there. The parameters `phis` names stay phis. Every other parameter must be passed one value on every edge, or itself, and becomes that value. `canon` of the result is `canon` of the module `detach` started from.
+The inverse of `detach`, which the certificate checker runs; it refuses what `inline` refuses, and any use of the callee or its hypothesis other than a block that only calls it. Every block that only calls the callee or its hypothesis and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there. The parameters `phis` names stay phis. Every other parameter must be passed one value on every edge, or itself, and becomes that value. `canon` of the result is `canon` of the module `detach` started from.
 
 ## analyze
 

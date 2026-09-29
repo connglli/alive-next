@@ -486,9 +486,16 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
     phis[i]->replaceAllUsesWith(same);
     phis[i]->eraseFromParent();
   }
-  for (llvm::Function *target : targets)
-    if (target->use_empty())
-      target->eraseFromParent();
+  // Induction reads every call of the hypothesis as the rest of the loop, and
+  // the outer's check reads every call of the callee as the callee, so a use
+  // that is not an edge would be a call the rebuilt module makes of something
+  // else under the same name.
+  for (llvm::Function *target : targets) {
+    if (!target->use_empty())
+      return errResponse("invalid", "'@" + target->getName().str() +
+                                        "' is used other than by a block that only calls it");
+    target->eraseFromParent();
+  }
 
   if (auto d = departure(outerM))
     return errResponse(d->code, d->message);

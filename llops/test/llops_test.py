@@ -1533,6 +1533,16 @@ exit:
     request = {"outer": marked, "callee": half["callee"], "callee_name": "k"}
     self.bad(run("reattach", {**request, "phis": half["phis"]}), "invalid")
 
+  def test_a_hypothesis_called_other_than_by_an_edge_is_refused(self):
+    # The call would come back as a call of an unknown function, which the
+    # callee's check read as the rest of the loop.
+    half = self.good(self.detach(STILL, "%loop", "k"))
+    used = half["callee"].replace("  ret i32 %1\n", "  %y = add i32 %1, 0\n  ret i32 %y\n")
+    self.assertNotEqual(used, half["callee"])
+    request = {"outer": half["outer"], "callee": used, "callee_name": "k", "hypothesis": "k.ih"}
+    r = self.bad(run("reattach", {**request, "phis": half["phis"]}), "invalid")
+    self.assertIn("'@k.ih' is used", r["error"]["message"])
+
   def test_canon_orders_phi_incoming_by_block(self):
     flipped = ROTATED.replace(
       "%i = phi i32 [ 0, %entry ], [ %i.next, %loop ]",

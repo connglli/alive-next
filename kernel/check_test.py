@@ -947,6 +947,68 @@ b:
     self.built.goal("g3", inner, inner, [], {"kind": "check"})
     self.refused(self.built.write(), "disagree about a symbol they share")
 
+  def test_a_hypothesis_named_after_a_function_the_tgt_calls(self):
+    # The tgt returns what an unknown @k.ih answers, where the src counts to
+    # 3. Named as the hypothesis, that call reattaches as the tgt's own and
+    # the callee's check reads it as the rest of the loop.
+    src = """define i32 @f() {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i1, %latch ]
+  %c = icmp eq i32 %i, 3
+  br i1 %c, label %exit, label %latch
+
+latch:
+  %i1 = add i32 %i, 1
+  br label %head
+
+exit:
+  ret i32 %i
+}
+"""
+    tgt = """define i32 @f() {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ]
+  %c = icmp eq i32 %i, 3
+  br i1 %c, label %exit, label %latch
+
+latch:
+  %i1 = add i32 %i, 1
+  br label %call
+
+call:
+  %r = call i32 @k.ih(i32 %i1)
+  %y = add i32 %r, 0
+  ret i32 %y
+
+exit:
+  ret i32 %i
+}
+
+declare i32 @k.ih(i32)
+"""
+    s = llops("detach", {"module": src, "side": "src", "block": "%head", "callee": "k"})
+    callee = s["callee"].replace("  ret i32 %1\n", "  %y = add i32 %1, 0\n  ret i32 %y\n")
+    self.assertNotEqual(callee, s["callee"])
+
+    def stored(text: str) -> str:
+      return self.built.program(canonical(text))
+
+    whole = {"src": stored(src), "tgt": stored(tgt)}
+    outer = {"src": stored(s["outer"]), "tgt": stored(s["outer"])}
+    inner = {"src": stored(s["callee"]), "tgt": stored(callee)}
+    cut = {"kind": "split", "detached": True, "callee": "k", "hypothesis": "k.ih"}
+    cut["phis"] = {"src": s["phis"], "tgt": s["phis"]}
+    self.built.goal("g1", whole, whole, [], {**cut, "outer": "g2", "inner": "g3"})
+    self.built.goal("g2", outer, outer, [], {"kind": "check"})
+    self.built.goal("g3", inner, inner, [], {"kind": "check"})
+    self.refused(self.built.write(), "'@k.ih' is used other than by a block that only calls it")
+
   def test_an_invariant_no_iteration_is_shown_to_keep(self):
     self.refused(self.invariant(kept=False), "no src step proves the entry predicates before @k.ih")
 
