@@ -112,8 +112,7 @@ private:
   std::vector<llvm::WeakVH> body;
 };
 
-// Whether a call is as outline and detach make it, with nothing on it that
-// could add UB or poison the body put back in its place would not have.
+// Whether a call is as outline and detach make it, with nothing on it.
 bool plainCall(const llvm::CallInst &call);
 
 // Render diagnostics into a response object under "diagnostics".

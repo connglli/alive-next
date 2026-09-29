@@ -73,9 +73,7 @@ bool fromOutside(llvm::Value *v, const Region &region) {
   return I && !region.contains(I->getParent());
 }
 
-// The values the region reads from outside, in definition order: instructions
-// in layout order, then arguments. A phi of B reads on a back edge only; what
-// it takes on an edge from outside is an argument of the call there.
+// The values the region reads from outside: instructions in layout order, then arguments.
 std::vector<llvm::Value *> readFromOutside(llvm::Function &F, const Region &region) {
   llvm::SmallPtrSet<llvm::Value *, 32> read;
   for (llvm::BasicBlock *R : region)
@@ -129,8 +127,7 @@ bool passable(llvm::Value *v, const Region &region, ValueRefs &refs, llvm::json:
   return false;
 }
 
-// The tgt signature: each src entry mapped through the value map, then the tgt
-// values the map lists under keys that are not src values.
+// The tgt signature: the src entries through the value map, then values only the tgt has.
 bool tgtParams(llvm::json::Object &args, llvm::Function &F, ValueRefs &refs, const Region &region,
                std::vector<llvm::Value *> &params, llvm::json::Array &info,
                llvm::json::Object &err) {
@@ -228,10 +225,7 @@ std::vector<Edge> edgesInto(llvm::Function &F, llvm::BasicBlock *B) {
   return edges;
 }
 
-// Route one edge into a fresh block that calls `target` with what the
-// parameters are on that edge, and returns what it answers. On a back edge
-// from inside `k`, a parameter that is not a phi passes itself on, even when
-// the tgt's value map made one value two parameters.
+// Route edge `e` into a fresh block that calls `target` and returns what it answers.
 llvm::BasicBlock *callInstead(Edge e, llvm::BasicBlock *B, llvm::Function *target,
                               llvm::ArrayRef<llvm::Value *> params, llvm::Function *k) {
   std::vector<llvm::Value *> args;
@@ -252,9 +246,7 @@ llvm::BasicBlock *callInstead(Edge e, llvm::BasicBlock *B, llvm::Function *targe
   return Q;
 }
 
-// Move the region into `name`, routing every edge into B through a call: of
-// `name` from outside, of `hypothesis` from inside. Returns the new function
-// and whether a back edge made it call its hypothesis.
+// Move the region into `name`; edges from outside call it, back edges call `hypothesis`.
 llvm::Function *cutOut(llvm::Module &M, llvm::Function &F, const Region &region,
                        llvm::ArrayRef<llvm::Value *> params, llvm::StringRef name,
                        llvm::StringRef hypothesis, bool &recurses) {
@@ -296,8 +288,7 @@ llvm::Function *cutOut(llvm::Module &M, llvm::Function &F, const Region &region,
   return k;
 }
 
-// One half of the detach: the module with `bodyless` reduced to a declaration,
-// and `gone` dropped once nothing calls it.
+// A copy of M with `bodyless` made a declaration and `gone` dropped once nothing calls it.
 std::unique_ptr<llvm::Module> half(llvm::Module &M, llvm::StringRef bodyless,
                                    llvm::StringRef gone) {
   llvm::ValueToValueMapTy vmap;
@@ -332,8 +323,7 @@ llvm::json::Array phiPositions(llvm::ArrayRef<llvm::Value *> params, llvm::Basic
   return positions;
 }
 
-// Which of `count` parameters `list` names as phis, or nothing when it names
-// a position the callee does not have.
+// Which of `count` parameters `list` names as phis; nothing if it names one out of range.
 std::optional<std::vector<bool>> phiParams(const llvm::json::Array &list, unsigned count) {
   std::vector<bool> isPhi(count, false);
   for (const auto &entry : list) {
