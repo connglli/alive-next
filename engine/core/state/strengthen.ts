@@ -46,7 +46,13 @@
 // declaration is, and the callee takes no function attribute: induction
 // cannot prove willreturn.
 import type { CheckResult } from "../drivers/alive2.ts";
-import type { Assertion, Attrs, Llops, PredicateAssertion } from "../drivers/llops.ts";
+import type {
+  Assertion,
+  Attrs,
+  Llops,
+  PredicateAssertion,
+  PredicateOperand,
+} from "../drivers/llops.ts";
 import { applyEffect, type Goal, head, type Side, type Tree } from "./goals.ts";
 import type { Steps } from "./steps.ts";
 import type { Store } from "./store.ts";
@@ -58,13 +64,19 @@ import type { Effect, Hash, StepRef } from "./trajectory.ts";
  * All fields are optional, but at least one attribute set or predicate list
  * must be provided.
  */
+/** A predicate over the callee's arguments, stated at its start and before its calls. */
+export type ContractPredicate = Omit<PredicateAssertion, "lhs" | "rhs"> & {
+  lhs: Exclude<PredicateOperand, { val: unknown }>;
+  rhs: Exclude<PredicateOperand, { val: unknown }>;
+};
+
 export interface StrengthenContract {
   /** Parameter-level attributes keyed by zero-based argument index (0, 1, ...). */
   param_attrs?: Record<number, Attrs>;
   /** Function-level attributes (e.g. memory: "none", nounwind: true, willreturn: true). */
   fn_attrs?: Attrs;
   /** Relational comparison preconditions conjoined at the cut boundary. */
-  predicates?: PredicateAssertion[];
+  predicates?: ContractPredicate[];
 }
 
 export type StrengthenResult =
@@ -111,6 +123,8 @@ export class Strengthen {
       throw new Error(
         `${gid}: '${bad}' is not a parameter position; parameter attributes are keyed by index (0, 1, ...)`,
       );
+    if (predicates.some((p) => "val" in p.lhs || "val" in p.rhs))
+      throw new Error(`${gid}: a predicate names the callee's arguments with 'arg', not a value`);
     const params = keys.map(Number).sort((a, b) => a - b);
     const hasParamAttrs = params.length > 0;
     const hasFnAttrs = Object.keys(fnAttrs).length > 0;

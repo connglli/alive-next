@@ -390,6 +390,18 @@ def signature(package: Package, module: str, name: str) -> str:
   return function(package, module, name)["signature"]
 
 
+def contract_predicates(step: dict) -> list:
+  """A strengthen step's predicates, which name the callee's arguments and never a value."""
+  predicates = step.get("predicates") or []
+  for predicate in predicates:
+    if not isinstance(predicate, dict):
+      continue
+    operands = [predicate, predicate.get("lhs"), predicate.get("rhs")]
+    if any(isinstance(operand, dict) and "val" in operand for operand in operands):
+      raise Refused("a strengthen predicate names a value, which the callee does not have")
+  return predicates
+
+
 def parameter_facts(param_attrs: dict) -> list[tuple[int, dict]]:
   """A strengthen step's parameter facts, by index, in the order the engine assumes them."""
   facts: list[tuple[int, dict]] = []
@@ -630,7 +642,7 @@ class Check:
 
     param_attrs = step.get("param_attrs") or {}
     fn_attrs = step.get("fn_attrs") or {}
-    predicates = step.get("predicates") or []
+    predicates = contract_predicates(step)
 
     if not param_attrs and not fn_attrs and not predicates:
       raise Refused(
@@ -727,7 +739,7 @@ class Check:
           "module": self.package.program(proofs[0]["from"]),
           "anchor": {"at": "before_call", "fn": fn},
           "assertions": [{"fact": fact, "arg": param} for param, fact in facts]
-          + step["predicates"],
+          + contract_predicates(step),
         },
       )["module"]
       same = self.package.run_llops("canon", {"module": assumed})["module"]

@@ -1,9 +1,9 @@
 // tree_strengthen: give a cut's interface the facts its callee is missing.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { Attrs, PredicateAssertion } from "../../core/drivers/llops.ts";
+import type { Attrs } from "../../core/drivers/llops.ts";
 import type { Session } from "../../core/session.ts";
-import type { StrengthenContract } from "../../core/state/strengthen.ts";
+import type { ContractPredicate, StrengthenContract } from "../../core/state/strengthen.ts";
 import { toolResultFrom } from "./format.ts";
 
 export function createStrengthenTool(session: Session) {
@@ -32,8 +32,8 @@ export function createStrengthenTool(session: Session) {
             op: Type.String({
               description: "Relational predicate operator (eq, ne, slt, ugt, ...)",
             }),
-            lhs: Type.Any({ description: 'Operand, e.g. {"arg": 0}' }),
-            rhs: Type.Any({ description: 'Operand, e.g. {"arg": 1} or {"const": 0}' }),
+            lhs: Type.Any({ description: 'Operand: {"arg": i} or {"const": n}' }),
+            rhs: Type.Any({ description: 'Operand: {"arg": i} or {"const": n}' }),
           }),
           {
             description: "Relational comparison preconditions conjoined at the cut boundary.",
@@ -45,7 +45,7 @@ export function createStrengthenTool(session: Session) {
       const contract: StrengthenContract = {
         ...(param_attrs ? { param_attrs: param_attrs as Record<number, Attrs> } : {}),
         ...(fn_attrs ? { fn_attrs } : {}),
-        ...(predicates ? { predicates: predicates as PredicateAssertion[] } : {}),
+        ...(predicates ? { predicates: predicates as ContractPredicate[] } : {}),
       };
       const stronger = await session.strengthen(gid, contract);
       if (stronger.kind === "editing") {

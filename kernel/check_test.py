@@ -1056,6 +1056,12 @@ b:
     )
     self.refused(self.built.write(), "not a callee")
 
+  def test_a_predicate_that_names_a_value(self):
+    TestGolden.strengthened(self)
+    step = self.built.goals["g3"]["steps"][0]
+    step["predicates"] = [{"op": "ne", "lhs": {"val": "%0"}, "rhs": {"const": 0}}]
+    self.refused(self.built.write(), "names a value")
+
   def test_a_predicate_the_outer_never_proved(self):
     package = TestGolden.strengthened(self, proved=False)
     self.refused(package, "no src step proves the entry predicates")

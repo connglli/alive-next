@@ -17,7 +17,11 @@ import { applyEffect, derive, head } from "../core/state/goals.ts";
 import { Splits } from "../core/state/splits.ts";
 import { DEFAULT_TIMEOUTS, Steps } from "../core/state/steps.ts";
 import { Store } from "../core/state/store.ts";
-import { explainAssumeRefusal, Strengthen } from "../core/state/strengthen.ts";
+import {
+  type ContractPredicate,
+  explainAssumeRefusal,
+  Strengthen,
+} from "../core/state/strengthen.ts";
 import type { Effect, Entry, Event } from "../core/state/trajectory.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
@@ -464,6 +468,24 @@ describe.skipIf(!built)("strengthening", () => {
         }),
       ).rejects.toThrow(new RegExp(`'${bad}' is not a parameter position`));
     }
+    expect(tree.goals.get("g1")?.status).toBe("split");
+  });
+
+  test("a predicate names the callee's arguments", async () => {
+    const tree = await cut();
+    const strengthen = new Strengthen(
+      store,
+      llops,
+      new Steps(store, new FakeChecker([]), DEFAULT_TIMEOUTS, llops, unrewriting),
+    );
+    const local = {
+      op: "ne",
+      lhs: { val: "%0" },
+      rhs: { const: 0 },
+    } as unknown as ContractPredicate;
+    await expect(strengthen.strengthen(tree, "g1", { predicates: [local] })).rejects.toThrow(
+      /names the callee's arguments/,
+    );
     expect(tree.goals.get("g1")?.status).toBe("split");
   });
 
