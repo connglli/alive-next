@@ -190,6 +190,24 @@ join:
     if (result.kind === "refused") expect(result.message).toContain("one side only");
   });
 
+  test("refuses a cut whose halves do not go back together as the side", async () => {
+    // One tgt phi stands for two src phis, which detach takes and reattach
+    // cannot undo: the tgt comes back with two phis.
+    const twin = LOOP.replace(
+      "  %i.next = add i32 %i, 1\n",
+      "  %j = phi i32 [ 0, %entry ], [ %j.next, %loop ]\n  %i.next = add i32 %i, 1\n  %j.next = add i32 %j, 1\n",
+    ).replace("  ret i32 %i\n", "  %r = add i32 %i, %j\n  ret i32 %r\n");
+    const single = LOOP.replace("  ret i32 %i\n", "  %r = add i32 %i, %i\n  ret i32 %r\n");
+    const splits = new Splits(store, llops);
+    const result = await splits.split(await start(twin, single), "g1", "%bb1", "%bb1", {
+      "%1": "%1",
+      "%2": "%1",
+      "%0": "%0",
+    });
+    expect(result).toMatchObject({ kind: "refused", side: "tgt", code: "invalid" });
+    if (result.kind === "refused") expect(result.message).toContain("another program");
+  });
+
   test("refuses a block on one side and a value on the other", async () => {
     const splits = new Splits(store, llops);
     const result = await splits.split(await start(LOOP), "g1", "%bb1", "%2", { "%1": "%1" });

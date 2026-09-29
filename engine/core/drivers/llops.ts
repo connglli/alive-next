@@ -230,6 +230,18 @@ export class Llops {
     return this.run("inline", { outer, callee, callee_name: calleeName });
   }
 
+  /** Put a detached block back, the calls `detach` made becoming branches again. */
+  reattach(
+    outer: Module,
+    callee: Module,
+    calleeName: string,
+    phis: number[],
+    hypothesis?: string,
+  ): Promise<LlopsResult<ModuleResult>> {
+    const request = { outer, callee, callee_name: calleeName, phis };
+    return this.run("reattach", hypothesis ? { ...request, hypothesis } : request);
+  }
+
   analyze(module: Module, kind: AnalyzeKind, point?: Ref): Promise<LlopsResult<AnalyzeResult>> {
     return this.run("analyze", point ? { module, kind, point } : { module, kind });
   }

@@ -116,6 +116,15 @@ export class Splits {
       const message = "the block heads a loop on one side only";
       return { kind: "refused", side: "tgt", code: "invalid", message };
     }
+    // A checker rebuilds each side from its halves, so a cut that does not
+    // rebuild is refused now rather than at replay.
+    for (const [side, half, whole] of [
+      ["src", src, srcModule],
+      ["tgt", tgt, tgtModule],
+    ] as const) {
+      const message = await this.unbuilt(half, whole, callee, atBlock);
+      if (message) return { kind: "refused", side, code: "invalid", message };
+    }
 
     return {
       kind: "preview",
@@ -187,6 +196,22 @@ export class Splits {
         },
       ],
     };
+  }
+
+  /** Why the halves do not put back together as `whole`, or nothing when they do. */
+  private async unbuilt(
+    half: DetachResult,
+    whole: string,
+    callee: string,
+    detached: boolean,
+  ): Promise<string | undefined> {
+    const back = detached
+      ? await this.llops.reattach(half.outer, half.callee, callee, half.phis ?? [], half.hypothesis)
+      : await this.llops.inline(half.outer, half.callee, callee);
+    if (!back.ok) return `the halves do not go back together: ${back.message}`;
+    const same = await this.llops.canon(back.module);
+    if (!same.ok || same.module !== whole) return "the halves go back together as another program";
+    return undefined;
   }
 
   /** Undo a cut, discarding the children and whatever was proved under them. */
