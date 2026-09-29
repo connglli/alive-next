@@ -70,6 +70,13 @@ export type ContractPredicate = Omit<PredicateAssertion, "lhs" | "rhs"> & {
   rhs: Exclude<PredicateOperand, { val: unknown }>;
 };
 
+/** The contract at the callee's start, where argument i is its parameter `%i` in canonical text. */
+function atStart(predicates: ContractPredicate[]): PredicateAssertion[] {
+  const own = (operand: ContractPredicate["lhs"]): PredicateOperand =>
+    "arg" in operand ? { val: `%${operand.arg}` } : operand;
+  return predicates.map((p) => ({ ...p, lhs: own(p.lhs), rhs: own(p.rhs) }));
+}
+
 export interface StrengthenContract {
   /** Parameter-level attributes keyed by zero-based argument index (0, 1, ...). */
   param_attrs?: Record<number, Attrs>;
@@ -179,7 +186,11 @@ export class Strengthen {
         current = attrRes;
       }
       if (hasPredicates) {
-        const assumeRes = await this.llops.assume(current, { at: "start", fn: name }, predicates);
+        const assumeRes = await this.llops.assume(
+          current,
+          { at: "start", fn: name },
+          atStart(predicates),
+        );
         if (!assumeRes.ok) {
           return {
             kind: "refused" as const,

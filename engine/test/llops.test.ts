@@ -256,7 +256,7 @@ entry:
     const withEntryFact = await llops.assume(
       module,
       { at: "start", fn: "f" },
-      { arg: 0, fact: { noundef: true } },
+      { val: "%x", fact: { noundef: true } },
     );
     if (!withEntryFact.ok) throw new Error(withEntryFact.message);
     expect(withEntryFact.module).toContain('"noundef"(i32 %x)');
@@ -264,7 +264,7 @@ entry:
     const withPred = await llops.assume(
       module,
       { at: "start", fn: "f" },
-      { op: "slt", lhs: { arg: 0 }, rhs: { arg: 1 } },
+      { op: "slt", lhs: { val: "%x" }, rhs: { val: "%y" } },
     );
     if (!withPred.ok) throw new Error(withPred.message);
     expect(withPred.module).toContain("icmp slt i32 %x, %y");
@@ -298,9 +298,9 @@ entry:
 }
 `;
     const result = await llops.assume(module, { at: "start", fn: "f" }, [
-      { arg: 0, fact: { noundef: true } },
-      { arg: 1, fact: { noundef: true } },
-      { op: "slt", lhs: { arg: 0 }, rhs: { arg: 1 } },
+      { val: "%x", fact: { noundef: true } },
+      { val: "%y", fact: { noundef: true } },
+      { op: "slt", lhs: { val: "%x" }, rhs: { val: "%y" } },
     ]);
     if (!result.ok) throw new Error(result.message);
     expect(result.module).toContain("icmp slt i32 %x, %y");
@@ -317,7 +317,7 @@ entry:
     const result = await llops.assume(
       module,
       { at: "start", fn: "f" },
-      { op: "eq", lhs: { arg: 0 }, rhs: { arg: 1 } },
+      { op: "eq", lhs: { val: "%x" }, rhs: { val: "%y" } },
     );
     if (result.ok) throw new Error("expected a refusal");
     expect(result.code).toBe("type_mismatch");
@@ -351,7 +351,7 @@ entry:
     const result = await llops.assume(
       module,
       { at: "start", fn: "f" },
-      { op: "ne", lhs: { arg: 0 }, rhs: { arg: 1 } },
+      { op: "ne", lhs: { val: "%p" }, rhs: { val: "%q" } },
     );
     if (!result.ok) throw new Error(result.message);
     expect(result.module).toContain("icmp ne ptr %p, %q");

@@ -67,31 +67,26 @@ llvm::CmpInst::Predicate parseICmpPred(llvm::StringRef op) {
   return llvm::CmpInst::BAD_ICMP_PREDICATE;
 }
 
-// Where the assumes go, and the parameters `arg` n picks from; before_inst has none.
+// Where the assumes go, and the call whose arguments `arg` n picks from, if any.
 struct Site {
   llvm::Instruction *before;
-  std::optional<std::vector<llvm::Value *>> params;
+  llvm::CallInst *call;
 };
 
-llvm::Value *param(const Site &site, int64_t index, llvm::json::Object &err) {
-  if (!site.params) {
-    err = errResponse("bad_request", "'arg' is refused at before_inst; name the value with 'val'");
+llvm::Value *argument(const Site &site, int64_t index, llvm::json::Object &err) {
+  if (!site.call) {
+    err =
+        errResponse("bad_request", "'arg' names a call's argument, so it is only for before_call");
     return nullptr;
   }
-  if (index < 0 || (uint64_t)index >= site.params->size()) {
+  if (index < 0 || (uint64_t)index >= site.call->arg_size()) {
     err = errResponse("invalid", "arg " + std::to_string(index) + " is out of range");
     return nullptr;
   }
-  return (*site.params)[index];
+  return site.call->getArgOperand(index);
 }
 
-llvm::Value *local(const Site &site, llvm::StringRef ref, ValueRefs &refs,
-                   llvm::json::Object &err) {
-  if (site.params) {
-    err =
-        errResponse("bad_request", "'val' is only for before_inst; name the parameter with 'arg'");
-    return nullptr;
-  }
+llvm::Value *named(llvm::StringRef ref, ValueRefs &refs, llvm::json::Object &err) {
   llvm::Value *value = refs.resolve(ref);
   if (!value)
     err = errResponse("not_found", "'" + ref.str() + "' is not a value");
@@ -107,9 +102,9 @@ llvm::Value *resolveOperand(const llvm::json::Value &v, const Site &site, ValueR
     return nullptr;
   }
   if (auto index = obj->getInteger("arg"))
-    return param(site, *index, err);
+    return argument(site, *index, err);
   if (auto ref = obj->getString("val"))
-    return local(site, *ref, refs, err);
+    return named(*ref, refs, err);
   if (auto cVal = obj->getInteger("const")) {
     if (expectedType && expectedType->isIntegerTy()) {
       unsigned bits = expectedType->getIntegerBitWidth();
@@ -176,7 +171,7 @@ bool applyAssertion(const llvm::json::Object &item, const Site &site, ValueRefs 
       err = errResponse("bad_request", "fact assertion needs 'arg' or 'val'");
       return false;
     }
-    llvm::Value *value = index ? param(site, *index, err) : local(site, *ref, refs, err);
+    llvm::Value *value = index ? argument(site, *index, err) : named(*ref, refs, err);
     if (!value)
       return false;
 
@@ -273,7 +268,7 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
     return errResponse("shape_error",
                        "assume needs the program shape: exactly one defined function");
   ValueRefs refs(*F);
-  Site site{nullptr, std::nullopt};
+  Site site{nullptr, nullptr};
 
   if (*at == "start") {
     auto fnName = anchorObj->getString("fn");
@@ -281,10 +276,7 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
       return errResponse("bad_request", "anchor with at 'start' needs 'fn'");
     if (F->getName() != *fnName)
       return errResponse("not_found", "no function defined with name '@" + fnName->str() + "'");
-    std::vector<llvm::Value *> params;
-    for (llvm::Argument &arg : F->args())
-      params.push_back(&arg);
-    site = {&*F->getEntryBlock().getFirstInsertionPt(), params};
+    site = {&*F->getEntryBlock().getFirstInsertionPt(), nullptr};
   } else if (*at == "before_call") {
     auto fnName = anchorObj->getString("fn");
     if (!fnName)
@@ -302,7 +294,7 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
     }
     if (!call)
       return errResponse("not_found", "no call to '@" + fnName->str() + "'");
-    site = {call, std::vector<llvm::Value *>(call->arg_begin(), call->arg_end())};
+    site = {call, call};
   } else if (*at == "before_inst") {
     auto instRef = anchorObj->getString("inst");
     if (!instRef)
@@ -310,7 +302,7 @@ llvm::json::Object assumeCmd(llvm::json::Object &args) {
     llvm::Instruction *inst = refs.resolveInst(*instRef);
     if (!inst)
       return errResponse("not_found", "'" + instRef->str() + "' is not an instruction");
-    site = {inst, std::nullopt};
+    site = {inst, nullptr};
   } else {
     return errResponse("bad_request", "unknown anchor at '" + at->str() + "'");
   }

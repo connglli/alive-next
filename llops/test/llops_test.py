@@ -2017,7 +2017,8 @@ class TestSeveralBlocks(Case):
     return r["module"]
 
   def test_an_assume_at_the_start_of_a_callee_that_branches(self):
-    module = self.assumed({"at": "start", "fn": "k"})
+    own = [{"op": "ule", "lhs": {"val": "%j"}, "rhs": {"val": "%i"}}]
+    module = self.assumed({"at": "start", "fn": "k"}, own)
     head = module[module.index("head:") : module.index("body:")]
     self.assertIn("icmp ule i32 %j, %i", head)
     self.assertIn("@llvm.assume", head)
@@ -2340,23 +2341,26 @@ declare i32 @g(i32)
     )
     self.bad(run("assume", {"module": self.F, "assertions": []}), "bad_request")
 
-  def test_a_contract_names_parameters_not_values(self):
-    module = """define i32 @f(i32 %n) {
+  def test_arg_names_a_call_argument_and_val_any_value(self):
+    module = """define i32 @f(i32 %n, i32 %k) {
 entry:
-  %r = call i32 @g(i32 %n)
+  %m = and i32 %n, 255
+  %r = call i32 @g(i32 %m)
   ret i32 %r
 }
 
 declare i32 @g(i32)
 """
-    for anchor in ({"at": "start", "fn": "f"}, {"at": "before_call", "fn": "g"}):
-      for assertion in (
-        {"fact": {"noundef": True}, "val": "%n"},
-        {"op": "ne", "lhs": {"val": "%n"}, "rhs": {"const": 0}},
-      ):
-        with self.subTest(anchor=anchor, assertion=assertion):
-          r = run("assume", {"module": module, "anchor": anchor, "assertions": [assertion]})
-          self.bad(r, "bad_request")
+
+    def assume(anchor, assertion):
+      return run("assume", {"module": module, "anchor": anchor, "assertions": [assertion]})
+
+    start, call = {"at": "start", "fn": "f"}, {"at": "before_call", "fn": "g"}
+    below = {"op": "ult", "lhs": {"arg": 0}, "rhs": {"val": "%k"}}
+    self.assertIn("icmp ult i32 %m, %k", self.good(assume(call, below))["module"])
+    self.bad(assume(start, below), "bad_request")
+    own = {"op": "ult", "lhs": {"val": "%n"}, "rhs": {"val": "%k"}}
+    self.assertIn("icmp ult i32 %n, %k", self.good(assume(start, own))["module"])
 
   def test_an_anchor_or_value_that_is_not_there(self):
     self.bad(self.assume(before="%nope"), "not_found")
@@ -2375,7 +2379,7 @@ entry:
         {
           "module": module,
           "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"fact": {"noundef": True}, "arg": 0}],
+          "assertions": [{"fact": {"noundef": True}, "val": "%x"}],
         },
       )
     )
@@ -2396,7 +2400,7 @@ entry:
         {
           "module": module,
           "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"op": "slt", "lhs": {"arg": 0}, "rhs": {"arg": 1}}],
+          "assertions": [{"op": "slt", "lhs": {"val": "%x"}, "rhs": {"val": "%y"}}],
         },
       )
     )
@@ -2442,9 +2446,9 @@ entry:
           "module": module,
           "anchor": {"at": "start", "fn": "f"},
           "assertions": [
-            {"fact": {"noundef": True}, "arg": 0},
-            {"fact": {"noundef": True}, "arg": 1},
-            {"op": "slt", "lhs": {"arg": 0}, "rhs": {"arg": 1}},
+            {"fact": {"noundef": True}, "val": "%x"},
+            {"fact": {"noundef": True}, "val": "%y"},
+            {"op": "slt", "lhs": {"val": "%x"}, "rhs": {"val": "%y"}},
           ],
         },
       )
@@ -2469,7 +2473,7 @@ entry:
         {
           "module": module,
           "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"op": "eq", "lhs": {"arg": 0}, "rhs": {"arg": 1}}],
+          "assertions": [{"op": "eq", "lhs": {"val": "%x"}, "rhs": {"val": "%y"}}],
         },
       ),
       "type_mismatch",
@@ -2487,7 +2491,7 @@ entry:
         {
           "module": module,
           "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"op": "bogus", "lhs": {"arg": 0}, "rhs": {"arg": 1}}],
+          "assertions": [{"op": "bogus", "lhs": {"val": "%x"}, "rhs": {"val": "%y"}}],
         },
       ),
       "invalid",
@@ -2552,7 +2556,7 @@ entry:
         {
           "module": module,
           "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"op": "ne", "lhs": {"arg": 0}, "rhs": {"arg": 1}}],
+          "assertions": [{"op": "ne", "lhs": {"val": "%p"}, "rhs": {"val": "%q"}}],
         },
       )
     )
@@ -2572,7 +2576,7 @@ entry:
         {
           "module": module,
           "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"op": "eq", "lhs": {"arg": 0}, "rhs": {"arg": 1}}],
+          "assertions": [{"op": "eq", "lhs": {"val": "%x"}, "rhs": {"val": "%y"}}],
         },
       ),
       "invalid",
@@ -2606,24 +2610,6 @@ entry:
     body = self.body(r["module"])
     self.assertEqual(body[0], 'call void @llvm.assume(i1 true) [ "noundef"(i32 %x) ]')
     self.assertEqual(body[1], "%a = add i32 %x, 1")
-
-  def test_arg_index_out_of_range_on_function(self):
-    module = """define i32 @f(i32 %x) {
-entry:
-  ret i32 %x
-}
-"""
-    self.bad(
-      run(
-        "assume",
-        {
-          "module": module,
-          "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"fact": {"noundef": True}, "arg": 5}],
-        },
-      ),
-      "invalid",
-    )
 
   def test_assertion_missing_fact_and_op_is_bad_request(self):
     module = """define i32 @f(i32 %x) {

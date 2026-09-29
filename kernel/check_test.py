@@ -454,8 +454,9 @@ class Case(unittest.TestCase):
     def text(digest: str) -> str:
       return (self.built.root / "programs" / f"{digest}.ll").read_text()
 
-    def assumed(digest: str, anchor: dict) -> str:
-      module = llops("assume", {"module": text(digest), "anchor": anchor, "assertions": ORDER})
+    def assumed(digest: str, anchor: dict, assertions: list = ORDER) -> str:
+      request = {"module": text(digest), "anchor": anchor, "assertions": assertions}
+      module = llops("assume", request)
       return self.built.program(llops("canon", {"module": module["module"]})["module"])
 
     entered = assumed(outer["src"], {"at": "before_call", "fn": "k"})
@@ -464,7 +465,9 @@ class Case(unittest.TestCase):
       "g2", outer, {"src": entered, "tgt": outer["tgt"]}, [initiation], {"kind": "check"}
     )
 
-    strong = {side: assumed(inner[side], {"at": "start", "fn": "k"}) for side in ("src", "tgt")}
+    start = {"at": "start", "fn": "k"}
+    order = [{"op": "ule", "lhs": {"val": "%1"}, "rhs": {"val": "%0"}}]
+    strong = {side: assumed(inner[side], start, order) for side in ("src", "tgt")}
     kept_by = assumed(strong["src"], {"at": "before_call", "fn": "k.ih"})
     by = [{"gid": "g2", "hash": entered}] + ([{"gid": "g3", "hash": kept_by}] if kept else [])
     steps = [{"kind": "strengthen", "from": inner, "to": strong, "predicates": ORDER, "by": by}]
@@ -764,7 +767,7 @@ class TestGolden(Case):
         {
           "module": m,
           "anchor": {"at": "start", "fn": "g"},
-          "assertions": [PREDICATE],
+          "assertions": [{**PREDICATE, "lhs": {"val": "%0"}}],
         },
       )["module"]
       return llops("canon", {"module": m})["module"]

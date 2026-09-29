@@ -397,11 +397,22 @@ def contract_predicates(step: dict) -> list:
   predicates = step.get("predicates") or []
   for predicate in predicates:
     if not isinstance(predicate, dict):
-      continue
+      raise Refused("a strengthen predicate is not an object")
     operands = [predicate, predicate.get("lhs"), predicate.get("rhs")]
     if any(isinstance(operand, dict) and "val" in operand for operand in operands):
       raise Refused("a strengthen predicate names a value, which the callee does not have")
   return predicates
+
+
+def at_start(predicates: list) -> list:
+  """The contract at the callee's start, where argument i is its parameter %i in canonical text."""
+
+  def own(operand: object) -> object:
+    if isinstance(operand, dict) and "arg" in operand:
+      return {"val": f"%{operand['arg']}"}
+    return operand
+
+  return [{**p, "lhs": own(p.get("lhs")), "rhs": own(p.get("rhs"))} for p in predicates]
 
 
 def parameter_facts(param_attrs: dict) -> list[tuple[int, dict]]:
@@ -695,7 +706,7 @@ class Check:
           {
             "module": attributed,
             "anchor": {"at": "start", "fn": role},
-            "assertions": predicates,
+            "assertions": at_start(predicates),
           },
         )["module"]
       same = self.package.run_llops("canon", {"module": attributed})["module"]
