@@ -200,14 +200,6 @@ const llvm::BasicBlock *loopHeader(const llvm::Function &F) {
 
 std::vector<Diag> checkFunction(llvm::Function &F) {
   std::vector<Diag> diags;
-  if (auto *header = loopHeader(F)) {
-    std::string name;
-    llvm::raw_string_ostream os(name);
-    header->printAsOperand(os, false);
-    diags.push_back({Diag::Severity::Error, "cyclic",
-                     "function '" + F.getName().str() + "' loops back to '" + name + "'"});
-    return diags;
-  }
 
   // Calls must go to a declared function: a call to the one defined function
   // is recursion, and an indirect call has no callee to check against.
@@ -254,6 +246,16 @@ std::vector<Diag> checkFunction(llvm::Function &F) {
                            "', not in ret, br, switch or unreachable"});
       return diags;
     }
+  }
+
+  // Last, since the subcommands that take a loop pass over this one: a body
+  // that loops still has to meet every rule above.
+  if (auto *header = loopHeader(F)) {
+    std::string name;
+    llvm::raw_string_ostream os(name);
+    header->printAsOperand(os, false);
+    diags.push_back({Diag::Severity::Error, "cyclic",
+                     "function '" + F.getName().str() + "' loops back to '" + name + "'"});
   }
   return diags;
 }
