@@ -11,6 +11,8 @@ import { exitcond } from "./exitcond.ts";
 import { freeze } from "./freeze.ts";
 import { induction } from "./induction.ts";
 import { invariantphi } from "./invariantphi.ts";
+import { join } from "./join.ts";
+import { latches } from "./latches.ts";
 import { loop } from "./loop.ts";
 import { loopbranch } from "./loopbranch.ts";
 import { loopdiv } from "./loopdiv.ts";
@@ -52,8 +54,10 @@ export const scenarios: Scenario[] = [
   poison,
   widen,
   branch,
+  join,
   induction,
   loop,
+  latches,
   loopbranch,
   rotated,
   nested,
