@@ -8,6 +8,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ModuleSlotTracker.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include <memory>
@@ -86,9 +87,9 @@ bool holdsUndef(const llvm::Module &M);
 // "#7" for the instruction at index 7, which is the only form that reaches
 // an instruction defining no value. docs/llops.md states the contract.
 //
-// A ValueRefs is a snapshot of one function: slot numbers come from the same
-// tracker the printer uses, so resolving and printing cannot disagree.
-// Rebuild it after mutating the function.
+// A ValueRefs is a snapshot of one function's slots and instruction order:
+// slot numbers come from the same tracker the printer uses, so resolving and
+// printing cannot disagree. Rebuild it after mutating the function.
 class ValueRefs {
 public:
   explicit ValueRefs(llvm::Function &F);
@@ -105,6 +106,7 @@ public:
 private:
   llvm::Function &fn;
   llvm::ModuleSlotTracker mst;
+  std::vector<llvm::WeakVH> body;
 };
 
 // Whether a call is as outline and detach make it, with nothing on it that

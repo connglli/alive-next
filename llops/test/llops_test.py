@@ -2582,6 +2582,29 @@ entry:
       "invalid",
     )
 
+  def test_an_index_names_the_body_as_given(self):
+    # %b is printed before %a, so the assume the first assertion puts in %b
+    # comes before %v in the printed order; #3 still names %v.
+    module = """define i32 @f(i32 %x) {
+entry:
+  br label %a
+
+b:
+  %r = add i32 %x, 1
+  ret i32 %r
+
+a:
+  %v = and i32 %x, 255
+  br label %b
+}
+"""
+    below = {"op": "ult", "lhs": {"val": "#3"}, "rhs": {"const": 256}}
+    request = {"at": "before_inst", "inst": "%r"}
+    r = self.good(
+      run("assume", {"module": module, "anchor": request, "assertions": [below, below]})
+    )
+    self.assertEqual(r["module"].count("icmp ult i32 %v, 256"), 2)
+
   def test_a_point_names_a_parameter_as_a_value(self):
     module = """define i32 @f(i32 %x) {
 entry:

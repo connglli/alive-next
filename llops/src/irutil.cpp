@@ -350,7 +350,11 @@ std::vector<Diag> validateModule(llvm::Module &M) {
 // Value references
 // ---------------------------------------------------------------------------
 
-ValueRefs::ValueRefs(llvm::Function &F) : fn(F), mst(F.getParent()) { mst.incorporateFunction(F); }
+ValueRefs::ValueRefs(llvm::Function &F) : fn(F), mst(F.getParent()) {
+  mst.incorporateFunction(F);
+  for (auto &I : llvm::instructions(F))
+    body.emplace_back(&I);
+}
 
 llvm::Value *ValueRefs::resolve(llvm::StringRef ref) {
   ref = ref.trim();
@@ -361,10 +365,7 @@ llvm::Value *ValueRefs::resolve(llvm::StringRef ref) {
     unsigned index = 0;
     if (ref.drop_front(1).getAsInteger(10, index))
       return nullptr;
-    for (auto &I : llvm::instructions(fn))
-      if (index-- == 0)
-        return &I;
-    return nullptr;
+    return index < body.size() ? static_cast<llvm::Value *>(body[index]) : nullptr;
   }
 
   if (ref.starts_with("%"))
