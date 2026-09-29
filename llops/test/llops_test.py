@@ -91,7 +91,7 @@ class Case(unittest.TestCase):
   def body(self, module):
     """The instruction lines of the single function, without the label."""
     lines = module.splitlines()
-    start = lines.index("entry:") + 1
+    start = next(i for i, line in enumerate(lines) if line[:1].isalpha() and line.endswith(":")) + 1
     end = lines.index("}", start)
     return [line.strip() for line in lines[start:end] if line.strip()]
 

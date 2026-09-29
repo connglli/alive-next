@@ -31,18 +31,6 @@ llvm::SmallPtrSet<llvm::Instruction *, 16> setOf(llvm::ArrayRef<llvm::Instructio
   return llvm::SmallPtrSet<llvm::Instruction *, 16>(window.begin(), window.end());
 }
 
-// The suffix from `cut`, terminator included: what a cut moves.
-std::vector<llvm::Instruction *> suffixFrom(llvm::BasicBlock &BB, llvm::Instruction *cut) {
-  std::vector<llvm::Instruction *> window;
-  bool started = false;
-  for (auto &I : BB) {
-    started |= &I == cut;
-    if (started)
-      window.push_back(&I);
-  }
-  return window;
-}
-
 // The values a window uses from outside it, in definition order: instructions
 // in the order they are printed first, then arguments. The order is what makes
 // the signature reproducible from the program alone.
@@ -62,27 +50,21 @@ std::vector<llvm::Value *> liveInto(llvm::Function &F,
   return live;
 }
 
-// Move a window into a fresh function and leave a call where it was.
-//
-// A window that ends the function takes the terminator with it, so the callee
-// answers with what the function answers with and the outer needs a return of
-// its own. A window in the middle leaves the terminator where it is and hands
-// back the values the rest of the body still uses: one as it is, several as a
-// struct the outer takes apart right after the call.
-llvm::Function *moveOut(llvm::Module &M, llvm::Function &F, llvm::BasicBlock &BB,
+// Move a window into a fresh function and leave a call where it was. The
+// callee hands back the values the rest of the body still uses: one as it is,
+// several as a struct the outer takes apart right after the call.
+llvm::Function *moveOut(llvm::Module &M, llvm::BasicBlock &BB,
                         llvm::ArrayRef<llvm::Instruction *> window,
                         const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside,
                         llvm::StringRef calleeName, llvm::ArrayRef<llvm::Value *> params,
                         llvm::ArrayRef<llvm::Instruction *> results) {
-  bool takesTheEnd = window.back()->isTerminator();
   std::vector<llvm::Type *> paramTys;
   for (auto *v : params)
     paramTys.push_back(v->getType());
   std::vector<llvm::Type *> resultTys;
   for (auto *r : results)
     resultTys.push_back(r->getType());
-  llvm::Type *retTy = takesTheEnd           ? F.getReturnType()
-                      : results.empty()     ? llvm::Type::getVoidTy(M.getContext())
+  llvm::Type *retTy = results.empty()       ? llvm::Type::getVoidTy(M.getContext())
                       : results.size() == 1 ? resultTys.front()
                                             : llvm::StructType::get(M.getContext(), resultTys);
   auto *FTy = llvm::FunctionType::get(retTy, paramTys, /*isVarArg=*/false);
@@ -119,17 +101,13 @@ llvm::Function *moveOut(llvm::Module &M, llvm::Function &F, llvm::BasicBlock &BB
 
   calleeBB->splice(calleeBB->end(), &BB, window.front()->getIterator(),
                    std::next(window.back()->getIterator()));
-  if (takesTheEnd) {
-    llvm::ReturnInst::Create(F.getContext(), F.getReturnType()->isVoidTy() ? nullptr : call, &BB);
-  } else {
-    llvm::Value *answer = results.size() == 1 ? results.front() : nullptr;
-    if (results.size() > 1) {
-      answer = llvm::PoisonValue::get(retTy);
-      for (unsigned k = 0; k < results.size(); ++k)
-        answer = llvm::InsertValueInst::Create(answer, results[k], {k}, "", calleeBB);
-    }
-    llvm::ReturnInst::Create(M.getContext(), answer, calleeBB);
+  llvm::Value *answer = results.size() == 1 ? results.front() : nullptr;
+  if (results.size() > 1) {
+    answer = llvm::PoisonValue::get(retTy);
+    for (unsigned k = 0; k < results.size(); ++k)
+      answer = llvm::InsertValueInst::Create(answer, results[k], {k}, "", calleeBB);
   }
+  llvm::ReturnInst::Create(M.getContext(), answer, calleeBB);
   // Named after the move, so that a body value of the same name is the one
   // LLVM renames rather than the parameter the response reports.
   for (unsigned i = 0; i < params.size(); ++i)
@@ -149,47 +127,6 @@ std::string printWithoutBody(llvm::Module &M, llvm::StringRef declName) {
   // behind should not claim them.
   drop->setAttributes(llvm::AttributeList());
   return printModule(*clone);
-}
-
-// The tgt side is outlined against the signature the src side produced. This
-// reads that signature and resolves each entry to a tgt value.
-bool readTgtParams(llvm::json::Object &args, llvm::Function &F, ValueRefs &refs,
-                   llvm::Instruction *cut, std::vector<llvm::Value *> &params,
-                   llvm::json::Object &err) {
-  auto *spec = args.getArray("params");
-  auto *valueMap = args.getObject("value_map");
-  if (!spec || !valueMap) {
-    err = errResponse("bad_request", "a tgt outline needs 'params' and 'value_map'");
-    return false;
-  }
-  llvm::BasicBlock &BB = *singleBlock(F);
-  for (const auto &entry : *spec) {
-    llvm::Value *tgtVal = mappedParam(entry, *valueMap, F, refs, err);
-    if (!tgtVal)
-      return false;
-    // A value defined at or after the cut cannot be passed into the callee.
-    bool inScope = llvm::isa<llvm::Argument>(tgtVal);
-    for (auto &I : BB) {
-      if (&I == cut)
-        break;
-      inScope |= &I == tgtVal;
-    }
-    if (!inScope) {
-      err = errResponse("invalid",
-                        "value_map: '" + refs.print(*tgtVal) + "' is not in scope at the cut");
-      return false;
-    }
-    params.push_back(tgtVal);
-  }
-
-  // Anything the tgt suffix reads and the map does not carry has no way in.
-  for (llvm::Value *v : liveInto(F, setOf(suffixFrom(BB, cut))))
-    if (!llvm::is_contained(params, v)) {
-      err = errResponse("invalid", "the tgt suffix uses '" + refs.print(*v) +
-                                       "', which the value map does not cover");
-      return false;
-    }
-  return true;
 }
 
 // The instructions from `cut` to `to`, or nothing when `to` does not come at
@@ -324,58 +261,36 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
   llvm::Instruction *cutInst = refs.resolveInst(*cut);
   if (!cutInst)
     return errResponse("not_found", "the cut point '" + cut->str() + "' does not exist");
-  // A window is a run of instructions in one block, wherever the block is; a
-  // cut takes the rest of the body, which is more than a suffix when the body
-  // has several blocks.
-  if (!to && !singleBlock(*F))
+  // A cut takes the rest of the body; a window is a run of instructions in
+  // one block, which is how a local edit becomes a local question.
+  if (!to)
     return outlineRest(args, M, *F, refs, cutInst, *calleeName);
   llvm::BasicBlock *BB = cutInst->getParent();
-
-  // Without a far end the window runs to the end of the body, which is the
-  // cut every split makes; with one it stops there, which is how a local edit
-  // becomes a local question.
-  std::vector<llvm::Instruction *> window;
-  if (to) {
-    llvm::Instruction *last = refs.resolveInst(*to);
-    if (!last)
-      return errResponse("not_found", "'" + to->str() + "' does not exist");
-    window = windowOf(*BB, cutInst, last);
-    if (window.empty())
-      return errResponse("invalid", "'" + to->str() + "' does not come at or after '" + cut->str() +
-                                        "' in its block");
-    if (window.back()->isTerminator())
-      return errResponse("invalid", "a window cannot take the terminator with it; leave 'to' out "
-                                    "to cut the suffix away instead");
-    if (llvm::isa<llvm::PHINode>(window.front()))
-      return errResponse("invalid", "a window cannot take a phi, which belongs to its block");
-  } else {
-    window = suffixFrom(*BB, cutInst);
-  }
+  llvm::Instruction *last = refs.resolveInst(*to);
+  if (!last)
+    return errResponse("not_found", "'" + to->str() + "' does not exist");
+  std::vector<llvm::Instruction *> window = windowOf(*BB, cutInst, last);
+  if (window.empty())
+    return errResponse("invalid", "'" + to->str() + "' does not come at or after '" + cut->str() +
+                                      "' in its block");
+  if (window.back()->isTerminator())
+    return errResponse("invalid", "a window cannot take the terminator with it; leave 'to' out "
+                                  "to cut the suffix away instead");
+  if (llvm::isa<llvm::PHINode>(window.front()))
+    return errResponse("invalid", "a window cannot take a phi, which belongs to its block");
   llvm::SmallPtrSet<llvm::Instruction *, 16> inside = setOf(window);
-
-  // Nothing follows a suffix, so only a window can hand values back.
   std::vector<llvm::Instruction *> out = liveOutOf(window, inside);
 
-  std::vector<llvm::Value *> params;
+  std::vector<llvm::Value *> params = liveInto(*F, inside);
   llvm::json::Array paramInfo;
-  if (!side || *side == "src") {
-    params = liveInto(*F, inside);
-    for (auto *v : params) {
-      llvm::json::Object p;
-      std::string ty;
-      llvm::raw_string_ostream os(ty);
-      v->getType()->print(os);
-      p["type"] = std::move(ty);
-      p["live"] = refs.print(*v);
-      paramInfo.emplace_back(std::move(p));
-    }
-  } else {
-    llvm::json::Object err;
-    if (!readTgtParams(args, *F, refs, cutInst, params, err))
-      return err;
-    // Both sides answer with the same signature, so the caller can compare
-    // them; the mapping itself is the caller's own input.
-    paramInfo = *args.getArray("params");
+  for (auto *v : params) {
+    llvm::json::Object p;
+    std::string ty;
+    llvm::raw_string_ostream os(ty);
+    v->getType()->print(os);
+    p["type"] = std::move(ty);
+    p["live"] = refs.print(*v);
+    paramInfo.emplace_back(std::move(p));
   }
 
   // Named before the move, while the references still resolve in one body.
@@ -383,7 +298,7 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
   for (auto *I : out)
     live.push_back(refs.print(*I));
 
-  llvm::Function *callee = moveOut(M, *F, *BB, window, inside, *calleeName, params, out);
+  llvm::Function *callee = moveOut(M, *BB, window, inside, *calleeName, params, out);
   for (unsigned i = 0; i < paramInfo.size(); ++i)
     (*paramInfo[i].getAsObject())["param"] =
         "%" + std::next(callee->arg_begin(), i)->getName().str();
