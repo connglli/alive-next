@@ -5,6 +5,7 @@ import type { Scenario } from "../core/scenario.ts";
 import { branch } from "./branch.ts";
 import { carry } from "./carry.ts";
 import { copiedphi } from "./copiedphi.ts";
+import { countdown } from "./countdown.ts";
 import { cut } from "./cut.ts";
 import { digits } from "./digits.ts";
 import { exitcond } from "./exitcond.ts";
@@ -73,6 +74,7 @@ export const scenarios: Scenario[] = [
   loopvector,
   loopdiv,
   strchr,
+  countdown,
   unroll,
 ];
 
