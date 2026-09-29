@@ -98,8 +98,9 @@ export async function narrowAt(
 
   // The window ends as far before its block's terminator on the new side as
   // it did on the old, since the edit sits inside it.
-  const block = spans(oldBlocks).findIndex((span) => resolved.toIdx <= span.last);
-  const oldSpan = spans(oldBlocks)[block];
+  const oldSpans = spans(oldBlocks);
+  const block = oldSpans.findIndex((span) => resolved.toIdx <= span.last);
+  const oldSpan = oldSpans[block];
   const newSpan = spans(newBlocks)[block];
   if (!oldSpan || !newSpan) return undefined;
   const newAt: Window = at(resolved.fromIdx, newSpan.last - (oldSpan.last - resolved.toIdx));

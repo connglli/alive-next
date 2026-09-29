@@ -263,7 +263,7 @@ export class Steps {
       { timeoutMs: budgetMs, ...(loops ? { unroll } : {}) },
     );
     const outcome = loops && check.outcome === "correct" ? "unknown" : goalOutcome(check.outcome);
-    this.history.set(key, { outcome, budgetMs, ms: check.ms });
+    this.history.set(key, { outcome, budgetMs: check.invocation.timeoutMs, ms: check.ms });
 
     const result: CheckGoalResult = {
       outcome,
@@ -503,7 +503,7 @@ export class Steps {
     );
     this.history.set(eagerKey, {
       outcome: goalOutcome(eager.outcome),
-      budgetMs: this.timeouts.eagerCheckMs,
+      budgetMs: eager.invocation.timeoutMs,
       ms: eager.ms,
     });
     if (eager.outcome === "correct") effects.push({ effect: "proved", gid });

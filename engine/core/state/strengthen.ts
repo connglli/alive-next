@@ -306,7 +306,9 @@ export class Strengthen {
     // Attaching parameter attributes, function attributes, and entry relational
     // predicates to callee definitions introduces assumptions justified by Phase 1 & 2.
     // Both sides advance simultaneously under one atomic `strengthen` effect.
-    const srcRes = await applyToCallee(this.store.get(head(callee, "src")));
+    const srcRes = kept
+      ? this.store.get(kept.from)
+      : await applyToCallee(this.store.get(head(callee, "src")));
     if (typeof srcRes !== "string") return { ...srcRes, effects: landed };
     const tgtRes = await applyToCallee(this.store.get(head(callee, "tgt")));
     if (typeof tgtRes !== "string") return { ...tgtRes, effects: landed };
@@ -328,9 +330,6 @@ export class Strengthen {
     // chain on that answer, so the claim never stands without it, and the
     // hypothesis is declared with the parameter facts.
     if (kept) {
-      if (head(callee, "src") !== kept.from) {
-        throw new Error(`${callee.id} moved while it was strengthened`);
-      }
       this.land(tree, landed, [
         { effect: "step", gid: callee.id, side: "src", to: kept.hash, how: "check" },
       ]);
