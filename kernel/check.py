@@ -160,21 +160,23 @@ class Package:
     # The no-undef model: a program holding an `undef` value has states
     # the model does not cover, and a certificate replay asks about none
     # of them, so one is refused rather than replayed under the wrong
-    # model. The gate is `llops canon`, the checker a program passed when
-    # the run stored it, applied here to the bytes the package carries.
-    self.model_gate(text, f"{path.name} holds an undef value, which the no-undef model excludes")
+    # model. The gate is `llops canon`, and the text must also be its output,
+    # which is how the run stored every program.
+    said = f"{path.name} holds an undef value, which the no-undef model excludes"
+    if self.model_gate(text, said) != text:
+      raise Refused(f"{path.name} is not in canonical form")
     self.read[digest] = text
     return text
 
   def model_gate(self, module: str, said: str) -> str:
-    """The module, unless it holds an `undef` value, which the model excludes."""
+    """The module in canonical form, unless it holds an `undef` value, which the model excludes."""
     answer = self.ask_llops("canon", {"module": module})
     if not answer.get("ok"):
       error = answer.get("error", {})
       if error.get("code") == "undef":
         raise Refused(said)
       raise Refused(f"llops canon: {error.get('message')}")
-    return module
+    return answer["module"]
 
   def shape_gate(self, module: str) -> str:
     """The module, if `llops validate` says it has the shape of a program."""
@@ -207,15 +209,15 @@ class Package:
         # A digest is exactly a sha256 name; anything else is the
         # program itself, which is what a replayed window carries,
         # and it passes the model gate like any stored program.
-        text = (
-          self.program(item)
-          if re.fullmatch(r"[0-9a-f]{64}", item)
-          else self.model_gate(
+        if re.fullmatch(r"[0-9a-f]{64}", item):
+          text = self.program(item)
+        else:
+          self.model_gate(
             item,
             "a program carried in the manifest holds an undef value,"
             " which the no-undef model excludes",
           )
-        )
+          text = item
         path.write_text(self.shape_gate(text))
         paths.append(str(path))
       started = time.monotonic()

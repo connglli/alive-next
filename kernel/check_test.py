@@ -226,6 +226,11 @@ def llops(subcommand: str, request: dict) -> dict:
   return answer
 
 
+def canonical(text: str) -> str:
+  """The text as the run stores a program, which is what a package carries."""
+  return llops("canon", {"module": text})["module"]
+
+
 def llrwt(rules: list, module: str) -> str:
   with tempfile.TemporaryDirectory() as scratch:
     path = Path(scratch) / "in.ll"
@@ -493,13 +498,13 @@ class TestGolden(Case):
     self.verified(self.invariant())
 
   def test_a_loop_against_itself_verifies_with_no_solver(self):
-    pair = {"src": self.built.program(LOOP), "tgt": self.built.program(LOOP)}
+    pair = {"src": self.built.program(canonical(LOOP)), "tgt": self.built.program(canonical(LOOP))}
     self.built.goal("g1", pair, pair, [], {"kind": "check"})
     done = self.verified(self.built.write())
     self.assertIn("0 solver queries", done.stdout)
 
   def test_a_pair_that_branches_without_looping_verifies(self):
-    pair = {"src": self.built.program(BRANCH), "tgt": self.built.program(SELECT)}
+    pair = {"src": self.built.program(canonical(BRANCH)), "tgt": self.built.program(SELECT)}
     self.built.goal("g1", pair, pair, [], {"kind": "check"})
     self.verified(self.built.write())
 
@@ -846,7 +851,7 @@ class TestTampered(Case):
   def test_a_pair_that_loops(self):
     # alive-tv calls this pair correct, which covers the iterations it
     # unrolls and says nothing of the one where the two part company.
-    pair = {"src": self.built.program(LOOP), "tgt": self.built.program(LATE)}
+    pair = {"src": self.built.program(canonical(LOOP)), "tgt": self.built.program(canonical(LATE))}
     self.built.goal("g1", pair, pair, [], {"kind": "check"})
     self.refused(self.built.write(), "outside the program shape: cyclic")
 
@@ -962,6 +967,12 @@ b:
     package = self.leaf()
     (package / "programs" / f"{self.tgt}.ll").unlink()
     self.refused(package, "has no program")
+
+  def test_a_program_that_is_not_canonical(self):
+    raw = self.built.program(BRANCH)
+    pair = {"src": raw, "tgt": raw}
+    self.built.goal("g1", pair, pair, [], {"kind": "check"})
+    self.refused(self.built.write(), "not in canonical form")
 
   def test_a_same_program_leaf_names_a_program_that_is_not_there(self):
     missing = "a" * 64
@@ -1392,7 +1403,7 @@ class TestRefuted(unittest.TestCase):
   def test_a_pair_that_loops_is_not_asked_about(self):
     # A refutation of a loop rests on how alive-tv treats the iterations it
     # did not unroll, so it is refused like a proof; llubi certifies a loop's.
-    package = self.built.refuted(LOOP, LATE)
+    package = self.built.refuted(canonical(LOOP), canonical(LATE))
     done = self.re_asked(package)
     self.assertNotEqual(done.returncode, 0, done.stdout)
     self.assertIn("outside the program shape: cyclic", done.stdout + done.stderr)
