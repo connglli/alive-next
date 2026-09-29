@@ -5,9 +5,12 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/CFG.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -109,32 +112,107 @@ std::vector<llvm::Value *> needed(llvm::Function &F, const Region &region) {
   return params;
 }
 
-// The tgt signature: each src entry resolved through the value map to a phi of
-// B or a value from outside, and nothing the tgt needs left out.
+std::string typeText(const llvm::Value &v) {
+  std::string out;
+  llvm::raw_string_ostream os(out);
+  v.getType()->print(os);
+  return out;
+}
+
+// Whether the tgt can pass `v` into the region: a phi of B or a value from outside.
+bool passable(llvm::Value *v, const Region &region, ValueRefs &refs, llvm::json::Object &err) {
+  auto *phi = llvm::dyn_cast<llvm::PHINode>(v);
+  if ((phi && phi->getParent() == region.front()) || fromOutside(v, region))
+    return true;
+  err = errResponse("invalid", "value_map: '" + refs.print(*v) +
+                                   "' is neither a phi of the block nor defined before it");
+  return false;
+}
+
+// The tgt signature: each src entry mapped through the value map, then the tgt
+// values the map lists under keys that are not src values.
 bool tgtParams(llvm::json::Object &args, llvm::Function &F, ValueRefs &refs, const Region &region,
-               std::vector<llvm::Value *> &params, llvm::json::Object &err) {
+               std::vector<llvm::Value *> &params, llvm::json::Array &info,
+               llvm::json::Object &err) {
   auto *spec = args.getArray("params");
   auto *valueMap = args.getObject("value_map");
   if (!spec || !valueMap) {
     err = errResponse("bad_request", "a tgt detach needs 'params' and 'value_map'");
     return false;
   }
+  std::vector<std::string> passed;
   for (const auto &entry : *spec) {
     llvm::Value *v = mappedParam(entry, *valueMap, F, refs, err);
-    if (!v)
+    if (!v || !passable(v, region, refs, err))
       return false;
-    auto *phi = llvm::dyn_cast<llvm::PHINode>(v);
-    if (!(phi && phi->getParent() == region.front()) && !fromOutside(v, region)) {
-      err = errResponse("invalid", "value_map: '" + refs.print(*v) +
-                                       "' is neither a phi of the block nor defined before it");
+    params.push_back(v);
+    info.push_back(entry);
+    passed.push_back(entry.getAsObject()->getString("live")->str());
+  }
+  std::vector<llvm::Value *> only;
+  for (const auto &[key, ref] : *valueMap) {
+    if (llvm::is_contained(passed, key.str()))
+      continue;
+    auto text = ref.getAsString();
+    llvm::Value *v = text ? refs.resolve(*text) : nullptr;
+    if (!v) {
+      err = errResponse("not_found", "value_map: '" + key.str() + "' names no tgt value");
+      return false;
+    }
+    if (!passable(v, region, refs, err))
+      return false;
+    only.push_back(v);
+  }
+  auto want = needed(F, region);
+  for (llvm::Value *v : only)
+    if (!llvm::is_contained(want, v)) {
+      err = errResponse("invalid", "the tgt region does not use '" + refs.print(*v) + "'");
+      return false;
+    }
+  for (llvm::Value *v : want)
+    if (llvm::is_contained(only, v)) {
+      params.push_back(v);
+      info.push_back(llvm::json::Object{{"type", typeText(*v)}, {"live", "poison"}});
+    }
+  for (llvm::Value *v : want)
+    if (!llvm::is_contained(params, v)) {
+      err = errResponse("invalid", "the tgt region uses '" + refs.print(*v) +
+                                       "', which the value map does not cover");
+      return false;
+    }
+  return true;
+}
+
+// Read a signature a tgt cut returned: src values by name, poison where `live` is "poison".
+bool srcParams(const llvm::json::Array &spec, llvm::Function &F, ValueRefs &refs,
+               const Region &region, std::vector<llvm::Value *> &params, llvm::json::Object &err) {
+  auto want = needed(F, region);
+  for (const auto &entry : spec) {
+    const auto *obj = entry.getAsObject();
+    auto live = obj ? obj->getString("live") : std::nullopt;
+    auto type = obj ? obj->getString("type") : std::nullopt;
+    if (!live || !type) {
+      err = errResponse("bad_request", "each params entry needs 'live' and 'type'");
+      return false;
+    }
+    llvm::SMDiagnostic smd;
+    llvm::Type *ty = llvm::parseType(*type, smd, *F.getParent());
+    llvm::Value *v =
+        *live == "poison" ? (ty ? llvm::PoisonValue::get(ty) : nullptr) : refs.resolve(*live);
+    if (!v || (!llvm::isa<llvm::PoisonValue>(v) && !llvm::is_contained(want, v))) {
+      err = errResponse("invalid", "params: '" + live->str() + "' is not a value the src passes");
+      return false;
+    }
+    if (v->getType() != ty) {
+      err = errResponse("type_mismatch", "params: '" + live->str() + "' is not " + type->str());
       return false;
     }
     params.push_back(v);
   }
-  for (llvm::Value *v : needed(F, region))
+  for (llvm::Value *v : want)
     if (!llvm::is_contained(params, v)) {
-      err = errResponse("invalid", "the tgt region uses '" + refs.print(*v) +
-                                       "', which the value map does not cover");
+      err = errResponse("invalid",
+                        "the src region uses '" + refs.print(*v) + "', which params does not name");
       return false;
     }
   return true;
@@ -161,6 +239,8 @@ llvm::BasicBlock *callInstead(Edge e, llvm::BasicBlock *B, llvm::Function *targe
     auto *phi = llvm::dyn_cast<llvm::PHINode>(params[i]);
     if (phi && phi->getParent() == B)
       args.push_back(phi->getIncomingValueForBlock(e.from));
+    else if (llvm::isa<llvm::PoisonValue>(params[i]))
+      args.push_back(params[i]);
     else
       args.push_back(k ? k->getArg(i) : params[i]);
   }
@@ -203,7 +283,8 @@ llvm::Function *cutOut(llvm::Module &M, llvm::Function &F, const Region &region,
   }
   llvm::DenseMap<llvm::Value *, llvm::Value *> toParam;
   for (unsigned i = 0; i < params.size(); ++i)
-    toParam[params[i]] = k->getArg(i);
+    if (!llvm::isa<llvm::PoisonValue>(params[i]))
+      toParam[params[i]] = k->getArg(i);
   for (auto &I : llvm::instructions(*k))
     for (llvm::Use &U : I.operands())
       if (auto it = toParam.find(U.get()); it != toParam.end())
@@ -270,22 +351,18 @@ llvm::json::Object moveRegion(llvm::json::Object &args, llvm::Module &M, llvm::F
                               llvm::BasicBlock *joined) {
   std::vector<llvm::Value *> params;
   llvm::json::Array paramInfo;
-  if (args.getString("side") == "src") {
-    params = needed(F, region);
-    for (llvm::Value *v : params) {
-      llvm::json::Object p;
-      std::string type;
-      llvm::raw_string_ostream os(type);
-      v->getType()->print(os);
-      p["type"] = std::move(type);
-      p["live"] = refs.print(*v);
-      paramInfo.emplace_back(std::move(p));
-    }
-  } else {
-    llvm::json::Object err;
-    if (!tgtParams(args, F, refs, region, params, err))
+  llvm::json::Object err;
+  if (args.getString("side") != "src") {
+    if (!tgtParams(args, F, refs, region, params, paramInfo, err))
       return err;
-    paramInfo = *args.getArray("params");
+  } else if (auto *spec = args.getArray("params")) {
+    if (!srcParams(*spec, F, refs, region, params, err))
+      return err;
+    paramInfo = *spec;
+  } else {
+    params = needed(F, region);
+    for (llvm::Value *v : params)
+      paramInfo.push_back(llvm::json::Object{{"type", typeText(*v)}, {"live", refs.print(*v)}});
   }
 
   auto phis = phiPositions(params, region.front());

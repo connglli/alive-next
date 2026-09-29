@@ -147,7 +147,7 @@ The tgt side is cut against that same signature, with a value map naming the tgt
   "value_map": { "%3": "%prod" } }
 ```
 
-Both sides answer with the same `params`, so a caller can compare them. The outer alive2 check settles whether the map is right. outline checks only structure: every live value is covered, and every mapped value is in scope at the cut and has the signature's type.
+Both sides answer with the same `params`, so a caller can compare them. A tgt value with no src counterpart goes in the map under a key that is not a src value; the signature gains an entry for it with `"live": "poison"`, and the src, cut again with that signature as `params`, passes `poison` there. The outer alive2 check settles whether the map is right. outline checks only structure: every live value is covered, and every mapped value is in scope at the cut and has the signature's type.
 
 The callee is declared with no attributes. An attribute is an assumption the call site has to honour, so adding one is a proof obligation that belongs to the strengthen flow rather than to the cut.
 
@@ -181,7 +181,7 @@ The call is replaced by the callee's body, and the declaration, which nothing el
 
 Moves a block and every block it reaches into a fresh function, and turns every branch to the block into a call of it. A goal is cut this way at a join or at a loop header.
 
-Request `{ "module": ..., "side": "src", "block": "%bb2", "callee": "k" }`; the tgt side adds `params` and `value_map` as `outline` takes them. Response `{ "ok": true, "outer": ..., "callee": ..., "params": [ ... ], "phis": [ 0, 1 ], "hypothesis": "k.ih" }`.
+Request `{ "module": ..., "side": "src", "block": "%bb2", "callee": "k" }`; the tgt side adds `params` and `value_map` as `outline` takes them, and the src side may add `params`. Response `{ "ok": true, "outer": ..., "callee": ..., "params": [ ... ], "phis": [ 0, 1 ], "hypothesis": "k.ih" }`.
 
 The signature is the block's phis, then the values the moved blocks use from outside, in definition order; a tgt side takes the src's, and `phis` gives the positions of the block's phis in it. Every edge into the block becomes an edge into a fresh block that only calls the callee and returns what it answers. An edge from a moved block exists when the block heads a loop. It calls the declared `hypothesis` instead, passing each parameter that is not a phi unchanged, so the callee's body does not loop; `hypothesis` is absent when there is no such edge. The module may loop, and so may either half when the moved blocks hold a loop of their own. A block entered from outside other than through the named one is refused with `not_single_entry`, and the entry block with `invalid`.
 

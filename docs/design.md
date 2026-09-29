@@ -80,7 +80,7 @@ Two alive2 checks replace the one big check:
 1. The outer pair, with `g` left as an unknown declared function. alive2 treats a call to an unknown function as an observable event: the arguments and memory reaching the call in RHS must refine those in LHS. That *is* the cut condition, memory included, and we inherit it from alive2's own semantics instead of writing our own composition theorem.
 2. The callee pair `g_lhs` vs `g_rhs`, as a normal function-level check.
 
-The declared `g` must have one signature shared by both sides. The signature is determined by the src side's live values at the cut, and the agent must supply a value map saying which tgt value corresponds to each src live value. Whether the map is *correct* is not trusted: alive2's outer check verifies that corresponding arguments refine each other. If the tgt suffix needs a value with no src counterpart at the cut, the split fails structurally; that is the signal to rewrite one side first until the cut points align.
+The declared `g` must have one signature shared by both sides. The signature is determined by the src side's live values at the cut, and the agent must supply a value map saying which tgt value corresponds to each src live value. Whether the map is *correct* is not trusted: alive2's outer check verifies that corresponding arguments refine each other. When the tgt needs a value that has no src counterpart at the cut, the map lists it under a key that is not a src value, and the src passes `poison` in its place, which any value refines.
 
 The only trusted glue is that the outlining transformation itself is faithful (the outer program plus the callee really is the original program). That is mechanical and small.
 

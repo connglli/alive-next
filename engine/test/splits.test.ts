@@ -191,6 +191,25 @@ join:
     if (result.kind === "refused") expect(result.message).toContain("one side only");
   });
 
+  test("carries state only the tgt has, which the src passes as poison", async () => {
+    // The tgt's `%2` is a counter the src lacks, so it goes under the new key `k`.
+    const counted = LOOP.replace(
+      "  %i.next = add i32 %i, 1\n",
+      "  %k = phi i32 [ %n, %entry ], [ %k.next, %loop ]\n  %i.next = add i32 %i, 1\n  %k.next = add i32 %k, -1\n",
+    );
+    const splits = new Splits(store, llops);
+    const result = await splits.split(await start(LOOP, counted), "g1", "%bb1", "%bb1", {
+      "%1": "%1",
+      "%0": "%0",
+      k: "%2",
+    });
+    if (result.kind !== "split") throw new Error(result.message);
+    expect(result.params.map((param) => param.live)).toEqual(["%1", "%0", "poison"]);
+    const tree = record(result.effects);
+    expect(store.get(head(goal(tree, "g2"), "src"))).toContain("i32 poison)");
+    expect(goal(tree, "g3").detach?.phis).toEqual({ src: [0], tgt: [0, 2] });
+  });
+
   test("refuses a cut whose halves do not go back together as the side", async () => {
     // One tgt phi stands for two src phis, which detach takes and reattach
     // cannot undo: the tgt comes back with two phis.

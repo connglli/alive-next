@@ -1498,6 +1498,37 @@ class TestDetach(Case):
     self.assertIn("@k.ih(i32 %i.next, i32 %p1, i32 %p2)", t["callee"])
     self.reattaches(tgt, t, "k")
 
+  def test_state_only_the_tgt_carries_is_poison_on_the_src_side(self):
+    # The tgt has a counter the src lacks; the src, cut again, passes poison for it.
+    src = ROTATED.replace("br i1 %guard, label %exit, label %loop", "br label %loop").replace(
+      "%r = phi i32 [ 0, %entry ], [ %acc.next, %loop ]", "%r = phi i32 [ %acc.next, %loop ]"
+    )
+    tgt = src.replace(
+      "  %acc.next = add i32 %acc, %i\n",
+      "  %k = phi i32 [ %n, %entry ], [ %k.next, %loop ]\n"
+      "  %acc.next = add i32 %acc, %i\n  %k.next = add i32 %k, -1\n",
+    )
+    s = self.good(self.detach(src, "%loop", "k"))
+    live = {p["live"]: p["live"] for p in s["params"]}
+    t = self.good(self.detach(tgt, "%loop", "k", params=s["params"], value_map={**live, "k": "%k"}))
+    self.assertEqual([p["live"] for p in t["params"]], ["%i", "%acc", "%n", "poison"])
+    self.assertEqual(t["phis"], [0, 1, 3])
+    request = {"module": src, "side": "src", "block": "%loop", "callee": "k", "params": t["params"]}
+    again = self.good(run("detach", request))
+    self.assertEqual(again["phis"], [0, 1])
+    self.assertIn("call i32 @k(i32 0, i32 0, i32 %n, i32 poison)", again["outer"])
+    self.assertIn("i32 %p2, i32 poison)", again["callee"])
+    self.reattaches(src, again, "k")
+    self.reattaches(tgt, t, "k")
+
+  def test_state_only_the_tgt_carries_has_to_reach_the_region(self):
+    s = self.good(self.detach(STILL, "%loop", "k"))
+    live = {p["live"]: p["live"] for p in s["params"]}
+    for extra, why in (("%i.next", "neither a phi"), ("%nope", "names no tgt value")):
+      with self.subTest(extra=extra):
+        r = self.detach(STILL, "%loop", "k", params=s["params"], value_map={**live, "x": extra})
+        self.assertIn(why, r["error"]["message"])
+
   def test_a_value_from_outside_passed_as_it_changes_is_refused(self):
     half = self.good(self.detach(STILL, "%loop", "k"))
     request = {"outer": half["outer"], "callee": half["callee"], "callee_name": "k"}

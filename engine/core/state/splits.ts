@@ -89,19 +89,25 @@ export class Splits {
       const message = "both cuts name a block, or neither does";
       return { kind: "refused", side: "tgt", code: "invalid", message };
     }
-    const src: LlopsResult<DetachResult> = atBlock
-      ? await this.llops.detachSrc(srcModule, srcCut, callee)
-      : await this.llops.outlineSrc(srcModule, srcCut, callee);
-    if (!src.ok) return { kind: "refused", side: "src", code: src.code, message: src.message };
+    const cutSrc = (params?: OutlineParam[]): Promise<LlopsResult<DetachResult>> =>
+      atBlock
+        ? this.llops.detachSrc(srcModule, srcCut, callee, params)
+        : this.llops.outlineSrc(srcModule, srcCut, callee, params);
+    const first = await cutSrc();
+    if (!first.ok)
+      return { kind: "refused", side: "src", code: first.code, message: first.message };
 
     if (!valueMap) {
-      return { kind: "preview", params: src.params, callee };
+      return { kind: "preview", params: first.params, callee };
     }
 
     const tgt: LlopsResult<DetachResult> = atBlock
-      ? await this.llops.detachTgt(tgtModule, tgtCut, callee, src.params, valueMap)
-      : await this.llops.outlineTgt(tgtModule, tgtCut, callee, src.params, valueMap);
+      ? await this.llops.detachTgt(tgtModule, tgtCut, callee, first.params, valueMap)
+      : await this.llops.outlineTgt(tgtModule, tgtCut, callee, first.params, valueMap);
     if (!tgt.ok) return { kind: "refused", side: "tgt", code: tgt.code, message: tgt.message };
+    // The tgt added values the src lacks, so cut the src again with the longer signature.
+    const src = tgt.params.length > first.params.length ? await cutSrc(tgt.params) : first;
+    if (!src.ok) return { kind: "refused", side: "src", code: src.code, message: src.message };
     // Induction needs the hypothesis on both sides, so a block has to head a
     // loop on both or on neither.
     if (src.hypothesis !== tgt.hypothesis) {

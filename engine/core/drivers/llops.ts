@@ -174,9 +174,14 @@ export class Llops {
     return this.run("edit", { module, ...op });
   }
 
-  /** Cut the src side at `cut`; the signature comes back in the response. */
-  outlineSrc(module: Module, cut: Ref, callee: string): Promise<LlopsResult<OutlineResult>> {
-    return this.run("outline", { module, side: "src", cut, callee });
+  /** Cut the src side at `cut`, using `params` as the signature if given. */
+  outlineSrc(
+    module: Module,
+    cut: Ref,
+    callee: string,
+    params?: OutlineParam[],
+  ): Promise<LlopsResult<OutlineResult>> {
+    return this.run("outline", { module, side: "src", cut, callee, ...(params ? { params } : {}) });
   }
 
   /** Cut the tgt side against the signature the src side produced. */
@@ -198,8 +203,19 @@ export class Llops {
   }
 
   /** Detach `block` and every block it reaches on the src side. */
-  detachSrc(module: Module, block: Ref, callee: string): Promise<LlopsResult<DetachResult>> {
-    return this.run("detach", { module, side: "src", block, callee });
+  detachSrc(
+    module: Module,
+    block: Ref,
+    callee: string,
+    params?: OutlineParam[],
+  ): Promise<LlopsResult<DetachResult>> {
+    return this.run("detach", {
+      module,
+      side: "src",
+      block,
+      callee,
+      ...(params ? { params } : {}),
+    });
   }
 
   /** Detach the tgt side against the signature the src side produced. */

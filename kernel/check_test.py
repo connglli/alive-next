@@ -424,12 +424,16 @@ class Case(unittest.TestCase):
     )
     return step
 
-  def detached(self, src: str, tgt: str) -> dict:
+  def detached(self, src: str, tgt: str, tgt_only: dict | None = None) -> dict:
     """A root loop cut at its header, both halves as detach leaves them."""
-    s = llops("detach", {"module": src, "side": "src", "block": "%head", "callee": "k"})
+    request = {"module": src, "side": "src", "block": "%head", "callee": "k"}
+    s = llops("detach", request)
     live = {p["live"]: p["live"] for p in s["params"]}
-    request = {"module": tgt, "side": "tgt", "block": "%head", "callee": "k"}
-    t = llops("detach", {**request, "params": s["params"], "value_map": live})
+    tgt_request = {"module": tgt, "side": "tgt", "block": "%head", "callee": "k"}
+    value_map = {**live, **(tgt_only or {})}
+    t = llops("detach", {**tgt_request, "params": s["params"], "value_map": value_map})
+    if tgt_only:
+      s = llops("detach", {**request, "params": t["params"]})
 
     def stored(text: str) -> str:
       return self.built.program(llops("canon", {"module": text})["module"])
@@ -495,6 +499,21 @@ class TestGolden(Case):
 
   def test_a_loop_cut_at_its_header_verifies_by_induction(self):
     self.detached(PARITY, PARITY_NUW)
+    self.verified(self.built.write())
+
+  def test_state_only_the_tgt_carries_verifies(self):
+    # The tgt keeps a countdown nothing reads, and the src passes poison for it.
+    counted = PARITY.replace(
+      "  %c = icmp ult i32 %i, %n\n",
+      "  %k = phi i32 [ %n, %entry ], [ %k.next, %body ]\n  %c = icmp ult i32 %i, %n\n",
+    ).replace(
+      "  %i.next = add i32 %i, 1\n", "  %i.next = add i32 %i, 1\n  %k.next = add i32 %k, -1\n"
+    )
+    self.assertEqual(counted.count("%k"), 4)
+    halves = self.detached(PARITY, counted, {"k": "%k"})
+    self.assertIn(
+      "poison", (self.built.root / "programs" / f"{halves['outer']['src']}.ll").read_text()
+    )
     self.verified(self.built.write())
 
   def test_a_loop_invariant_proved_on_entry_and_kept_verifies(self):
