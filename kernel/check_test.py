@@ -963,6 +963,18 @@ b:
     (package / "programs" / f"{self.tgt}.ll").unlink()
     self.refused(package, "has no program")
 
+  def test_a_same_program_leaf_names_a_program_that_is_not_there(self):
+    missing = "a" * 64
+    pair = {"src": missing, "tgt": missing}
+    self.built.goal("g1", pair, pair, [], {"kind": "check"})
+    self.refused(self.built.write(), "has no program")
+
+  def test_a_same_program_leaf_holds_an_undef_value(self):
+    bad = self.built.program(SRC.replace("ret i32 %1", "ret i32 undef"))
+    pair = {"src": bad, "tgt": bad}
+    self.built.goal("g1", pair, pair, [], {"kind": "check"})
+    self.refused(self.built.write(), "holds an undef value")
+
   def test_a_pair_that_does_not_hold(self):
     # The two programs are not a refinement, whatever the manifest says.
     wrong = self.built.program(SRC.replace("mul i32 %0, 2", "mul i32 %0, 3"))

@@ -551,7 +551,8 @@ class Check:
     discharge = goal["discharge"]
     if discharge["kind"] == "check" and goal["end"]["src"] == goal["end"]["tgt"]:
       # A program refines itself, so the same program on both sides needs no
-      # solver, and whether it loops does not matter.
+      # solver, looping or not, but is read, which checks its hash and the no-undef model.
+      self.package.program(goal["end"]["src"])
       self.report(
         result="OK",
         gid=gid,
