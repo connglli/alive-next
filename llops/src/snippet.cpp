@@ -94,6 +94,27 @@ std::vector<Token> scanTokens(llvm::StringRef text) {
   return tokens;
 }
 
+// Declare, for the scratch module, the module's globals the snippet names.
+// Each is an i8 global, since only its address is used and a call takes its
+// type from its own text. The parser declares an intrinsic itself.
+std::string declarationsFor(llvm::Function &F, llvm::StringRef text) {
+  std::string out;
+  llvm::raw_string_ostream os(out);
+  std::vector<const llvm::GlobalValue *> declared;
+  TextLexer lexer(text, F.getContext());
+  for (llvm::lltok::Kind kind = lexer.next(); kind != llvm::lltok::Eof; kind = lexer.next()) {
+    const llvm::GlobalValue *gv = kind == llvm::lltok::GlobalVar
+                                      ? F.getParent()->getNamedValue(lexer.lexer.getStrVal())
+                                      : nullptr;
+    if (!gv || gv->getName().starts_with("llvm.") || llvm::is_contained(declared, gv))
+      continue;
+    declared.push_back(gv);
+    gv->printAsOperand(os, false);
+    os << " = external global i8\n";
+  }
+  return out;
+}
+
 } // namespace
 
 bool parseSnippet(llvm::Function &F, ValueRefs &refs, llvm::StringRef text, llvm::Value *replacing,
@@ -195,7 +216,7 @@ bool parseSnippet(llvm::Function &F, ValueRefs &refs, llvm::StringRef text, llvm
   }
   body += text.substr(copied);
 
-  std::string scratchText = "define void @llops.scratch(";
+  std::string scratchText = declarationsFor(F, text) + "define void @llops.scratch(";
   {
     llvm::raw_string_ostream os(scratchText);
     for (size_t i = 0; i < actuals.size(); ++i) {
@@ -225,9 +246,9 @@ bool parseSnippet(llvm::Function &F, ValueRefs &refs, llvm::StringRef text, llvm
   llvm::ValueToValueMapTy vmap;
   for (size_t i = 0; i < actuals.size(); ++i)
     vmap[std::next(scratch->arg_begin(), i)] = actuals[i];
-  // A snippet that calls something makes the parser invent a declaration in
-  // the throwaway module. The clones have to point at the real module's
-  // declaration instead, which is created when it is not there yet.
+  // The clones have to point at the real module's globals instead of the
+  // throwaway module's. An intrinsic the parser declared there gets its
+  // declaration in the real module when it is not there yet.
   llvm::Module &M = *F.getParent();
   for (llvm::GlobalValue &gv : mwc->mod->global_values()) {
     if (&gv == scratch)

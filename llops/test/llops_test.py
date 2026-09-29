@@ -794,6 +794,22 @@ entry:
     self.assertIn("declare void @llvm.assume(i1", r["module"])
     self.assertTrue(self.conforms(r["module"]))
 
+  def test_snippet_names_the_modules_globals(self):
+    module = """@g = global i32 7
+
+declare i32 @h(i32)
+
+define i32 @f(i32 %x) {
+entry:
+  %a = call i32 @h(i32 %x)
+  ret i32 %a
+}
+"""
+    insts = ["%l = load i32, ptr @g, align 4", "%a = call i32 @h(i32 %l)"]
+    r = self.good(self.edit("replace", module=module, v="a", insts=insts))
+    self.assertEqual(self.body(r["module"]), [*insts, "ret i32 %a"])
+    self.assertTrue(self.conforms(r["module"]))
+
   def test_snippet_naming_a_struct_type(self):
     module = """%pair = type { i32, i32 }
 

@@ -91,7 +91,7 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 
 A snippet may not shadow a name that already exists. `replace` may reuse the name of the value it replaces, and may not use the value itself.
 
-A snippet that calls a function the module does not declare gets a declaration, which is how `llvm.assume` reaches a body. A snippet cannot name a type the module declares, because it is parsed in a throwaway function that cannot declare one; `set_body` reparses the whole module and can.
+A snippet may name the module's globals, and one that calls an intrinsic the module does not declare gets a declaration, which is how `llvm.assume` reaches a body. A snippet cannot name a type the module declares, because it is parsed in a throwaway function that cannot declare one; `set_body` reparses the whole module and can.
 
 `erase` refuses a value that still has users, leaving the caller to erase or rewrite them first. With `"cascade": true` the operands that become dead go with it, stopping at anything with a side effect; a plain load has none, so a dead one goes.
 
