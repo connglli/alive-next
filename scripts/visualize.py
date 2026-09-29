@@ -204,8 +204,7 @@ class Tree:
       self.name(effect["tgt"])
       self.moved(goal, at, "strengthen", "both", attrs_note(effect))
       callee, hypothesis = self.calls.get(goal["id"], (None, None))
-      by = effect.get("by")
-      for link in by if isinstance(by, list) else [by] if isinstance(by, dict) else []:
+      for link in effect.get("by") or []:
         fn = hypothesis if link.get("gid") == goal["id"] else callee
         if fn:
           self.proofs.append((link.get("gid"), link.get("hash"), fn))

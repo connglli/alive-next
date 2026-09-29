@@ -734,7 +734,9 @@ class Check:
     if discharge.get("hypothesis"):
       sites.append((discharge["inner"], discharge["hypothesis"]))
     by = step.get("by")
-    links = [link for link in (by if isinstance(by, list) else [by]) if isinstance(link, dict)]
+    if not isinstance(by, list):
+      raise Refused("a strengthen step names its proofs under by as a list")
+    links = [link for link in by if isinstance(link, dict)]
     facts = parameter_facts(step.get("param_attrs") or {})
     for gid, fn in sites:
       proved = next((link.get("hash") for link in links if link.get("gid") == gid), None)

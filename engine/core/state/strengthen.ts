@@ -347,7 +347,7 @@ export class Strengthen {
         ...(hasParamAttrs ? { param_attrs: rawParamAttrs } : {}),
         ...(hasFnAttrs ? { fn_attrs: fnAttrs } : {}),
         ...(hasPredicates ? { predicates } : {}),
-        ...(by ? { by: kept ? [by, { gid: callee.id, hash: kept.hash }] : by } : {}),
+        ...(by ? { by: kept ? [by, { gid: callee.id, hash: kept.hash }] : [by] } : {}),
       },
     ]);
 

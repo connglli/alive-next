@@ -79,7 +79,7 @@ export type Step =
       param_attrs?: Record<number, Attrs>;
       fn_attrs?: Attrs;
       predicates?: PredicateAssertion[];
-      by?: StepRef | StepRef[];
+      by?: StepRef[];
     };
 
 export interface Pair {

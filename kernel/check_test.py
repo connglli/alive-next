@@ -823,7 +823,7 @@ class TestGolden(Case):
       "param_attrs": {"0": {"noundef": True}},
       "fn_attrs": {"nounwind": True},
       "predicates": [PREDICATE],
-      "by": {"gid": "g2", "hash": proof},
+      "by": [{"gid": "g2", "hash": proof}],
     }
     self.built.goal("g3", inner, strengthened, [step], {"kind": "check"})
     return self.built.write()
@@ -1063,7 +1063,7 @@ b:
           "from": pair,
           "to": pair,
           "param_attrs": {"0": {"noundef": True}},
-          "by": {"gid": "g2", "hash": "x"},
+          "by": [{"gid": "g2", "hash": "x"}],
         }
       ],
       {"kind": "check"},
@@ -1075,6 +1075,12 @@ b:
     step = self.built.goals["g3"]["steps"][0]
     step["predicates"] = [{"op": "ne", "lhs": {"val": "%0"}, "rhs": {"const": 0}}]
     self.refused(self.built.write(), "names a value")
+
+  def test_a_strengthen_step_whose_proofs_are_not_a_list(self):
+    TestGolden.strengthened(self)
+    step = self.built.goals["g3"]["steps"][0]
+    step["by"] = step["by"][0]
+    self.refused(self.built.write(), "as a list")
 
   def test_a_predicate_the_outer_never_proved(self):
     package = TestGolden.strengthened(self, proved=False)
@@ -1112,7 +1118,7 @@ b:
       "from": inner,
       "to": inner_end,
       "param_attrs": {"0": {"noundef": True}},
-      "by": {"gid": "g2", "hash": outer_end["src"]},
+      "by": [{"gid": "g2", "hash": outer_end["src"]}],
     }
     self.built.goal(
       "g1", whole, whole, [], {"kind": "split", "callee": "g", "outer": "g2", "inner": "g3"}
@@ -1154,7 +1160,7 @@ b:
           "from": inner,
           "to": forged,
           "param_attrs": {"0": {"noundef": True}},
-          "by": {"gid": "g2", "hash": "bogus"},
+          "by": [{"gid": "g2", "hash": "bogus"}],
         }
       ],
       {"kind": "check"},

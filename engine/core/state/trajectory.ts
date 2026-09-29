@@ -121,7 +121,7 @@ export type Effect =
       fn_attrs?: Attrs;
       predicates?: PredicateAssertion[];
       /** The steps proving the contract before each call: one, or two for a loop. */
-      by?: StepRef | StepRef[];
+      by?: StepRef[];
     }
   /** A split was undone, discarding both children and their subtrees. */
   | { effect: "unsplit"; gid: string }

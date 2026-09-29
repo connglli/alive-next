@@ -201,10 +201,9 @@ describe.skipIf(!built)("strengthening a loop", () => {
 
     const claim = result.effects.find((effect) => effect.effect === "strengthen");
     if (claim?.effect !== "strengthen") throw new Error("expected a strengthen effect");
-    if (!Array.isArray(claim.by)) throw new Error("a loop's contract names two proofs");
-    expect(claim.by.map((proof) => proof.gid)).toEqual(["g2", "g3"]);
+    expect(claim.by?.map((proof) => proof.gid)).toEqual(["g2", "g3"]);
     const kept = result.effects.find((effect) => effect.effect === "step" && effect.gid === "g3");
-    expect(kept).toMatchObject({ side: "src", to: claim.by[1]?.hash });
+    expect(kept).toMatchObject({ side: "src", to: claim.by?.[1]?.hash });
   });
 
   test("parameter facts go on the hypothesis too, on both sides", async () => {
@@ -278,7 +277,7 @@ describe.skipIf(!built)("strengthening", () => {
     if (last?.effect !== "strengthen") throw new Error("expected a strengthen effect");
     expect(last.gid).toBe("g3");
     // It names the step that makes it sound, which is what a replay re-checks.
-    expect(last.by).toEqual({ gid: "g2", hash: (result.effects[0] as { to: string }).to });
+    expect(last.by).toEqual([{ gid: "g2", hash: (result.effects[0] as { to: string }).to }]);
   });
 
   test("checks both goals once at the end", async () => {
