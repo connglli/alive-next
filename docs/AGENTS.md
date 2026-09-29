@@ -24,6 +24,8 @@ State the contract: what holds, under which conditions, and what happens when th
 
 One rule per paragraph. Emphasis marks the clause that changes behaviour and nothing else. Numbers carry their provenance, so "about 70% of seeds solve over the full type lattice" is a claim and "yields are good" is not.
 
+Keep the prose concise. Avoid appending text everywhere. Avoid adding clauses everywhere.
+
 ## Use natural writing
 
 Use [natural writing](https://github.com/flutter/flutter/blob/fdf8a01bd014798113aa59ac5b4fd3c30573d9eb/.agents/agents/reidbaker-agent/skills/natural-writing/SKILL.md). For example, avoid:
@@ -72,4 +74,4 @@ Two failures survive every grep, so read the diff for them: a paragraph that gre
 
 ## Length
 
-Relocate first, condense second, accept the length third. Review is the check; there is no budget script.
+Relocate first, condense second, accept the length third.
