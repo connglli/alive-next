@@ -2,23 +2,23 @@
 
 The agent is the untrusted half of alive-next. It decides where to cut, which rewrite to try, and which counterexample to chase, and every one of those decisions passes through a certifying check before it counts, as [design.md](./design.md) sets out. Pi runs the loop, and alive-next supplies the tools that reach the goal tree.
 
-Pi's coding agent is the harness, through its SDK: `createAgentSessionRuntime` from `@earendil-works/pi-coding-agent`. What that buys is everything a long search needs and none of it verification-critical: context compaction, session branching, the interactive and RPC front ends, provider and model resolution, and a shell tool with the truncation and timeout behaviour already worked out.
+Pi's coding agent is the harness, through its SDK: `createAgentSessionRuntime` from `@earendil-works/pi-coding-agent`. It provides everything a long search needs, none of it verification-critical: context compaction, session branching, the interactive and RPC front ends, provider and model resolution, and a shell tool with the truncation and timeout behaviour already worked out.
 
-A runtime rather than a bare session, because a runtime is what Pi's run modes take. `engine/agent/agent.ts` builds one and draws nothing itself, so how a run is watched is the caller's choice.
+The engine builds a runtime rather than a bare session, because Pi's run modes take a runtime. `engine/agent/agent.ts` builds one and draws nothing itself, so how a run is watched is the caller's choice.
 
 ## The tool set
 
 `createAgentSessionFromServices` takes the tools as data, so the surface the model sees is stated in one call rather than assembled by what happens to be installed. Our tools arrive as `customTools`, and `tools` is the allowlist of everything active, so a built-in that is not named is not there.
 
-Active are `bash`, `read`, `write`, `edit`, `grep`, `ls` and `find`, the tools of the counterexample search's scratch computation, which [design.md](./design.md) defines. They are ours, in `tools/sandbox.ts`, because each one is confined to the run's scratch directory.
+The built-in names in the allowlist are `bash`, `read`, `write`, `edit`, `grep`, `ls` and `find`, the scratch tools of the counterexample search that [design.md](./design.md) defines. They are ours, in `tools/sandbox.ts`, because each one is confined to the run's scratch directory.
 
-Ours also include the rest of design.md's catalog, declared with `defineTool` and TypeBox parameters, under names that carry the prefix of what the move acts on: `run_` the run as a whole (`run_status`, `run_list_rules`, `run_report_cex`, `run_give_up`), `goal_` one goal (`goal_show`, `goal_analyze`, `goal_check`, `goal_rewrite`, `goal_revert`), `tx_` the open transaction (`tx_begin`, `tx_edit`, `tx_commit`, `tx_abort`), `tree_` the shape of the goal tree (`tree_split`, `tree_split_preview`, `tree_unsplit`, `tree_strengthen`). Two things follow. No name of ours can collide with one of Pi's, today or when Pi grows a tool, so the surface stays stated rather than negotiated. And a model reaching for the `edit` it has been trained on in every other harness does not land on the tool that rewrites IR under a transaction, which is `tx_edit` and answers to nothing else.
+Ours also include the rest of design.md's catalog, declared with `defineTool` and TypeBox parameters, under names that carry the prefix of what the move acts on: `run_` the run as a whole (`run_status`, `run_list_rules`, `run_report_cex`, `run_give_up`), `goal_` one goal (`goal_show`, `goal_analyze`, `goal_check`, `goal_rewrite`, `goal_revert`), `tx_` the open transaction (`tx_begin`, `tx_edit`, `tx_commit`, `tx_abort`), `tree_` the shape of the goal tree (`tree_split`, `tree_split_preview`, `tree_unsplit`, `tree_strengthen`). Two things follow. No name of ours can collide with one of Pi's, today or when Pi grows a tool, so the surface stays stated rather than negotiated. And a model reaching for the `edit` it has been trained on in every other harness does not land on the tool that rewrites IR under a transaction: that tool is `tx_edit`, and answers to no other name.
 
 The prefixes stop at this layer. The session's moves keep design.md's bare names and so does the trajectory, since a record of what a proof did should read the same whether a model or a script drove it.
 
 The eleven edit operations are one `tx_edit` tool taking an `op` field rather than eleven tools, so they do not crowd out the tools that move a proof forward. llops validates the op and its arguments, so the tool passes them through. The op union is declared with a top-level `type: "object"` beside it: every branch is an object already, but a provider that validates a tool's schema reads the top level and refuses a bare `anyOf` before the run has said anything.
 
-A tool that fails throws, and Pi reports a thrown error to the model as a tool error, so a failure carries the diagnostic the agent needs to try something else. A rejected commit, a failed check and a refused edit are ordinary results, not errors: they say what happened and the run continues. A rejected commit by default aborts the transaction, when not (`imm_abort=False`), it leaves its transaction open on the same scratch program, where `tx_edit` may refine it and `tx_abort` discards it.
+A tool that fails throws, and Pi reports a thrown error to the model as a tool error, so a failure carries the diagnostic the agent needs to try something else. A rejected commit, a failed check and a refused edit are ordinary results, not errors: they say what happened and the run continues. A rejected `tx_commit` leaves its transaction open on the same scratch program, where `tx_edit` may refine it and `tx_abort` discards it; a script's `commit` aborts it by default (`imm_abort`).
 
 A tool result is the whole of what the agent knows, since there is no state it can see between calls. Two rules follow, and they are the same rule about what a result is worth carrying.
 
@@ -26,7 +26,7 @@ A result carries the text of a program exactly when the agent is about to name v
 
 A result opens with SUCCESS or FAILURE, which says whether the move did what it was asked to do rather than whether the framework worked: a refused edit, a rejected commit and a check that did not prove are all failures to advance, and what follows each of them says why.
 
-A result carries the goal tree exactly when the move changed it, which is what the effects the move recorded say. A read, a refusal and every move inside a transaction change nothing and repeat nothing; a cut, a step, a discharge and a revert answer with the tree they left behind, since the goal to work on next is chosen from it.
+A result carries the goal tree exactly when the move changed it, as the effects it recorded show. A read, a refusal and every move inside a transaction change nothing and repeat nothing; a cut, a step, a discharge and a revert answer with the tree they left behind, since the goal to work on next is chosen from it.
 
 Tools run sequentially, because they share one store and one goal tree, and two calls in a parallel batch would race on the state the second one reads.
 
@@ -58,7 +58,7 @@ It does not describe the tools. Pi sends each tool's description and schema with
 
 ## Sessions
 
-`trajectory.jsonl` is the source of truth, the goal tree is derived from it, and a resumed run replays the trajectory, which is the rule [implementation.md](./implementation.md) states for state on disk. Pi's session manager holds the message history for the run in memory and compaction rewrites it, which the framework records as a `framework` event, so the trajectory keeps the messages the model actually saw.
+`trajectory.jsonl` is the source of truth, the goal tree is derived from it, and a resumed run replays the trajectory, which is the rule [implementation.md](./implementation.md) states for state on disk. Pi's session manager holds the run's message history in memory, and compaction rewrites it; the framework records each compaction as a `framework` event, so the trajectory keeps the messages the model actually saw.
 
 ## Watching a run
 
@@ -70,7 +70,7 @@ A run sends its opening turn as it opens, which is what makes it a run. `--pause
 
 A certificate is earned the moment the goal tree settles, which under the TUI is long before the process ends. The run is therefore concluded from the callback the loop fires when it stops, and the summary is held until the terminal belongs to the shell again.
 
-A run with no model to talk to is assembled all the same, because the TUI is where a machine without one is set up: `/login` stores a key and `/model` picks what to prove with. What that costs is the first turn, which fails saying so.
+A run with no model to talk to is assembled all the same, because the TUI is where a machine without one is set up: `/login` stores a key and `/model` picks what to prove with. The cost is the first turn, which fails and says why.
 
 ## Configuration
 
@@ -120,11 +120,11 @@ export default function (pi: ExtensionAPI) {
 
 [Pi's models guide](https://github.com/earendil-works/pi/tree/main/packages/coding-agent/docs/models.md) and [Pi's custom-provider guide](https://github.com/earendil-works/pi/tree/main/packages/coding-agent/docs/custom-provider.md) are references.
 
-The project layer is read from the repository rather than from the session `cwd` Pi would find it beside, because that `cwd` is the run's scratch directory. `noExtensions` drops everything discovered on the machine and keeps what a caller names, so a run loads this repository's extensions and nothing else.
+The project layer is read from the repository, not from the session `cwd` where Pi would look for it, because that `cwd` is the run's scratch directory. `noExtensions` drops everything discovered on the machine and keeps what a caller names, so a run loads this repository's extensions and nothing else.
 
 Pi's services are built once per command, in `createServices`, because a project's providers are known only once its extensions have loaded and a model has to be chosen before a run starts. The runtime a model is chosen from is therefore the one that streams it.
 
-Credentials stay out of the repository entirely, for the reason the shell section gives: a key is per person and lasts, a model choice is per checkout and does not.
+Credentials stay out of the repository entirely: a key belongs to a person and lasts, while a model choice belongs to a checkout.
 
 `config.jsonc` holds the toolchain and the timeouts, which describe the machine and change rarely. What changes per run is named on the command line.
 

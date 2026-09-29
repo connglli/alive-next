@@ -77,9 +77,9 @@ export type Effect =
       invocation?: LlrwtInvocation;
       /**
        * The window the check was narrowed to, when that is what certified the
-       * step. The outer is shared by the two halves, which is what says the
-       * difference is confined to the window, and inlining each half back into
-       * it is what a checker reruns instead of believing any of this.
+       * step. The outer is shared by the two halves, which shows the difference
+       * is confined to the window, and a checker reruns the inlining of each
+       * half into it instead of believing any of this.
        */
       window?: {
         callee: string;

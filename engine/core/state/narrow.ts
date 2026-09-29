@@ -6,12 +6,12 @@
 // the edit touched out of both versions, leaving one outer and two small
 // functions, and the small pair is then what a checker has to be asked about.
 //
-// What makes that sound is not the search. The two outers coming out identical
-// is what says the difference is confined to the window, and `llops inline`
-// puts each side back together, so a window that is wrong is caught rather
-// than believed; the search puts them back too, so it proposes no window a
-// checker would refuse. It is free to guess: a bad guess costs a few llops
-// calls and falls back to the whole function.
+// The search is not what makes that sound. Identical outers show that the
+// difference is confined to the window, and `llops inline` puts each side back
+// together, so a window that is wrong is caught rather than believed; the
+// search puts them back too, so it proposes no window a checker would refuse.
+// It is free to guess: a bad guess costs a few llops calls and falls back to
+// the whole function.
 //
 // A window is a run of instructions in one block, the block where the two
 // bodies first disagree, and it guesses twice there. The tight window runs
@@ -28,7 +28,7 @@ const CALLEE = "outlined_window";
 
 /** A step's obligation, narrowed to the window the edit touched. */
 export interface Narrowed {
-  /** The outer both versions share, which is what says the rest is untouched. */
+  /** The outer both versions share, which shows the rest is untouched. */
   outer: Module;
   /** The window as it was, and as the edit leaves it. */
   before: Module;

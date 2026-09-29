@@ -1,6 +1,6 @@
 # alive-next: Design
 
-Agent-driven, alive2-certified translation validation for large LLVM IR programs. This document records the design decisions we have agreed on, at the idea level and at the tool level. It supersedes `draft.md`.
+Agent-driven, alive2-certified translation validation for large LLVM IR programs. This document records the design decisions we have agreed on, at the idea level and at the tool level.
 
 ## Problem
 
@@ -14,7 +14,7 @@ The approach structures translation validation as an interactive proof search ov
 
 **2. Refinement is transitive, so a *chain of small rewrites* shrinks the semantic gap.** Instead of proving LHS refines to RHS in one step, we transform LHS step by step, the same way a compiler applies a sequence of local, semantics-preserving transformations, until it becomes RHS. If every step in the chain is a refinement, the composition is a refinement. Each step is a small, local change, so validating one step is far easier than validating the end-to-end translation. Analyses (known bits, ranges, aliasing) supply the facts that justify individual steps, just as they do inside a compiler.
 
-The two combine naturally: decomposition cuts the program into chunks small enough to check, and rewriting closes the semantic distance within and across chunks, including massaging LHS until cut points that match RHS exist at all. What makes the combination hard in practice is search: where to cut, which rewrite to apply next, which facts to establish first. That search problem is what we hand to an agent. The correctness problem stays with the checkers, which is the subject of the next section.
+The two combine naturally: decomposition cuts the program into chunks small enough to check, and rewriting closes the semantic distance within and across chunks, including massaging LHS until cut points that match RHS exist at all. In practice the hard part is search: where to cut, which rewrite to apply next, which facts to establish first. We hand that search to an agent. The correctness problem stays with the checkers, which is the subject of the next section.
 
 ## Core principle: proof writer proposes, checker certifies
 
@@ -30,14 +30,14 @@ A wrong proposal wastes time; it never produces a wrong certificate. Since refin
 
 **All** features alive2 supports, including memory operations and branches. A loop is proved by induction once split at its header, and refuted by running it.
 
-Induction reaches two loops only where they meet at the header once per iteration with the same state, and where a fact over the callee's parameters relates them there. That leaves out of reach:
+Induction proves a pair of loops only when both reach the header once per iteration with the same state, and a fact over the callee's parameters relates them there. That leaves out of reach:
 
 * A variable the tgt dropped, such as `%i` after linear function test replacement: the tgt would have to pass the shared hypothesis a value refining the src's.
 * Unrolling with a remainder loop, a loop replaced by a call such as `memset`, and a deleted loop: the tgt makes no call to pair with the src's call of its hypothesis, and alive2 refuses a call on one side only, since it may not return.
 * Reordering transformations (interchange, fusion, fission, tiling, reversal): the two sides agree on memory only at the end, which takes a quantified invariant.
 * An irreducible loop, whose second entry breaks the single entry a split at a block needs.
 * A pointer carried as loop state: a fact compares addresses, not the objects the pointers may access.
-* A loop whose loaded values flow into its hypothesis: sound, but the query times out.
+* A loop whose loaded values flow into its hypothesis: sound, but the query times out at a 60 s budget.
 
 ## Parameter definedness and the no-undef model
 
@@ -66,7 +66,7 @@ The framework state has two parts: an immutable **program store** and a **goal t
 
 **Transactions.** A transaction is an editing session on one side of one goal. Between `begin` and `commit` the agent makes arbitrary edits and gets cheap feedback (parse errors, shape check, analyses); the intermediate programs are scratch and never enter any certificate. At `commit`, alive2 validates the transaction as a single step, asking about the window the edits touched before falling back to the whole pair. On failure the head is unchanged and the local counterexample is returned as a hint. There is no separate "checked rewrite" concept: a checked rewrite is a transaction with one edit. Likewise, inserting `llvm.assume(c)` on the src side and committing *is* a proof that `c` always holds; annotation is not special machinery. (An assume inserted on the tgt side commits trivially, but the obligation resurfaces in the remaining goal, so it defers work rather than avoiding it.)
 
-**Certificate.** The deliverable of a successful run: a standalone package (IR files, a manifest, a checker script) that replays the whole proof through alive2 with no framework and no agent involved (see "Certificate package"). It contains only the pruned proof, the goals and steps that actually discharged the root; reverted or abandoned search never appears in it. A refuted root has the symmetric package: the input for one executed under llubi, or nothing for one the checker itself refuted.
+**Certificate.** The deliverable of a successful run: a standalone package (IR files, a manifest, a checker script) that replays the whole proof through alive2 with no framework and no agent involved (see "Certificate package"). It contains only the pruned proof, the goals and steps that actually discharged the root; reverted or abandoned search never appears in it. A refuted root has the symmetric package: the input, when llubi ran one, or nothing, when alive2 refuted the pair itself.
 
 ## Decomposition = outlining
 
@@ -86,19 +86,19 @@ The only trusted glue is that the outlining transformation itself is faithful (t
 
 A split at a block detaches it instead: the block and every block it reaches become `g`, and each branch to the block becomes a call of `g`. At a loop header, the back edge calls a declared hypothesis `g.ih` in place of `g`, so the callee is one iteration and does not loop. Proving that pair, with `g.ih` an unknown function both sides share, proves the loop by induction: each side calls `g.ih` where it would go around again, so a tgt cannot stop where the src goes on. The glue a checker trusts is `reattach`, the inverse of detaching, as `inline` is of outlining.
 
-A cut leaves the callee's parameters poison-capable, since nothing about a fresh function says its arguments are defined. `strengthen(gid, {param: {noundef}})` is what states otherwise, proved at the call site. The proof fails where the value at the cut can be poison, and then the cut has to move or the program has to be made defined there.
+A cut leaves the callee's parameters poison-capable, since nothing about a fresh function says its arguments are defined. `strengthen(gid, {param: {noundef}})` states otherwise and proves it at the call site. The proof fails where the value at the cut can be poison, and then the cut has to move or the program has to be made defined there.
 
 Known cost: alive2 is conservative at function entry (arbitrary memory, arbitrary aliasing) and around unknown calls (code cannot move across the cut). So a bad cut placement produces spurious failures. That is fine: cut placement is the agent's job, and a local failure is feedback to the agent, never a bug report. When a cut fails because facts established before the cut are lost, the fix is interface strengthening (below).
 
-Open item: confirm with alive2's docs/developers that its function-level refinement is contextual in the corner cases we rely on (pointer provenance, escaped pointers).
+A cut relies on alive2's function-level refinement being contextual, pointer provenance and escaped pointers included.
 
 ## Narrowing a step to what it changed
 
-A cut shrinks a goal; narrowing shrinks a step. They are the same move over different parts of the body: outlining. A commit outlines the window its edits touched out of both versions of the side, which leaves one outer and two small functions, and asks alive2 about the small pair instead of the whole function. A local rewrite then costs what it is rather than what it sits inside. Rewriting a masked bitfield extraction inside a body that goes on to multiply four factors together is two instructions of ten, and measures as out of reach at four minutes whole and a second's work as a window.
+A cut shrinks a goal; narrowing shrinks a step. They are the same move over different parts of the body: outlining. A commit outlines the window its edits touched out of both versions of the side, which leaves one outer and two small functions, and asks alive2 about the small pair instead of the whole function. A local rewrite then costs what it is rather than what it sits inside. In one example, a masked bitfield extraction is two instructions of ten in a body that then multiplies four factors: alive2 gives no answer on the whole function in four minutes, and proves the window in about a second.
 
-Two things make it hold, and neither is the search that found the window. The outers coming out byte-identical is what says the difference is confined to the window, since the rest of the body is then literally the same program on both sides. And `inline` puts each half back where it came from, so a checker recovers the pair the step names rather than believing the halves it was handed. What is left is refinement through a call, which is the same property a cut rests on: if the callee refines the callee, the caller refines the caller.
+Two things make it hold, and neither is the search that found the window. Byte-identical outers show that the difference is confined to the window, since the rest of the body is then the same program on both sides. And `inline` puts each half back where it came from, so a checker recovers the pair the step names rather than believing the halves it was handed. What is left is refinement through a call, the property a cut rests on: if the tgt callee refines the src callee, the tgt caller refines the src caller.
 
-A window is not simply cheaper. Its parameters are values the program computed, and under the no-`undef` model they cannot be `undef`, so it is asked with `--disable-undef-input` exactly as every other query is. Neither question is the easier one in general, so a commit asks the window first on a small budget and falls back to the whole function on the step's own budget. The vector rewrite in that same example is the other way round: unprovable as a window, and a tenth of a second whole.
+A window is not always cheaper: neither question is the easier one in general. A commit therefore asks the window first on a small budget and falls back to the whole function on the step's own budget. The vector rewrite in the same example goes the other way: alive2 cannot prove it as a window and proves it whole in a tenth of a second. A window's parameters are values the program computed, so under the no-`undef` model they cannot be `undef`, and a window is asked with `--disable-undef-input` like every other query.
 
 Automatic narrowing tries two window candidates in the block where the canonicalized bodies first disagree: a tight window from the first instruction line they disagree on to the last (effective when the edit preserves instruction count), and a wide window extending from the first disagreement to the end of the block (effective when length changes renumber downstream instructions). When an explicit window `[from, to]` is specified, references are resolved in the pre-edit program. Because insertions or deletions change the number of instructions inside the window, the post-edit window is mapped using the surrounding shared context: the post-edit start is `fromIdx`, the unchanged suffix length is `suffix = oldLast - toIdx`, and the post-edit end is `newLast - suffix`. Outlining extracts both slices and verifies that their shared outer frames are byte-identical.
 
@@ -111,7 +111,7 @@ Putting an attribute on `g` is not free. If the fact were false, the annotated o
 1. Prove the fact: insert `llvm.assume(c)` just before each call in the outer src program and validate the insertion with alive2. This query scales with the outer program, because that is where the evidence for `c` lives.
 2. Only then rewrite `g`'s declaration with the attribute, in the outer goal (both sides) and the callee goal's signature. With the assume in place this adds no new UB, and the step is cheap to validate.
 
-A detached loop's callee also calls `g.ih`, so phase 1 is proved there too, before that call in the callee's src with the fact assumed at the entry: the loop's entry establishes the fact and each iteration keeps it, which makes it an invariant. Such a `g` takes no function attribute, since induction cannot prove `willreturn`.
+A detached loop's callee also calls `g.ih`, so phase 1 is also proved before each of those calls in the callee's src, with the fact assumed at its start: the loop's entry establishes the fact and each iteration keeps it, which makes it an invariant. Such a `g` takes no function attribute, since induction cannot prove `willreturn`.
 
 This is the deepest cost item in the design: a fact assumed by a callee is proved in its outer goal. The cost control is hierarchical splitting, so that each fact is proved inside a chunk-sized goal rather than at the top level. Split placement and fact placement therefore interact, and that interaction is part of the agent's search problem.
 
@@ -132,7 +132,7 @@ A counterexample the run ends on is certified one of two ways, and the certifica
 1. Execution (the `llubi` source): a concrete whole-program input on which LHS and RHS are run under a UB/poison-aware interpreter (llubi), and RHS shows a behavior LHS does not allow. That check is cheap, independent of program size, and replayable by anyone.
 2. The root refutation (the `alive2` source): alive-tv refuting the root's original pair. Replaying it asks alive-tv the same question again under the no-undef flags, where the pair must be refuted again.
 
-The search for an input is fully untrusted, so the agent gets full flexibility: infer candidate values from analyses, run chunks forward concretely with `interp`, solve chunk-local inversion queries with `solve`, compute in `bash`, or guess.
+The search for an input is fully untrusted, so the agent gets full flexibility: infer candidate values from analyses, run programs concretely under llubi or compute anything else in `bash`, or guess.
 
 For programs with memory operations, an input means argument values plus the initial contents of the memory the pointer arguments point to; divergence compares the return value, the final observable memory, and UB events.
 
@@ -152,16 +152,16 @@ A certified step shows the step is valid; it says nothing about whether the path
 
 Interpreting a refutation depends on where it happens. On a goal whose sides have been rewritten, it may blame only the path: a valid step can overshoot. Example: S returns `poison`, a valid step refines it to S' returning `0`, and T returns `1`. T refines S, and S' refines S, but T does not refine S'; the translation is fine and only the path is dead. On a callee goal, it may instead mean the interface is too weak (strengthen it) or the cut is misplaced (unsplit and cut elsewhere), since the callee's entry is conservative. None of these refute the translation by themselves.
 
-A refutation on the root goal, after later steps have replaced its pair, is a counterexample against the replaced pair, not the translation: the goal stays open. Before any step, a check of the root's original pair is a check of the translation, and the checker that refuted it is what the certificate replays. For callee goals the same applies, and lifting a counterexample there to a root input remains the agent's search problem.
+A refutation on the root goal, after later steps have replaced its pair, is a counterexample against the replaced pair, not the translation: the goal stays open. Before any step, a check of the root's original pair is a check of the translation, and the certificate replays the checker that refuted it. For callee goals the same applies, and lifting a counterexample there to a root input remains the agent's search problem.
 
 ## Workflow
 
 A session looks like this:
 
 1. The framework creates the root goal `(LHS, RHS)`.
-2. The agent inspects (`status`, `show`, `diff`, `analyze`) and picks a strategy: usually, find aligned cut points and `split`, rewriting one side first when no alignment exists yet.
+2. The agent inspects (`status`, `show`, `analyze`) and picks a strategy: usually, find aligned cut points and `split`, rewriting one side first when no alignment exists yet.
 3. On each open leaf goal: if it looks small enough, `check` it directly. Otherwise rewrite the src toward the tgt (`rewrite`, transactions), `strengthen` interfaces where the callee lacks facts, and `split` further.
-4. A failed commit, a failed check, or an eager cross-check refutation returns a local counterexample as a hint. The agent either treats it as search feedback (revert, try another path) or investigates it as a possible real miscompilation: use `interp`, `solve`, `bash` to hunt for a whole-program input, then `report_cex` to certify it. The exception is the root goal itself: a check on its original pair is a check on the translation, and what it refutes is the run's counterexample.
+4. A failed commit, a failed check, or an eager cross-check refutation returns a local counterexample as a hint. The agent either treats it as search feedback (revert, try another path) or investigates it as a possible real miscompilation: use `bash` to hunt for a whole-program input, then `report_cex` to certify it. The exception is the root goal itself: a check on its original pair is a check on the translation, and what it refutes is the run's counterexample.
 5. The session ends when the root goal is proved (verified), the root goal is refuted (counterexample), or the budget runs out (unknown).
 
 ## Tools
@@ -172,7 +172,6 @@ Every tool call is logged. Tools that create certified steps record enough to re
 
 - `status()`: the goal tree with statuses, current heads, open transactions, and open obligations.
 - `show(pid | gid)`: the text of a program, or the details of a goal.
-- `diff(pid1, pid2)`: textual diff between any two programs.
 
 ### Splitting
 
@@ -206,7 +205,7 @@ A step may move a goal that has already been proved. The goal reopens, and every
 
 - `strengthen(gid, contract)`: enrich a split goal's interface with parameter attributes (`param_attrs`), semantic function attributes (`fn_attrs`), and relational entry preconditions (`predicates`). Phase 1 proves caller preconditions as `llvm.assume` assertions before each call in `outer.src` certified by alive2. Phase 2 certifies callee function attributes via refinement checks on both `callee.src` and `callee.tgt`. Phase 3 materializes the parameter and function attributes on caller declarations (`outer.src` and `outer.tgt`), and applies parameter attributes, function attributes, and entry relational predicates to callee definitions (`callee.src` and `callee.tgt`).
 
-An interface is strengthened as a whole rather than one attribute at a time, so the solver cost is bounded: caller assumption steps, callee attribute checks, and eager cross-checks.
+An interface is strengthened as a whole rather than one attribute at a time, so its solver cost is one set of queries: the caller's assume steps, the callee's attribute checks, and the eager cross-checks.
 
 Both children are cross-checked once at the end, after phase 3, and not between intermediate half-steps where the outer's two sides declare `g` differently.
 
@@ -220,8 +219,6 @@ Both children are cross-checked once at the end, after phase 3, and not between 
 
 ### Counterexample search and computation
 
-- `interp(pid, args)`: run any program (chunk or whole, any version) on concrete inputs under llubi. Untrusted helper; results are information only.
-- `solve(pid, spec)`: a chunk-local SMT query, e.g. find arguments that drive a small chunk to a given output, or check whether a candidate cut state is producible. Untrusted helper.
 - `report_cex(inputs)`: the certifying check. The framework itself replays the root pair under llubi; only a confirmed divergence marks the root goal refuted and is recorded in the certificate.
 - `bash(cmd)`: general scratch computation for the agent, an interpreter included, since running one is a command. Untrusted; must not touch the program store or goal tree except through the tools above (see Implementation notes).
 
@@ -244,7 +241,7 @@ The script verifies:
 
 The consequence for trust is significant: the framework is now just a search assistant and drops out of the trust base entirely. Anything it gets wrong (bookkeeping, direction, outlining) surfaces as a failed replay. The composition rule and the faithfulness check live in `kernel/check.py`, which is small, standalone, and auditable.
 
-A "counterexample" verdict ships the symmetric package: the two root programs, what the source needs, and a script that asks the checker named again. For one executed on an input, the input is there for llubi to run both programs on; for one the checker refuted on the pair the run was asked about, there is no input, and the script asks alive-tv the same question again.
+A "counterexample" verdict ships the symmetric package: the two root programs and a script that asks the named checker again. An executed counterexample also carries its input, and the script runs both programs on it under llubi; a pair alive-tv refuted carries no input, and the script asks alive-tv the same question again.
 
 Replay cost is the same order as the original validation run (the solver queries are rerun); that is inherent to a certificate whose checker is alive2 itself.
 
@@ -252,7 +249,7 @@ Replay cost is the same order as the original validation run (the solver queries
 
 Exactly three:
 
-- **verified**: a certificate package replaying the proof through alive2, under the assumption about arguments the run was given and the package states.
+- **verified**: a certificate package replaying the proof through alive2, under the assumptions about arguments that the package states.
 - **counterexample**: a package replaying an executed input under llubi, or asking alive-tv the same question a root refutation answered.
 - **unknown**: the agent could not close the gap. Local failures along the way are never reported as bugs. No package is produced.
 
@@ -262,9 +259,10 @@ Two tiers, drawn by one criterion: can a bug here cause a wrong verdict to be ac
 
 **Tier 1, verdict-critical (trusted).** Exactly what the certificate package depends on:
 
-- alive2, and transitively the SMT solver it trusts (Z3) and the LLVM IR parser/printer it links. This is the largest real-world risk in the whole trust base; everything else of LLVM is out. Its proof is trusted for a proof; its refutation is trusted for a counterexample of the root refutation, since the kernel replays the same question.
+- alive2, and transitively the SMT solver it trusts (Z3) and the LLVM IR parser/printer it links. This is the largest real-world risk in the whole trust base; the rest of LLVM is in only through the llops below. Its proofs back a verified verdict, and its refutation of the root pair backs that counterexample, since the kernel asks it the same question again.
 - llubi, for counterexample verdicts that name an input: a llubi bug cannot fake "verified", and a replay is a single concrete input that is easy to cross-check independently.
 - The verified rewriter llrwt (used by `kernel/check.py` to replay rule steps), together with the rules' external proofs and the MLIR translators it runs under.
+- llops, for the subcommands `kernel/check.py` runs, and the LLVM they link: they rebuild and gate the programs the replay compares.
 - `kernel/check.py`: the small standalone checker that encodes chain connectivity, split faithfulness, and tree composition.
 
 **Tier 2, success-critical (untrusted for soundness).** The framework, the analyses, the agent, and `bash` scratch work. A bug here can waste time, mislead the search, or end the run at "unknown"; it cannot survive a certificate replay, so it cannot corrupt a verdict. These components are still engineered and tested like normal software, because the tool's success rate depends on them. The framework in particular orchestrates the search and assembles the package, but its mistakes show up as failed replays, not wrong answers.

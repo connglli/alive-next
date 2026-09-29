@@ -51,9 +51,9 @@ export type Step =
     }
   /**
    * A step whose check was narrowed to the window the edit touched. The two
-   * halves share one outer, and inlining each back into it is what says the
-   * rest of the body is untouched, so what a checker reruns is that and the
-   * small pair rather than the whole function.
+   * halves share one outer, and inlining each back into it shows the rest of
+   * the body is untouched, so a checker reruns that and the small pair rather
+   * than the whole function.
    */
   | {
       kind: "window";

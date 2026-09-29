@@ -7,7 +7,7 @@
 //
 // The exit code is not the answer. alive-tv exits non-zero only for its own
 // errors, so an incorrect transformation exits 0, and the summary block it
-// prints is what says how the check went. `--quiet` is deliberately not passed:
+// prints tells how the check went. `--quiet` is deliberately not passed:
 // the counterexample is the point.
 //
 // The flags come from the caller and are passed on verbatim: this driver

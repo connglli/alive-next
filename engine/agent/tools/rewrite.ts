@@ -9,7 +9,7 @@ export function createRewriteTool(session: Session) {
     name: "goal_rewrite",
     label: "Rewrite",
     description:
-      "Rewrite the src side of one goal with the verified rewriter's named rules, applied to fixpoint. Call `run_list_rules` to see what it offers. The rules' proofs certify the move, so no solver runs for the step itself. Input outside the rules passes through or refuses, and then the head does not move. The goal's new pair is then eagerly checked once on a small budget, so a rewrite that finishes a chain discharges the goal here.",
+      "Rewrite the src side of one goal with the verified rewriter's named rules, applied to fixpoint. Call `run_list_rules` to see what it offers. The rules' proofs certify the move, so no solver runs for the step itself. Input the rules do not match passes through unchanged or is refused, and then the head does not move. The goal's new pair is then eagerly checked once on a small budget, so a rewrite that finishes a chain discharges the goal here.",
     parameters: Type.Object({
       gid: Type.String({ description: "The goal to rewrite." }),
       // TODO: Support tgt->src rewrites (some kind of anti-optimizations).

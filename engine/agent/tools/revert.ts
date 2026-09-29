@@ -9,7 +9,7 @@ export function createRevertTool(session: Session) {
     name: "goal_revert",
     label: "Revert",
     description:
-      "Put one side of a goal back to a program it held earlier, which goal_show lists for each side. The steps after it are abandoned, and whatever proof they carried comes undone with them. This is how a path that led nowhere is left.",
+      "Put one side of a goal back to a program it held earlier, which goal_show lists for each side. The steps after it are abandoned, and any proof they carried is undone with them. Use it to leave a path that led nowhere.",
     parameters: Type.Object({
       gid: Type.String(),
       side: Type.Union([Type.Literal("src"), Type.Literal("tgt")]),

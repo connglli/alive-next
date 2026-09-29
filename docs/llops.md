@@ -12,13 +12,13 @@ llops <subcommand> < request.json > response.json
 
 The request is one JSON object on stdin, the response one JSON object on stdout. `llops version` and `llops help` take no request and answer in plain text.
 
-A successful response carries `"ok": true` and the subcommand's payload. A failed one carries `"ok": false` and an error, whose code is the stable part and whose message is free text for whoever reads the result:
+A successful response carries `"ok": true` and the subcommand's payload. A failed one carries `"ok": false` and an error. The code is stable; the message is free text:
 
 ```json
 { "ok": false, "error": { "code": "not_found", "message": "..." } }
 ```
 
-The exit status repeats that answer, 0 when ok and 1 when not, so a caller can branch on it without parsing the body. A command line llops cannot make sense of exits 2 and writes usage to stderr.
+The exit status repeats that answer, 0 when ok and 1 when not, so a caller can branch on it without parsing the body. On a command line it cannot parse, llops exits 2 and writes usage to stderr.
 
 ## The program shape
 
@@ -65,9 +65,9 @@ A response is ok when the module parses. `conforms` says whether it is a program
 
 Request `{ "module": "<ir text>" }`, response `{ "ok": true, "module": ... }`.
 
-Every local name is dropped, so LLVM numbers values in definition order with the arguments first, and blocks, laid out in reverse postorder from the entry, are named by position starting at `entry`. Two programs that differ only in names canonicalize to identical bytes, which is what makes a content hash a program's identity, and canon over its own output changes nothing.
+Every local name is dropped, so LLVM numbers values in definition order with the arguments first. Blocks are laid out in reverse postorder from the entry and named by position, starting at `entry`. Two programs that differ only in names canonicalize to identical bytes, which is what makes a content hash a program's identity, and canon over its own output changes nothing.
 
-A module holding an `undef` value is refused with the error code `undef`. Canon is the gate text passes through to become a stored program, and every program is reasoned about under the [no-`undef` model](./design.md), so the refusal keeps what is stored inside what any later question can be about. The value, not the word, is what is refused: poison is a value of its own and passes, a local called `%undef` is an ordinary name, and metadata passes, since none of them put an `undef` into a runtime state.
+A module holding an `undef` value is refused with the error code `undef`. Every stored program passes through canon, and every program is reasoned about under the [no-`undef` model](./design.md), so the refusal keeps every stored program inside the model. The value, not the word, is what is refused: poison is a value of its own and passes, a local called `%undef` is an ordinary name, and metadata passes, since none of them put an `undef` into a runtime state.
 
 ## edit
 
@@ -94,13 +94,13 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 
 A snippet may not shadow a name that already exists. `replace` may reuse the name of the value it replaces, and may not use the value itself.
 
-A snippet that calls a function the module does not declare gets a declaration, which is how `llvm.assume` reaches a body. A type the module declares cannot be named from a snippet, because the throwaway function it is parsed in cannot declare it, whereas `set_body` reparses the whole module and can.
+A snippet that calls a function the module does not declare gets a declaration, which is how `llvm.assume` reaches a body. A snippet cannot name a type the module declares, because it is parsed in a throwaway function that cannot declare one; `set_body` reparses the whole module and can.
 
 `erase` refuses a value that still has users, leaving the caller to erase or rewrite them first. With `"cascade": true` the operands that become dead go with it, stopping at anything with a side effect; a plain load has none, so a dead one goes.
 
 `commute` swaps the operands of a commutative operation. On a comparison it swaps the predicate as well, so any predicate can be commuted.
 
-`retype` keeps the definition computing in the old type, converts it under the old name, and converts back at every use, with `ext` choosing `zext` or `sext` where the conversion widens. Whether the conversions lose nothing is a claim for the caller's alive2 check.
+`retype` leaves the definition in the old type, gives the old name to a conversion into the new type, and converts back at every use, with `ext` choosing `zext` or `sext` where a conversion widens. Whether the conversions lose nothing is a claim for the caller's alive2 check.
 
 `attrs` puts attributes on a parameter when `param` is given, or on the function itself when omitted. On a parameter it accepts `noundef`, `nonnull`, `noalias`, `align`, `dereferenceable` and `range`. The last two carry a byte count and a `{ "min": n, "max": m }` pair, the range being the half-open interval `[min, max)`. On a function it accepts `nounwind`, `nofree`, `nosync`, `willreturn`, `norecurse`, `mustprogress` (each boolean `true`), and `memory` (a string such as `"none"`, `"read"`, `"write"`, or `"argmem: readwrite"`).
 
@@ -117,11 +117,11 @@ Request `{ "module": ..., "what": "<op>", ... }`, response `{ "ok": true, "modul
 
 `simplify` rewrites the instruction's uses to the simplified value and erases the instruction; nothing else in the body moves, so the step stays as small as it was asked to be, and an instruction with nothing to fold comes back unchanged. The terminator cannot be simplified.
 
-`instcombine` combines instructions across the function. `max_iterations` is a positive integer and defaults to LLVM's default of one. `debug_counter` is a non-negative integer selecting the only zero-based `instcombine-visit` to execute; without it every visit executes. Invalid values are refused.
+`instcombine` combines instructions across the function. `max_iterations` is a positive integer and defaults to LLVM's default of one. `debug_counter` n runs only the n-th `instcombine-visit`, counting from 0; without it every visit runs. Invalid values are refused.
 
 ## outline
 
-Moves part of a body into a fresh function and leaves a call where it was. Without a `to` the part is everything the cut reaches, which no block outside it may enter (`not_single_entry`), and is how a goal is cut in two; with one it is the window between them, which is how a local edit is asked about locally.
+Moves part of a body into a fresh function and leaves a call where it was. Without a `to`, the part is everything the cut reaches, which no outside block may enter (`not_single_entry`); this cuts a goal in two. With a `to`, it is the window from the cut to `to`, which asks about a local edit locally.
 
 The instructions before the cut stay in the outer function, which gains a call, and the instructions from the cut onwards become the body of a fresh function. The cut instruction itself is the first instruction of the callee.
 
@@ -148,7 +148,7 @@ The tgt side is cut against that same signature, with a value map naming the tgt
   "value_map": { "%3": "%prod" } }
 ```
 
-Both sides answer with the same `params`, so a caller can compare them. Whether the map is right is for the outer alive2 check to settle; what outline checks is structural, that every live value is covered and every mapped value is in scope at the cut and has the type the signature gives.
+Both sides answer with the same `params`, so a caller can compare them. The outer alive2 check settles whether the map is right. outline checks only structure: every live value is covered, and every mapped value is in scope at the cut and has the signature's type.
 
 The callee is declared with no attributes. An attribute is an assumption the call site has to honour, so adding one is a proof obligation that belongs to the strengthen flow rather than to the cut.
 
@@ -168,7 +168,7 @@ The callee is declared with no attributes. An attribute is an assumption the cal
 
 `result` is absent when nothing outside the window uses what it defines, and the callee then answers with `void`; several values come back as a struct, in the order the window defines them, which the outer takes apart right after the call. A window that takes a phi or the terminator is refused: leaving `to` out is how the rest is cut away.
 
-What a window is for is asking about a local edit locally. Two versions of a body that differ only inside one window come out as the same outer and two small functions, so the small pair is the whole question, and the outers being byte-identical is what says the difference is confined to the window. Neither the instruction count nor the names have to line up for that. This is one program's own business rather than an agreement between two, so a window takes no `side`, `params` or `value_map`, and is refused if it is given one.
+A window asks about a local edit locally. Two versions of a body that differ only inside one window come out as the same outer and two small functions, so the small pair is the whole question, and byte-identical outers show that the difference is confined to the window. Neither the instruction count nor the names have to line up for that. This is one program's own business rather than an agreement between two, so a window takes no `side`, `params` or `value_map`, and is refused if it is given one.
 
 A window may hold memory. Its pair is then asked about an arbitrary entry state, which is conservative rather than unsound: the cost is that fewer such pairs prove.
 
@@ -176,7 +176,7 @@ A window may hold memory. Its pair is then asked about an arbitrary entry state,
 
 Request `{ "outer": ..., "callee": ..., "callee_name": "g" }`, response `{ "ok": true, "module": ... }`.
 
-The call is replaced by the callee's body in place, the parts of a struct it answered with going back to their uses, and the declaration that carried it is dropped once nothing uses it. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, and so are halves that declare a shared symbol differently: either way the module built would not be what the halves were checked as. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was. That roundtrip is how the certificate checker tests a split for faithfulness, and it is why `outline` is tier 2: what a checker reruns is the inlining, not the cutting.
+The call is replaced by the callee's body, and the declaration is dropped once nothing uses it. When the callee answers with a struct, each part goes back to its uses. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, and so are halves that declare a shared symbol differently. In both cases the rebuilt module would differ from what the halves were checked as. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was. That roundtrip is how the certificate checker tests a split for faithfulness, and it is why `outline` is tier 2: what a checker reruns is the inlining, not the cutting.
 
 ## detach
 
@@ -184,19 +184,19 @@ Moves a block and every block it reaches into a fresh function, and turns every 
 
 Request `{ "module": ..., "side": "src", "block": "%bb2", "callee": "k" }`; the tgt side adds `params` and `value_map` as `outline` takes them. Response `{ "ok": true, "outer": ..., "callee": ..., "params": [ ... ], "phis": [ 0, 1 ], "hypothesis": "k.ih" }`.
 
-The signature is the block's phis, then the values the moved blocks use from outside, in definition order; a tgt side takes the src's, and `phis` gives the positions of the block's phis in it. Every edge into the block becomes an edge into a fresh block that only calls the callee and returns what it answers. An edge from a moved block, which exists when the block heads a loop, calls the declared `hypothesis` instead, passing each parameter that is not a phi on as itself, so the callee's body does not loop through it; `hypothesis` is absent when there is no such edge. The module may loop, and so may either half when the moved blocks hold a loop of their own. A block entered from outside other than through the named one is refused with `not_single_entry`, and the entry block with `invalid`.
+The signature is the block's phis, then the values the moved blocks use from outside, in definition order; a tgt side takes the src's, and `phis` gives the positions of the block's phis in it. Every edge into the block becomes an edge into a fresh block that only calls the callee and returns what it answers. An edge from a moved block exists when the block heads a loop. It calls the declared `hypothesis` instead, passing each parameter that is not a phi unchanged, so the callee's body does not loop; `hypothesis` is absent when there is no such edge. The module may loop, and so may either half when the moved blocks hold a loop of their own. A block entered from outside other than through the named one is refused with `not_single_entry`, and the entry block with `invalid`.
 
 ## reattach
 
 Request `{ "outer": ..., "callee": ..., "callee_name": "k", "phis": [ 0, 1 ], "hypothesis": "k.ih" }`, response `{ "ok": true, "module": ... }`.
 
-The inverse of `detach` on `inline`'s terms, which the certificate checker runs. Every block that only calls the callee or its hypothesis and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there. Those `phis` names stay phis, and each other one has to be passed as one value or as itself, and becomes that value. `canon` of the result is `canon` of the module `detach` started from.
+The inverse of `detach`, which the certificate checker runs; it refuses what `inline` refuses. Every block that only calls the callee or its hypothesis and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there. The parameters `phis` names stay phis. Every other parameter must be passed one value on every edge, or itself, and becomes that value. `canon` of the result is `canon` of the module `detach` started from.
 
 ## analyze
 
 Request `{ "module": ..., "kind": ..., "point": ... }`, response `{ "ok": true, "kind": ..., "point": ..., "facts": [ ... ] }`.
 
-Facts are reported for every argument and every value that dominates the point that the analysis applies to, and they hold just before the point runs. The point defaults to the end of a body of one block.
+Facts are reported for every argument and every value that dominates the point, and hold just before the point runs. The point defaults to the end of a body of one block.
 
 The point is also the context for assumptions, so an `llvm.assume` that dominates it counts, and one at the point itself does not, because it has not run yet.
 
@@ -207,7 +207,7 @@ Every fact carries `value` and `type`. The kind decides the rest:
 * `pointer` adds `align`, `dereferenceable` and `nonnull`.
 * `defined` adds `noundef`, `not_undef` and `not_poison`, and applies to every type. `noundef` is the conjunction of the other two, in the sense the attribute has.
 
-Analyses only propose; [design.md](./design.md) is where that stands in the trust base.
+Analyses only propose; [design.md](./design.md) says why that keeps them out of the trust base.
 
 ## harness
 
@@ -227,7 +227,7 @@ The harness does not have the program shape, since it defines a second function,
 
 ## assume
 
-States facts about values or relational comparisons between values at a program anchor. This is the first half of interface strengthening: an attribute or precondition on an outlined callee is an assumption its caller has to honour, so it may only be assumed once the caller has been shown to satisfy it, and an assume is how that is shown. If the assertion were false the assume would add UB the program did not have, and the alive2 check of the insertion refuses it.
+States facts about values or relational comparisons between values at a program anchor. This is the first half of interface strengthening: an attribute or precondition on an outlined callee is an assumption its caller has to honour, and an assume in the caller is how the caller is shown to honour it. If the assertion were false the assume would add UB the program did not have, and the alive2 check of the insertion refuses it.
 
 Request `{ "module": ..., "anchor": { ... }, "assertions": [ ... ] }`, response `{ "ok": true, "module": ... }`.
 

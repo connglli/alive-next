@@ -28,7 +28,7 @@ There are two ways to change a goal:
 
 ## How to use certified steps
 
-Optimization opportunities in the \`src\` side or anti-optimization opportunities in the \`tgt\` side help find certified steps. Prefer the verified rewriter for optimizations on the \`src\` side where its integer arithmetic and bitwise peephole rules apply: it is cheap and needs no solver. Input outside the rules it matches passes through unchanged or fails with its reason, such as floating point numbers, vectors, memory operations or calls, etc. Otherwise, or when transforming the \`tgt\` side, find small changes so that alive2 can verify them. Wrap a chain of changes in a transaction which, when committed, will verify the change, even inside a loop.
+Optimization opportunities in the \`src\` side or anti-optimization opportunities in the \`tgt\` side help find certified steps. Prefer the verified rewriter for optimizations on the \`src\` side where its integer arithmetic and bitwise peephole rules apply: it is cheap and needs no solver. Input its rules do not match, such as floating point numbers, vectors, memory operations or calls, passes through unchanged or fails with its reason. Otherwise, or when transforming the \`tgt\` side, find small changes so that alive2 can verify them. Wrap a chain of changes in a transaction which, when committed, will verify the change, even inside a loop.
 
 The framework chooses the required refinement direction, so do not specify it yourself. The framework automatically enforces the no-\`undef\` model by passing \`--disable-undef-input\` to alive2, so do not worry.
 
@@ -46,12 +46,12 @@ Similarly: The framework chooses the required refinement direction and passes \`
 
 ## Interpreting failures
 
-alive2's refusal to prove a pair is only a hint, except where the pair is the translation itself, the root's original pair: its refutation is of the translation, so a check of that pair refutes the run. A refusal elsewhere may result from the chosen proof path:
+alive2's refusal to prove a pair is only a hint, except on the root's original pair, which is the translation itself: a refutation there refutes the run. A refusal elsewhere may result from the chosen proof path:
 
 - A certified step may have changed too much.
 - A cut gives the callee a conservative entry state.
 
-A refusal elsewhere stays one until an input on which the two original programs behave differently refutes the run. Report it if you can find it. You may use the shell and scratch directory to search for such an input.
+A refusal elsewhere stays a hint until you find an input on which the two original programs behave differently; report that input, and it refutes the run. You may use the shell and scratch directory to search for such an input.
 
 ## Value references and tool results
 
