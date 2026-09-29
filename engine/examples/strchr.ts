@@ -81,7 +81,7 @@ none:
     if (split.kind !== "split") return;
 
     const kept = await session.strengthen("g1", {
-      predicates: [{ op: "ne", lhs: { arg: 1 }, rhs: { const: 0 } }],
+      predicates: [{ op: "ne", lhs: "!1", rhs: 0 }],
     });
     expect("the key is not 0, on entry and each time around", kept.kind === "strengthened", kept);
   },

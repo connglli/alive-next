@@ -11,7 +11,7 @@
 // What the run abandoned does not appear. A goal's chain is the path from the
 // pair it started with to the pair it ended with, which is what the goal tree
 // holds after reverts have truncated it.
-import type { Attrs, HarnessArg, PredicateAssertion } from "../core/drivers/llops.ts";
+import type { Attrs, HarnessArg, Predicate } from "../core/drivers/llops.ts";
 import type { LlrwtInvocation } from "../core/drivers/llrwt.ts";
 import type { ReportResult } from "../core/state/counterexamples.ts";
 import { type Goal, head, type Tree } from "../core/state/goals.ts";
@@ -71,7 +71,7 @@ export type Step =
     }
   /**
    * An interface was strengthened: the callee gained parameter attributes,
-   * function attributes, and/or entry relational predicates.
+   * function attributes, and/or entry predicates.
    */
   | {
       kind: "strengthen";
@@ -79,7 +79,7 @@ export type Step =
       to: Pair;
       param_attrs?: Record<number, Attrs>;
       fn_attrs?: Attrs;
-      predicates?: PredicateAssertion[];
+      predicates?: Predicate[];
       by?: StepRef[];
     };
 

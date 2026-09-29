@@ -2,8 +2,6 @@
 
 llops is the half of alive-next that touches LLVM. It is stateless: IR text in, IR text or JSON facts out, one request per process, nothing kept between calls. The language split in [implementation.md](./implementation.md) is why it is a separate binary.
 
-The subcommands the certificate checker runs are verdict-critical. The others are tier 2 in the sense of [design.md](./design.md): a bug in one wastes search time and cannot corrupt a verdict. All of them share one library, so the line is documented here rather than enforced by separate binaries.
-
 ## Invocation
 
 ```sh
@@ -175,7 +173,7 @@ A window may hold memory. Its pair is then asked about an arbitrary entry state,
 
 Request `{ "outer": ..., "callee": ..., "callee_name": "g" }`, response `{ "ok": true, "module": ... }`.
 
-The call is replaced by the callee's body, and the declaration, which nothing else may use, is dropped. When the callee answers with a struct, each part goes back to its uses. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, and so are halves that declare a shared symbol differently. In both cases the rebuilt module would differ from what the halves were checked as. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was. That roundtrip is how the certificate checker tests a split for faithfulness, and it is why `outline` is tier 2: what a checker reruns is the inlining, not the cutting.
+The call is replaced by the callee's body, and the declaration, which nothing else may use, is dropped. When the callee answers with a struct, each part goes back to its uses. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, and so are halves that declare a shared symbol differently. In both cases the rebuilt module would differ from what the halves were checked as. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was.
 
 ## detach
 
@@ -189,7 +187,7 @@ The signature is the block's phis, then the values the moved blocks use from out
 
 Request `{ "outer": ..., "callee": ..., "callee_name": "k", "phis": [ 0, 1 ], "hypothesis": "k.ih" }`, response `{ "ok": true, "module": ... }`.
 
-The inverse of `detach`, which the certificate checker runs; it refuses what `inline` refuses, and any use of the callee or its hypothesis other than a block that only calls it. Every block that only calls the callee or its hypothesis and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there. The parameters `phis` names stay phis. Every other parameter must be passed one value on every edge, or itself, and becomes that value. `canon` of the result is `canon` of the module `detach` started from.
+The inverse of `detach`. It refuses what `inline` refuses, and any use of the callee or its hypothesis other than a block that only calls it. Every block that only calls the callee or its hypothesis and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there. The parameters `phis` names stay phis. Every other parameter must be passed one value on every edge, or itself, and becomes that value. `canon` of the result is `canon` of the module `detach` started from.
 
 ## analyze
 
@@ -226,20 +224,21 @@ The harness does not have the program shape, since it defines a second function,
 
 ## assume
 
-States facts about values or relational comparisons between values at a program anchor. This is the first half of interface strengthening: an attribute or precondition on an outlined callee is an assumption its caller has to honour, and an assume in the caller is how the caller is shown to honour it. If the assertion were false the assume would add UB the program did not have, and the alive2 check of the insertion refuses it.
+Adds an assumption to a function: an `llvm.assume` before an instruction, stating a fact about a value or a condition written in IR. Inserting an assumption that can be false adds UB the program did not have, so alive2 refuses the change; an insertion alive2 accepts therefore shows the assumption always holds there.
 
 Request `{ "module": ..., "anchor": { ... }, "assertions": [ ... ] }`, response `{ "ok": true, "module": ... }`.
 
-`anchor` specifies the insertion point:
-* `{ "at": "start", "fn": "<name>" }`: at the start of the defined function's entry block.
-* `{ "at": "before_calls", "fn": "<name>" }`: immediately before each call to `<name>`.
-* `{ "at": "before_inst", "inst": "<ref>" }`: immediately before the instruction `<ref>`.
+`anchor` says where the assumption goes:
+* `{ "at": "before_inst", "inst": "<ref>" }`: before that instruction.
+* `{ "at": "before_calls", "fn": "<name>" }`: before each call of `<name>`.
+* `{ "at": "start", "fn": "<name>" }`: before the first instruction of the defined function `<name>`.
 
-`assertions` is a list of assertions to assume at the anchor:
-* Unary fact on a call's argument or a value: `{ "fact": { ... }, "arg": <n> }` or `{ "fact": { ... }, "val": "<ref>" }`. Facts use the vocabulary of `edit attrs` (`range`, `noundef`, `nonnull`, `align`, `dereferenceable`). `noalias` is refused.
-* Relational comparison: `{ "op": "<icmp_pred>", "lhs": <operand>, "rhs": <operand> }`, where `op` is an integer comparison (`eq`, `ne`, `slt`, `sle`, `sgt`, `sge`, `ult`, `ule`, `ugt`, `uge`), and operands are `{ "arg": n }`, `{ "val": "<ref>" }`, or `{ "const": n }`. Mismatched operand types are refused with `type_mismatch`.
+An assertion names a value in one of two ways. `%x` is a value of the function, in scope where the assumption goes. `!N` is argument N of the call the assumption goes before. At `start`, `!N` is the function's own argument N, and `%x` is refused, since only the arguments are in scope there. So an assertion that names only `!N` and numbers means the same before each call of a function as at that function's start.
 
-`arg` n is argument n of each call at `before_calls`, and is refused elsewhere. `val` names a value of the function the assumes go into, a parameter or a local, at every anchor.
+`assertions` lists what to assume:
+* A fact about one value: `{ "fact": { ... }, "of": "<name>" }`. Facts use the vocabulary of `edit attrs` (`range`, `noundef`, `nonnull`, `align`, `dereferenceable`); `noalias` is refused.
+* A comparison: `{ "op": "ule", "lhs": "<name>", "rhs": "<name or integer>" }`, which becomes one `icmp`. `op` is any integer comparison, and an integer takes the type of the other operand.
+* Lines of IR: `{ "insts": [ ... ] }`, whose last line defines an `i1`. The lines name values as above and may define their own, but may not call a function, use memory, or hold a terminator.
 
 A request that asks for conditions and operand bundles produces two assumes, because an assume carrying operand bundles has to have `true` as its condition.
 

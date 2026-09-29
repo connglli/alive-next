@@ -138,7 +138,7 @@ entry:
 """
 
 # True of every i32, so the outer can prove it before any call.
-PREDICATE = {"op": "sle", "lhs": {"arg": 0}, "rhs": {"const": 2147483647}}
+PREDICATE = {"insts": ["%le = icmp sle i32 !0, 2147483647"]}
 
 # Negating through a branch and through a select, which alive-tv decides
 # because neither one loops.
@@ -214,7 +214,7 @@ exit:
 """
 PARITY_NUW = PARITY.replace("%i.next = add i32", "%i.next = add nuw i32")
 PARITY_SUB_NUW = PARITY_NUW.replace("%d = sub i32", "%d = sub nuw i32")
-ORDER = [{"op": "ule", "lhs": {"arg": 1}, "rhs": {"arg": 0}}]
+ORDER = [{"op": "ule", "lhs": "!1", "rhs": "!0"}]
 
 
 def llops(subcommand: str, request: dict) -> dict:
@@ -470,8 +470,7 @@ class Case(unittest.TestCase):
     )
 
     start = {"at": "start", "fn": "k"}
-    order = [{"op": "ule", "lhs": {"val": "%1"}, "rhs": {"val": "%0"}}]
-    strong = {side: assumed(inner[side], start, order) for side in ("src", "tgt")}
+    strong = {side: assumed(inner[side], start) for side in ("src", "tgt")}
     kept_by = assumed(strong["src"], {"at": "before_calls", "fn": "k.ih"})
     by = [{"gid": "g2", "hash": entered}] + ([{"gid": "g3", "hash": kept_by}] if kept else [])
     steps = [{"kind": "strengthen", "from": inner, "to": strong, "predicates": ORDER, "by": by}]
@@ -796,7 +795,7 @@ class TestGolden(Case):
         {
           "module": m,
           "anchor": {"at": "start", "fn": "g"},
-          "assertions": [{**PREDICATE, "lhs": {"val": "%0"}}],
+          "assertions": [PREDICATE],
         },
       )["module"]
       return llops("canon", {"module": m})["module"]
@@ -823,7 +822,7 @@ class TestGolden(Case):
       {
         "module": outer_src_mod,
         "anchor": {"at": "before_calls", "fn": "g"},
-        "assertions": [{"fact": {"noundef": True}, "arg": 0}, PREDICATE],
+        "assertions": [{"fact": {"noundef": True}, "of": "!0"}, PREDICATE],
       },
     )["module"]
     assumed_src = llops("canon", {"module": assumed})["module"]
@@ -1191,9 +1190,11 @@ declare i32 @k.ih(i32)
     self.refused(self.built.write(), "not a callee")
 
   def test_a_predicate_that_names_a_value(self):
+    # A name means one value in the callee and another before its calls, so
+    # the callee's start refuses a contract that uses one.
     TestGolden.strengthened(self)
     step = self.built.goals["g3"]["steps"][0]
-    step["predicates"] = [{"op": "ne", "lhs": {"val": "%0"}, "rhs": {"const": 0}}]
+    step["predicates"] = [{"op": "ne", "lhs": "%0", "rhs": 0}]
     self.refused(self.built.write(), "names a value")
 
   def test_a_strengthen_step_whose_proofs_are_not_a_list(self):

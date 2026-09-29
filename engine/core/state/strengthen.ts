@@ -11,9 +11,9 @@
 //    Per-argument properties on callee parameters (e.g. `noundef`, `range`,
 //    `align`, `nonnull`, `dereferenceable`).
 //
-// 2. Relational Preconditions (`predicates`):
-//    Relational comparisons across arguments at the cut boundary (e.g. `%0 < %1`,
-//    `%p != null`).
+// 2. Predicates (`predicates`):
+//    Conditions on the callee's arguments !0, !1, ...: a comparison such as
+//    `{op: "ule", lhs: "!1", rhs: "!0"}`, or lines of IR ending in an i1.
 //
 // 3. Function Semantic Attributes (`fn_attrs`):
 //    Function-level guarantees about the callee's behavior (e.g. `memory(none)`,
@@ -35,7 +35,7 @@
 // Phase three (contract materialization): caller declarations (`outer.src` and `outer.tgt`)
 // are updated with the certified parameter and function attributes. Callee definitions
 // (`callee.src` and `callee.tgt`) gain the parameter attributes, function attributes,
-// and entry relational predicates. This transition is recorded as an atomic `strengthen`
+// and entry predicates. This transition is recorded as an atomic `strengthen`
 // effect linked to the justifying caller step (`by`).
 //
 // A callee cut at a loop header also calls itself, through its hypothesis, so
@@ -46,13 +46,7 @@
 // declaration is, and the callee takes no function attribute: induction
 // cannot prove willreturn.
 import type { CheckResult } from "../drivers/alive2.ts";
-import type {
-  Assertion,
-  Attrs,
-  Llops,
-  PredicateAssertion,
-  PredicateOperand,
-} from "../drivers/llops.ts";
+import type { Assertion, Attrs, Llops, Predicate } from "../drivers/llops.ts";
 import { applyEffect, type Goal, head, type Side, type Tree } from "./goals.ts";
 import type { Steps } from "./steps.ts";
 import type { Store } from "./store.ts";
@@ -64,26 +58,13 @@ import type { Effect, Hash, StepRef } from "./trajectory.ts";
  * All fields are optional, but at least one attribute set or predicate list
  * must be provided.
  */
-/** A predicate over the callee's arguments, stated at its start and before its calls. */
-export type ContractPredicate = Omit<PredicateAssertion, "lhs" | "rhs"> & {
-  lhs: Exclude<PredicateOperand, { val: unknown }>;
-  rhs: Exclude<PredicateOperand, { val: unknown }>;
-};
-
-/** The contract at the callee's start, where argument i is its parameter `%i` in canonical text. */
-function atStart(predicates: ContractPredicate[]): PredicateAssertion[] {
-  const own = (operand: ContractPredicate["lhs"]): PredicateOperand =>
-    "arg" in operand ? { val: `%${operand.arg}` } : operand;
-  return predicates.map((p) => ({ ...p, lhs: own(p.lhs), rhs: own(p.rhs) }));
-}
-
 export interface StrengthenContract {
   /** Parameter-level attributes keyed by zero-based argument index (0, 1, ...). */
   param_attrs?: Record<number, Attrs>;
   /** Function-level attributes (e.g. memory: "none", nounwind: true, willreturn: true). */
   fn_attrs?: Attrs;
-  /** Relational comparison preconditions conjoined at the cut boundary. */
-  predicates?: ContractPredicate[];
+  /** Preconditions on the callee's arguments !0, !1, ...: comparisons, or lines of IR ending in an i1. */
+  predicates?: Predicate[];
 }
 
 export type StrengthenResult =
@@ -130,8 +111,6 @@ export class Strengthen {
       throw new Error(
         `${gid}: '${bad}' is not a parameter position; parameter attributes are keyed by index (0, 1, ...)`,
       );
-    if (predicates.some((p) => "val" in p.lhs || "val" in p.rhs))
-      throw new Error(`${gid}: a predicate names the callee's arguments with 'arg', not a value`);
     const params = keys.map(Number).sort((a, b) => a - b);
     const hasParamAttrs = params.length > 0;
     const hasFnAttrs = Object.keys(fnAttrs).length > 0;
@@ -173,7 +152,7 @@ export class Strengthen {
     const checks: CheckResult[] = [];
     let by: StepRef | undefined;
     const assertions: Assertion[] = [
-      ...params.map((p) => ({ fact: rawParamAttrs[p] as Attrs, arg: p })),
+      ...params.map((p) => ({ fact: rawParamAttrs[p] as Attrs, of: `!${p}` })),
       ...predicates,
     ];
 
@@ -186,11 +165,7 @@ export class Strengthen {
         current = attrRes;
       }
       if (hasPredicates) {
-        const assumeRes = await this.llops.assume(
-          current,
-          { at: "start", fn: name },
-          atStart(predicates),
-        );
+        const assumeRes = await this.llops.assume(current, { at: "start", fn: name }, predicates);
         if (!assumeRes.ok) {
           return {
             kind: "refused" as const,
@@ -202,6 +177,15 @@ export class Strengthen {
       }
       return current;
     };
+
+    // At the callee's start only its arguments are in scope, so llops refuses
+    // a contract that names anything else. Ask that before anything lands.
+    if (hasPredicates) {
+      const start = { at: "start" as const, fn: name };
+      const probe = await this.llops.assume(this.store.get(head(callee, "src")), start, predicates);
+      if (!probe.ok)
+        return { kind: "refused", phase: "assume", reason: probe.message, effects: [] };
+    }
 
     // Phase 0, for a loop: the contract has to hold again where the callee
     // calls its hypothesis, with the contract assumed at its entry. That is
@@ -328,7 +312,7 @@ export class Strengthen {
     }
 
     // Phase 3 (continued): Materialize contract on callee (both src and tgt).
-    // Attaching parameter attributes, function attributes, and entry relational
+    // Attaching parameter attributes, function attributes, and entry
     // predicates to callee definitions introduces assumptions justified by Phase 1 & 2.
     // Both sides advance simultaneously under one atomic `strengthen` effect.
     const srcRes = kept
@@ -469,7 +453,7 @@ export function explainAssumeRefusal(
 ): string {
   const header =
     params.length === 0
-      ? "The relational preconditions do not hold in the caller."
+      ? "The predicates do not hold in the caller."
       : params.length === 1
         ? `The assumption on parameter ${params[0]} does not hold in the caller.`
         : `The assumptions on parameter(s) ${params.join(", ")} do not hold in the caller.`;

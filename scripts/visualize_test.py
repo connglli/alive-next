@@ -255,7 +255,7 @@ class TestFold(Case):
         "gid": "g3",
         "src": self.src,
         "tgt": self.tgt,
-        "predicates": [{"op": "ule", "lhs": {"arg": 0}, "rhs": {"arg": 0}}],
+        "predicates": [{"op": "ule", "lhs": "!0", "rhs": "!0"}],
         "by": [{"gid": "g2", "hash": entered}, {"gid": "g3", "hash": kept}],
       },
       {"effect": "step", "gid": "g3", "side": "src", "to": kept, "how": "check"},

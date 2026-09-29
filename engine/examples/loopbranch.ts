@@ -73,7 +73,7 @@ exit:
 
     // j <=u i, parameter 1 against parameter 0.
     const kept = await session.strengthen("g1", {
-      predicates: [{ op: "ule", lhs: { arg: 1 }, rhs: { arg: 0 } }],
+      predicates: [{ op: "ule", lhs: "!1", rhs: "!0" }],
     });
     expect(
       "the invariant holds on entry and each iteration keeps it",

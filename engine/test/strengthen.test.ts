@@ -10,18 +10,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckOutcome, CheckResult } from "../core/drivers/alive2.ts";
-import { type Attrs, Llops } from "../core/drivers/llops.ts";
+import { type Attrs, Llops, type Predicate } from "../core/drivers/llops.ts";
 import type { Llrwt } from "../core/drivers/llrwt.ts";
 import type { Goal, Tree } from "../core/state/goals.ts";
 import { applyEffect, derive, head } from "../core/state/goals.ts";
 import { Splits } from "../core/state/splits.ts";
 import { DEFAULT_TIMEOUTS, Steps } from "../core/state/steps.ts";
 import { Store } from "../core/state/store.ts";
-import {
-  type ContractPredicate,
-  explainAssumeRefusal,
-  Strengthen,
-} from "../core/state/strengthen.ts";
+import { explainAssumeRefusal, Strengthen } from "../core/state/strengthen.ts";
 import type { Effect, Entry, Event } from "../core/state/trajectory.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
@@ -144,7 +140,7 @@ exit:
   ret i32 %i
 }
 `;
-const WITHIN = [{ op: "ule" as const, lhs: { arg: 0 }, rhs: { arg: 1 } }];
+const WITHIN = [{ insts: ["%le = icmp ule i32 !0, !1"] }];
 
 /** The loop detached at its header, so the callee calls its hypothesis. */
 async function detached(): Promise<Tree> {
@@ -470,22 +466,20 @@ describe.skipIf(!built)("strengthening", () => {
     expect(tree.goals.get("g1")?.status).toBe("split");
   });
 
-  test("a predicate names the callee's arguments", async () => {
+  test("a contract that names a value is refused before anything lands", async () => {
+    // At the callee's start only its arguments are in scope, so a contract
+    // naming anything else could mean one thing there and another at a call.
     const tree = await cut();
+    const checker = new FakeChecker([]);
     const strengthen = new Strengthen(
       store,
       llops,
-      new Steps(store, new FakeChecker([]), DEFAULT_TIMEOUTS, llops, unrewriting),
+      new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
     );
-    const local = {
-      op: "ne",
-      lhs: { val: "%0" },
-      rhs: { const: 0 },
-    } as unknown as ContractPredicate;
-    await expect(strengthen.strengthen(tree, "g1", { predicates: [local] })).rejects.toThrow(
-      /names the callee's arguments/,
-    );
-    expect(tree.goals.get("g1")?.status).toBe("split");
+    const named: Predicate = { insts: ["%nz = icmp ne i32 %0, 0"] };
+    const result = await strengthen.strengthen(tree, "g1", { predicates: [named] });
+    expect(result).toMatchObject({ kind: "refused", effects: [] });
+    expect(checker.calls).toHaveLength(0);
   });
 
   test("explainAssumeRefusal produces clear diagnostic on noundef poison failure", () => {
@@ -683,7 +677,7 @@ Target:
       new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
     );
     const result = await strengthen.strengthen(tree, "g1", {
-      predicates: [{ op: "slt", lhs: { arg: 0 }, rhs: { arg: 1 } }],
+      predicates: [{ insts: ["%lt = icmp slt i32 !0, !1"] }],
     });
 
     if (result.kind !== "strengthened") throw new Error(result.reason);
@@ -716,7 +710,7 @@ Target:
     const result = await strengthen.strengthen(tree, "g1", {
       param_attrs: { 0: { noundef: true } },
       fn_attrs: { nounwind: true },
-      predicates: [{ op: "slt", lhs: { arg: 0 }, rhs: { arg: 1 } }],
+      predicates: [{ insts: ["%lt = icmp slt i32 !0, !1"] }],
     });
 
     if (result.kind !== "strengthened") throw new Error(result.reason);

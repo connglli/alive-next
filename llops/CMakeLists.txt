@@ -32,6 +32,7 @@ set(LLOPS_SOURCES
   src/validate.cpp
   src/canon.cpp
   src/edit.cpp
+  src/snippet.cpp
   src/opt.cpp
   src/outline.cpp
   src/detach.cpp

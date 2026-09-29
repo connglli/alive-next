@@ -103,7 +103,7 @@ entry:
         1: { noundef: true },
         2: { noundef: true },
       },
-      predicates: [{ op: "ult", lhs: { arg: 0 }, rhs: { arg: 1 } }],
+      predicates: [{ op: "ult", lhs: "!0", rhs: "!1" }],
     });
     expect(
       "strengthen interface with relational predicate",

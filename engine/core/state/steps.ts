@@ -543,7 +543,7 @@ export class Steps {
     // Phase 1: Insert assumes before call in outer and verify whole-function
     const assertions = Object.entries(mappedFacts).map(([argIdxStr, fact]) => ({
       fact,
-      arg: Number(argIdxStr),
+      of: `!${argIdxStr}`,
     }));
     const res = await this.llops.assume(
       narrowed.outer,

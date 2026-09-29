@@ -66,7 +66,7 @@ exit:
 
     // The phi equals n, parameter 1 against parameter 3.
     const kept = await session.strengthen("g1", {
-      predicates: [{ op: "eq", lhs: { arg: 1 }, rhs: { arg: 3 } }],
+      predicates: [{ op: "eq", lhs: "!1", rhs: "!3" }],
     });
     expect(
       "the invariant holds on entry and each iteration keeps it",

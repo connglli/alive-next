@@ -203,7 +203,7 @@ A step may move a goal that has already been proved. The goal reopens, and every
 
 ### Interface strengthening
 
-- `strengthen(gid, contract)`: enrich a split goal's interface with parameter attributes (`param_attrs`), semantic function attributes (`fn_attrs`), and relational entry preconditions (`predicates`). Phase 1 proves caller preconditions as `llvm.assume` assertions before each call in `outer.src` certified by alive2. Phase 2 certifies callee function attributes via refinement checks on both `callee.src` and `callee.tgt`. Phase 3 materializes the parameter and function attributes on caller declarations (`outer.src` and `outer.tgt`), and applies parameter attributes, function attributes, and entry relational predicates to callee definitions (`callee.src` and `callee.tgt`).
+- `strengthen(gid, contract)`: enrich a split goal's interface with parameter attributes (`param_attrs`), semantic function attributes (`fn_attrs`), and entry preconditions written as IR (`predicates`). Phase 1 proves caller preconditions as `llvm.assume` assertions before each call in `outer.src` certified by alive2. Phase 2 certifies callee function attributes via refinement checks on both `callee.src` and `callee.tgt`. Phase 3 materializes the parameter and function attributes on caller declarations (`outer.src` and `outer.tgt`), and applies parameter attributes, function attributes, and entry predicates to callee definitions (`callee.src` and `callee.tgt`).
 
 An interface is strengthened as a whole rather than one attribute at a time, so its solver cost is one set of queries: the caller's assume steps, the callee's attribute checks, and the eager cross-checks.
 

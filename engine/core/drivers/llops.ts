@@ -136,17 +136,26 @@ export type AssumeAnchor =
   | { at: "before_calls"; fn: string }
   | { at: "before_inst"; inst: Ref };
 
-export type PredicateOperand = { arg: number } | { val: Ref } | { const: number };
+/**
+ * What an assumption names: `!N` for argument N of the call it goes before,
+ * or of the function at its start, and `%x` for a value of the function.
+ */
+export type Name = string;
 
-export type PredicateAssertion = {
+/** A comparison of two names, or a name and an integer, as one `icmp`. */
+export type Comparison = {
   op: "eq" | "ne" | "slt" | "sle" | "sgt" | "sge" | "ult" | "ule" | "ugt" | "uge";
-  lhs: PredicateOperand;
-  rhs: PredicateOperand;
+  lhs: Name | number;
+  rhs: Name | number;
 };
 
-export type FactAssertion = { fact: Attrs; arg: number } | { fact: Attrs; val: Ref };
+/** Lines of IR whose last line defines the i1 assumed, or one comparison. */
+export type Predicate = { insts: string[] } | Comparison;
 
-export type Assertion = FactAssertion | PredicateAssertion;
+/** A fact about one value, in the vocabulary of `edit attrs`. */
+export type FactAssertion = { fact: Attrs; of: Name };
+
+export type Assertion = FactAssertion | Predicate;
 
 /** Thrown when llops cannot be run or does not answer in JSON. */
 export class LlopsCrash extends Error {
@@ -270,7 +279,7 @@ export class Llops {
   }
 
   /**
-   * State facts or relational predicates at a program anchor (before an instruction,
+   * State facts or predicates at a program anchor (before an instruction,
    * before a call, or at function entry).
    */
   assume(

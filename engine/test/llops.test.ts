@@ -246,7 +246,7 @@ entry:
     expect(result.point).toBe("#2");
   });
 
-  test("assume: supports start anchor and relational predicates", async () => {
+  test("assume: at the start, !N is the function's own argument N", async () => {
     const module = `define i32 @f(i32 %x, i32 %y) {
 entry:
   %a = add i32 %x, %y
@@ -256,7 +256,7 @@ entry:
     const withEntryFact = await llops.assume(
       module,
       { at: "start", fn: "f" },
-      { val: "%x", fact: { noundef: true } },
+      { of: "!0", fact: { noundef: true } },
     );
     if (!withEntryFact.ok) throw new Error(withEntryFact.message);
     expect(withEntryFact.module).toContain('"noundef"(i32 %x)');
@@ -264,14 +264,14 @@ entry:
     const withPred = await llops.assume(
       module,
       { at: "start", fn: "f" },
-      { op: "slt", lhs: { val: "%x" }, rhs: { val: "%y" } },
+      { insts: ["%lt = icmp slt i32 !0, !1"] },
     );
     if (!withPred.ok) throw new Error(withPred.message);
     expect(withPred.module).toContain("icmp slt i32 %x, %y");
     expect(withPred.module).toContain("call void @llvm.assume");
   });
 
-  test("assume: supports before_calls with predicate and constant operand", async () => {
+  test("assume: a predicate before calls reads each call's arguments", async () => {
     const module = `declare i32 @g(i32)
 
 define i32 @f(i32 %x) {
@@ -283,7 +283,7 @@ entry:
     const result = await llops.assume(
       module,
       { at: "before_calls", fn: "g" },
-      { op: "ne", lhs: { arg: 0 }, rhs: { const: 0 } },
+      { op: "ne", lhs: "!0", rhs: 0 },
     );
     if (!result.ok) throw new Error(result.message);
     expect(result.module).toContain("icmp ne i32 %x, 0");
@@ -298,9 +298,9 @@ entry:
 }
 `;
     const result = await llops.assume(module, { at: "start", fn: "f" }, [
-      { val: "%x", fact: { noundef: true } },
-      { val: "%y", fact: { noundef: true } },
-      { op: "slt", lhs: { val: "%x" }, rhs: { val: "%y" } },
+      { of: "!0", fact: { noundef: true } },
+      { of: "!1", fact: { noundef: true } },
+      { insts: ["%lt = icmp slt i32 !0, !1"] },
     ]);
     if (!result.ok) throw new Error(result.message);
     expect(result.module).toContain("icmp slt i32 %x, %y");
@@ -308,8 +308,8 @@ entry:
     expect(result.module).toContain('"noundef"(i32 %y)');
   });
 
-  test("assume: refuses predicate with mismatched operand types", async () => {
-    const module = `define i32 @f(i32 %x, i64 %y) {
+  test("assume: refuses a predicate whose last line is not an i1", async () => {
+    const module = `define i32 @f(i32 %x) {
 entry:
   ret i32 %x
 }
@@ -317,13 +317,13 @@ entry:
     const result = await llops.assume(
       module,
       { at: "start", fn: "f" },
-      { op: "eq", lhs: { val: "%x" }, rhs: { val: "%y" } },
+      { insts: ["%s = add i32 !0, 1"] },
     );
     if (result.ok) throw new Error("expected a refusal");
     expect(result.code).toBe("type_mismatch");
   });
 
-  test("assume: supports before_inst with predicate comparing local values", async () => {
+  test("assume: a predicate at an instruction names the module's values", async () => {
     const module = `define i32 @f(i32 %x, i32 %y) {
 entry:
   %a = add i32 %x, 1
@@ -335,11 +335,10 @@ entry:
     const result = await llops.assume(
       module,
       { at: "before_inst", inst: "%c" },
-      { op: "slt", lhs: { val: "%a" }, rhs: { val: "%b" } },
+      { insts: ["%lt = icmp slt i32 %a, %b"] },
     );
     if (!result.ok) throw new Error(result.message);
     expect(result.module).toContain("icmp slt i32 %a, %b");
-    expect(result.module).toContain("call void @llvm.assume");
   });
 
   test("assume: supports pointer comparison predicate", async () => {
@@ -351,7 +350,7 @@ entry:
     const result = await llops.assume(
       module,
       { at: "start", fn: "f" },
-      { op: "ne", lhs: { val: "%p" }, rhs: { val: "%q" } },
+      { insts: ["%ne = icmp ne ptr !0, !1"] },
     );
     if (!result.ok) throw new Error(result.message);
     expect(result.module).toContain("icmp ne ptr %p, %q");

@@ -397,26 +397,11 @@ def signature(package: Package, module: str, name: str) -> str:
 
 
 def contract_predicates(step: dict) -> list:
-  """A strengthen step's predicates, which name the callee's arguments and never a value."""
+  """A strengthen step's predicates. At the callee's start, llops refuses any that names a value."""
   predicates = step.get("predicates") or []
-  for predicate in predicates:
-    if not isinstance(predicate, dict):
-      raise Refused("a strengthen predicate is not an object")
-    operands = [predicate, predicate.get("lhs"), predicate.get("rhs")]
-    if any(isinstance(operand, dict) and "val" in operand for operand in operands):
-      raise Refused("a strengthen predicate names a value, which the callee does not have")
+  if not isinstance(predicates, list):
+    raise Refused("a strengthen step's predicates are not a list")
   return predicates
-
-
-def at_start(predicates: list) -> list:
-  """The contract at the callee's start, where argument i is its parameter %i in canonical text."""
-
-  def own(operand: object) -> object:
-    if isinstance(operand, dict) and "arg" in operand:
-      return {"val": f"%{operand['arg']}"}
-    return operand
-
-  return [{**p, "lhs": own(p.get("lhs")), "rhs": own(p.get("rhs"))} for p in predicates]
 
 
 def parameter_facts(param_attrs: dict) -> list[tuple[int, dict]]:
@@ -709,7 +694,7 @@ class Check:
           {
             "module": attributed,
             "anchor": {"at": "start", "fn": role},
-            "assertions": at_start(predicates),
+            "assertions": predicates,
           },
         )["module"]
       same = self.package.run_llops("canon", {"module": attributed})["module"]
@@ -756,7 +741,7 @@ class Check:
         {
           "module": self.package.program(proofs[0]["from"]),
           "anchor": {"at": "before_calls", "fn": fn},
-          "assertions": [{"fact": fact, "arg": param} for param, fact in facts]
+          "assertions": [{"fact": fact, "of": f"!{param}"} for param, fact in facts]
           + contract_predicates(step),
         },
       )["module"]
@@ -829,7 +814,7 @@ class Check:
             f"invalid integer {arg_str}",
           )
           return step["to"]
-        assertions.append({"fact": fact, "arg": arg})
+        assertions.append({"fact": fact, "of": f"!{arg}"})
 
       started = time.monotonic()
       res = self.package.run_llops(

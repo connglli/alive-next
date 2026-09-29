@@ -14,7 +14,7 @@
 // a verdict rests on replaying the certificate rather than on this file.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Attrs, PredicateAssertion } from "../drivers/llops.ts";
+import type { Attrs, Predicate } from "../drivers/llops.ts";
 import type { LlrwtInvocation } from "../drivers/llrwt.ts";
 import { sha256 } from "./hash.ts";
 
@@ -108,7 +108,7 @@ export type Effect =
     }
   /**
    * Both sides of a callee goal gained a strengthened interface contract
-   * (parameter attributes, function attributes, and/or entry relational predicates).
+   * (parameter attributes, function attributes, and/or entry predicates).
    * This is not a step: adding an assumption/attribute to a definition introduces
    * UB where the old program was defined, so neither direction of a refinement
    * check would certify it. What makes it sound is the verified assumption at the
@@ -121,7 +121,7 @@ export type Effect =
       tgt: Hash;
       param_attrs?: Record<number, Attrs>;
       fn_attrs?: Attrs;
-      predicates?: PredicateAssertion[];
+      predicates?: Predicate[];
       /** The steps proving the contract before each call: one, or two for a loop. */
       by?: StepRef[];
     }

@@ -1,9 +1,9 @@
 // tree_strengthen: give a cut's interface the facts its callee is missing.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { Attrs } from "../../core/drivers/llops.ts";
+import type { Attrs, Predicate } from "../../core/drivers/llops.ts";
 import type { Session } from "../../core/session.ts";
-import type { ContractPredicate, StrengthenContract } from "../../core/state/strengthen.ts";
+import type { StrengthenContract } from "../../core/state/strengthen.ts";
 import { toolResultFrom } from "./format.ts";
 
 export function createStrengthenTool(session: Session) {
@@ -11,7 +11,7 @@ export function createStrengthenTool(session: Session) {
     name: "tree_strengthen",
     label: "Strengthen",
     description:
-      "Strengthen the interface of a function cut at a split boundary. Supports parameter attributes (param_attrs), function-level attributes (fn_attrs), and relational preconditions (predicates). Preconditions are certified at the caller before being assumed on the callee, and function attributes are certified on the callee before being assumed on the caller.",
+      "Strengthen the interface of a function cut at a split boundary. Supports parameter attributes (param_attrs), function-level attributes (fn_attrs), and preconditions (predicates). Preconditions are certified at the caller before being assumed on the callee, and function attributes are certified on the callee before being assumed on the caller.",
     parameters: Type.Object({
       gid: Type.String({ description: "The goal that was cut, not one of its children." }),
       param_attrs: Type.Optional(
@@ -28,15 +28,17 @@ export function createStrengthenTool(session: Session) {
       ),
       predicates: Type.Optional(
         Type.Array(
-          Type.Object({
-            op: Type.String({
-              description: "Relational predicate operator (eq, ne, slt, ugt, ...)",
+          Type.Union([
+            Type.Object({
+              op: Type.String(),
+              lhs: Type.Union([Type.String(), Type.Number()]),
+              rhs: Type.Union([Type.String(), Type.Number()]),
             }),
-            lhs: Type.Any({ description: 'Operand: {"arg": i} or {"const": n}' }),
-            rhs: Type.Any({ description: 'Operand: {"arg": i} or {"const": n}' }),
-          }),
+            Type.Object({ insts: Type.Array(Type.String()) }),
+          ]),
           {
-            description: "Relational comparison preconditions conjoined at the cut boundary.",
+            description:
+              'Preconditions over the callee\'s arguments, named !0, !1, ... by position. Each is a comparison, e.g. {"op": "ule", "lhs": "!1", "rhs": "!0"}, or lines of IR whose last line defines an i1, e.g. {"insts": ["%rest = sub i32 !3, !0", "%ok = icmp eq i32 !2, %rest"]}.',
           },
         ),
       ),
@@ -45,7 +47,7 @@ export function createStrengthenTool(session: Session) {
       const contract: StrengthenContract = {
         ...(param_attrs ? { param_attrs: param_attrs as Record<number, Attrs> } : {}),
         ...(fn_attrs ? { fn_attrs } : {}),
-        ...(predicates ? { predicates: predicates as ContractPredicate[] } : {}),
+        ...(predicates ? { predicates: predicates as Predicate[] } : {}),
       };
       const stronger = await session.strengthen(gid, contract);
       if (stronger.kind === "editing") {

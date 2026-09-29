@@ -2119,7 +2119,7 @@ exit:
 
 
 class TestSeveralBlocks(Case):
-  ORDER = [{"op": "ule", "lhs": {"arg": 1}, "rhs": {"arg": 0}}]
+  ORDER = [{"insts": ["%le = icmp ule i32 !1, !0"]}]
 
   def assumed(self, anchor, assertions=ORDER):
     r = self.good(run("assume", {"module": CALLEE, "anchor": anchor, "assertions": assertions}))
@@ -2127,8 +2127,7 @@ class TestSeveralBlocks(Case):
     return r["module"]
 
   def test_an_assume_at_the_start_of_a_callee_that_branches(self):
-    own = [{"op": "ule", "lhs": {"val": "%j"}, "rhs": {"val": "%i"}}]
-    module = self.assumed({"at": "start", "fn": "k"}, own)
+    module = self.assumed({"at": "start", "fn": "k"})
     head = module[module.index("head:") : module.index("body:")]
     self.assertIn("icmp ule i32 %j, %i", head)
     self.assertIn("@llvm.assume", head)
@@ -2140,7 +2139,7 @@ class TestSeveralBlocks(Case):
     self.assertLess(body.index("@llvm.assume"), body.index("call i32 @k.ih"))
 
   def test_a_reference_reaches_into_a_later_block(self):
-    fact = [{"fact": {"range": {"min": 0, "max": 256}}, "val": "%j.next"}]
+    fact = [{"fact": {"range": {"min": 0, "max": 256}}, "of": "%j.next"}]
     module = self.assumed({"at": "before_inst", "inst": "%r"}, fact)
     self.assertIn("icmp sge i32 %j.next, 0", module)
 
@@ -2291,7 +2290,7 @@ entry:
         "module": module or self.F,
         "anchor": {"at": "before_inst", "inst": before},
         "assertions": [
-          {"fact": fact if fact is not None else {"range": {"min": 0, "max": 256}}, "val": value}
+          {"fact": fact if fact is not None else {"range": {"min": 0, "max": 256}}, "of": value}
         ],
       },
     )
@@ -2393,7 +2392,7 @@ declare i32 @g(i32)
         {
           "module": module,
           "anchor": {"at": "before_calls", "fn": "g"},
-          "assertions": [{"fact": {"range": {"min": 0, "max": 256}}, "arg": 0}],
+          "assertions": [{"fact": {"range": {"min": 0, "max": 256}}, "of": "!0"}],
         },
       )
     )
@@ -2421,14 +2420,14 @@ b:
 
 declare i32 @g(i32)
 """
-    below = {"op": "ule", "lhs": {"arg": 0}, "rhs": {"val": "%n"}}
+    below = {"insts": ["%le = icmp ule i32 !0, 255"]}
     anchor = {"at": "before_calls", "fn": "g"}
     text = self.good(run("assume", {"module": module, "anchor": anchor, "assertions": [below]}))[
       "module"
     ]
     for block, arg, end in (("a:", "%x", "b:"), ("b:", "%y", "}")):
       body = text[text.index(block) : text.index(end, text.index(block))]
-      self.assertIn(f"icmp ule i32 {arg}, %n", body)
+      self.assertIn(f"icmp ule i32 {arg}, 255", body)
       self.assertLess(body.index("@llvm.assume"), body.index(f"call i32 @g(i32 {arg})"))
 
   def test_a_call_that_is_not_there(self):
@@ -2438,7 +2437,7 @@ declare i32 @g(i32)
         {
           "module": self.F,
           "anchor": {"at": "before_calls", "fn": "g"},
-          "assertions": [{"fact": {"noundef": True}, "arg": 0}],
+          "assertions": [{"fact": {"noundef": True}, "of": "!0"}],
         },
       ),
       "not_found",
@@ -2459,10 +2458,10 @@ declare i32 @g(i32)
         {
           "module": module,
           "anchor": {"at": "before_calls", "fn": "g"},
-          "assertions": [{"fact": {"noundef": True}, "arg": 4}],
+          "assertions": [{"fact": {"noundef": True}, "of": "!4"}],
         },
       ),
-      "invalid",
+      "not_found",
     )
 
   def test_unknown_anchor_kind(self):
@@ -2472,14 +2471,14 @@ declare i32 @g(i32)
         {
           "module": self.F,
           "anchor": {"at": "nowhere"},
-          "assertions": [{"fact": {"noundef": True}, "arg": 0}],
+          "assertions": [{"fact": {"noundef": True}, "of": "!0"}],
         },
       ),
       "bad_request",
     )
     self.bad(run("assume", {"module": self.F, "assertions": []}), "bad_request")
 
-  def test_arg_names_a_call_argument_and_val_any_value(self):
+  def test_a_predicate_names_the_parameters_of_the_function_the_anchor_names(self):
     module = """define i32 @f(i32 %n, i32 %k) {
 entry:
   %m = and i32 %n, 255
@@ -2494,11 +2493,9 @@ declare i32 @g(i32)
       return run("assume", {"module": module, "anchor": anchor, "assertions": [assertion]})
 
     start, call = {"at": "start", "fn": "f"}, {"at": "before_calls", "fn": "g"}
-    below = {"op": "ult", "lhs": {"arg": 0}, "rhs": {"val": "%k"}}
-    self.assertIn("icmp ult i32 %m, %k", self.good(assume(call, below))["module"])
-    self.bad(assume(start, below), "bad_request")
-    own = {"op": "ult", "lhs": {"val": "%n"}, "rhs": {"val": "%k"}}
-    self.assertIn("icmp ult i32 %n, %k", self.good(assume(start, own))["module"])
+    below = {"insts": ["%lt = icmp ult i32 !0, 256"]}
+    self.assertIn("icmp ult i32 %m, 256", self.good(assume(call, below))["module"])
+    self.assertIn("icmp ult i32 %n, 256", self.good(assume(start, below))["module"])
 
   def test_an_anchor_or_value_that_is_not_there(self):
     self.bad(self.assume(before="%nope"), "not_found")
@@ -2517,7 +2514,7 @@ entry:
         {
           "module": module,
           "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"fact": {"noundef": True}, "val": "%x"}],
+          "assertions": [{"fact": {"noundef": True}, "of": "!0"}],
         },
       )
     )
@@ -2538,13 +2535,13 @@ entry:
         {
           "module": module,
           "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"op": "slt", "lhs": {"val": "%x"}, "rhs": {"val": "%y"}}],
+          "assertions": [{"insts": ["%lt = icmp slt i32 !0, !1"]}],
         },
       )
     )
     body = self.body(r["module"])
-    self.assertEqual(body[0], "%0 = icmp slt i32 %x, %y")
-    self.assertEqual(body[1], "call void @llvm.assume(i1 %0)")
+    self.assertEqual(body[0], "%lt = icmp slt i32 %x, %y")
+    self.assertEqual(body[1], "call void @llvm.assume(i1 %lt)")
 
   def test_before_calls_with_predicate(self):
     module = """declare i32 @g(i32, i32)
@@ -2561,13 +2558,13 @@ entry:
         {
           "module": module,
           "anchor": {"at": "before_calls", "fn": "g"},
-          "assertions": [{"op": "ne", "lhs": {"arg": 0}, "rhs": {"const": 0}}],
+          "assertions": [{"insts": ["%nz = icmp ne i32 !0, 0"]}],
         },
       )
     )
     body = self.body(r["module"])
-    self.assertEqual(body[0], "%0 = icmp ne i32 %x, 0")
-    self.assertEqual(body[1], "call void @llvm.assume(i1 %0)")
+    self.assertEqual(body[0], "%nz = icmp ne i32 %x, 0")
+    self.assertEqual(body[1], "call void @llvm.assume(i1 %nz)")
     self.assertEqual(body[2], "%c = call i32 @g(i32 %x, i32 %y)")
 
   def test_multiple_assertions_in_single_call(self):
@@ -2584,23 +2581,23 @@ entry:
           "module": module,
           "anchor": {"at": "start", "fn": "f"},
           "assertions": [
-            {"fact": {"noundef": True}, "val": "%x"},
-            {"fact": {"noundef": True}, "val": "%y"},
-            {"op": "slt", "lhs": {"val": "%x"}, "rhs": {"val": "%y"}},
+            {"fact": {"noundef": True}, "of": "!0"},
+            {"fact": {"noundef": True}, "of": "!1"},
+            {"insts": ["%lt = icmp slt i32 !0, !1"]},
           ],
         },
       )
     )
     body = self.body(r["module"])
-    self.assertEqual(body[0], "%0 = icmp slt i32 %x, %y")
-    self.assertEqual(body[1], "call void @llvm.assume(i1 %0)")
+    self.assertEqual(body[0], "%lt = icmp slt i32 %x, %y")
+    self.assertEqual(body[1], "call void @llvm.assume(i1 %lt)")
     self.assertEqual(
       body[2], 'call void @llvm.assume(i1 true) [ "noundef"(i32 %x), "noundef"(i32 %y) ]'
     )
     self.assertEqual(body[3], "%a = add i32 %x, %y")
 
-  def test_predicate_type_mismatch(self):
-    module = """define i32 @f(i32 %x, i64 %y) {
+  def test_the_last_line_of_a_predicate_defines_an_i1(self):
+    module = """define i32 @f(i32 %x) {
 entry:
   ret i32 %x
 }
@@ -2611,87 +2608,93 @@ entry:
         {
           "module": module,
           "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"op": "eq", "lhs": {"val": "%x"}, "rhs": {"val": "%y"}}],
+          "assertions": [{"insts": ["%s = add i32 !0, 1"]}],
         },
       ),
       "type_mismatch",
     )
 
-  def test_a_constant_takes_the_type_of_the_other_operand(self):
-    module = "define i64 @f(i64 %x) {\nentry:\n  ret i64 %x\n}\n"
-    for lhs, rhs, said in (
-      ({"const": 5}, {"val": "%x"}, "icmp ult i64 5, %x"),
-      ({"val": "%x"}, {"const": 5}, "icmp ult i64 %x, 5"),
+  def test_an_argument_is_named_by_its_position(self):
+    # The module's own %0 is a local. !0 is argument 0: the function's own at
+    # its start, and the call's before a call.
+    module = """declare i32 @g(i32, i32)
+
+define i32 @f(i32 %x, i32 %y) {
+entry:
+  %0 = add i32 %y, 7
+  %r = call i32 @g(i32 %0, i32 %x)
+  ret i32 %r
+}
+"""
+    below = {"insts": ["%lt = icmp ult i32 !0, !1"]}
+    for anchor, said in (
+      ({"at": "start", "fn": "f"}, "icmp ult i32 %x, %y"),
+      ({"at": "before_calls", "fn": "g"}, "icmp ult i32 %0, %x"),
     ):
-      with self.subTest(lhs=lhs):
-        request = {"module": module, "anchor": {"at": "start", "fn": "f"}}
-        request["assertions"] = [{"op": "ult", "lhs": lhs, "rhs": rhs}]
-        self.assertIn(said, self.good(run("assume", request))["module"])
+      with self.subTest(at=anchor["at"]):
+        r = self.good(run("assume", {"module": module, "anchor": anchor, "assertions": [below]}))
+        self.assertIn(said, r["module"])
 
-  def test_unknown_predicate_operator(self):
-    module = """define i32 @f(i32 %x, i32 %y) {
+  def test_a_comparison_is_one_icmp(self):
+    module = """declare i32 @g(i64, ptr)
+
+define i32 @f(i64 %x, ptr %p) {
 entry:
-  ret i32 %x
+  %r = call i32 @g(i64 %x, ptr %p)
+  ret i32 %r
 }
 """
-    self.bad(
-      run(
-        "assume",
-        {
-          "module": module,
-          "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"op": "bogus", "lhs": {"val": "%x"}, "rhs": {"val": "%y"}}],
-        },
-      ),
-      "invalid",
-    )
+    anchor = {"at": "before_calls", "fn": "g"}
+    for comparison, said in (
+      ({"op": "ult", "lhs": "!0", "rhs": 256}, "icmp ult i64 %x, 256"),
+      ({"op": "ugt", "lhs": 256, "rhs": "!0"}, "icmp ugt i64 256, %x"),
+      ({"op": "ne", "lhs": "!1", "rhs": "%p"}, "icmp ne ptr %p, %p"),
+    ):
+      with self.subTest(comparison=comparison):
+        r = self.good(
+          run("assume", {"module": module, "anchor": anchor, "assertions": [comparison]})
+        )
+        self.assertIn(said, r["module"])
+    for comparison, code in (
+      ({"op": "bogus", "lhs": "!0", "rhs": 0}, "invalid"),
+      ({"op": "eq", "lhs": 1, "rhs": 0}, "invalid"),
+      ({"op": "eq", "lhs": "!0", "rhs": "!1"}, "type_mismatch"),
+    ):
+      with self.subTest(comparison=comparison):
+        request = {"module": module, "anchor": anchor, "assertions": [comparison]}
+        self.bad(run("assume", request), code)
 
-  def test_before_inst_with_predicate_comparing_local_values(self):
-    module = """define i32 @f(i32 %x, i32 %y) {
-entry:
-  %a = add i32 %x, 1
-  %b = add i32 %y, 2
-  %c = add i32 %a, %b
-  ret i32 %c
-}
-"""
-    r = self.good(
-      run(
-        "assume",
-        {
-          "module": module,
-          "anchor": {"at": "before_inst", "inst": "%c"},
-          "assertions": [{"op": "slt", "lhs": {"val": "%a"}, "rhs": {"val": "%b"}}],
-        },
-      )
-    )
-    body = self.body(r["module"])
-    self.assertEqual(body[2], "%0 = icmp slt i32 %a, %b")
-    self.assertEqual(body[3], "call void @llvm.assume(i1 %0)")
-    self.assertEqual(body[4], "%c = add i32 %a, %b")
-
-  def test_before_inst_with_predicate_comparing_a_local_and_a_parameter(self):
+  def test_a_predicate_at_an_instruction_names_the_modules_values(self):
     module = """define i32 @f(i32 %x) {
 entry:
   %a = add i32 %x, 1
-  %b = add i32 %a, 2
+  %b = mul i32 %a, 2
   ret i32 %b
 }
 """
-    r = self.good(
-      run(
-        "assume",
-        {
-          "module": module,
-          "anchor": {"at": "before_inst", "inst": "%b"},
-          "assertions": [{"op": "sgt", "lhs": {"val": "%a"}, "rhs": {"val": "%x"}}],
-        },
-      )
-    )
+    lines = {"insts": ["%d = sub i32 %a, %x", "%ok = icmp eq i32 %d, 1"]}
+    anchor = {"at": "before_inst", "inst": "%b"}
+    r = self.good(run("assume", {"module": module, "anchor": anchor, "assertions": [lines]}))
     body = self.body(r["module"])
-    self.assertEqual(body[1], "%0 = icmp sgt i32 %a, %x")
-    self.assertEqual(body[2], "call void @llvm.assume(i1 %0)")
-    self.assertEqual(body[3], "%b = add i32 %a, 2")
+    self.assertEqual(
+      body[1:4],
+      ["%d = sub i32 %a, %x", "%ok = icmp eq i32 %d, 1", "call void @llvm.assume(i1 %ok)"],
+    )
+
+  def test_a_predicate_uses_only_its_parameters_and_plain_instructions(self):
+    module = "define i32 @f(i32 %x, ptr %p) {\nentry:\n  ret i32 %x\n}\n"
+    for lines, code in (
+      (["%m = call i32 @llvm.umin.i32(i32 !0, i32 1)", "%c = icmp eq i32 %m, 0"], "invalid"),
+      (["%v = load i32, ptr !1", "%c = icmp eq i32 %v, 0"], "invalid"),
+      (["ret void", "%c = icmp eq i32 !0, 0"], "snippet_terminator"),
+      ([], "empty_snippet"),
+      (["%c = icmp eq i32 %x, 0"], "invalid"),
+      (["%c = icmp eq i32 %0, 0"], "invalid"),
+      (["%c = icmp eq i32 !2, 0"], "not_found"),
+    ):
+      with self.subTest(lines=lines):
+        request = {"module": module, "anchor": {"at": "start", "fn": "f"}}
+        self.bad(run("assume", {**request, "assertions": [{"insts": lines}]}), code)
 
   def test_pointer_comparison_predicate(self):
     module = """define i32 @f(ptr %p, ptr %q) {
@@ -2705,35 +2708,16 @@ entry:
         {
           "module": module,
           "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"op": "ne", "lhs": {"val": "%p"}, "rhs": {"val": "%q"}}],
+          "assertions": [{"insts": ["%ne = icmp ne ptr !0, !1"]}],
         },
       )
     )
     body = self.body(r["module"])
-    self.assertEqual(body[0], "%0 = icmp ne ptr %p, %q")
-    self.assertEqual(body[1], "call void @llvm.assume(i1 %0)")
+    self.assertEqual(body[0], "%ne = icmp ne ptr %p, %q")
+    self.assertEqual(body[1], "call void @llvm.assume(i1 %ne)")
 
-  def test_predicate_on_unsupported_float_type(self):
-    module = """define float @f(float %x, float %y) {
-entry:
-  ret float %x
-}
-"""
-    self.bad(
-      run(
-        "assume",
-        {
-          "module": module,
-          "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"op": "eq", "lhs": {"val": "%x"}, "rhs": {"val": "%y"}}],
-        },
-      ),
-      "invalid",
-    )
-
-  def test_an_index_names_the_body_as_given(self):
-    # %b is printed before %a, so the assume the first assertion puts in %b
-    # comes before %v in the printed order; #3 still names %v.
+  def test_a_fact_names_a_value_not_an_index(self):
+    # #N only says where an assumption goes; what it is about has a name.
     module = """define i32 @f(i32 %x) {
 entry:
   br label %a
@@ -2747,14 +2731,11 @@ a:
   br label %b
 }
 """
-    below = {"op": "ult", "lhs": {"val": "#3"}, "rhs": {"const": 256}}
+    below = {"fact": {"range": {"min": 0, "max": 256}}, "of": "#3"}
     request = {"at": "before_inst", "inst": "%r"}
-    r = self.good(
-      run("assume", {"module": module, "anchor": request, "assertions": [below, below]})
-    )
-    self.assertEqual(r["module"].count("icmp ult i32 %v, 256"), 2)
+    self.bad(run("assume", {"module": module, "anchor": request, "assertions": [below]}), "invalid")
 
-  def test_a_point_names_a_parameter_as_a_value(self):
+  def test_a_point_that_is_not_a_call_has_no_arguments(self):
     module = """define i32 @f(i32 %x) {
 entry:
   %a = add i32 %x, 1
@@ -2763,19 +2744,19 @@ entry:
 """
     anchor = {"at": "before_inst", "inst": "%a"}
     for assertion in (
-      {"fact": {"noundef": True}, "arg": 0},
-      {"op": "ne", "lhs": {"arg": 0}, "rhs": {"const": 0}},
+      {"fact": {"noundef": True}, "of": "!0"},
+      {"insts": ["%nz = icmp ne i32 !0, 0"]},
     ):
       with self.subTest(assertion=assertion):
         r = run("assume", {"module": module, "anchor": anchor, "assertions": [assertion]})
-        self.bad(r, "bad_request")
+        self.bad(r, "invalid")
     r = self.good(
       run(
         "assume",
         {
           "module": module,
           "anchor": anchor,
-          "assertions": [{"fact": {"noundef": True}, "val": "%x"}],
+          "assertions": [{"fact": {"noundef": True}, "of": "%x"}],
         },
       )
     )
@@ -2783,7 +2764,7 @@ entry:
     self.assertEqual(body[0], 'call void @llvm.assume(i1 true) [ "noundef"(i32 %x) ]')
     self.assertEqual(body[1], "%a = add i32 %x, 1")
 
-  def test_assertion_missing_fact_and_op_is_bad_request(self):
+  def test_an_assertion_is_a_fact_or_a_predicate(self):
     module = """define i32 @f(i32 %x) {
 entry:
   ret i32 %x
@@ -2795,7 +2776,7 @@ entry:
         {
           "module": module,
           "anchor": {"at": "start", "fn": "f"},
-          "assertions": [{"invalid_key": True}],
+          "assertions": [{"op": "ne", "lhs": {"arg": 0}, "rhs": {"const": 0}}],
         },
       ),
       "bad_request",
