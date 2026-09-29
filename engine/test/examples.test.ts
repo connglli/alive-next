@@ -7,7 +7,7 @@
 // solver on it. It leaves out the scenarios that end in a counterexample,
 // since a checker that proves everything cannot reach one.
 //
-// The second pass is the real one, and needs alive-tv and llubi installed.
+// The second pass is the real one, and needs alive-tv, llubi and python3 installed.
 // Only the rule scenario needs llrwt on top of those.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
