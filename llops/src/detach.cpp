@@ -379,6 +379,8 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
   auto *phiList = args.getArray("phis");
   if (!outerText || !calleeText || !name || !phiList)
     return errResponse("bad_request", "reattach needs 'outer', 'callee', 'callee_name' and 'phis'");
+  if (hypothesis && *hypothesis == *name)
+    return errResponse("bad_request", "'hypothesis' names the callee itself");
 
   std::string parseErr;
   auto outerMwc = parseModule(*outerText, &parseErr);

@@ -1481,6 +1481,17 @@ class TestDetach(Case):
   def test_the_entry_block_is_not_detached(self):
     self.bad(self.detach(ROTATED, "%entry", "k"), "invalid")
 
+  def test_a_hypothesis_that_names_the_callee_is_refused(self):
+    half = self.good(self.detach(ROTATED, "%exit", "k"))
+    request = {
+      "outer": half["outer"],
+      "callee": half["callee"],
+      "callee_name": "k",
+      "hypothesis": "k",
+      "phis": half["phis"],
+    }
+    self.bad(run("reattach", request), "bad_request")
+
   def test_an_auxiliary_the_halves_disagree_about_is_refused(self):
     loop = """declare void @h()
 
