@@ -242,8 +242,7 @@ class TestFold(Case):
         "name": "k",
         "outer": {"gid": "g2", "src": self.src, "tgt": self.tgt},
         "callee": {"gid": "g3", "src": self.src, "tgt": self.tgt},
-        "detached": True,
-        "hypothesis": "k.ih",
+        "detach": {"phis": {"src": [0], "tgt": [0]}, "hypothesis": "k.ih"},
       },
     )
     entered = self.session.program(SRC.replace("mul", "add"))

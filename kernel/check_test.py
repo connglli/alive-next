@@ -437,8 +437,8 @@ class Case(unittest.TestCase):
     whole = {"src": stored(src), "tgt": stored(tgt)}
     outer = {"src": stored(s["outer"]), "tgt": stored(t["outer"])}
     inner = {"src": stored(s["callee"]), "tgt": stored(t["callee"])}
-    cut = {"kind": "split", "detached": True, "callee": "k", "hypothesis": "k.ih"}
-    cut["phis"] = {"src": s["phis"], "tgt": t["phis"]}
+    phis = {"src": s["phis"], "tgt": t["phis"]}
+    cut = {"kind": "split", "callee": "k", "detach": {"phis": phis, "hypothesis": "k.ih"}}
     self.built.goal("g1", whole, whole, [], {**cut, "outer": "g2", "inner": "g3"})
     self.built.goal("g2", outer, outer, [], {"kind": "check"})
     self.built.goal("g3", inner, inner, [], {"kind": "check"})
@@ -878,7 +878,7 @@ class TestTampered(Case):
 
   def test_a_detached_cut_that_names_no_phis(self):
     self.detached(PARITY, PARITY_NUW)
-    del self.built.goals["g1"]["discharge"]["phis"]
+    del self.built.goals["g1"]["discharge"]["detach"]["phis"]
     self.refused(self.built.write(), "without naming the parameters that were its phis")
 
   def test_a_cut_whose_halves_disagree_about_an_auxiliary(self):
@@ -934,9 +934,8 @@ b:
       [],
       {
         "kind": "split",
-        "detached": True,
         "callee": "k",
-        "phis": {"src": s["phis"], "tgt": t["phis"]},
+        "detach": {"phis": {"src": s["phis"], "tgt": t["phis"]}},
         "outer": "g2",
         "inner": "g3",
       },
@@ -1002,8 +1001,8 @@ declare i32 @k.ih(i32)
     whole = {"src": stored(src), "tgt": stored(tgt)}
     outer = {"src": stored(s["outer"]), "tgt": stored(s["outer"])}
     inner = {"src": stored(s["callee"]), "tgt": stored(callee)}
-    cut = {"kind": "split", "detached": True, "callee": "k", "hypothesis": "k.ih"}
-    cut["phis"] = {"src": s["phis"], "tgt": s["phis"]}
+    phis = {"src": s["phis"], "tgt": s["phis"]}
+    cut = {"kind": "split", "callee": "k", "detach": {"phis": phis, "hypothesis": "k.ih"}}
     self.built.goal("g1", whole, whole, [], {**cut, "outer": "g2", "inner": "g3"})
     self.built.goal("g2", outer, outer, [], {"kind": "check"})
     self.built.goal("g3", inner, inner, [], {"kind": "check"})

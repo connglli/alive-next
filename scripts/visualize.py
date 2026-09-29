@@ -210,8 +210,9 @@ class Tree:
           self.proofs.append((link.get("gid"), link.get("hash"), fn))
     elif kind == "split":
       parent = self.editable(effect["gid"])
-      how = "detach" if effect.get("detached") else "outline"
-      hypothesis = effect.get("hypothesis")
+      detach = effect.get("detach")
+      how = "detach" if detach else "outline"
+      hypothesis = detach.get("hypothesis") if detach else None
       for role in ("outer", "callee"):
         child = effect[role]
         note = f"hypothesis @{hypothesis}" if role == "callee" and hypothesis else None

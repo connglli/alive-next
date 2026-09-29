@@ -17,6 +17,7 @@ import type { ReportResult } from "../core/state/counterexamples.ts";
 import { type Goal, head, type Tree } from "../core/state/goals.ts";
 import type { CheckGoalResult } from "../core/state/steps.ts";
 import type {
+  Detach,
   Effect,
   Entry,
   FrameworkEvent,
@@ -95,9 +96,7 @@ export type Discharge =
       callee: string;
       outer: string;
       inner: string;
-      detached?: true;
-      hypothesis?: string;
-      phis?: { src: number[]; tgt: number[] };
+      detach?: Detach;
     };
 
 /** One goal in a proof, from the pair it started with to the one it proved. */
@@ -295,9 +294,7 @@ function include(
       callee: (outer.callee ?? goal.callee) as string,
       outer: outer.id,
       inner: inner.id,
-      ...(outer.detached ? { detached: outer.detached } : {}),
-      ...(outer.hypothesis ? { hypothesis: outer.hypothesis } : {}),
-      ...(outer.phis ? { phis: outer.phis } : {}),
+      ...(outer.detach ? { detach: outer.detach } : {}),
     },
   };
   include(tree, outer, effects, goals, programs);

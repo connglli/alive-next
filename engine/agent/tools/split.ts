@@ -40,7 +40,7 @@ export function createSplitTool(session: Session) {
         [
           `${gid} is cut into @${split.callee}`,
           `outer ${split.children.outer}, callee ${split.children.callee}`,
-          ...(split.hypothesis ? [`back edges call @${split.hypothesis}`] : []),
+          ...(split.detach?.hypothesis ? [`back edges call @${split.detach.hypothesis}`] : []),
           `parameters:\n${params}`,
         ].join("\n"),
         split,

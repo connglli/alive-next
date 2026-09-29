@@ -63,7 +63,11 @@ exit:
   async prove(session) {
     // `%bb1` is the header; i (`%1`), j (`%2`) and n (`%0`) cross.
     const split = await session.split("g1", "%bb1", "%bb1", { "%1": "%1", "%2": "%2", "%0": "%0" });
-    expect("detach the header", split.kind === "split" && split.hypothesis !== undefined, split);
+    expect(
+      "detach the header",
+      split.kind === "split" && split.detach?.hypothesis !== undefined,
+      split,
+    );
     if (split.kind !== "split") return;
 
     const outer = await session.check(split.children.outer);

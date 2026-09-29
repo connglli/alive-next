@@ -163,7 +163,7 @@ export class Strengthen {
         };
       }
     }
-    const hypothesis = callee.hypothesis;
+    const hypothesis = callee.detach?.hypothesis;
     if (hypothesis && hasFnAttrs) {
       const reason = `@${name} calls @${hypothesis}, so it takes no function attributes: induction cannot prove willreturn`;
       return { kind: "refused", phase: "callee_attr", reason, effects: [] };

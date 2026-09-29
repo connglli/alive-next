@@ -63,7 +63,11 @@ exit:
       "%3": "%3",
       "%0": "%0",
     });
-    expect("detach the header", header.kind === "split" && header.hypothesis !== undefined, header);
+    expect(
+      "detach the header",
+      header.kind === "split" && header.detach?.hypothesis !== undefined,
+      header,
+    );
     if (header.kind !== "split") return;
 
     // i <u n, parameter 0 against parameter 2.

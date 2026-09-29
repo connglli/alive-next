@@ -143,12 +143,13 @@ describe.skipIf(!built)("splitting", () => {
       "%0": "%0",
     });
     if (result.kind !== "split") throw new Error(result.message);
-    expect(result.hypothesis).toBe("outlined_g3.ih");
+    expect(result.detach?.hypothesis).toBe("outlined_g3.ih");
 
     const tree = record(result.effects);
-    expect(goal(tree, "g3").detached).toBe(true);
-    expect(goal(tree, "g3").hypothesis).toBe("outlined_g3.ih");
-    expect(goal(tree, "g3").phis).toEqual({ src: [0], tgt: [0] });
+    expect(goal(tree, "g3").detach).toEqual({
+      phis: { src: [0], tgt: [0] },
+      hypothesis: "outlined_g3.ih",
+    });
     expect(store.get(head(goal(tree, "g3"), "src"))).toContain("call i32 @outlined_g3.ih(");
   });
 
@@ -173,7 +174,7 @@ join:
     const tree = record(result.effects);
     expect(store.get(head(goal(tree, "g2"), "src"))).toContain("call i32 @outlined_g3(i32 %0)");
     expect(store.get(head(goal(tree, "g3"), "src"))).toContain("br i1");
-    expect(goal(tree, "g3").detached).toBeUndefined();
+    expect(goal(tree, "g3").detach).toBeUndefined();
   });
 
   test("refuses a block that heads a loop on one side only", async () => {
@@ -206,6 +207,13 @@ join:
     });
     expect(result).toMatchObject({ kind: "refused", side: "tgt", code: "invalid" });
     if (result.kind === "refused") expect(result.message).toContain("another program");
+  });
+
+  test("reads a block off the program's labels", async () => {
+    const splits = new Splits(store, llops);
+    const result = await splits.split(await start(LOOP), "g1", "%entry", "%entry", {});
+    expect(result).toMatchObject({ kind: "refused", side: "src", code: "invalid" });
+    if (result.kind === "refused") expect(result.message).toContain("entry block");
   });
 
   test("refuses a block on one side and a value on the other", async () => {

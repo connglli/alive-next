@@ -21,6 +21,12 @@ import { sha256 } from "./hash.ts";
 /** Programs are named by their store hash wherever an event mentions one. */
 export type Hash = string;
 
+/** A detached block: which callee parameters were its phis on each side, and a loop's hypothesis. */
+export interface Detach {
+  phis: { src: number[]; tgt: number[] };
+  hypothesis?: string;
+}
+
 /** A certified step in a goal's chain, named by the program it produced. */
 export interface StepRef {
   gid: string;
@@ -98,11 +104,7 @@ export type Effect =
       outer: { gid: string; src: Hash; tgt: Hash };
       callee: { gid: string; src: Hash; tgt: Hash };
       /** Present when a block was detached rather than a suffix outlined. */
-      detached?: true;
-      /** The declaration a detached loop's back edges call in place of the callee. */
-      hypothesis?: string;
-      /** Which parameters of the callee were the block's phis, on each side. */
-      phis?: { src: number[]; tgt: number[] };
+      detach?: Detach;
     }
   /**
    * Both sides of a callee goal gained a strengthened interface contract

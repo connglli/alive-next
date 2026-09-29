@@ -9,7 +9,7 @@
 // log is the only thing that has to be right, and a reader that replays it
 // sees exactly what the run saw. That also makes this file pure: no disk, no
 // clock, no processes.
-import type { Effect, Entry, Hash } from "./trajectory.ts";
+import type { Detach, Effect, Entry, Hash } from "./trajectory.ts";
 
 export type GoalId = string;
 export type ProgramId = string;
@@ -31,11 +31,7 @@ export interface Goal {
   /** The outlined function this cut made, on both of its children. */
   callee?: string;
   /** Present on both children when the cut detached a block. */
-  detached?: true;
-  /** The declaration the callee's back edges call, when it detached a loop. */
-  hypothesis?: string;
-  /** Which parameters of the callee were the block's phis, on each side. */
-  phis?: { src: number[]; tgt: number[] };
+  detach?: Detach;
   src: SideHistory;
   tgt: SideHistory;
   status: Status;
@@ -178,9 +174,7 @@ function apply(tree: Tree, effect: Effect): void {
           parent: parent.id,
           role,
           callee: effect.name,
-          ...(effect.detached ? { detached: effect.detached } : {}),
-          ...(effect.hypothesis ? { hypothesis: effect.hypothesis } : {}),
-          ...(effect.phis ? { phis: effect.phis } : {}),
+          ...(effect.detach ? { detach: effect.detach } : {}),
           src: { history: [child.src] },
           tgt: { history: [child.tgt] },
           status: "open",

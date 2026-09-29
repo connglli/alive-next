@@ -726,7 +726,7 @@ class Check:
       )
       head[side] = step["to"][side]
 
-  def predicates(self, discharge: dict, step: dict) -> None:
+  def predicates(self, discharge: dict, step: dict, hypothesis: str | None) -> None:
     """The src step that assumed a strengthen step's predicates before each call of the callee.
 
     The outer calls it; a recursive callee also calls its hypothesis, where
@@ -734,8 +734,8 @@ class Check:
     """
     name = discharge["callee"]
     sites = [(discharge["outer"], name)]
-    if discharge.get("hypothesis"):
-      sites.append((discharge["inner"], discharge["hypothesis"]))
+    if hypothesis:
+      sites.append((discharge["inner"], hypothesis))
     by = step.get("by")
     if not isinstance(by, list):
       raise Refused("a strengthen step names its proofs under by as a list")
@@ -978,16 +978,15 @@ class Check:
     outer = self.package.goal(discharge["outer"])
     inner = self.package.goal(discharge["inner"])
     name = discharge["callee"]
-    hypothesis = discharge.get("hypothesis")
-    detached = discharge.get("detached") is True
-    if hypothesis and not detached:
-      raise Refused(f"{gid} names a hypothesis for a cut that detached no block")
     # A parameter that never changes is a phi or a value from outside, and
     # only detach knew which.
-    phis = discharge.get("phis")
-    if detached and not isinstance(phis, dict):
+    detach = discharge.get("detach")
+    if detach is not None and not (
+      isinstance(detach, dict) and isinstance(detach.get("phis"), dict)
+    ):
       raise Refused(f"{gid} detached a block without naming the parameters that were its phis")
-    rebuild = "reattach" if detached else "inline"
+    hypothesis = detach.get("hypothesis") if detach else None
+    rebuild = "reattach" if detach else "inline"
 
     for side in ("src", "tgt"):
       started = time.monotonic()
@@ -998,8 +997,8 @@ class Check:
       }
       if hypothesis:
         request["hypothesis"] = hypothesis
-      if detached:
-        request["phis"] = phis.get(side)
+      if detach:
+        request["phis"] = detach["phis"].get(side)
       back = self.package.run_llops(rebuild, request)["module"]
       same = self.package.run_llops("canon", {"module": back})["module"]
       whole = self.package.program(goal["end"][side])
@@ -1081,7 +1080,7 @@ class Check:
       if step.get("kind") != "strengthen":
         continue
       if step.get("predicates"):
-        self.predicates(discharge, step)
+        self.predicates(discharge, step, hypothesis)
       # Induction cannot prove willreturn, so a recursive callee takes no
       # function attribute at all.
       if hypothesis and step.get("fn_attrs"):
