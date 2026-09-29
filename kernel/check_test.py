@@ -856,7 +856,7 @@ class TestTampered(Case):
     # unrolls and says nothing of the one where the two part company.
     pair = {"src": self.built.program(canonical(LOOP)), "tgt": self.built.program(canonical(LATE))}
     self.built.goal("g1", pair, pair, [], {"kind": "check"})
-    self.refused(self.built.write(), "outside the program shape: cyclic")
+    self.refused(self.built.write(), "handed to alive-tv loops")
 
   def test_a_detached_cut_whose_halves_do_not_reattach(self):
     # The tgt's callee in the src's place reattaches to the tgt, not the src.
@@ -1507,7 +1507,7 @@ class TestRefuted(unittest.TestCase):
     package = self.built.refuted(canonical(LOOP), canonical(LATE))
     done = self.re_asked(package)
     self.assertNotEqual(done.returncode, 0, done.stdout)
-    self.assertIn("outside the program shape: cyclic", done.stdout + done.stderr)
+    self.assertIn("handed to alive-tv loops", done.stdout + done.stderr)
 
   def test_a_pair_that_refines_is_not_a_counterexample(self):
     package = self.built.refuted(SRC, TGT)

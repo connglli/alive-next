@@ -631,7 +631,7 @@ export class Steps {
     const known = this.looping.get(hash);
     if (known !== undefined) return known;
     const result = await this.llops.validate(module);
-    const loops = result.ok && result.diagnostics.some((d) => d.code === "cyclic");
+    const loops = result.ok && result.cyclic;
     this.looping.set(hash, loops);
     return loops;
   }

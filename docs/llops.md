@@ -22,9 +22,9 @@ The exit status repeats that answer, 0 when ok and 1 when not, so a caller can b
 
 ## The program shape
 
-A program is a module with exactly one defined function, whose body has no loop and ends every block in `ret`, `br`, `switch` or `unreachable`. Declarations and global variables are free, calls must name a declared function, and inline assembly and indirect calls are refused.
+A program is a module with exactly one defined function, whose body ends every block in `ret`, `br`, `switch` or `unreachable`. Declarations and global variables are free, calls must name a declared function, and inline assembly and indirect calls are refused.
 
-`validate` reports a departure from that shape as a diagnostic. Every subcommand that rewrites a program reports the first departure other than `cyclic` as an error instead, and changes nothing.
+`validate` reports a departure from that shape as a diagnostic. Every subcommand that rewrites a program reports the first departure as an error instead, and changes nothing.
 
 The LLVM verifier decides what the shape rules do not cover, so a module that comes out of llops parses, has the program shape, and verifies. A refusal is the normal case while an agent searches, not an error path: the diagnostic is the feedback.
 
@@ -44,15 +44,14 @@ Slot numbers move whenever a program is edited, so a caller reads the module bac
 
 ## validate
 
-Request `{ "module": "<ir text>" }`, response `{ "ok": true, "conforms": bool, "diagnostics": [ ... ], "functions": { ... } }`, where each diagnostic is `{ "severity": "error", "code": "...", "message": "..." }`.
+Request `{ "module": "<ir text>" }`, response `{ "ok": true, "conforms": bool, "cyclic": bool, "diagnostics": [ ... ], "functions": { ... } }`, where each diagnostic is `{ "severity": "error", "code": "...", "message": "..." }`.
 
-A response is ok when the module parses. `conforms` says whether it is a program in the sense above. `functions` maps each declared and defined function to its parsed structure: `defined`, `return_type`, `params` (with types and parameter attributes like `noundef`, `range`, `align`), `fn_attrs` (such as `memory`, `nounwind`, `willreturn`), `signature` (the types and every attribute), and `bare` (no attribute at all).
+A response is ok when the module parses. `conforms` says whether it is a program in the sense above, `cyclic` whether its body loops. `functions` maps each declared and defined function to its parsed structure: `defined`, `return_type`, `params` (with types and parameter attributes like `noundef`, `range`, `align`), `fn_attrs` (such as `memory`, `nounwind`, `willreturn`), `signature` (the types and every attribute), and `bare` (no attribute at all).
 
 | code | what it means |
 | --- | --- |
 | `no_define` | the module defines no function |
 | `too_many_defines` | the module defines more than one |
-| `cyclic` | the body has a loop |
 | `no_terminator` | a block does not end in a terminator |
 | `unsupported_terminator` | a block ends in something other than `ret`, `br`, `switch` or `unreachable` |
 | `inline_asm` | the body contains inline assembly |

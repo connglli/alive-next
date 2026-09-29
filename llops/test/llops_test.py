@@ -107,6 +107,10 @@ class Case(unittest.TestCase):
   def conforms(self, module):
     return self.good(run("validate", {"module": module}))["conforms"]
 
+  def cyclic(self, module):
+    answer = self.good(run("validate", {"module": module}))
+    return answer["conforms"] and answer["cyclic"]
+
 
 class TestProtocol(Case):
   def test_version(self):
@@ -251,13 +255,11 @@ exit:
 }
 """
     r = self.good(run("validate", {"module": module}))
-    self.assertFalse(r["conforms"])
-    self.assertEqual(r["diagnostics"][0]["code"], "cyclic")
-    self.assertIn("'%loop'", r["diagnostics"][0]["message"])
+    self.assertTrue(r["conforms"])
+    self.assertTrue(r["cyclic"])
+    self.assertFalse(self.good(run("validate", {"module": F_SIMPLE}))["cyclic"])
 
   def test_a_loop_is_held_to_the_other_rules(self):
-    # The subcommands that take a loop pass over `cyclic`, so it cannot
-    # stand in front of what else the body breaks.
     module = """define i32 @f(i32 %n) {
 entry:
   br label %loop
@@ -886,7 +888,7 @@ entry:
     body = "  br label %l\nl:\n  %i = phi i32 [ %x, %entry ], [ %j, %l ]\n  %j = add i32 %i, %y\n  br label %l"
     r = self.good(self.edit("set_body", body=body))
     self.assertIn("%j = add i32 %i, %y", r["module"])
-    self.assertFalse(self.conforms(r["module"]))
+    self.assertTrue(self.cyclic(r["module"]))
 
 
 class TestEditAttrs(Case):
@@ -2106,7 +2108,7 @@ class TestSeveralBlocks(Case):
 
   def test_a_window_in_the_body_of_a_loop_goes_out_and_back(self):
     r = self.windowed(ROTATED, "%acc.next", "%acc.next")
-    self.assertFalse(self.conforms(r["outer"]))
+    self.assertTrue(self.cyclic(r["outer"]))
     self.assertTrue(self.conforms(r["callee"]))
 
   def test_a_window_hands_back_both_values_a_loop_header_reads(self):
@@ -2191,7 +2193,7 @@ join:
   def test_an_edit_may_leave_a_loop(self):
     r = self.good(run("edit", {"module": ROTATED, "op": "retype", "v": "%i.next", "ty": "i64"}))
     self.assertIn("phi i32 [ 0, %entry ], [ %", r["module"])
-    self.assertFalse(self.conforms(r["module"]))
+    self.assertTrue(self.cyclic(r["module"]))
     self.good(run("opt", {"module": ROTATED, "what": "instcombine"}))
 
 

@@ -211,13 +211,12 @@ export class Session {
     return session;
   }
 
-  /** Refuse a root program outside the shape `llops validate` defines, but for a loop. */
+  /** Refuse a root program outside the shape `llops validate` defines. */
   private async refuseOutsideShape(side: Side, text: string): Promise<void> {
     const result = await this.llops.validate(text);
     if (!result.ok) throw new Error(`the ${side} program: llops validate: ${result.message}`);
-    const outside = result.diagnostics.filter((d) => d.code !== "cyclic");
-    if (outside.length > 0) {
-      const why = outside.map((d) => `${d.code}, ${d.message}`).join("; ");
+    if (!result.conforms) {
+      const why = result.diagnostics.map((d) => `${d.code}, ${d.message}`).join("; ");
       throw new Error(`the ${side} program is outside the program shape: ${why}`);
     }
   }

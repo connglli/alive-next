@@ -188,15 +188,14 @@ bool findUseBeforeDef(llvm::Function &F, llvm::BasicBlock &BB, ValueRefs &refs, 
   return false;
 }
 
-// The block a branch goes back to, if the body loops. Only blocks the entry
-// reaches are searched; the rest never run.
-const llvm::BasicBlock *loopHeader(const llvm::Function &F) {
+} // namespace
+
+bool holdsLoop(const llvm::Function &F) {
+  // Only blocks the entry reaches are searched; the rest never run.
   llvm::SmallVector<std::pair<const llvm::BasicBlock *, const llvm::BasicBlock *>> back;
   llvm::FindFunctionBackedges(F, back);
-  return back.empty() ? nullptr : back.front().second;
+  return !back.empty();
 }
-
-} // namespace
 
 std::vector<Diag> checkFunction(llvm::Function &F) {
   std::vector<Diag> diags;
@@ -246,16 +245,6 @@ std::vector<Diag> checkFunction(llvm::Function &F) {
                            "', not in ret, br, switch or unreachable"});
       return diags;
     }
-  }
-
-  // Last, since the subcommands that take a loop pass over this one: a body
-  // that loops still has to meet every rule above.
-  if (auto *header = loopHeader(F)) {
-    std::string name;
-    llvm::raw_string_ostream os(name);
-    header->printAsOperand(os, false);
-    diags.push_back({Diag::Severity::Error, "cyclic",
-                     "function '" + F.getName().str() + "' loops back to '" + name + "'"});
   }
   return diags;
 }
@@ -461,13 +450,7 @@ std::optional<Diag> departure(llvm::Module &M) {
   auto diags = validateModule(M);
   if (diags.empty())
     return std::nullopt;
-  if (diags.front().code != "cyclic")
-    return diags.front();
-  // A loop stops the shape check before the verifier runs, so run it here.
-  auto verifier = checkModule(M);
-  if (!verifier.empty())
-    return verifier.front();
-  return std::nullopt;
+  return diags.front();
 }
 
 llvm::json::Object checkedResponse(llvm::Module &M) {

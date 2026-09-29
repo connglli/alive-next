@@ -37,6 +37,8 @@ export interface FunctionMeta {
 
 export interface ValidateResult {
   conforms: boolean;
+  /** Whether the body holds a loop. */
+  cyclic: boolean;
   diagnostics: Diagnostic[];
   functions?: Record<string, FunctionMeta>;
 }

@@ -35,7 +35,7 @@ describe.skipIf(!built)("llops", () => {
     expect(result.diagnostics).toEqual([]);
   });
 
-  test("reports why a program does not conform", async () => {
+  test("says a loop has the program shape and is cyclic", async () => {
     const loop = `define i32 @f(i32 %n) {
 entry:
   br label %loop
@@ -52,8 +52,8 @@ exit:
 `;
     const result = await llops.validate(loop);
     if (!result.ok) throw new Error(result.message);
-    expect(result.conforms).toBe(false);
-    expect(result.diagnostics[0]?.code).toBe("cyclic");
+    expect(result.conforms).toBe(true);
+    expect(result.cyclic).toBe(true);
   });
 
   test("canonicalizes, and does it idempotently", async () => {

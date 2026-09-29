@@ -151,6 +151,8 @@ llvm::json::Object validateCmd(llvm::json::Object &args) {
   llvm::json::Object resp;
   resp["ok"] = true;
   resp["conforms"] = diags.empty();
+  llvm::Function *F = singleFunction(*mwc->mod);
+  resp["cyclic"] = F && holdsLoop(*F);
   addDiagnostics(resp, diags);
   resp["functions"] = extractFunctions(*mwc->mod);
   return resp;

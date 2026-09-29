@@ -64,11 +64,11 @@ llvm::BasicBlock *singleBlock(llvm::Function &F);
 // shape below. An empty result means the module conforms.
 std::vector<Diag> validateModule(llvm::Module &M);
 
-// The body invariants: no loop, no call to anything but a declared function, every block
+// The body invariants: no call to anything but a declared function, every block
 // ending in ret, br, switch or unreachable.
 std::vector<Diag> checkFunction(llvm::Function &F);
 
-// The first departure from the shape other than `cyclic`, if any.
+// The first departure from the shape, if any.
 std::optional<Diag> departure(llvm::Module &M);
 
 // Everything else that makes IR ill formed, delegated to the LLVM verifier
@@ -81,6 +81,9 @@ std::vector<Diag> checkModule(llvm::Module &M);
 // everything that does, global initializers included, is searched through
 // constants wherever a constant is accepted.
 bool holdsUndef(const llvm::Module &M);
+
+// Whether the body holds a loop, which alive-tv answers only as far as it unrolls.
+bool holdsLoop(const llvm::Function &F);
 
 // Values are referenced by the token that names them in printed IR, so the
 // agent can quote back what it reads: "%3" for a slot, "%x" for a name and

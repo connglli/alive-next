@@ -179,11 +179,15 @@ class Package:
     return answer["module"]
 
   def shape_gate(self, module: str) -> str:
-    """The module, if `llops validate` says it has the shape of a program."""
+    """The module, if `llops validate` says it has the shape of a program and does not loop."""
     answer = self.run_llops("validate", {"module": module})
     if not answer.get("conforms"):
       codes = ", ".join(d.get("code", "?") for d in answer.get("diagnostics", []))
       raise Refused(f"a program handed to alive-tv is outside the program shape: {codes}")
+    if answer.get("cyclic") is not False:
+      raise Refused(
+        "a program handed to alive-tv loops, which it answers only as far as it unrolls"
+      )
     return module
 
   def goal(self, gid: str) -> dict:
