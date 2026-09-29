@@ -154,4 +154,9 @@ llvm::Value *mappedParam(const llvm::json::Value &entry, const llvm::json::Objec
 bool adoptSymbols(llvm::Module &from, llvm::Module &into, const llvm::GlobalValue *skip,
                   llvm::ValueToValueMapTy &vmap, llvm::json::Object &err);
 
+// Whether a cut's halves agree on each shared symbol but `outerFn`, `calleeFn` and `hypothesis`.
+bool sharedSymbolsAgree(llvm::Module &outerM, llvm::Function &outerFn, llvm::Module &calleeM,
+                        llvm::Function &calleeFn, llvm::StringRef hypothesis,
+                        llvm::json::Object &err);
+
 } // namespace llops

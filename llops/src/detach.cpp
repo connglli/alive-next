@@ -404,6 +404,8 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
 
   llvm::ValueToValueMapTy vmap;
   llvm::json::Object err;
+  if (!sharedSymbolsAgree(outerM, *F, *calleeMwc->mod, *K, hypothesis ? *hypothesis : "", err))
+    return err;
   if (!adoptSymbols(*calleeMwc->mod, outerM, K, vmap, err))
     return err;
   llvm::Function *ih = hypothesis ? outerM.getFunction(*hypothesis) : nullptr;

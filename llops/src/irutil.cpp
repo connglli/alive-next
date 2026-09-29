@@ -14,6 +14,7 @@
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 namespace llops {
 
@@ -568,6 +569,50 @@ bool adoptSymbols(llvm::Module &from, llvm::Module &into, const llvm::GlobalValu
     }
   }
   return true;
+}
+
+namespace {
+
+// `M` printed from a copy, with `blank` bodiless and the unused symbols `other` lacks dropped.
+std::string sharedText(llvm::Module &M, std::initializer_list<llvm::StringRef> blank,
+                       llvm::Module &other) {
+  llvm::ValueToValueMapTy vmap;
+  auto clone = llvm::CloneModule(M, vmap);
+  for (llvm::StringRef name : blank)
+    if (auto *fn = clone->getFunction(name)) {
+      fn->deleteBody();
+      fn->setAttributes(llvm::AttributeList());
+    }
+  std::vector<llvm::GlobalValue *> alone;
+  for (llvm::GlobalValue &gv : clone->global_values())
+    if (!other.getNamedValue(gv.getName()) && gv.use_empty())
+      alone.push_back(&gv);
+  for (llvm::GlobalValue *gv : alone)
+    gv->eraseFromParent();
+  return printModule(*clone);
+}
+
+} // namespace
+
+bool sharedSymbolsAgree(llvm::Module &outerM, llvm::Function &outerFn, llvm::Module &calleeM,
+                        llvm::Function &calleeFn, llvm::StringRef hypothesis,
+                        llvm::json::Object &err) {
+  std::initializer_list<llvm::StringRef> cut = {outerFn.getName(), calleeFn.getName(), hypothesis};
+  std::string outerText = sharedText(outerM, cut, calleeM);
+  std::string calleeText = sharedText(calleeM, cut, outerM);
+  if (outerText == calleeText)
+    return true;
+  llvm::SmallVector<llvm::StringRef> outerLines, calleeLines;
+  llvm::StringRef(outerText).split(outerLines, '\n');
+  llvm::StringRef(calleeText).split(calleeLines, '\n');
+  auto [o, c] =
+      std::mismatch(outerLines.begin(), outerLines.end(), calleeLines.begin(), calleeLines.end());
+  llvm::StringRef outerLine = o != outerLines.end() ? *o : "<no such line>";
+  llvm::StringRef calleeLine = c != calleeLines.end() ? *c : "<no such line>";
+  err = errResponse("invalid", "the outer and the callee disagree about a symbol they "
+                               "share\nouter:  " +
+                                   outerLine.str() + "\ncallee: " + calleeLine.str());
+  return false;
 }
 
 } // namespace llops

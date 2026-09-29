@@ -1481,6 +1481,31 @@ class TestDetach(Case):
   def test_the_entry_block_is_not_detached(self):
     self.bad(self.detach(ROTATED, "%entry", "k"), "invalid")
 
+  def test_an_auxiliary_the_halves_disagree_about_is_refused(self):
+    loop = """declare void @h()
+
+define void @g(i32 noundef %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %i.next = add nuw i32 %i, 1
+  call void @h()
+  %c = icmp ult i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret void
+}
+"""
+    half = self.good(self.detach(loop, "%loop", "k"))
+    callee = half["callee"].replace("declare void @h()", "declare void @h() memory(none)")
+    self.assertNotEqual(callee, half["callee"])
+    request = {"outer": half["outer"], "callee": callee, "callee_name": "k"}
+    r = self.bad(run("reattach", {**request, "phis": half["phis"]}), "invalid")
+    self.assertIn("disagree about a symbol", r["error"]["message"])
+
   def test_a_tgt_phi_the_map_does_not_cover(self):
     src = self.good(self.detach(ROTATED, "%exit", "k"))
     tgt = ROTATED.replace(
@@ -1768,6 +1793,39 @@ entry:
       run("inline", {"outer": out["outer"], "callee": out["outer"], "callee_name": "g"}),
       "not_found",
     )
+
+  def test_the_outer_must_declare_the_callee_as_it_is_defined(self):
+    out = self.good(run("outline", {"module": F_SIMPLE, "side": "src", "cut": "s", "callee": "g"}))
+    # Varargs keeps the call well formed, so only the signatures disagree.
+    callee = out["callee"].replace(
+      "define i32 @g(i32 %p0, i32 %p1) {", "define i32 @g(i32 %p0, i32 %p1, ...) {"
+    )
+    self.assertNotEqual(callee, out["callee"])
+    self.bad(
+      run("inline", {"outer": out["outer"], "callee": callee, "callee_name": "g"}), "type_mismatch"
+    )
+
+  def test_an_auxiliary_the_halves_disagree_about_is_refused(self):
+    module = """declare i32 @h(i32)
+
+define i32 @f(i32 %x) {
+entry:
+  %a = add i32 %x, 1
+  %c = call i32 @h(i32 %a)
+  ret i32 %c
+}
+"""
+    out = self.good(run("outline", {"module": module, "side": "src", "cut": "c", "callee": "g"}))
+    for callee in (
+      out["callee"].replace("declare i32 @h(i32)", "declare i32 @h(i32) memory(none)"),
+      out["callee"].replace("declare i32 @h(i32)", "declare i64 @h(i32)"),
+    ):
+      with self.subTest(callee=callee):
+        self.assertNotEqual(callee, out["callee"])
+        r = self.bad(
+          run("inline", {"outer": out["outer"], "callee": callee, "callee_name": "g"}), "invalid"
+        )
+        self.assertIn("disagree about a symbol", r["error"]["message"])
 
   def test_parse_errors_name_the_side(self):
     r = self.bad(

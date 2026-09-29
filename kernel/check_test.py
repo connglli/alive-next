@@ -873,6 +873,72 @@ class TestTampered(Case):
     del self.built.goals["g1"]["discharge"]["phis"]
     self.refused(self.built.write(), "without naming the parameters that were its phis")
 
+  def test_a_cut_whose_halves_disagree_about_an_auxiliary(self):
+    # The callee halves hold only under a stronger @h than the whole keeps.
+    whole = """declare void @h(ptr)
+
+define void @f(ptr noundef %p, i1 noundef %c) {
+entry:
+  br i1 %c, label %a, label %b
+
+a:
+  store i32 1, ptr %p, align 4
+  call void @h(ptr %p)
+  ret void
+
+b:
+  store i32 2, ptr %p, align 4
+  call void @h(ptr %p)
+  ret void
+}
+"""
+    swapped = whole.replace(
+      "  store i32 1, ptr %p, align 4\n  call void @h(ptr %p)\n",
+      "  call void @h(ptr %p)\n  store i32 1, ptr %p, align 4\n",
+    )
+    s = llops("detach", {"module": whole, "side": "src", "block": "%a", "callee": "k"})
+    live = {p["live"]: p["live"] for p in s["params"]}
+    t = llops(
+      "detach",
+      {
+        "module": swapped,
+        "side": "tgt",
+        "block": "%a",
+        "callee": "k",
+        "params": s["params"],
+        "value_map": live,
+      },
+    )
+
+    def stored(text: str) -> str:
+      return self.built.program(llops("canon", {"module": text})["module"])
+
+    def blind(text: str) -> str:
+      edited = llops(
+        "edit", {"module": text, "op": "attrs", "fn": "h", "attrs": {"memory": "none"}}
+      )
+      return stored(edited["module"])
+
+    self.built.goal(
+      "g1",
+      {"src": stored(whole), "tgt": stored(swapped)},
+      {"src": stored(whole), "tgt": stored(swapped)},
+      [],
+      {
+        "kind": "split",
+        "detached": True,
+        "callee": "k",
+        "phis": {"src": s["phis"], "tgt": t["phis"]},
+        "outer": "g2",
+        "inner": "g3",
+      },
+    )
+    outer = {"src": stored(s["outer"]), "tgt": stored(t["outer"])}
+    inner = {"src": blind(s["callee"]), "tgt": blind(t["callee"])}
+    self.built.goal("g2", outer, outer, [], {"kind": "check"})
+    self.built.goal("g3", inner, inner, [], {"kind": "check"})
+    self.refused(self.built.write(), "disagree about a symbol they share")
+
   def test_an_invariant_no_iteration_is_shown_to_keep(self):
     self.refused(self.invariant(kept=False), "no src step proves the entry predicates before @k.ih")
 

@@ -449,8 +449,9 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
     return errResponse("not_found", "the outer does not call '@" + calleeName->str() + "'");
   if (!plainCall(*call))
     return errResponse("invalid", "the call of '@" + calleeName->str() + "' is not a plain call");
-  if (call->arg_size() != callee->arg_size())
-    return errResponse("type_mismatch", "the call and the callee disagree on the argument count");
+  if (decl->getFunctionType() != callee->getFunctionType())
+    return errResponse("type_mismatch", "the outer does not declare '@" + calleeName->str() +
+                                            "' as the callee defines it");
 
   // The map covers both halves of the move: the callee's parameters become
   // the call's arguments, and every symbol the callee body names is redirected
@@ -460,6 +461,8 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   for (unsigned i = 0; i < callee->arg_size(); ++i)
     vmap[std::next(callee->arg_begin(), i)] = call->getArgOperand(i);
   llvm::json::Object adoptErr;
+  if (!sharedSymbolsAgree(outerM, *F, *calleeMwc->mod, *callee, "", adoptErr))
+    return adoptErr;
   if (!adoptSymbols(*calleeMwc->mod, outerM, callee, vmap, adoptErr))
     return adoptErr;
 
