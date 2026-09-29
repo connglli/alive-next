@@ -383,7 +383,7 @@ def summary(stdout: str) -> str:
 
 
 def signature(package: Package, module: str, name: str) -> str:
-  """The parameter list and function attributes a function is declared or defined with.
+  """The types and every attribute a function is declared or defined with.
 
   A cut leaves the callee declared in one program and defined in another, and
   they have to say the same thing about the arguments and semantic attributes:
@@ -430,8 +430,7 @@ def parameter_facts(param_attrs: dict) -> list[tuple[int, dict]]:
 
 def bare(package: Package, module: str, name: str) -> bool:
   """Whether a function is declared or defined without any attribute."""
-  fn = function(package, module, name)
-  return not fn["fn_attrs"] and not any(param["attrs"] for param in fn["params"])
+  return function(package, module, name)["bare"] is True
 
 
 def function(package: Package, module: str, name: str) -> dict:

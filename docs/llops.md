@@ -46,7 +46,7 @@ Slot numbers move whenever a program is edited, so a caller reads the module bac
 
 Request `{ "module": "<ir text>" }`, response `{ "ok": true, "conforms": bool, "diagnostics": [ ... ], "functions": { ... } }`, where each diagnostic is `{ "severity": "error", "code": "...", "message": "..." }`.
 
-A response is ok when the module parses. `conforms` says whether it is a program in the sense above. `functions` maps each declared and defined function to its parsed structure: `defined`, `return_type`, `params` (with types and parameter attributes like `noundef`, `range`, `align`), `fn_attrs` (such as `memory`, `nounwind`, `willreturn`), and normalized `signature`.
+A response is ok when the module parses. `conforms` says whether it is a program in the sense above. `functions` maps each declared and defined function to its parsed structure: `defined`, `return_type`, `params` (with types and parameter attributes like `noundef`, `range`, `align`), `fn_attrs` (such as `memory`, `nounwind`, `willreturn`), `signature` (the types and every attribute), and `bare` (no attribute at all).
 
 | code | what it means |
 | --- | --- |

@@ -32,6 +32,7 @@ export interface FunctionMeta {
   params: FunctionParamMeta[];
   fn_attrs: Record<string, unknown>;
   signature: string;
+  bare: boolean;
 }
 
 export interface ValidateResult {

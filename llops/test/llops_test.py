@@ -170,11 +170,14 @@ entry:
   def test_function_metadata_and_signatures(self):
     module = """declare i32 @g(i32 noundef range(i32 0, 256)) memory(none) nounwind
 
-define i32 @f(i32 noundef %x) memory(none) {
+define noundef i32 @f(i32 noundef %x) memory(none) {
 entry:
   %c = call i32 @g(i32 %x)
-  ret i32 %c
+  %d = call i32 @h(i32 %c)
+  ret i32 %d
 }
+
+declare i32 @h(i32)
 """
     r = self.good(run("validate", {"module": module}))
     self.assertTrue(r["conforms"])
@@ -190,12 +193,10 @@ entry:
     self.assertEqual(funcs["g"]["fn_attrs"]["nounwind"], True)
     self.assertEqual(
       funcs["g"]["signature"],
-      "i32(i32 noundef range(i32 0, 256)) {memory(none), nounwind}",
+      "i32(i32 noundef range(i32 0, 256)) {nounwind memory(none)}",
     )
-    self.assertEqual(
-      funcs["f"]["signature"],
-      "i32(i32 noundef) {memory(none)}",
-    )
+    self.assertEqual(funcs["f"]["signature"], "noundef i32(i32 noundef) {memory(none)}")
+    self.assertEqual([funcs[n]["bare"] for n in "fgh"], [False, False, True])
 
   def test_use_before_def(self):
     module = """define i32 @f(i32 %x, i32 %y) {

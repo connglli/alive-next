@@ -1113,6 +1113,36 @@ declare i32 @k.ih(i32)
     self.built.bend(lambda m: m["goals"]["g3"]["end"].update({"src": digest}))
     self.refused(package, "declaration differs from definition")
 
+  def test_a_callee_that_says_its_result_is_defined(self):
+    # At x = 0 the src returns poison and the tgt divides by zero. A callee
+    # that says `noundef` of its result turns the src's poison into UB,
+    # which lets the tgt's division through.
+    src = "define i32 @f(i32 %x) {\n  %c = icmp eq i32 %x, 0\n"
+    src += "  %p = select i1 %c, i32 poison, i32 5\n  ret i32 %p\n}\n"
+    tgt = "define i32 @f(i32 %x) {\n  %q = udiv i32 1, %x\n  %r = mul i32 %q, 0\n"
+    tgt += "  %s = add i32 %r, 5\n  ret i32 %s\n}\n"
+    s = llops("outline", {"module": src, "side": "src", "cut": "%c", "callee": "g"})
+    request = {"module": tgt, "side": "tgt", "cut": "%q", "callee": "g", "params": s["params"]}
+    t = llops("outline", {**request, "value_map": {"%x": "%x"}})
+
+    def stored(text: str, claims: bool) -> str:
+      said = text
+      if claims:
+        for word in ("declare", "define"):
+          said = said.replace(f"{word} i32 @g(", f"{word} noundef i32 @g(")
+      self.assertEqual(said != text, claims)
+      return self.built.program(canonical(said))
+
+    for outer_claims, saying in ((False, "declaration differs from definition"), (True, "Bare")):
+      whole = {"src": stored(src, False), "tgt": stored(tgt, False)}
+      outer = {"src": stored(s["outer"], outer_claims), "tgt": stored(t["outer"], outer_claims)}
+      inner = {"src": stored(s["callee"], True), "tgt": stored(t["callee"], True)}
+      cut = {"kind": "split", "callee": "g", "outer": "g2", "inner": "g3"}
+      self.built.goal("g1", whole, whole, [], cut)
+      self.built.goal("g2", outer, outer, [], {"kind": "check"})
+      self.built.goal("g3", inner, inner, [], {"kind": "check"})
+      self.refused(self.built.write(), saying)
+
   def test_an_attribute_on_a_goal_that_is_not_a_callee(self):
     pair = {"src": self.src, "tgt": self.tgt}
     self.built.goal(
