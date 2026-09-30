@@ -24,6 +24,7 @@ import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import type { Checker } from "../core/state/steps.ts";
 import { cut } from "../examples/cut.ts";
+import { loop } from "../examples/loop.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 const llops = new Llops(toolchain.path("llops"));
@@ -685,6 +686,33 @@ entry:
     expect(editingRefused).toContain("FAILURE");
     expect(editingRefused).toContain("refused, editing: a transaction is open on g1 src");
     await callFrom(rewritingTools, "tx_abort", {});
+  });
+
+  test("goal_unfold runs a loop's body twice per call, and only on a loop's callee", async () => {
+    const looping = await Session.start({
+      dir: join(dir, "unfold-session"),
+      src: loop.src,
+      tgt: loop.tgt,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    const tools = createProofAssistantTools(looping);
+    const map = { "%1": "%1", "%2": "%2", "%0": "%0" };
+    await callFrom(tools, "tree_split", {
+      gid: "g1",
+      src_cut: "%bb1",
+      tgt_cut: "%bb1",
+      value_map: map,
+    });
+
+    const unfolded = await callFrom(tools, "goal_unfold", { gid: "g3", side: "src" });
+    expect(unfolded).toContain("SUCCESS");
+    expect(unfolded).toContain("unfolded g3 src");
+    const outer = await callFrom(tools, "goal_unfold", { gid: "g2", side: "src" });
+    expect(outer).toContain("FAILURE");
+    expect(outer).toContain("not a loop cut at its header");
   });
 
   test("run_list_rules reports a broken rewriter instead of crashing", async () => {

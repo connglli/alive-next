@@ -29,6 +29,7 @@ import { createSplitTool } from "./split.ts";
 import { createSplitPreviewTool } from "./split-preview.ts";
 import { createStatusTool } from "./status.ts";
 import { createStrengthenTool } from "./strengthen.ts";
+import { createUnfoldTool } from "./unfold.ts";
 import { createUnsplitTool } from "./unsplit.ts";
 
 export { createSandboxTools, SANDBOX_TOOLS };
@@ -53,6 +54,7 @@ export function createProofAssistantTools(
     createCheckTool(session),
     createRulesTool(session),
     createRewriteTool(session),
+    createUnfoldTool(session),
     createBeginTool(session),
     createEditTool(session),
     createOptTool(session),
