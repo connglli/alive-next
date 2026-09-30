@@ -179,7 +179,7 @@ Every tool call is logged. Tools that create certified steps record enough to re
 
 - `split(gid, src_cut, tgt_cut, value_map)`: outlines both sides of an open goal at the given cut points (a cut point names a position in the instruction sequence by the value defined there), or detaches both at a block. The src side's live values at the cut define `g`'s signature; `value_map` gives the corresponding tgt values. Creates two child goals (outer and callee); the parent's status becomes `split` and its heads are frozen. The parent is proved automatically when both children are. Fails structurally if the map is ill-typed or the tgt suffix uses values not covered by the map.
 - `unsplit(gid)`: discards a split goal's children (and their subtrees) and reopens the parent. The way to undo a bad cut.
-- `unfold(gid, side)`: on a half of a loop cut at its header, unfold the given side. Certified without running alive2.
+- `unfold(gid, side)`: before strengthening, unfold the given side of a half of a loop cut at its header. Certified without running alive2.
 
 ### Rewriting
 
