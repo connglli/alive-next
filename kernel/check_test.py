@@ -456,9 +456,12 @@ class Case(unittest.TestCase):
     request = {"module": self.text(digest), "anchor": anchor, "assertions": assertions}
     return self.built.program(canonical(llops("assume", request)["module"]))
 
-  def unfolded(self, digest: str) -> str:
-    """The program with k's body at each call of k.ih, stored as a run stores it."""
+  def unfolded(self, digest: str, callee: str | None = None) -> str:
+    """The program with k's body at each call of k.ih, or of k given the
+    callee, stored as a run stores it."""
     request = {"module": self.text(digest), "hypothesis": "k.ih"}
+    if callee:
+      request["callee"] = self.text(callee)
     return self.built.program(canonical(llops("unfold", request)["module"]))
 
   def invariant(self, kept: bool = True) -> Path:
@@ -532,6 +535,17 @@ class TestGolden(Case):
       for side in ("src", "tgt")
     ]
     self.built.goal("g3", inner, end, steps, {"kind": "check"})
+    self.verified(self.built.write())
+
+  def test_an_outer_unfolded_on_both_sides_verifies(self):
+    halves = self.detached(PARITY, PARITY_NUW)
+    outer, inner = halves["outer"], halves["inner"]
+    end = {side: self.unfolded(outer[side], inner[side]) for side in ("src", "tgt")}
+    steps = [
+      {"kind": "unfold", "side": side, "from": outer[side], "to": end[side]}
+      for side in ("src", "tgt")
+    ]
+    self.built.goal("g2", outer, end, steps, {"kind": "check"})
     self.verified(self.built.write())
 
   def test_a_loop_against_itself_verifies_with_no_solver(self):
@@ -1062,12 +1076,33 @@ declare i32 @k.ih(i32)
     self.built.goal("g3", inner, end, [step], {"kind": "check"})
     self.refused(self.built.write(), "Unfold replay")
 
-  def test_an_unfold_on_a_goal_that_is_not_a_loop(self):
-    outer = self.detached(PARITY, PARITY_NUW)["outer"]
-    step = {"kind": "unfold", "side": "src", "from": outer["src"], "to": outer["tgt"]}
-    end = {"src": outer["tgt"], "tgt": outer["tgt"]}
-    self.built.goal("g2", outer, end, [step], {"kind": "check"})
-    self.refused(self.built.write(), "not a loop cut at its header")
+  def test_an_unfold_on_a_goal_that_is_not_a_half_of_a_loop_cut(self):
+    step = {"kind": "unfold", "side": "src", "from": self.src, "to": self.tgt}
+    start = {"src": self.src, "tgt": self.tgt}
+    self.built.goal("g1", start, {"src": self.tgt, "tgt": self.tgt}, [step], {"kind": "check"})
+    self.refused(self.built.write(), "not a half of a loop cut at its header")
+
+  def test_an_outer_unfolded_after_the_proof_on_entry(self):
+    # The unfolded outer calls the loop again, where nothing proved j <= i.
+    halves = self.detached(PARITY, PARITY_SUB_NUW)
+    outer, inner = halves["outer"], halves["inner"]
+    entered = self.assumed(outer["src"], {"at": "before_calls", "fn": "k"})
+    unfolded = self.unfolded(entered, inner["src"])
+    steps = [
+      {"kind": "check", "side": "src", "from": outer["src"], "to": entered},
+      {"kind": "unfold", "side": "src", "from": entered, "to": unfolded},
+    ]
+    self.built.goal("g2", outer, {"src": unfolded, "tgt": outer["tgt"]}, steps, {"kind": "check"})
+    strong = {side: self.assumed(inner[side], {"at": "start", "fn": "k"}) for side in inner}
+    kept_by = self.assumed(strong["src"], {"at": "before_calls", "fn": "k.ih"})
+    by = [{"gid": "g2", "hash": entered}, {"gid": "g3", "hash": kept_by}]
+    inner_steps = [
+      {"kind": "strengthen", "from": inner, "to": strong, "predicates": ORDER, "by": by},
+      {"kind": "check", "side": "src", "from": strong["src"], "to": kept_by},
+    ]
+    end = {"src": kept_by, "tgt": strong["tgt"]}
+    self.built.goal("g3", inner, end, inner_steps, {"kind": "check"})
+    self.refused(self.built.write(), "an unfold follows the proof before @k")
 
   def test_an_invariant_proved_after_an_unfold(self):
     # The contract says i is even. An unfold before the consecution proof

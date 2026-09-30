@@ -382,13 +382,25 @@ export class Session {
     });
   }
 
-  /**
-   * Put a detached loop's body at each call of its hypothesis on one side of
-   * its callee goal, so one call runs two iterations, as a loop unrolled by
-   * two does. The loop stays the same, so no solver is asked about the step.
-   */
+  /** Unfold one side of a half of a loop cut at its header, before any strengthening. */
   unfold(gid: string, side: Side): Promise<UnfoldStepResult> {
     return this.act("unfold", { gid, side }, async (tree) => {
+      // Copies made after a contract's proof would call the loop where the
+      // proof does not reach, so unfolding comes before strengthening.
+      const chain = new Set(goalOf(tree, gid).src.history);
+      const proved = this.entries.some(
+        (entry) =>
+          entry.kind === "tool_result" &&
+          (entry.effects ?? []).some(
+            (effect) =>
+              effect.effect === "strengthen" &&
+              (effect.by ?? []).some((link) => link.gid === gid && chain.has(link.hash)),
+          ),
+      );
+      if (proved) {
+        const message = `${gid} holds the proof of a strengthened contract; unfold before strengthening`;
+        return { kind: "refused", code: "strengthened", message };
+      }
       return this.editingRefusal(gid, side) ?? this.steps.unfold(tree, gid, side);
     });
   }

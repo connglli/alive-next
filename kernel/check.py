@@ -543,15 +543,16 @@ class Check:
       ms=ms,
     )
 
-  def goal(self, gid: str, role: str | None = None, hypothesis: str | None = None) -> None:
+  def goal(self, gid: str, role: str | None = None, loop: dict | None = None) -> None:
     """Check one goal: its chain, then how it was discharged.
 
     `role` identifies the goal's role in a split: None means neither caller
     nor callee, "outer" means the caller, and any other value is the
-    callee's name. `hypothesis` is what a detached loop's callee calls.
+    callee's name. `loop`, on a half of a loop cut at its header, names the
+    hypothesis, and on the outer also the pair the callee started with.
     """
     goal = self.package.goal(gid)
-    head = self.chain(gid, goal, role, hypothesis)
+    head = self.chain(gid, goal, role, loop)
     for side in ("src", "tgt"):
       if head[side] != goal["end"][side]:
         self.fail(
@@ -593,7 +594,7 @@ class Check:
         f"{discharge['kind']}, which this does not know",
       )
 
-  def chain(self, gid: str, goal: dict, role: str | None, hypothesis: str | None) -> dict:
+  def chain(self, gid: str, goal: dict, role: str | None, loop: dict | None) -> dict:
     """Walk the steps, checking each one in the direction its side implies."""
     head = dict(goal["start"])
     for step in goal["steps"]:
@@ -620,7 +621,7 @@ class Check:
       elif step["kind"] == "rewrite":
         head[step["side"]] = self.rewrite(gid, step, head)
       elif step["kind"] == "unfold":
-        head[step["side"]] = self.unfold(gid, step, head, hypothesis)
+        head[step["side"]] = self.unfold(gid, step, head, loop)
       elif step["kind"] == "strengthen":
         self.strengthen(gid, step, head, role)
       else:
@@ -747,6 +748,12 @@ class Check:
           "Predicate proof",
           f"the proof before @{fn} does not start from the program the contract was assumed in",
         )
+        continue
+      # An unfold of the outer after the proof would make calls of the loop
+      # that the proof does not cover.
+      later = steps[steps.index(proofs[0]) + 1 :]
+      if fn == name and any(s.get("kind") == "unfold" for s in later):
+        self.fail(gid, "src", "Predicate proof", f"an unfold follows the proof before @{fn}")
         continue
       started = time.monotonic()
       assumed = self.package.run_llops(
@@ -971,15 +978,17 @@ class Check:
     )
     return step["to"]
 
-  def unfold(self, gid: str, step: dict, head: dict, hypothesis: str | None) -> str:
-    """A detached loop's body put at each call of its hypothesis: unfold again and compare.
+  def unfold(self, gid: str, step: dict, head: dict, loop: dict | None) -> str:
+    """A detached loop's body put at each call of its hypothesis, or of the
+    loop in the outer: unfold again and compare.
 
-    Both bodies define the same loop, so the step holds on either side and no
-    solver is asked anything.
+    The loop stays the same, so the step holds on either side and no solver
+    is asked anything. The outer takes the loop as the cut made it, which is
+    the loop reattach puts back.
     """
     side = step["side"]
-    if hypothesis is None:
-      self.fail(gid, side, "Unfold", "on a goal that is not a loop cut at its header")
+    if loop is None:
+      self.fail(gid, side, "Unfold", "on a goal that is not a half of a loop cut at its header")
       return step["to"]
     if step["from"] != head[side]:
       self.fail(
@@ -991,9 +1000,10 @@ class Check:
       return step["to"]
 
     started = time.monotonic()
-    unfolded = self.package.run_llops(
-      "unfold", {"module": self.package.program(step["from"]), "hypothesis": hypothesis}
-    )["module"]
+    request = {"module": self.package.program(step["from"]), "hypothesis": loop["hypothesis"]}
+    if "callee" in loop:
+      request["callee"] = self.package.program(loop["callee"][side])
+    unfolded = self.package.run_llops("unfold", request)["module"]
     same = self.package.run_llops("canon", {"module": unfolded})["module"]
     matches = same == self.package.program(step["to"])
     self.compared(
@@ -1001,7 +1011,7 @@ class Check:
       side,
       "llops",
       "Unfold replay",
-      f"{step['from'][:12]} -> {step['to'][:12]}; @{hypothesis}",
+      f"{step['from'][:12]} -> {step['to'][:12]}; @{loop['hypothesis']}",
       matches,
       elapsed_ms(started),
     )
@@ -1123,8 +1133,12 @@ class Check:
     # The outer half keeps the entry the cut was made in; the callee's
     # parameters are values computed before it, so it is asked about them
     # under no assumption at all.
-    self.goal(discharge["outer"], "outer")
-    self.goal(discharge["inner"], name, hypothesis)
+    self.goal(
+      discharge["outer"],
+      "outer",
+      {"hypothesis": hypothesis, "callee": inner["start"]} if hypothesis else None,
+    )
+    self.goal(discharge["inner"], name, {"hypothesis": hypothesis} if hypothesis else None)
 
 
 class Refutation:

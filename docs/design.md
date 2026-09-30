@@ -86,7 +86,7 @@ The only trusted glue is that the outlining transformation itself is faithful (t
 
 A split at a block detaches it instead: the block and every block it reaches become `g`, and each branch to the block becomes a call of `g`. At a loop header, the back edge calls a declared hypothesis `g.ih` in place of `g`, so the callee is one iteration and does not loop. Proving that pair, with `g.ih` an unknown function both sides share, proves the loop by induction: each side calls `g.ih` where it would go around again, so a tgt cannot stop where the src goes on. The glue a checker trusts is `reattach`, the inverse of detaching, as `inline` is of outlining.
 
-Unfolding puts `g`'s body at each call of `g.ih`, so one call of `g` runs two iterations, as a loop unrolled by two does. It is not a refinement, but both bodies define the same loop, so a checker reruns the unfold instead of asking alive2.
+Unfolding puts the loop's body at a call of `g.ih`, for a loop unrolled by two, or at the outer's call of `g`, for a peeled loop. It is not a refinement, but the loop stays the same, so a checker reruns the unfold instead of asking alive2.
 
 A cut leaves the callee's parameters poison-capable, since nothing about a fresh function says its arguments are defined. `strengthen(gid, {param: {noundef}})` states otherwise and proves it at the call site. The proof fails where the value at the cut can be poison, and then the cut has to move or the program has to be made defined there.
 
@@ -179,7 +179,7 @@ Every tool call is logged. Tools that create certified steps record enough to re
 
 - `split(gid, src_cut, tgt_cut, value_map)`: outlines both sides of an open goal at the given cut points (a cut point names a position in the instruction sequence by the value defined there), or detaches both at a block. The src side's live values at the cut define `g`'s signature; `value_map` gives the corresponding tgt values. Creates two child goals (outer and callee); the parent's status becomes `split` and its heads are frozen. The parent is proved automatically when both children are. Fails structurally if the map is ill-typed or the tgt suffix uses values not covered by the map.
 - `unsplit(gid)`: discards a split goal's children (and their subtrees) and reopens the parent. The way to undo a bad cut.
-- `unfold(gid, side)`: on the callee of a loop cut at its header, put the body at each call of the hypothesis on the given side. Certified without running alive2.
+- `unfold(gid, side)`: on a half of a loop cut at its header, unfold the given side. Certified without running alive2.
 
 ### Rewriting
 

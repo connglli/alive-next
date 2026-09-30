@@ -100,6 +100,15 @@ export function workable(tree: Tree, id: GoalId): Goal {
   return goal;
 }
 
+/** The half of `parent`'s cut that plays `role`. */
+export function child(tree: Tree, parent: Goal, role: "outer" | "callee"): Goal {
+  for (const id of parent.children) {
+    const goal = tree.goals.get(id);
+    if (goal?.role === role) return goal;
+  }
+  throw new DerivationError(`${parent.id} has no ${role} child`);
+}
+
 /** Apply one effect to a tree, which is what derive does line by line. */
 export function applyEffect(tree: Tree, effect: Effect): void {
   apply(tree, effect);

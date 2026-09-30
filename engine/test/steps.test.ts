@@ -141,8 +141,18 @@ exit:
 }
 `;
 
-/** A cut of the root at a loop header, both children holding `body`. */
-function detachG1(body: string): Event {
+/** The outer of that cut, which calls the loop from the start. */
+const CALLER = `declare i32 @k(i32, i32)
+
+define i32 @f(i32 %n) {
+entry:
+  %r = call i32 @k(i32 0, i32 %n)
+  ret i32 %r
+}
+`;
+
+/** A cut of the root at a loop header: the callee holds `body`, and the outer `outer`. */
+function detachG1(body: string, outer = body): Event {
   const pair = { src: body, tgt: body };
   return {
     kind: "tool_result",
@@ -153,7 +163,7 @@ function detachG1(body: string): Event {
         effect: "split",
         gid: "g1",
         name: "k",
-        outer: { gid: "g2", ...pair },
+        outer: { gid: "g2", src: outer, tgt: outer },
         callee: { gid: "g3", ...pair },
         detach: { phis: { src: [0], tgt: [0] }, hypothesis: "k.ih" },
       },
@@ -320,7 +330,25 @@ describe("unfolding", () => {
     expect(checker.calls).toHaveLength(1);
   });
 
-  test("refuses a goal that is not a loop cut at its header", async () => {
+  test("puts the loop's first iteration at the outer's call of it", async () => {
+    const steps = new Steps(
+      store,
+      new FakeChecker(["unknown"]),
+      DEFAULT_TIMEOUTS,
+      llops,
+      unrewriting,
+    );
+    const tree = await treeOf(SRC, TGT, detachG1(await store.put(BODY), await store.put(CALLER)));
+    const result = await steps.unfold(tree, "g2", "src");
+
+    if (result.kind !== "certified") throw new Error("expected the unfold to land");
+    const outer = store.get(result.hash);
+    expect(outer).toContain("icmp ult i32 0, %n");
+    expect(outer).toContain("call i32 @k(i32 %next, i32 %n)");
+    expect(outer).not.toContain("@k.ih");
+  });
+
+  test("refuses a goal that is not a half of a loop cut at its header", async () => {
     const steps = new Steps(store, new FakeChecker([]), DEFAULT_TIMEOUTS, llops, unrewriting);
     const refused = await steps.unfold(await tree(), "g1", "src");
     expect(refused).toMatchObject({ kind: "refused", code: "invalid" });

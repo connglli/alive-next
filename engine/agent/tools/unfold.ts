@@ -9,9 +9,11 @@ export function createUnfoldTool(session: Session) {
     name: "goal_unfold",
     label: "Unfold",
     description:
-      "On the callee goal of a loop cut at its header, put the loop's body at each call of its hypothesis on one side, so that one call runs two iterations. Use it when the other side's loop runs two iterations each time this side's runs one, as a loop unrolled by two does. Unfold before `tree_strengthen`, because a fact such as `i` being even may hold only every second iteration. No solver runs for the step itself, and the goal's new pair is then eagerly checked once on a small budget.",
+      "Put a loop's body at its calls on one side of a loop cut at its header. In the callee goal, one call then runs two iterations, to pair with a loop unrolled by two. In the outer goal, the outer then runs the first iteration, to pair with a peeled loop. Unfold before `tree_strengthen`. No solver runs for the step itself.",
     parameters: Type.Object({
-      gid: Type.String({ description: "The callee goal of a loop cut at its header." }),
+      gid: Type.String({
+        description: "The outer or the callee goal of a loop cut at its header.",
+      }),
       side: Type.Union([Type.Literal("src"), Type.Literal("tgt")]),
     }),
     execute: async (_id, { gid, side }) => {

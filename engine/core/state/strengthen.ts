@@ -47,7 +47,7 @@
 // cannot prove willreturn.
 import type { CheckResult } from "../drivers/alive2.ts";
 import type { Assertion, Attrs, Llops, Predicate } from "../drivers/llops.ts";
-import { applyEffect, type Goal, head, type Side, type Tree } from "./goals.ts";
+import { applyEffect, child, head, type Side, type Tree } from "./goals.ts";
 import type { Steps } from "./steps.ts";
 import type { Store } from "./store.ts";
 import type { Effect, Hash, StepRef } from "./trajectory.ts";
@@ -429,14 +429,6 @@ export class Strengthen {
       landed.push(effect);
     }
   }
-}
-
-function child(tree: Tree, parent: Goal, role: "outer" | "callee"): Goal {
-  for (const id of parent.children) {
-    const goal = tree.goals.get(id);
-    if (goal?.role === role) return goal;
-  }
-  throw new Error(`${parent.id} has no ${role} child`);
 }
 
 /**

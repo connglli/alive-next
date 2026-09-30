@@ -688,7 +688,7 @@ entry:
     await callFrom(rewritingTools, "tx_abort", {});
   });
 
-  test("goal_unfold runs a loop's body twice per call, and only on a loop's callee", async () => {
+  test("goal_unfold unfolds either half of a loop cut, before strengthening", async () => {
     const looping = await Session.start({
       dir: join(dir, "unfold-session"),
       src: loop.src,
@@ -699,6 +699,9 @@ entry:
       rewriter: unrewriting,
     });
     const tools = createProofAssistantTools(looping);
+    const root = await callFrom(tools, "goal_unfold", { gid: "g1", side: "src" });
+    expect(root).toContain("FAILURE");
+    expect(root).toContain("not a half of a loop cut at its header");
     const map = { "%1": "%1", "%2": "%2", "%0": "%0" };
     await callFrom(tools, "tree_split", {
       gid: "g1",
@@ -710,9 +713,16 @@ entry:
     const unfolded = await callFrom(tools, "goal_unfold", { gid: "g3", side: "src" });
     expect(unfolded).toContain("SUCCESS");
     expect(unfolded).toContain("unfolded g3 src");
-    const outer = await callFrom(tools, "goal_unfold", { gid: "g2", side: "src" });
-    expect(outer).toContain("FAILURE");
-    expect(outer).toContain("not a loop cut at its header");
+    expect(await callFrom(tools, "goal_unfold", { gid: "g2", side: "src" })).toContain(
+      "unfolded g2 src",
+    );
+
+    // j <= i, which the unfolded outer proves before it calls the loop.
+    const predicates = [{ op: "ule", lhs: "!1", rhs: "!0" }];
+    await callFrom(tools, "tree_strengthen", { gid: "g1", predicates });
+    const late = await callFrom(tools, "goal_unfold", { gid: "g2", side: "tgt" });
+    expect(late).toContain("FAILURE");
+    expect(late).toContain("unfold before strengthening");
   });
 
   test("run_list_rules reports a broken rewriter instead of crashing", async () => {

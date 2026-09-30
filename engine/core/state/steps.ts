@@ -12,7 +12,7 @@ import type { CheckOutcome, CheckResult, Invocation } from "../drivers/alive2.ts
 import { type Llops, moduleLines } from "../drivers/llops.ts";
 import type { Llrwt, LlrwtInvocation, RuleInfo } from "../drivers/llrwt.ts";
 import { definedRefAt, named, resolveRef } from "../refs.ts";
-import { type Goal, head, type Side, type Tree, workable } from "./goals.ts";
+import { child, type Goal, head, type Side, type Tree, workable } from "./goals.ts";
 import { sha256 } from "./hash.ts";
 import type { Narrowed, Window } from "./narrow.ts";
 import type { Store } from "./store.ts";
@@ -498,21 +498,28 @@ export class Steps {
   }
 
   /**
-   * Put a detached loop's body at each call of its hypothesis on one side, so
-   * one call runs two iterations. Both bodies define the same loop, so no
-   * solver is asked about the step; a replay unfolds again and compares.
+   * Put a detached loop's body on one side: in the callee at each call of the
+   * hypothesis, so one call runs two iterations, or in the outer at each call
+   * of the loop, so the outer runs the first iteration. The loop stays the
+   * same, so no solver is asked about the step; a replay unfolds again.
    */
   async unfold(tree: Tree, gid: string, side: Side): Promise<UnfoldStepResult> {
     const goal = workable(tree, gid);
-    const hypothesis = goal.role === "callee" ? goal.detach?.hypothesis : undefined;
-    if (hypothesis === undefined) {
+    const hypothesis = goal.detach?.hypothesis;
+    const parent = goal.parent === undefined ? undefined : tree.goals.get(goal.parent);
+    if (hypothesis === undefined || parent === undefined) {
       return {
         kind: "refused",
         code: "invalid",
-        message: `${gid} is not a loop cut at its header, so it has no hypothesis to unfold`,
+        message: `${gid} is not a half of a loop cut at its header, so it has no loop to unfold`,
       };
     }
-    const unfolded = await this.llops.unfold(this.store.get(head(goal, side)), hypothesis);
+    // The outer takes the loop as the cut made it, which is the loop reattach puts back.
+    const callee =
+      goal.role === "outer"
+        ? this.store.get(child(tree, parent, "callee")[side].history[0] as Hash)
+        : undefined;
+    const unfolded = await this.llops.unfold(this.store.get(head(goal, side)), hypothesis, callee);
     if (!unfolded.ok) return { kind: "refused", code: unfolded.code, message: unfolded.message };
     const after = await this.store.put(unfolded.module);
     const effects: Effect[] = [{ effect: "step", gid, side, to: after, how: "unfold" }];
