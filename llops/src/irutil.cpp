@@ -470,7 +470,8 @@ bool plainCall(const llvm::CallInst &call) {
 bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F,
                  llvm::ValueToValueMapTy &vmap) {
   auto *ret = llvm::dyn_cast_or_null<llvm::ReturnInst>(call.getNextNode());
-  if (!ret || ret->getReturnValue() != (call.getType()->isVoidTy() ? nullptr : &call))
+  if (!ret || ret->getReturnValue() != (call.getType()->isVoidTy() ? nullptr : &call) ||
+      call.getNumUses() > 1)
     return false;
   llvm::BasicBlock *head = call.getParent();
   ret->eraseFromParent();

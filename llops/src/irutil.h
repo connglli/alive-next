@@ -115,7 +115,7 @@ private:
 // Whether a call is as outline and detach make it, with nothing on it.
 bool plainCall(const llvm::CallInst &call);
 
-// Put a callee of several blocks back at a call its block returns, its entry joining that block.
+// Put a callee of several blocks back at a call used only by the ret after it.
 bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F,
                  llvm::ValueToValueMapTy &vmap);
 

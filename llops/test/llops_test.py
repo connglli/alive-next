@@ -77,6 +77,11 @@ def run(sub: str, req: dict):
   return r
 
 
+def with_dead_use(module: str, value: str) -> str:
+  """The module with a block no branch reaches, which uses `value`."""
+  return module.replace("\n}\n", f"\n\ndead:\n  %u = add i32 {value}, 1\n  ret i32 %u\n}}\n", 1)
+
+
 class Case(unittest.TestCase):
   def good(self, r):
     self.assertTrue(r.get("ok"), f"unexpected failure: {r}")
@@ -1618,6 +1623,12 @@ exit:
     r = self.bad(run("reattach", {**request, "phis": half["phis"]}), "invalid")
     self.assertIn("'@k.ih' is used", r["error"]["message"])
 
+  def test_a_call_whose_answer_a_dead_block_uses_is_not_reattached(self):
+    half = self.good(self.detach(STILL, "%loop", "k"))
+    outer = with_dead_use(half["outer"], "%1")
+    request = {"outer": outer, "callee": half["callee"], "callee_name": "k", "hypothesis": "k.ih"}
+    self.bad(run("reattach", {**request, "phis": half["phis"]}), "invalid")
+
   def test_canon_orders_phi_incoming_by_block(self):
     flipped = ROTATED.replace(
       "%i = phi i32 [ 0, %entry ], [ %i.next, %loop ]",
@@ -1842,6 +1853,23 @@ class TestInline(Case):
     request = {"outer": outer, "callee": out["callee"], "callee_name": "g"}
     r = self.bad(run("inline", request), "invalid")
     self.assertIn("used other than by the call", r["error"]["message"])
+
+  def test_a_call_whose_answer_a_dead_block_uses_is_not_inlined(self):
+    outer = "declare i32 @g(i32)\n\ndefine i32 @f(i32 %x) {\nentry:\n  %r = call i32 @g(i32 %x)\n  ret i32 %r\n}\n"
+    callee = """define i32 @g(i32 %y) {
+entry:
+  %c = icmp eq i32 %y, 0
+  br i1 %c, label %p, label %q
+
+p:
+  ret i32 1
+
+q:
+  ret i32 2
+}
+"""
+    request = {"outer": with_dead_use(outer, "%r"), "callee": callee, "callee_name": "g"}
+    self.bad(run("inline", request), "invalid")
 
   def test_roundtrip_with_memory(self):
     _, back = self.roundtrip(F_MEMORY, "l")
@@ -2385,6 +2413,9 @@ class TestUnfold(Case):
   def test_a_call_whose_answer_is_not_returned_is_refused(self):
     later = CALLEE.replace("  ret i32 %r\n", "  %s = add i32 %r, 1\n  ret i32 %s\n")
     self.bad(self.unfold(later), "invalid")
+
+  def test_a_call_whose_answer_a_dead_block_uses_is_refused(self):
+    self.bad(self.unfold(with_dead_use(CALLEE, "%r")), "invalid")
 
   def test_a_hypothesis_the_module_does_not_declare(self):
     self.bad(self.unfold(CALLEE, "g.ih"), "not_found")

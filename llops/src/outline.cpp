@@ -370,8 +370,8 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
 
   if (callee->size() > 1) {
     if (!putBackRest(*call, *callee, *F, vmap))
-      return errResponse("invalid", "a callee of several blocks goes back only at a call whose "
-                                    "block returns what it answers");
+      return errResponse("invalid", "a callee of several blocks goes back only at a call "
+                                    "followed by a ret of its result, and used by nothing else");
     return inlined(outerM, *decl);
   }
 

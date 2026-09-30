@@ -301,7 +301,7 @@ std::unique_ptr<llvm::Module> half(llvm::Module &M, llvm::StringRef bodyless,
   return clone;
 }
 
-// A block that only calls one of `targets` and returns what it answers.
+// A block that only calls one of `targets` and returns its answer, which nothing else uses.
 llvm::CallInst *onlyCalls(llvm::BasicBlock &Q, llvm::ArrayRef<llvm::Function *> targets) {
   if (Q.size() != 2)
     return nullptr;
@@ -309,7 +309,8 @@ llvm::CallInst *onlyCalls(llvm::BasicBlock &Q, llvm::ArrayRef<llvm::Function *> 
   auto *ret = llvm::dyn_cast<llvm::ReturnInst>(Q.getTerminator());
   if (!call || !ret || !llvm::is_contained(targets, call->getCalledFunction()))
     return nullptr;
-  if (ret->getReturnValue() != (call->getType()->isVoidTy() ? nullptr : call))
+  if (ret->getReturnValue() != (call->getType()->isVoidTy() ? nullptr : call) ||
+      call->getNumUses() > 1)
     return nullptr;
   return call;
 }
@@ -659,7 +660,9 @@ llvm::json::Object unfoldCmd(llvm::json::Object &args) {
     for (unsigned i = 0; i < body->arg_size(); ++i)
       vmap[body->getArg(i)] = call->getArgOperand(i);
     if (!putBackRest(*call, *body, F, vmap))
-      return errResponse("invalid", "a call of " + fn + " is not followed by a ret of its result");
+      return errResponse("invalid", "a call of " + fn +
+                                        " must be followed by a ret of its result, and used by "
+                                        "nothing else");
   }
   if (!calleeMwc)
     body->eraseFromParent();
