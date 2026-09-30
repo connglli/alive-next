@@ -2322,9 +2322,42 @@ exit2:
 """
 
 
+# The outer that calls CALLEE's loop from the start, and the same outer with
+# the first iteration run before the call.
+OUTER = """declare i32 @k(i32, i32, i32)
+
+define i32 @f(i32 %n) {
+entry:
+  %r = call i32 @k(i32 0, i32 0, i32 %n)
+  ret i32 %r
+}
+"""
+PEELED = """declare i32 @k(i32, i32, i32)
+
+define i32 @f(i32 %n) {
+entry:
+  %c = icmp ult i32 0, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %odd = and i32 0, 1
+  %even = icmp eq i32 %odd, 0
+  %inc = zext i1 %even to i32
+  %j.next = add i32 0, %inc
+  %i.next = add i32 0, 1
+  %r = call i32 @k(i32 %i.next, i32 %j.next, i32 %n)
+  ret i32 %r
+
+exit:
+  %d = sub i32 0, 0
+  ret i32 %d
+}
+"""
+
+
 class TestUnfold(Case):
-  def unfold(self, module, hypothesis="k.ih"):
-    return run("unfold", {"module": module, "hypothesis": hypothesis})
+  def unfold(self, module, hypothesis="k.ih", **callee):
+    return run("unfold", {"module": module, "hypothesis": hypothesis, **callee})
 
   def test_a_call_of_the_hypothesis_runs_the_body_again(self):
     r = self.good(self.unfold(CALLEE))
@@ -2355,6 +2388,14 @@ class TestUnfold(Case):
 
   def test_a_hypothesis_the_module_does_not_declare(self):
     self.bad(self.unfold(CALLEE, "g.ih"), "not_found")
+
+  def test_a_call_of_the_loop_runs_its_first_iteration(self):
+    r = self.good(self.unfold(OUTER, callee=CALLEE))
+    self.assertEqual(self.canon(r["module"]), self.canon(PEELED))
+
+  def test_a_declaration_of_the_loop_with_attributes_is_refused(self):
+    marked = OUTER.replace("declare i32 @k(i32,", "declare i32 @k(i32 noundef,")
+    self.bad(self.unfold(marked, callee=CALLEE), "invalid")
 
 
 class TestAssume(Case):

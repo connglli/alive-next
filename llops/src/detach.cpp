@@ -569,6 +569,27 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
   return moduleResponse(outerM);
 }
 
+namespace {
+
+// Make the callee's calls of its hypothesis calls of the loop itself, which
+// the hypothesis stands for.
+bool callItself(llvm::Module &calleeM, llvm::Function &loop, llvm::StringRef hypothesis,
+                llvm::json::Object &err) {
+  llvm::Function *ih = calleeM.getFunction(hypothesis);
+  if (!ih)
+    return true;
+  if (ih->getFunctionType() != loop.getFunctionType()) {
+    err = errResponse("type_mismatch", "the callee does not declare '@" + hypothesis.str() +
+                                           "' as it defines '@" + loop.getName().str() + "'");
+    return false;
+  }
+  ih->replaceAllUsesWith(&loop);
+  ih->eraseFromParent();
+  return true;
+}
+
+} // namespace
+
 llvm::json::Object unfoldCmd(llvm::json::Object &args) {
   auto hypothesis = args.getString("hypothesis");
   if (!hypothesis)
@@ -577,44 +598,72 @@ llvm::json::Object unfoldCmd(llvm::json::Object &args) {
   llvm::json::Object err;
   if (!parseCmdShape(args, "unfold", shape, err))
     return err;
+  llvm::Module &M = *shape.M;
   llvm::Function &F = *shape.F;
-  std::string fn = "'@" + F.getName().str() + "'";
-  std::string ih = "'@" + hypothesis->str() + "'";
 
-  llvm::Function *decl = shape.M->getFunction(*hypothesis);
+  // Without a callee, the loop is the module's own function and its calls of
+  // the hypothesis are replaced; with one, the module's calls of the callee.
+  std::unique_ptr<ModuleWithCtx> calleeMwc;
+  llvm::Function *loop = &F;
+  if (auto calleeText = args.getString("callee")) {
+    std::string parseErr;
+    calleeMwc = parseModule(*calleeText, &parseErr, *shape.mwc->ctx);
+    if (!calleeMwc)
+      return errResponse("parse_error", "callee: " + parseErr);
+    loop = singleFunction(*calleeMwc->mod);
+    if (!loop)
+      return errResponse("shape_error", "the callee module must define exactly one function");
+    if (!sharedSymbolsAgree(M, F, *calleeMwc->mod, *loop, *hypothesis, err))
+      return err;
+  }
+  llvm::StringRef called = calleeMwc ? loop->getName() : *hypothesis;
+  std::string fn = "'@" + called.str() + "'";
+  std::string defined = "'@" + loop->getName().str() + "'";
+
+  llvm::Function *decl = M.getFunction(called);
   if (!decl || !decl->isDeclaration())
-    return errResponse("not_found", "the module does not declare " + ih);
-  if (decl->getFunctionType() != F.getFunctionType())
-    return errResponse("type_mismatch", ih + " is not declared as " + fn + " is defined");
-  // The copies do not keep the function's attributes. Where an attribute makes
-  // the function UB, a copy would not be UB, so the result would be another loop.
-  if (!F.getAttributes().isEmpty())
-    return errResponse("invalid", fn + " has attributes, which the copies of its body would lose");
+    return errResponse("not_found", "the module does not declare " + fn);
+  if (decl->getFunctionType() != loop->getFunctionType())
+    return errResponse("type_mismatch", fn + " is not declared as " + defined + " is defined");
+  // The copies keep no attribute of the loop or of the declaration it is
+  // called through. Where an attribute makes a call UB, the copy would not
+  // be UB, so the result would be another program.
+  if (!loop->getAttributes().isEmpty() || !decl->getAttributes().isEmpty())
+    return errResponse("invalid", "the copies would lose the attributes of " + defined +
+                                      " or of its declaration " + fn);
 
   std::vector<llvm::CallInst *> calls;
   for (auto &I : llvm::instructions(F))
     if (auto *call = llvm::dyn_cast<llvm::CallInst>(&I);
         call && call->getCalledFunction() == decl) {
       if (!plainCall(*call))
-        return errResponse("invalid", "a call of " + ih + " is not a plain call");
+        return errResponse("invalid", "a call of " + fn + " is not a plain call");
       calls.push_back(call);
     }
   if (calls.empty())
-    return errResponse("not_found", fn + " does not call " + ih);
+    return errResponse("not_found", "'@" + F.getName().str() + "' does not call " + fn);
   if (decl->getNumUses() != calls.size())
-    return errResponse("invalid", ih + " is used other than by a call");
+    return errResponse("invalid", fn + " is used other than by a call");
 
   llvm::ValueToValueMapTy cloned;
-  llvm::Function *body = llvm::CloneFunction(&F, cloned);
+  llvm::Function *body = calleeMwc ? loop : llvm::CloneFunction(&F, cloned);
+  if (calleeMwc && !callItself(*calleeMwc->mod, *loop, *hypothesis, err))
+    return err;
   for (llvm::CallInst *call : calls) {
     llvm::ValueToValueMapTy vmap;
-    for (unsigned i = 0; i < F.arg_size(); ++i)
+    if (calleeMwc) {
+      if (!adoptSymbols(*calleeMwc->mod, M, loop, vmap, err))
+        return err;
+      vmap[loop] = decl;
+    }
+    for (unsigned i = 0; i < body->arg_size(); ++i)
       vmap[body->getArg(i)] = call->getArgOperand(i);
     if (!putBackRest(*call, *body, F, vmap))
-      return errResponse("invalid", "a call of " + ih + " is not followed by a ret of its result");
+      return errResponse("invalid", "a call of " + fn + " is not followed by a ret of its result");
   }
-  body->eraseFromParent();
-  return checkedResponse(*shape.M);
+  if (!calleeMwc)
+    body->eraseFromParent();
+  return checkedResponse(M);
 }
 
 } // namespace llops

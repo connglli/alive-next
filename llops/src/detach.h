@@ -12,8 +12,9 @@
 //
 // reattach removes those blocks, sends their predecessors to the callee's
 // entry, and turns the parameters back into phis there. unfold puts the
-// callee's body at each call of its hypothesis, so one call runs two
-// iterations. See docs/llops.md for the request and response.
+// callee's body at each call of its hypothesis, so that one call runs two
+// iterations, or at each call of the callee in the outer, so that the outer
+// runs the first iteration. See docs/llops.md for the request and response.
 #pragma once
 
 #include "irutil.h"

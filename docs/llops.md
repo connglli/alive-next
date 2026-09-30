@@ -191,13 +191,15 @@ The inverse of `detach`. It refuses what `inline` refuses, and any use of the ca
 
 ## unfold
 
-Request `{ "module": ..., "hypothesis": "k.ih" }`, response `{ "ok": true, "module": ... }`.
+Request `{ "module": ..., "hypothesis": "k.ih" }`, optionally with `"callee"`, response `{ "ok": true, "module": ... }`.
 
-The module defines one function. `unfold` replaces each call of `hypothesis` in it with a copy of that function's body, in which the function's parameters are replaced by the arguments of the call. Every copy is made from the body as it was before any call was replaced, so each copy still calls `hypothesis`.
+The module defines one function. Without `callee`, `unfold` replaces each call of `hypothesis` in it with a copy of that function's body, in which the function's parameters are replaced by the arguments of the call. Every copy is made from the body as it was before any call was replaced, so each copy still calls `hypothesis`.
 
 After `detach` cuts a loop at its header, the function runs one iteration of the loop and then calls `hypothesis`. After `unfold`, it runs two iterations before it calls `hypothesis`.
 
-Each call of `hypothesis` must be followed by a `ret` of its result, and must carry nothing of its own, such as an attribute, metadata or a tail marker. The calls `detach` makes are like that. `unfold` refuses with `invalid` when the function has attributes, because the copies would not keep them. It also refuses with `invalid` when something other than a call uses `hypothesis`, such as a global variable that holds its address.
+`callee` is a callee module that `detach` returned, which defines the loop's function `k`. With it, `unfold` replaces each call of `k` in the module with a copy of `k`'s body, in which calls of `hypothesis` become calls of `k`. When the module is the outer that `detach` returned, its function then runs the loop's first iteration before it calls `k`. The module and the callee must agree about every symbol they share.
+
+Each replaced call must be followed by a `ret` of its result, and must carry nothing of its own, such as an attribute, metadata or a tail marker. The calls `detach` makes are like that. `unfold` refuses with `invalid` when the copied function or the declaration whose calls are replaced has attributes, because the copies would not keep them. It also refuses with `invalid` when something other than a call uses that declaration, such as a global variable that holds its address.
 
 ## analyze
 
