@@ -1082,17 +1082,18 @@ declare i32 @k.ih(i32)
     self.built.goal("g1", start, {"src": self.tgt, "tgt": self.tgt}, [step], {"kind": "check"})
     self.refused(self.built.write(), "not a half of a loop cut at its header")
 
-  def test_an_outer_unfolded_after_the_proof_on_entry(self):
-    # The unfolded outer calls the loop again, where nothing proved j <= i.
+  def outer_unfolded_after_the_proof_on_entry(self, side: str) -> Path:
+    """The parity loop with j <= i proved on entry, and then one side of the outer unfolded."""
     halves = self.detached(PARITY, PARITY_SUB_NUW)
     outer, inner = halves["outer"], halves["inner"]
     entered = self.assumed(outer["src"], {"at": "before_calls", "fn": "k"})
-    unfolded = self.unfolded(entered, inner["src"])
+    proved = {"src": entered, "tgt": outer["tgt"]}
+    unfolded = self.unfolded(proved[side], inner[side])
     steps = [
       {"kind": "check", "side": "src", "from": outer["src"], "to": entered},
-      {"kind": "unfold", "side": "src", "from": entered, "to": unfolded},
+      {"kind": "unfold", "side": side, "from": proved[side], "to": unfolded},
     ]
-    self.built.goal("g2", outer, {"src": unfolded, "tgt": outer["tgt"]}, steps, {"kind": "check"})
+    self.built.goal("g2", outer, {**proved, side: unfolded}, steps, {"kind": "check"})
     strong = {side: self.assumed(inner[side], {"at": "start", "fn": "k"}) for side in inner}
     kept_by = self.assumed(strong["src"], {"at": "before_calls", "fn": "k.ih"})
     by = [{"gid": "g2", "hash": entered}, {"gid": "g3", "hash": kept_by}]
@@ -1102,7 +1103,16 @@ declare i32 @k.ih(i32)
     ]
     end = {"src": kept_by, "tgt": strong["tgt"]}
     self.built.goal("g3", inner, end, inner_steps, {"kind": "check"})
-    self.refused(self.built.write(), "an unfold follows the proof before @k")
+    return self.built.write()
+
+  def test_an_outer_unfolded_after_the_proof_on_entry(self):
+    # The unfolded outer calls the loop again, where nothing proved j <= i.
+    package = self.outer_unfolded_after_the_proof_on_entry("src")
+    self.refused(package, "an unfold follows the proof before @k")
+
+  def test_an_outer_tgt_unfolded_after_the_proof_on_entry(self):
+    package = self.outer_unfolded_after_the_proof_on_entry("tgt")
+    self.refused(package, "an unfold follows the proof before @k")
 
   def test_an_invariant_proved_after_an_unfold(self):
     # The contract says i is even. An unfold before the consecution proof

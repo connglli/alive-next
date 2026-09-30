@@ -2445,6 +2445,17 @@ entry:
     marked = OUTER.replace("declare i32 @k(i32,", "declare i32 @k(i32 noundef,")
     self.bad(self.unfold(marked, callee=CALLEE), "invalid")
 
+  def test_a_callee_that_disagrees_about_a_shared_symbol_is_refused(self):
+    called = CALLEE.replace(
+      "  %d = sub i32 %i, %j\n", "  %e = sub i32 %i, %j\n  %d = call i32 @h(i32 %e)\n"
+    )
+    callee = called + "\ndeclare i32 @h(i32)\n"
+    outer = OUTER + "\ndeclare i32 @h(i32) memory(none)\n"
+    self.assertNotEqual(called, CALLEE)
+    self.good(self.unfold(OUTER + "\ndeclare i32 @h(i32)\n", callee=callee))
+    r = self.bad(self.unfold(outer, callee=callee), "invalid")
+    self.assertIn("disagree about a symbol", r["error"]["message"])
+
   def test_a_callee_whose_hypothesis_has_attributes_is_refused(self):
     marked = CALLEE.replace("declare i32 @k.ih(i32,", "declare i32 @k.ih(i32 noundef,")
     self.assertNotEqual(marked, CALLEE)
