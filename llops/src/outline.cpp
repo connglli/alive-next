@@ -203,35 +203,6 @@ bool takenApart(llvm::CallInst &call, unsigned fields) {
   });
 }
 
-// Put a callee of several blocks back at a call its block returns, its entry joining that block.
-bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F,
-                 llvm::ValueToValueMapTy &vmap) {
-  auto *ret = llvm::dyn_cast_or_null<llvm::ReturnInst>(call.getNextNode());
-  if (!ret || ret->getReturnValue() != (call.getType()->isVoidTy() ? nullptr : &call))
-    return false;
-  llvm::BasicBlock *head = call.getParent();
-  ret->eraseFromParent();
-  call.eraseFromParent();
-  std::vector<llvm::Instruction *> clones;
-  for (auto &B : callee) {
-    llvm::BasicBlock *into = &B == &callee.getEntryBlock()
-                                 ? head
-                                 : llvm::BasicBlock::Create(F.getContext(), B.getName(), &F);
-    vmap[&B] = into;
-    for (auto &I : B) {
-      auto *clone = I.clone();
-      clone->setName(I.getName());
-      clone->insertInto(into, into->end());
-      vmap[&I] = clone;
-      clones.push_back(clone);
-    }
-  }
-  for (auto *clone : clones)
-    llvm::RemapInstruction(clone, vmap,
-                           llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs);
-  return true;
-}
-
 // The outer once its callee is back, the declaration dropped and the program
 // checked. A use left over would name the callee as something else.
 llvm::json::Object inlined(llvm::Module &M, llvm::Function &decl) {

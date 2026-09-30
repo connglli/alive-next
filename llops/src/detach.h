@@ -1,5 +1,5 @@
-// `detach` and `reattach`: a block and everything it reaches leave the function
-// as a function of their own, and come back.
+// `detach`, `reattach` and `unfold`: a block and everything it reaches leave the
+// function as a function of their own, and come back.
 //
 // detach moves block B and every block it reaches into a fresh function `k`,
 // whose parameters are B's phis followed by the values those blocks use from
@@ -11,8 +11,9 @@
 // treat that call as the induction hypothesis.
 //
 // reattach removes those blocks, sends their predecessors to the callee's
-// entry, and turns the parameters back into phis there. See docs/llops.md for
-// the request and response.
+// entry, and turns the parameters back into phis there. unfold puts the
+// callee's body at each call of its hypothesis, so one call runs two
+// iterations. See docs/llops.md for the request and response.
 #pragma once
 
 #include "irutil.h"
@@ -25,6 +26,8 @@ namespace llops {
 llvm::json::Object detachCmd(llvm::json::Object &args);
 
 llvm::json::Object reattachCmd(llvm::json::Object &args);
+
+llvm::json::Object unfoldCmd(llvm::json::Object &args);
 
 // What `outline` answers for a cut at an instruction.
 llvm::json::Object outlineRest(llvm::json::Object &args, llvm::Module &M, llvm::Function &F,

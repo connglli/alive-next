@@ -2284,6 +2284,79 @@ join:
     self.good(run("opt", {"module": ROTATED, "what": "instcombine"}))
 
 
+# CALLEE with each call of the hypothesis replaced by the body, so the second
+# iteration starts from the first one's values.
+UNFOLDED = """declare i32 @k.ih(i32, i32, i32)
+
+define i32 @k(i32 %i, i32 %j, i32 %n) {
+head:
+  %c = icmp ult i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %odd = and i32 %i, 1
+  %even = icmp eq i32 %odd, 0
+  %inc = zext i1 %even to i32
+  %j.next = add i32 %j, %inc
+  %i.next = add i32 %i, 1
+  %c2 = icmp ult i32 %i.next, %n
+  br i1 %c2, label %body2, label %exit2
+
+exit:
+  %d = sub i32 %i, %j
+  ret i32 %d
+
+body2:
+  %odd2 = and i32 %i.next, 1
+  %even2 = icmp eq i32 %odd2, 0
+  %inc2 = zext i1 %even2 to i32
+  %j.next2 = add i32 %j.next, %inc2
+  %i.next2 = add i32 %i.next, 1
+  %r2 = call i32 @k.ih(i32 %i.next2, i32 %j.next2, i32 %n)
+  ret i32 %r2
+
+exit2:
+  %d2 = sub i32 %i.next, %j.next
+  ret i32 %d2
+}
+"""
+
+
+class TestUnfold(Case):
+  def unfold(self, module, hypothesis="k.ih"):
+    return run("unfold", {"module": module, "hypothesis": hypothesis})
+
+  def test_a_call_of_the_hypothesis_runs_the_body_again(self):
+    r = self.good(self.unfold(CALLEE))
+    self.assertEqual(self.canon(r["module"]), self.canon(UNFOLDED))
+
+  def test_every_call_gets_the_body_as_it_was(self):
+    # Two latches: each call becomes a body that itself calls twice.
+    twice = CALLEE.replace(
+      "  %r = call i32 @k.ih(i32 %i.next, i32 %j.next, i32 %n)\n  ret i32 %r\n",
+      "  br i1 %even, label %a, label %b\n\n"
+      "a:\n  %ra = call i32 @k.ih(i32 %i.next, i32 %j.next, i32 %n)\n  ret i32 %ra\n\n"
+      "b:\n  %rb = call i32 @k.ih(i32 %i.next, i32 %j, i32 %n)\n  ret i32 %rb\n",
+    )
+    r = self.good(self.unfold(twice))
+    self.assertEqual(r["module"].count("call i32 @k.ih("), 4)
+    self.assertTrue(self.conforms(r["module"]))
+
+  def test_a_function_with_attributes_is_refused(self):
+    marked = CALLEE.replace("define i32 @k(i32 %i,", "define i32 @k(i32 noundef %i,")
+    self.bad(self.unfold(marked), "invalid")
+
+  def test_a_hypothesis_used_other_than_by_a_call_is_refused(self):
+    self.bad(self.unfold("@p = global ptr @k.ih\n\n" + CALLEE), "invalid")
+
+  def test_a_call_whose_answer_is_not_returned_is_refused(self):
+    later = CALLEE.replace("  ret i32 %r\n", "  %s = add i32 %r, 1\n  ret i32 %s\n")
+    self.bad(self.unfold(later), "invalid")
+
+  def test_a_hypothesis_the_module_does_not_declare(self):
+    self.bad(self.unfold(CALLEE, "g.ih"), "not_found")
+
+
 class TestAssume(Case):
   F = """define i32 @f(i32 %n) {
 entry:

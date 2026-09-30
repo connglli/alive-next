@@ -31,6 +31,7 @@ const char *kUsage = "usage: llops <subcommand> < request.json > response.json\n
                      "  inline     substitute a callee back into its outer function\n"
                      "  detach     move a block and all it reaches into a function\n"
                      "  reattach   turn the calls detach made back into branches\n"
+                     "  unfold     put a detached loop's body at each call of its hypothesis\n"
                      "  analyze    known bits, ranges or pointer facts at a program point\n"
                      "  harness    wrap a function in a main that llubi can run\n"
                      "  assume     state a fact about a value before an instruction\n"
@@ -92,6 +93,8 @@ int main(int argc, char **argv) {
     return respond(llops::detachCmd(*args));
   if (cmd == "reattach")
     return respond(llops::reattachCmd(*args));
+  if (cmd == "unfold")
+    return respond(llops::unfoldCmd(*args));
   if (cmd == "analyze")
     return respond(llops::analyzeCmd(*args));
   if (cmd == "harness")

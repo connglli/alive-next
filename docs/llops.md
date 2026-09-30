@@ -91,7 +91,7 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 
 A snippet may not shadow a name that already exists. `replace` may reuse the name of the value it replaces, and may not use the value itself.
 
-A snippet may name the module's globals, and one that calls an intrinsic the module does not declare gets a declaration, which is how `llvm.assume` reaches a body. A snippet cannot name a type the module declares, because it is parsed in a throwaway function that cannot declare one; `set_body` reparses the whole module and can.
+A snippet may use the module's global variables and call its functions. When a snippet calls an intrinsic that the module does not declare, llops adds the declaration, which is how a snippet can call `llvm.assume`. A snippet cannot name a type the module declares, because it is parsed in a throwaway function that cannot declare one; `set_body` reparses the whole module and can.
 
 `erase` refuses a value that still has users, leaving the caller to erase or rewrite them first. With `"cascade": true` the operands that become dead go with it, stopping at anything with a side effect; a plain load has none, so a dead one goes.
 
@@ -188,6 +188,16 @@ The signature is the block's phis, then the values the moved blocks use from out
 Request `{ "outer": ..., "callee": ..., "callee_name": "k", "phis": [ 0, 1 ], "hypothesis": "k.ih" }`, response `{ "ok": true, "module": ... }`.
 
 The inverse of `detach`. It refuses what `inline` refuses, and any use of the callee or its hypothesis other than a block that only calls it. Every block that only calls the callee or its hypothesis and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there. The parameters `phis` names stay phis. Every other parameter must be passed one value on every edge, or itself, and becomes that value. `canon` of the result is `canon` of the module `detach` started from.
+
+## unfold
+
+Request `{ "module": ..., "hypothesis": "k.ih" }`, response `{ "ok": true, "module": ... }`.
+
+The module defines one function. `unfold` replaces each call of `hypothesis` in it with a copy of that function's body, in which the function's parameters are replaced by the arguments of the call. Every copy is made from the body as it was before any call was replaced, so each copy still calls `hypothesis`.
+
+After `detach` cuts a loop at its header, the function runs one iteration of the loop and then calls `hypothesis`. After `unfold`, it runs two iterations before it calls `hypothesis`.
+
+Each call of `hypothesis` must be followed by a `ret` of its result, and must carry nothing of its own, such as an attribute, metadata or a tail marker. The calls `detach` makes are like that. `unfold` refuses with `invalid` when the function has attributes, because the copies would not keep them. It also refuses with `invalid` when something other than a call uses `hypothesis`, such as a global variable that holds its address.
 
 ## analyze
 
