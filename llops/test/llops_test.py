@@ -2417,6 +2417,23 @@ class TestUnfold(Case):
   def test_a_call_whose_answer_a_dead_block_uses_is_refused(self):
     self.bad(self.unfold(with_dead_use(CALLEE, "%r")), "invalid")
 
+  def test_a_body_with_alias_scopes_is_refused(self):
+    scoped = """declare i32 @k.ih(ptr, i32)
+
+define i32 @k(ptr %p, i32 %i) {
+entry:
+  %v = load i32, ptr %p, align 4, !alias.scope !0
+  %r = call i32 @k.ih(ptr %p, i32 %v)
+  ret i32 %r
+}
+
+!0 = !{!1}
+!1 = distinct !{!1, !2}
+!2 = distinct !{!2}
+"""
+    self.good(run("validate", {"module": scoped}))
+    self.bad(self.unfold(scoped), "invalid")
+
   def test_a_hypothesis_the_module_does_not_declare(self):
     self.bad(self.unfold(CALLEE, "g.ih"), "not_found")
 

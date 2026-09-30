@@ -199,7 +199,7 @@ After `detach` cuts a loop at its header, the function runs one iteration of the
 
 `callee` is a callee module that `detach` returned, which defines the loop's function `k`. With it, `unfold` replaces each call of `k` in the module with a copy of `k`'s body, in which calls of `hypothesis` become calls of `k`. When the module is the outer that `detach` returned, its function then runs the loop's first iteration before it calls `k`. The module and the callee must agree about every symbol they share.
 
-Each replaced call must be followed by a `ret` of its result, which nothing else may use, and must carry nothing of its own, such as an attribute, metadata or a tail marker. The calls `detach` makes are like that. `unfold` refuses with `invalid` when the copied function, the declaration whose calls are replaced, or the callee's `hypothesis` has attributes, because the copies would not keep them. It also refuses with `invalid` when something other than a call uses that declaration, such as a global variable that holds its address.
+A replaced call must carry nothing of its own, such as an attribute or metadata, and only a `ret` right after it may use its result, as in the calls `detach` makes. `unfold` refuses with `invalid` attributes on the copied function, on the declaration whose calls are replaced or on the callee's `hypothesis`, which the copies would drop; `!alias.scope` or `!noalias` metadata in the copied body, which the copies would share; and any use of that declaration other than a call.
 
 ## analyze
 

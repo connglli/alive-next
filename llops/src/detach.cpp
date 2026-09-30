@@ -632,12 +632,16 @@ llvm::json::Object unfoldCmd(llvm::json::Object &args) {
     return errResponse("not_found", "the module does not declare " + fn);
   if (decl->getFunctionType() != loop->getFunctionType())
     return errResponse("type_mismatch", fn + " is not declared as " + defined + " is defined");
-  // The copies keep no attribute of the loop or of the declaration it is
-  // called through. Where an attribute makes a call UB, the copy would not
-  // be UB, so the result would be another program.
+  // A copy has to mean what the call meant. It would drop the attributes of
+  // the loop and of the declaration it is called through, and share the
+  // body's alias scopes with the other copies.
   if (!loop->getAttributes().isEmpty() || !decl->getAttributes().isEmpty())
     return errResponse("invalid", "the copies would lose the attributes of " + defined +
                                       " or of its declaration " + fn);
+  for (auto &I : llvm::instructions(*loop))
+    if (I.hasMetadata(llvm::LLVMContext::MD_alias_scope) ||
+        I.hasMetadata(llvm::LLVMContext::MD_noalias))
+      return errResponse("invalid", defined + " has alias scopes, which the copies would share");
 
   std::vector<llvm::CallInst *> calls;
   for (auto &I : llvm::instructions(F))
