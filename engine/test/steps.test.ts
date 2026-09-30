@@ -123,6 +123,46 @@ function cutG1(src: string, tgt: string): Event {
   };
 }
 
+/** A loop's callee after a cut at its header: its back edge calls the hypothesis. */
+const BODY = `declare i32 @k.ih(i32, i32)
+
+define i32 @k(i32 %i, i32 %n) {
+head:
+  %c = icmp ult i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %next = add i32 %i, 1
+  %r = call i32 @k.ih(i32 %next, i32 %n)
+  ret i32 %r
+
+exit:
+  ret i32 %i
+}
+`;
+
+/** A cut of the root at a loop header, both children holding `body`. */
+function detachG1(body: string): Event {
+  const pair = { src: body, tgt: body };
+  return {
+    kind: "tool_result",
+    id: "1",
+    tool: "split",
+    effects: [
+      {
+        effect: "split",
+        gid: "g1",
+        name: "k",
+        outer: { gid: "g2", ...pair },
+        callee: { gid: "g3", ...pair },
+        detach: { phis: { src: [0], tgt: [0] }, hypothesis: "k.ih" },
+      },
+    ],
+    result: null,
+    ms: 1,
+  };
+}
+
 /** An open goal on the pair the preconditioned window tests edit. */
 async function preconditionedTree() {
   const src = await store.put(BEFORE);
@@ -261,6 +301,38 @@ describe("rewriting", () => {
     const { steps } = rewriting(NEW);
     const refused = await steps.rewrite(await tree(), "g1", "tgt", ["addi-zero-to-x"]);
     expect(refused).toMatchObject({ kind: "refused", code: "side_unsupported" });
+  });
+});
+
+describe("unfolding", () => {
+  test("puts the body at the hypothesis's call without asking alive2 about the step", async () => {
+    const checker = new FakeChecker(["unknown"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const body = await store.put(BODY);
+    const result = await steps.unfold(await tree(detachG1(body)), "g3", "src");
+
+    if (result.kind !== "certified") throw new Error("expected the unfold to land");
+    expect(result.effects).toEqual([
+      { effect: "step", gid: "g3", side: "src", to: result.hash, how: "unfold" },
+    ]);
+    expect(store.get(result.hash).match(/icmp ult/g)).toHaveLength(2);
+    // The only solver run is the eager check of the new pair, not of the step.
+    expect(checker.calls).toHaveLength(1);
+  });
+
+  test("refuses a goal that is not a loop cut at its header", async () => {
+    const steps = new Steps(store, new FakeChecker([]), DEFAULT_TIMEOUTS, llops, unrewriting);
+    const refused = await steps.unfold(await tree(), "g1", "src");
+    expect(refused).toMatchObject({ kind: "refused", code: "invalid" });
+  });
+
+  test("passes on what llops refuses", async () => {
+    const checker = new FakeChecker([]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const marked = await store.put(BODY.replace("(i32 %i,", "(i32 noundef %i,"));
+    const refused = await steps.unfold(await tree(detachG1(marked)), "g3", "src");
+    expect(refused).toMatchObject({ kind: "refused", code: "invalid" });
+    expect(checker.calls).toHaveLength(0);
   });
 });
 

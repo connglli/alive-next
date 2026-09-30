@@ -543,15 +543,15 @@ class Check:
       ms=ms,
     )
 
-  def goal(self, gid: str, role: str | None = None) -> None:
+  def goal(self, gid: str, role: str | None = None, hypothesis: str | None = None) -> None:
     """Check one goal: its chain, then how it was discharged.
 
     `role` identifies the goal's role in a split: None means neither caller
     nor callee, "outer" means the caller, and any other value is the
-    callee's name.
+    callee's name. `hypothesis` is what a detached loop's callee calls.
     """
     goal = self.package.goal(gid)
-    head = self.chain(gid, goal, role)
+    head = self.chain(gid, goal, role, hypothesis)
     for side in ("src", "tgt"):
       if head[side] != goal["end"][side]:
         self.fail(
@@ -593,7 +593,7 @@ class Check:
         f"{discharge['kind']}, which this does not know",
       )
 
-  def chain(self, gid: str, goal: dict, role: str | None) -> dict:
+  def chain(self, gid: str, goal: dict, role: str | None, hypothesis: str | None) -> dict:
     """Walk the steps, checking each one in the direction its side implies."""
     head = dict(goal["start"])
     for step in goal["steps"]:
@@ -619,6 +619,8 @@ class Check:
         head[step["side"]] = self.window(gid, step, head)
       elif step["kind"] == "rewrite":
         head[step["side"]] = self.rewrite(gid, step, head)
+      elif step["kind"] == "unfold":
+        head[step["side"]] = self.unfold(gid, step, head, hypothesis)
       elif step["kind"] == "strengthen":
         self.strengthen(gid, step, head, role)
       else:
@@ -733,6 +735,17 @@ class Check:
       if not proofs:
         self.fail(
           gid, "src", "Predicate proof", f"no src step proves the entry predicates before @{fn}"
+        )
+        continue
+      # One iteration keeps the contract when the proof starts from the
+      # program that assumed it at the entry. After an unfold, the copy in the
+      # middle would carry that assumption too, and it was never proved there.
+      if fn == hypothesis and proofs[0]["from"] != step["to"]["src"]:
+        self.fail(
+          gid,
+          "src",
+          "Predicate proof",
+          f"the proof before @{fn} does not start from the program the contract was assumed in",
         )
         continue
       started = time.monotonic()
@@ -958,6 +971,42 @@ class Check:
     )
     return step["to"]
 
+  def unfold(self, gid: str, step: dict, head: dict, hypothesis: str | None) -> str:
+    """A detached loop's body put at each call of its hypothesis: unfold again and compare.
+
+    Both bodies define the same loop, so the step holds on either side and no
+    solver is asked anything.
+    """
+    side = step["side"]
+    if hypothesis is None:
+      self.fail(gid, side, "Unfold", "on a goal that is not a loop cut at its header")
+      return step["to"]
+    if step["from"] != head[side]:
+      self.fail(
+        gid,
+        side,
+        "Chain continuity",
+        f"step starts at {step['from'][:12]}, not the head",
+      )
+      return step["to"]
+
+    started = time.monotonic()
+    unfolded = self.package.run_llops(
+      "unfold", {"module": self.package.program(step["from"]), "hypothesis": hypothesis}
+    )["module"]
+    same = self.package.run_llops("canon", {"module": unfolded})["module"]
+    matches = same == self.package.program(step["to"])
+    self.compared(
+      gid,
+      side,
+      "llops",
+      "Unfold replay",
+      f"{step['from'][:12]} -> {step['to'][:12]}; @{hypothesis}",
+      matches,
+      elapsed_ms(started),
+    )
+    return step["to"]
+
   def split(self, gid: str, goal: dict, discharge: dict) -> None:
     """A cut holds when it inlines, or reattaches, back to the pair it was made on."""
     outer = self.package.goal(discharge["outer"])
@@ -1075,7 +1124,7 @@ class Check:
     # parameters are values computed before it, so it is asked about them
     # under no assumption at all.
     self.goal(discharge["outer"], "outer")
-    self.goal(discharge["inner"], name)
+    self.goal(discharge["inner"], name, hypothesis)
 
 
 class Refutation:

@@ -269,6 +269,11 @@ export class Llops {
     return this.run("reattach", hypothesis ? { ...request, hypothesis } : request);
   }
 
+  /** Put a detached loop's body at each call of its hypothesis, so one call runs two iterations. */
+  unfold(module: Module, hypothesis: string): Promise<LlopsResult<ModuleResult>> {
+    return this.run("unfold", { module, hypothesis });
+  }
+
   analyze(module: Module, kind: AnalyzeKind, point?: Ref): Promise<LlopsResult<AnalyzeResult>> {
     return this.run("analyze", point ? { module, kind, point } : { module, kind });
   }

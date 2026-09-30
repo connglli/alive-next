@@ -448,20 +448,26 @@ class Case(unittest.TestCase):
     self.built.goal("g3", inner, inner, [], {"kind": "check"})
     return {"outer": outer, "inner": inner}
 
+  def text(self, digest: str) -> str:
+    return (self.built.root / "programs" / f"{digest}.ll").read_text()
+
+  def assumed(self, digest: str, anchor: dict, assertions: list = ORDER) -> str:
+    """The program with `assertions` assumed at `anchor`, stored as a run stores it."""
+    request = {"module": self.text(digest), "anchor": anchor, "assertions": assertions}
+    return self.built.program(canonical(llops("assume", request)["module"]))
+
+  def unfolded(self, digest: str) -> str:
+    """The program with k's body at each call of k.ih, stored as a run stores it."""
+    request = {"module": self.text(digest), "hypothesis": "k.ih"}
+    return self.built.program(canonical(llops("unfold", request)["module"]))
+
   def invariant(self, kept: bool = True) -> Path:
     """The parity loop proved with j <= i, assumed at the callee's entry and
     proved before each call: the outer's (on entry) and k.ih's (each
     iteration), unless `kept` is false."""
     halves = self.detached(PARITY, PARITY_SUB_NUW)
     outer, inner = halves["outer"], halves["inner"]
-
-    def text(digest: str) -> str:
-      return (self.built.root / "programs" / f"{digest}.ll").read_text()
-
-    def assumed(digest: str, anchor: dict, assertions: list = ORDER) -> str:
-      request = {"module": text(digest), "anchor": anchor, "assertions": assertions}
-      module = llops("assume", request)
-      return self.built.program(llops("canon", {"module": module["module"]})["module"])
+    assumed = self.assumed
 
     entered = assumed(outer["src"], {"at": "before_calls", "fn": "k"})
     initiation = {"kind": "check", "side": "src", "from": outer["src"], "to": entered}
@@ -517,6 +523,16 @@ class TestGolden(Case):
 
   def test_a_loop_invariant_proved_on_entry_and_kept_verifies(self):
     self.verified(self.invariant())
+
+  def test_a_loop_unfolded_on_both_sides_verifies(self):
+    inner = self.detached(PARITY, PARITY_NUW)["inner"]
+    end = {side: self.unfolded(inner[side]) for side in ("src", "tgt")}
+    steps = [
+      {"kind": "unfold", "side": side, "from": inner[side], "to": end[side]}
+      for side in ("src", "tgt")
+    ]
+    self.built.goal("g3", inner, end, steps, {"kind": "check"})
+    self.verified(self.built.write())
 
   def test_a_loop_against_itself_verifies_with_no_solver(self):
     pair = {"src": self.built.program(canonical(LOOP)), "tgt": self.built.program(canonical(LOOP))}
@@ -1038,6 +1054,47 @@ declare i32 @k.ih(i32)
 
   def test_an_invariant_no_iteration_is_shown_to_keep(self):
     self.refused(self.invariant(kept=False), "no src step proves the entry predicates before @k.ih")
+
+  def test_an_unfold_that_is_not_the_body_run_twice(self):
+    inner = self.detached(PARITY, PARITY_NUW)["inner"]
+    step = {"kind": "unfold", "side": "src", "from": inner["src"], "to": inner["tgt"]}
+    end = {"src": inner["tgt"], "tgt": inner["tgt"]}
+    self.built.goal("g3", inner, end, [step], {"kind": "check"})
+    self.refused(self.built.write(), "Unfold replay")
+
+  def test_an_unfold_on_a_goal_that_is_not_a_loop(self):
+    outer = self.detached(PARITY, PARITY_NUW)["outer"]
+    step = {"kind": "unfold", "side": "src", "from": outer["src"], "to": outer["tgt"]}
+    end = {"src": outer["tgt"], "tgt": outer["tgt"]}
+    self.built.goal("g2", outer, end, [step], {"kind": "check"})
+    self.refused(self.built.write(), "not a loop cut at its header")
+
+  def test_an_invariant_proved_after_an_unfold(self):
+    # The contract says i is even. An unfold before the consecution proof
+    # copies that assumption into the middle of the body, where it says i + 1
+    # is even, which never holds. The src is then UB after one iteration, so a
+    # tgt that steps i by 2 would pass.
+    stride = PARITY.replace("%i.next = add i32 %i, 1", "%i.next = add i32 %i, 2")
+    halves = self.detached(PARITY, stride)
+    outer, inner = halves["outer"], halves["inner"]
+    even = [{"insts": ["%lo = and i32 !0, 1", "%ok = icmp eq i32 %lo, 0"]}]
+    entered = self.assumed(outer["src"], {"at": "before_calls", "fn": "k"}, even)
+    initiation = {"kind": "check", "side": "src", "from": outer["src"], "to": entered}
+    self.built.goal(
+      "g2", outer, {"src": entered, "tgt": outer["tgt"]}, [initiation], {"kind": "check"}
+    )
+    strong = {side: self.assumed(inner[side], {"at": "start", "fn": "k"}, even) for side in inner}
+    twice = self.unfolded(strong["src"])
+    kept_by = self.assumed(twice, {"at": "before_calls", "fn": "k.ih"}, even)
+    by = [{"gid": "g2", "hash": entered}, {"gid": "g3", "hash": kept_by}]
+    steps = [
+      {"kind": "strengthen", "from": inner, "to": strong, "predicates": even, "by": by},
+      {"kind": "unfold", "side": "src", "from": strong["src"], "to": twice},
+      {"kind": "check", "side": "src", "from": twice, "to": kept_by},
+    ]
+    end = {"src": kept_by, "tgt": strong["tgt"]}
+    self.built.goal("g3", inner, end, steps, {"kind": "check"})
+    self.refused(self.built.write(), "does not start from the program the contract was assumed in")
 
   def test_a_recursive_callee_with_a_function_attribute(self):
     halves = self.detached(PARITY, PARITY_NUW)

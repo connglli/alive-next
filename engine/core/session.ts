@@ -50,6 +50,7 @@ import {
   type RewriteStepResult,
   Steps,
   type Timeouts,
+  type UnfoldStepResult,
 } from "./state/steps.ts";
 import { canonWith, Store } from "./state/store.ts";
 import { Strengthen, type StrengthenContract, type StrengthenResult } from "./state/strengthen.ts";
@@ -377,14 +378,30 @@ export class Session {
           message: "rewriting is supported on src only; peephole rules optimize forward",
         };
       }
-      // A rewrite moves the head the scratch was opened on, so like a revert
-      // it waits while its side is being edited.
-      const editing = this.editing.open();
-      if (editing && this.editing.isEditing(gid, side)) {
-        return { kind: "refused", code: "editing", message: transactionMessage(editing) };
-      }
-      return this.steps.rewrite(tree, gid, side, rules);
+      return this.editingRefusal(gid, side) ?? this.steps.rewrite(tree, gid, side, rules);
     });
+  }
+
+  /**
+   * Put a detached loop's body at each call of its hypothesis on one side of
+   * its callee goal, so one call runs two iterations, as a loop unrolled by
+   * two does. The loop stays the same, so no solver is asked about the step.
+   */
+  unfold(gid: string, side: Side): Promise<UnfoldStepResult> {
+    return this.act("unfold", { gid, side }, async (tree) => {
+      return this.editingRefusal(gid, side) ?? this.steps.unfold(tree, gid, side);
+    });
+  }
+
+  /**
+   * The refusal a move gets when it would replace a side's head while a
+   * transaction is open on that side, since the transaction started from
+   * that head. A revert waits for the same reason.
+   */
+  private editingRefusal(gid: string, side: Side) {
+    const editing = this.editing.open();
+    if (!editing || !this.editing.isEditing(gid, side)) return undefined;
+    return { kind: "refused" as const, code: "editing", message: transactionMessage(editing) };
   }
 
   /** The rewriter's rule table, which is what a rewrite offers. */

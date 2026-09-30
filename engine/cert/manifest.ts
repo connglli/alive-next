@@ -70,6 +70,17 @@ export type Step =
       };
     }
   /**
+   * A detached loop's body put at each call of its hypothesis. Both bodies
+   * define the same loop, so a checker unfolds `from` again and compares
+   * bytes, asking no solver anything.
+   */
+  | {
+      kind: "unfold";
+      side: "src" | "tgt";
+      from: Hash;
+      to: Hash;
+    }
+  /**
    * An interface was strengthened: the callee gained parameter attributes,
    * function attributes, and/or entry predicates.
    */
@@ -339,6 +350,8 @@ function chainOf(goal: Goal, effects: Effect[]): Step[] {
           rules: effect.rules,
           invocation: effect.invocation,
         });
+      } else if (effect.how === "unfold") {
+        steps.push({ kind: "unfold", side: effect.side, from, to: effect.to });
       } else {
         steps.push(
           effect.window

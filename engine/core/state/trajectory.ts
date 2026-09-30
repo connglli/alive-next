@@ -66,13 +66,13 @@ export interface MessageEvent {
  * result, so there is one record of what happened rather than two.
  */
 export type Effect =
-  /** A side advanced to a new program, by the rewriter's rules or by alive2's check. */
+  /** A side advanced to a new program, by the rewriter's rules, by alive2's check, or by unfolding. */
   | {
       effect: "step";
       gid: string;
       side: "src" | "tgt";
       to: Hash;
-      how: "rewrite" | "check";
+      how: "rewrite" | "check" | "unfold";
       /**
        * The rules llrwt ran, present when `how` is "rewrite". A rewrite step is
        * certified by the rules' external proofs rather than by an alive2 run

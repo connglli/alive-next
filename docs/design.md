@@ -30,7 +30,7 @@ A wrong proposal wastes time; it never produces a wrong certificate. Since refin
 
 **All** features alive2 supports, including memory operations and branches. A loop is proved by induction once split at its header, and refuted by running it.
 
-Induction proves a pair of loops only when both reach the header once per iteration with the same state, and a fact over the callee's parameters relates them there. That leaves out of reach:
+Induction proves a pair of loops only when both reach the header with the same state, and a fact over the callee's parameters relates them there. That leaves out of reach:
 
 * A variable the tgt dropped, such as `%i` after linear function test replacement: the tgt would have to pass the shared hypothesis a value refining the src's.
 * Unrolling with a remainder loop, a loop replaced by a call such as `memset`, and a deleted loop: the tgt makes no call to pair with the src's call of its hypothesis, and alive2 refuses a call on one side only, since it may not return.
@@ -85,6 +85,8 @@ The declared `g` must have one signature shared by both sides. The signature is 
 The only trusted glue is that the outlining transformation itself is faithful (the outer program plus the callee really is the original program). That is mechanical and small.
 
 A split at a block detaches it instead: the block and every block it reaches become `g`, and each branch to the block becomes a call of `g`. At a loop header, the back edge calls a declared hypothesis `g.ih` in place of `g`, so the callee is one iteration and does not loop. Proving that pair, with `g.ih` an unknown function both sides share, proves the loop by induction: each side calls `g.ih` where it would go around again, so a tgt cannot stop where the src goes on. The glue a checker trusts is `reattach`, the inverse of detaching, as `inline` is of outlining.
+
+Unfolding puts `g`'s body at each call of `g.ih`, so one call of `g` runs two iterations, as a loop unrolled by two does. It is not a refinement, but both bodies define the same loop, so a checker reruns the unfold instead of asking alive2.
 
 A cut leaves the callee's parameters poison-capable, since nothing about a fresh function says its arguments are defined. `strengthen(gid, {param: {noundef}})` states otherwise and proves it at the call site. The proof fails where the value at the cut can be poison, and then the cut has to move or the program has to be made defined there.
 
@@ -177,6 +179,7 @@ Every tool call is logged. Tools that create certified steps record enough to re
 
 - `split(gid, src_cut, tgt_cut, value_map)`: outlines both sides of an open goal at the given cut points (a cut point names a position in the instruction sequence by the value defined there), or detaches both at a block. The src side's live values at the cut define `g`'s signature; `value_map` gives the corresponding tgt values. Creates two child goals (outer and callee); the parent's status becomes `split` and its heads are frozen. The parent is proved automatically when both children are. Fails structurally if the map is ill-typed or the tgt suffix uses values not covered by the map.
 - `unsplit(gid)`: discards a split goal's children (and their subtrees) and reopens the parent. The way to undo a bad cut.
+- `unfold(gid, side)`: on the callee of a loop cut at its header, put the body at each call of the hypothesis on the given side. Certified without running alive2.
 
 ### Rewriting
 
@@ -227,14 +230,14 @@ Both children are cross-checked once at the end, after phase 3, and not between 
 A "verified" verdict is delivered as a self-contained package that anyone can replay with only alive2, the rule applier, and a scripting runtime; the framework and the agent are not needed. Layout:
 
 - `programs/`: every IR version referenced by the proof, one file per program, named by content hash. Hash naming makes chain connectivity a trivial string comparison.
-- `manifest.json`: the pruned goal tree. Per goal: its initial (src, tgt) hashes, its chain of certified steps, and how it was discharged. Per step: kind (rule, checked, split, strengthen), side, before/after hashes, and for alive2-backed steps the exact invocation (function pair, direction, options, timeout).
+- `manifest.json`: the pruned goal tree. Per goal: its initial (src, tgt) hashes, its chain of certified steps, and how it was discharged. Per step: kind (rule, checked, unfold, split, strengthen), side, before/after hashes, and for alive2-backed steps the exact invocation (function pair, direction, options, timeout).
 - `check.py`: a small standalone script that replays the proof, one step at a time.
 
 The script verifies:
 
 1. Chain connectivity: each step's before-hash matches the current head, starting from the root's LHS and RHS hashes.
 2. alive2-backed steps and leaf discharges: rerun alive-tv on the recorded pair in the recorded direction; the result must be "correct". Replay timeouts should be more generous than the originals, since solver timing varies across machines.
-3. Rule steps: re-apply the recorded rule at the recorded location and check that the output matches the after-hash.
+3. Rule and unfold steps: re-apply the recorded rule at the recorded location, or unfold again, and check that the output matches the after-hash.
 4. Split faithfulness: inline the callee back into the outer program at the call site, or reattach a detached one, and check alpha-equivalence against the parent's program, per side. Mechanical.
 5. Identical discharges: a leaf whose two sides are the same program needs no solver.
 6. Composition: the root is verified iff every leaf discharge and every faithfulness check passed and every parent's children are accounted for.
@@ -263,7 +266,7 @@ Two tiers, drawn by one criterion: can a bug here cause a wrong verdict to be ac
 - llubi, for counterexample verdicts that name an input: a llubi bug cannot fake "verified", and a replay is a single concrete input that is easy to cross-check independently.
 - The verified rewriter llrwt (used by `kernel/check.py` to replay rule steps), together with the rules' external proofs and the MLIR translators it runs under.
 - llops, for the subcommands `kernel/check.py` runs, and the LLVM they link: they rebuild and gate the programs the replay compares.
-- `kernel/check.py`: the small standalone checker that encodes chain connectivity, split faithfulness, and tree composition.
+- `kernel/check.py`: the small standalone checker that encodes chain connectivity, split faithfulness, tree composition, and the loop rules no solver checks (induction and unfolding).
 
 **Tier 2, success-critical (untrusted for soundness).** The framework, the analyses, the agent, and `bash` scratch work. A bug here can waste time, mislead the search, or end the run at "unknown"; it cannot survive a certificate replay, so it cannot corrupt a verdict. These components are still engineered and tested like normal software, because the tool's success rate depends on them. The framework in particular orchestrates the search and assembles the package, but its mistakes show up as failed replays, not wrong answers.
 

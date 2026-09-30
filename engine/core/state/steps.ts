@@ -196,6 +196,21 @@ export type RewriteStepResult =
       message: string;
     };
 
+/** An unfold that landed, or the reason it did not. */
+export type UnfoldStepResult =
+  | {
+      kind: "certified";
+      hash: Hash;
+      /** In order: the step, then the discharge when the eager check proved it. */
+      effects: Effect[];
+      eager: CheckResult;
+    }
+  | {
+      kind: "refused";
+      code: string;
+      message: string;
+    };
+
 /** What checking a goal's current pair came to. */
 export interface CheckGoalResult {
   outcome: "proved" | "refuted" | "unknown";
@@ -480,6 +495,29 @@ export class Steps {
     const eager = await this.eagerCheck(goal, gid, side, after, effects);
 
     return { kind: "certified", hash: after, effects, invocation: applied.invocation, eager };
+  }
+
+  /**
+   * Put a detached loop's body at each call of its hypothesis on one side, so
+   * one call runs two iterations. Both bodies define the same loop, so no
+   * solver is asked about the step; a replay unfolds again and compares.
+   */
+  async unfold(tree: Tree, gid: string, side: Side): Promise<UnfoldStepResult> {
+    const goal = workable(tree, gid);
+    const hypothesis = goal.role === "callee" ? goal.detach?.hypothesis : undefined;
+    if (hypothesis === undefined) {
+      return {
+        kind: "refused",
+        code: "invalid",
+        message: `${gid} is not a loop cut at its header, so it has no hypothesis to unfold`,
+      };
+    }
+    const unfolded = await this.llops.unfold(this.store.get(head(goal, side)), hypothesis);
+    if (!unfolded.ok) return { kind: "refused", code: unfolded.code, message: unfolded.message };
+    const after = await this.store.put(unfolded.module);
+    const effects: Effect[] = [{ effect: "step", gid, side, to: after, how: "unfold" }];
+    const eager = await this.eagerCheck(goal, gid, side, after, effects);
+    return { kind: "certified", hash: after, effects, eager };
   }
 
   /**

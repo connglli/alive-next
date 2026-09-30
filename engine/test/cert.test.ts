@@ -21,6 +21,7 @@ import { derive } from "../core/state/goals.ts";
 import type { Checker } from "../core/state/steps.ts";
 import { parse } from "../core/state/trajectory.ts";
 import { cut } from "../examples/cut.ts";
+import { loop } from "../examples/loop.ts";
 import { miscompile } from "../examples/miscompile.ts";
 import { strengthen } from "../examples/strengthen.ts";
 import { toolchain } from "./toolchain-under-test.ts";
@@ -255,6 +256,27 @@ describe.skipIf(!built)("the manifest", () => {
     expect(only.side).toBe("src");
     expect(only.rules).toEqual(["addi-zero-to-x"]);
     expect(only.invocation).toMatchObject({ binary: "fake-llrwt", rules: ["addi-zero-to-x"] });
+  });
+
+  test("records an unfold as the step it is, for a replay without a solver", async () => {
+    const session = await Session.start({
+      dir: join(dir, "unfolded"),
+      src: loop.src,
+      tgt: loop.tgt,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    const split = await session.split("g1", "%bb1", "%bb1", { "%1": "%1", "%2": "%2", "%0": "%0" });
+    if (split.kind !== "split") throw new Error("expected the cut to land");
+    const unfolded = await session.unfold("g3", "src");
+    if (unfolded.kind !== "certified") throw new Error("expected the unfold to land");
+    await session.check("g2");
+    expect(session.finish()).toBe("verified");
+
+    const [only] = manifestFrom(session.dir).goals.g3?.steps ?? [];
+    expect(only).toMatchObject({ kind: "unfold", side: "src", to: unfolded.hash });
   });
 
   test("copies every program the proof names", async () => {
