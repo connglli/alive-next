@@ -25,6 +25,7 @@ import { memloop } from "./memloop.ts";
 import { miscompile } from "./miscompile.ts";
 import { nested } from "./nested.ts";
 import { nuw } from "./nuw.ts";
+import { offset } from "./offset.ts";
 import { peel } from "./peel.ts";
 import { pipeline } from "./pipeline.ts";
 import { poison } from "./poison.ts";
@@ -79,6 +80,7 @@ export const scenarios: Scenario[] = [
   countdown,
   unfold,
   peel,
+  offset,
   unroll,
 ];
 
