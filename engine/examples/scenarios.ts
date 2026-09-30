@@ -35,6 +35,7 @@ import { rule } from "./rule.ts";
 import { strchr } from "./strchr.ts";
 import { strengthReduce } from "./strength-reduce.ts";
 import { strengthen } from "./strengthen.ts";
+import { unfold } from "./unfold.ts";
 import { unroll } from "./unroll.ts";
 import { vectorize } from "./vectorize.ts";
 import { widen } from "./widen.ts";
@@ -75,6 +76,7 @@ export const scenarios: Scenario[] = [
   loopdiv,
   strchr,
   countdown,
+  unfold,
   unroll,
 ];
 
