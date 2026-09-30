@@ -584,6 +584,12 @@ bool callItself(llvm::Module &calleeM, llvm::Function &loop, llvm::StringRef hyp
                                            "' as it defines '@" + loop.getName().str() + "'");
     return false;
   }
+  // Its calls become calls of the loop's declaration, which has none of its attributes.
+  if (!ih->getAttributes().isEmpty()) {
+    err = errResponse("invalid",
+                      "the copies would lose the attributes of '@" + hypothesis.str() + "'");
+    return false;
+  }
   ih->replaceAllUsesWith(&loop);
   ih->eraseFromParent();
   return true;

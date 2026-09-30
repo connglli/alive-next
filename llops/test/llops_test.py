@@ -2428,6 +2428,11 @@ class TestUnfold(Case):
     marked = OUTER.replace("declare i32 @k(i32,", "declare i32 @k(i32 noundef,")
     self.bad(self.unfold(marked, callee=CALLEE), "invalid")
 
+  def test_a_callee_whose_hypothesis_has_attributes_is_refused(self):
+    marked = CALLEE.replace("declare i32 @k.ih(i32,", "declare i32 @k.ih(i32 noundef,")
+    self.assertNotEqual(marked, CALLEE)
+    self.bad(self.unfold(OUTER, callee=marked), "invalid")
+
 
 class TestAssume(Case):
   F = """define i32 @f(i32 %n) {
