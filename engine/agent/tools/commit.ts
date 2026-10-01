@@ -87,7 +87,8 @@ function fallbackSummary(fallback?: Fallback): string {
     return ` (whole-function fallback: window check${bounds}${pre} was ${narrowOutcome} in ${ms}ms${budget}${conditioning})`;
   }
   if (fallback?.reason === "no_window") {
-    return " (whole-function fallback: no local window found across edits)";
+    const why = fallback.narrowing ? `, since ${fallback.narrowing}` : "";
+    return ` (whole-function fallback: no window${why})`;
   }
   return "";
 }

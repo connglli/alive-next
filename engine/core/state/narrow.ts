@@ -26,6 +26,9 @@ import { type Ref, resolveRef } from "../refs.ts";
 /** The name the outlined window has in both halves. */
 const CALLEE = "outlined_window";
 
+const BLOCKS: NoWindow = { why: "the edit changes the number of blocks" };
+const NO_BODY: NoWindow = { why: "a side has no body" };
+
 /** A step's obligation, narrowed to the window the edit touched. */
 export interface Narrowed {
   /** The outer both versions share, which shows the rest is untouched. */
@@ -49,8 +52,13 @@ export interface Window {
   to: Ref;
 }
 
+/** Why a step has no window, which leaves the whole function as its question. */
+export interface NoWindow {
+  why: string;
+}
+
 /**
- * The window pair for a step from `before` to `after`, or nothing when the
+ * The window pair for a step from `before` to `after`, or why not when the
  * two do not line up around one window and the whole function is the only
  * question there is.
  */
@@ -58,43 +66,50 @@ export async function narrow(
   llops: Llops,
   before: Module,
   after: Module,
-): Promise<Narrowed | undefined> {
+): Promise<Narrowed | NoWindow> {
   // Both sides are canonicalised first, because what the two bodies have in
   // common is read line by line and a scratch program names its values
   // whatever the edits called them. Two programs that differ only in names
   // would otherwise look like two programs that differ everywhere.
   const [was, now] = await Promise.all([llops.canon(before), llops.canon(after)]);
-  if (!was.ok || !now.ok) return undefined;
+  if (!was.ok) return { why: was.message };
+  if (!now.ok) return { why: now.message };
   const oldBlocks = moduleBlocks(was.module);
   const newBlocks = moduleBlocks(now.module);
-  if (!oldBlocks || !newBlocks) return undefined;
+  if (!oldBlocks || !newBlocks) return NO_BODY;
 
-  for (const [oldAt, newAt] of candidates(oldBlocks, newBlocks)) {
+  const tries = candidates(oldBlocks, newBlocks);
+  if ("why" in tries) return tries;
+  // The last try is the widest, so its reason is the one worth reporting.
+  let last = NO_BODY;
+  for (const [oldAt, newAt] of tries) {
     const found = await outlineBoth(llops, was.module, now.module, oldAt, newAt);
-    if (found) return found;
+    if (!("why" in found)) return found;
+    last = found;
   }
-  return undefined;
+  return last;
 }
 
-/**
- * Outline an explicit window given by `userWindow` in `before`.
- */
+/** Outline the window `userWindow` names in `before`, or say why not. */
 export async function narrowAt(
   llops: Llops,
   before: Module,
   after: Module,
   userWindow: Window,
-): Promise<Narrowed | undefined> {
+): Promise<Narrowed | NoWindow> {
   const rawBody = moduleBlocks(before)?.flat();
-  if (!rawBody) return undefined;
+  if (!rawBody) return NO_BODY;
   const resolved = resolveWindow(rawBody, userWindow);
-  if (!resolved) return undefined;
+  if (!resolved)
+    return { why: `${userWindow.from}..${userWindow.to} names no run of instructions` };
 
   const [was, now] = await Promise.all([llops.canon(before), llops.canon(after)]);
-  if (!was.ok || !now.ok) return undefined;
+  if (!was.ok) return { why: was.message };
+  if (!now.ok) return { why: now.message };
   const oldBlocks = moduleBlocks(was.module);
   const newBlocks = moduleBlocks(now.module);
-  if (!oldBlocks || !newBlocks || oldBlocks.length !== newBlocks.length) return undefined;
+  if (!oldBlocks || !newBlocks) return NO_BODY;
+  if (oldBlocks.length !== newBlocks.length) return BLOCKS;
 
   // The window ends as far before its block's terminator on the new side as
   // it did on the old, since the edit sits inside it.
@@ -102,11 +117,11 @@ export async function narrowAt(
   const block = oldSpans.findIndex((span) => resolved.toIdx <= span.last);
   const oldSpan = oldSpans[block];
   const newSpan = spans(newBlocks)[block];
-  if (!oldSpan || !newSpan) return undefined;
+  if (!oldSpan || !newSpan) return { why: "a window holds no terminator" };
   const newAt: Window = at(resolved.fromIdx, newSpan.last - (oldSpan.last - resolved.toIdx));
 
   const found = await outlineBoth(llops, was.module, now.module, resolved.window, newAt);
-  if (!found) return undefined;
+  if ("why" in found) return found;
   // The before bounds echo the window the caller named, which is the one it
   // will look for in a summary; the after bounds stay the mapped positions.
   return { ...found, at: { ...found.at, before: userWindow } };
@@ -127,7 +142,8 @@ function resolveWindow(
  * first disagree, since everything before that is shared by construction, and
  * stay in the block that happens in, which is the same block on both sides.
  */
-function candidates(oldBlocks: string[][], newBlocks: string[][]): [Window, Window][] {
+function candidates(oldBlocks: string[][], newBlocks: string[][]): [Window, Window][] | NoWindow {
+  if (oldBlocks.length !== newBlocks.length) return BLOCKS;
   // Phis are left out: no window holds one, and in a loop the header's phis
   // read what the body defines, so renumbering the body changes their text.
   const block = oldBlocks.findIndex(
@@ -138,11 +154,11 @@ function candidates(oldBlocks: string[][], newBlocks: string[][]): [Window, Wind
     afterPhis(newBlocks[block] ?? []),
   ];
   const [oldSpan, newSpan] = [spans(oldBlocks)[block], spans(newBlocks)[block]];
-  if (oldBlocks.length !== newBlocks.length || !oldSpan || !newSpan) return [];
   // The terminator is the block's last line and cannot go into a window.
   const oldLast = oldLines.length - 2;
   const newLast = newLines.length - 2;
-  if (oldLast < 0 || newLast < 0) return [];
+  if (!oldSpan || !newSpan || oldLast < 0 || newLast < 0)
+    return { why: "the edit changes only phis or a terminator, which no window holds" };
 
   const shared = common(oldLines, newLines);
   const from = Math.min(shared.prefix, oldLast, newLast);
@@ -162,7 +178,7 @@ function candidates(oldBlocks: string[][], newBlocks: string[][]): [Window, Wind
   if (oldStart > 0 || oldBlocks.length > 1) {
     tries.push([at(oldStart, oldSpan.start + oldLast), at(newStart, newSpan.start + newLast)]);
   }
-  return tries;
+  return tries.length > 0 ? tries : { why: "the window would be the whole body" };
 }
 
 /** Each block's first index after its phis, and its last before the terminator. */
@@ -211,27 +227,37 @@ function common(oldBody: string[], newBody: string[]): { prefix: number; suffix:
   return { prefix, suffix };
 }
 
-/** Outline both sides at the given windows, if the two agree on an outer. */
+/** Outline both sides at the given windows, or say why not. */
 async function outlineBoth(
   llops: Llops,
   before: Module,
   after: Module,
   oldAt: Window,
   newAt: Window,
-): Promise<Narrowed | undefined> {
+): Promise<Narrowed | NoWindow> {
   const [was, now] = await Promise.all([
     llops.outlineWindow(before, oldAt.from, oldAt.to, CALLEE),
     llops.outlineWindow(after, newAt.from, newAt.to, CALLEE),
   ]);
-  if (!was.ok || !now.ok) return undefined;
+  if (!was.ok) return { why: was.message };
+  if (!now.ok) return { why: now.message };
   const [oldOuter, newOuter] = await Promise.all([llops.canon(was.outer), llops.canon(now.outer)]);
-  if (!oldOuter.ok || !newOuter.ok) return undefined;
-  if (oldOuter.module !== newOuter.module) return undefined;
+  if (!oldOuter.ok) return { why: oldOuter.message };
+  if (!newOuter.ok) return { why: newOuter.message };
+  if (oldOuter.module !== newOuter.module) {
+    const [oldReads, newReads] = [was, now].map((half) => half.params.map((p) => p.live).join(" "));
+    return {
+      why:
+        oldReads === newReads
+          ? "the edit reaches past the window"
+          : `the window reads ${oldReads} before the edit and ${newReads} after`,
+    };
+  }
   const back = await Promise.all([
     putBack(llops, oldOuter.module, was.callee, before),
     putBack(llops, oldOuter.module, now.callee, after),
   ]);
-  if (back.includes(false)) return undefined;
+  if (back.includes(false)) return { why: "a half does not go back into the outer" };
   return {
     outer: oldOuter.module,
     before: was.callee,

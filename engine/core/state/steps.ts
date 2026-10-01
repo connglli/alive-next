@@ -14,7 +14,7 @@ import type { Llrwt, LlrwtInvocation, RuleInfo } from "../drivers/llrwt.ts";
 import { definedRefAt, named, resolveRef } from "../refs.ts";
 import { child, type Goal, head, type Side, type Tree, workable } from "./goals.ts";
 import { sha256 } from "./hash.ts";
-import type { Narrowed, Window } from "./narrow.ts";
+import type { Narrowed, NoWindow, Window } from "./narrow.ts";
 import type { Store } from "./store.ts";
 import type { Effect, Hash } from "./trajectory.ts";
 
@@ -75,12 +75,12 @@ export function orient(side: Side, before: string, after: string): { src: string
 /** How a checked step is made, and whether it should look at where it lands. */
 export interface CheckStepOptions {
   /**
-   * The window the edit touched, when the caller found one. A step asks about
+   * The window the edit touched, or why the caller found none. A step asks about
    * it first, on the budget a cheap question gets, and falls back to the whole
    * function when that settles nothing: the window is smaller but its inputs
    * are values the program computed, so neither question is the easier one.
    */
-  narrowed?: Narrowed;
+  narrowed?: Narrowed | NoWindow;
   /**
    * Preconditions on live-in values of the window, named as in the program the
    * step opens on (e.g. { "%1": { "noundef": true } }).
@@ -119,6 +119,8 @@ export interface Fallback {
   preconditions?: Record<string, Record<string, unknown>>;
   /** Why a preconditioned window attempt did not run to a check, if one was asked for. */
   conditioning?: string;
+  /** Why no window was found, when the caller looked for one. */
+  narrowing?: string;
 }
 
 /**
@@ -320,7 +322,7 @@ export class Steps {
       return { kind: "refused", check: unasked("the program is the one already there") };
     }
 
-    const narrowed = options.narrowed;
+    const narrowed = options.narrowed && "why" in options.narrowed ? undefined : options.narrowed;
 
     let local: CheckResult | undefined;
     let usedPreconditions: Record<string, Record<string, unknown>> | undefined;
@@ -370,7 +372,11 @@ export class Steps {
             preconditions: conditioned?.kind === "checked" ? conditioned.preconditions : undefined,
             conditioning: conditioned?.kind === "refused" ? conditioned.reason : undefined,
           }
-        : { reason: "no_window" };
+        : {
+            reason: "no_window",
+            narrowing:
+              options.narrowed && "why" in options.narrowed ? options.narrowed.why : undefined,
+          };
       const whole = await this.check(orient(side, beforeText, afterText), {
         timeoutMs: this.timeouts.alive2Ms,
       });

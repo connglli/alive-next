@@ -168,12 +168,12 @@ export class Transactions {
     // caller named and that will not outline means the caller asked for
     // something this pair cannot express, which is worth saying rather than
     // silently proving something larger.
-    if (options?.window && !narrowed) {
+    if (options?.window && "why" in narrowed) {
       return {
         kind: "refused",
         check: {
           outcome: "error",
-          detail: "the window it was asked to outline does not resolve",
+          detail: `the window does not outline: ${narrowed.why}`,
           invocation: { binary: "", flags: [], timeoutMs: 0 },
           stdout: "",
           ms: 0,

@@ -193,7 +193,7 @@ async function preconditionedTree() {
 /** The window the pair narrows to, which the preconditioned tests step on. */
 async function preconditionedNarrow() {
   const narrowed = await narrow(llops, BEFORE, AFTER);
-  if (!narrowed) throw new Error("expected narrowing to succeed");
+  if ("why" in narrowed) throw new Error(narrowed.why);
   return narrowed;
 }
 

@@ -182,6 +182,23 @@ describe.skipIf(!built)("transactions", () => {
     expect(checker.calls[0]?.tgt).toContain("mul i32 %p1, %p0");
   });
 
+  test("refuses a window it was asked for, saying why it does not outline", async () => {
+    const checker = new FakeChecker([]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const transactions = new Transactions(store, llops);
+    const goals = await tree();
+
+    transactions.begin(goals, "g1", "src");
+    await transactions.edit({ op: "commute", v: "%2" });
+    const result = await transactions.commit(goals, steps, { window: { from: "%9", to: "%9" } });
+
+    if (result.kind !== "refused") throw new Error("expected the commit to be refused");
+    expect(result.check.detail).toBe(
+      "the window does not outline: %9..%9 names no run of instructions",
+    );
+    expect(checker.calls).toHaveLength(0);
+  });
+
   test("a refused commit leaves the head alone and closes by default", async () => {
     const steps = new Steps(
       store,

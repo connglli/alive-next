@@ -57,7 +57,7 @@ ${TAIL}`;
 describe.skipIf(!built)("narrowing a step", () => {
   test("takes the window the edit touched, and leaves the rest", async () => {
     const found = await narrow(llops, await canon(BEFORE), await canon(AFTER));
-    if (!found) throw new Error("expected the step to narrow");
+    if ("why" in found) throw new Error(found.why);
 
     // Two instructions of the ten, which is the whole of what changed.
     expect(body(found.before)).toEqual([
@@ -98,7 +98,7 @@ entry:
 }
 `;
     const found = await narrow(llops, await canon(before), await canon(after));
-    if (!found) throw new Error("expected the step to narrow");
+    if ("why" in found) throw new Error(found.why);
     expect(body(found.before)).toHaveLength(3);
     expect(body(found.after)).toHaveLength(4);
     expect(await inlined(found.outer, found.before)).toBe(await canon(before));
@@ -126,7 +126,7 @@ done:
       .replace("mul i32 %h, 2", "shl i32 %h, 1\n  %z = add i32 %a, 0")
       .replace("add i32 %a, %y", "add i32 %z, %y");
     const found = await narrow(llops, await canon(before), await canon(after));
-    if (!found) throw new Error("expected the step to narrow");
+    if ("why" in found) throw new Error(found.why);
     expect(found.outer).toContain("br i1");
     expect(body(found.before)).not.toContain("br i1");
     expect(await inlined(found.outer, found.before)).toBe(await canon(before));
@@ -153,7 +153,7 @@ exit:
 `;
     const after = before.replace("mul i32 %i, 4", "shl i32 %i, 2");
     const found = await narrow(llops, await canon(before), await canon(after));
-    if (!found) throw new Error("expected the step to narrow");
+    if ("why" in found) throw new Error(found.why);
     expect(body(found.before)).toEqual(["%0 = mul i32 %p0, 4", "ret i32 %0"]);
     expect(await inlined(found.outer, found.after)).toBe(await canon(after));
   });
@@ -179,7 +179,7 @@ exit:
       .replace("add i32 %s, %i", "add i32 %i, %s")
       .replace("add i32 %i, 1", "add i32 1, %i");
     const found = await narrow(llops, await canon(before), await canon(after));
-    if (!found) throw new Error("expected the step to narrow");
+    if ("why" in found) throw new Error(found.why);
     expect(found.before).toContain("ret { i32, i32 }");
     expect(await inlined(found.outer, found.before)).toBe(await canon(before));
     expect(await inlined(found.outer, found.after)).toBe(await canon(after));
@@ -207,7 +207,7 @@ exit:
       "  %j.next = add i32 %j, 2\n  %i.next = add i32 %i, 1\n",
     );
     const found = await narrow(llops, await canon(before), await canon(after));
-    if (!found) throw new Error("expected the step to narrow");
+    if ("why" in found) throw new Error(found.why);
     expect(await inlined(found.outer, found.before)).toBe(await canon(before));
     expect(await inlined(found.outer, found.after)).toBe(await canon(after));
   });
@@ -238,7 +238,7 @@ exit:
       "  %wrap = icmp ugt i32 %lo, -4\n  %lo.next = add i32 %lo, 3\n",
     );
     const found = await narrow(llops, await canon(before), await canon(after));
-    if (!found) throw new Error("expected the step to narrow");
+    if ("why" in found) throw new Error(found.why);
     expect(body(found.before)).not.toContain("phi");
     expect(await inlined(found.outer, found.after)).toBe(await canon(after));
   });
@@ -265,12 +265,12 @@ other:
 `;
     const after = before.replace("mul i32 %h, 2", "shl i32 %h, 1");
     const found = await narrow(llops, await canon(before), await canon(after));
-    if (!found) throw new Error("expected the step to narrow");
+    if ("why" in found) throw new Error(found.why);
     expect(body(found.before)).toEqual(["%0 = mul i32 %p0, 2", "ret i32 %0"]);
     expect(await inlined(found.outer, found.after)).toBe(await canon(after));
   });
 
-  test("says nothing when the first instruction is the one that changed", async () => {
+  test("says the window would be the body when its first instruction changed", async () => {
     // Nothing is shared at either end, so the window is the body and the
     // whole function is the only question there is.
     const before = `define i32 @f(i32 %x) {
@@ -280,10 +280,12 @@ entry:
 }
 `;
     const after = before.replace("mul i32 %x, 2", "shl i32 %x, 1");
-    expect(await narrow(llops, await canon(before), await canon(after))).toBeUndefined();
+    expect(await narrow(llops, await canon(before), await canon(after))).toEqual({
+      why: "the window would be the whole body",
+    });
   });
 
-  test("says nothing when the window would read something else", async () => {
+  test("says what the window reads when the edit changes it", async () => {
     // The two windows are the same shape in the same place, and still not one
     // question: the edit changed which value flows in, so the calls disagree
     // and the outers are not the same program. This is the verification doing
@@ -297,13 +299,38 @@ entry:
 }
 `;
     const after = before.replace("add i32 %h, 1", "add i32 %g, 1");
-    expect(await narrow(llops, await canon(before), await canon(after))).toBeUndefined();
+    expect(await narrow(llops, await canon(before), await canon(after))).toEqual({
+      why: "the window reads %1 before the edit and %2 after",
+    });
   });
 
-  test("says nothing about a body with nothing but a return", async () => {
+  test("says no window holds a changed return", async () => {
     const before = "define i32 @f(i32 %x) {\nentry:\n  ret i32 %x\n}\n";
     const after = "define i32 @f(i32 %x) {\nentry:\n  ret i32 0\n}\n";
-    expect(await narrow(llops, before, after)).toBeUndefined();
+    expect(await narrow(llops, before, after)).toEqual({
+      why: "the edit changes only phis or a terminator, which no window holds",
+    });
+  });
+
+  test("says when the edit changes the number of blocks", async () => {
+    const before = `define i32 @f(i32 %x) {
+entry:
+  %a = add i32 %x, 1
+  br label %next
+
+next:
+  ret i32 %a
+}
+`;
+    const after = `define i32 @f(i32 %x) {
+entry:
+  %a = add i32 %x, 1
+  ret i32 %a
+}
+`;
+    expect(await narrow(llops, await canon(before), await canon(after))).toEqual({
+      why: "the edit changes the number of blocks",
+    });
   });
 
   test("outlines an explicit user-supplied window with narrowAt", async () => {
@@ -317,7 +344,7 @@ entry:
 `;
     const after = before.replace("add i32 %a, 1", "add i32 %a, 2");
     const found = await narrowAt(llops, before, after, { from: "%b", to: "%b" });
-    if (!found) throw new Error("expected narrowAt to succeed");
+    if ("why" in found) throw new Error(found.why);
     expect(found.callee).toBe("outlined_window");
     expect(found.params.length).toBeGreaterThan(0);
   });
