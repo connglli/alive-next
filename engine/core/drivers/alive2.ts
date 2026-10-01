@@ -151,6 +151,11 @@ function overrun(wallMs: number): Pick<CheckResult, "outcome" | "detail"> {
   return { outcome: "unknown", detail: `killed after ${wallMs}ms without an answer` };
 }
 
+/** Whether a check ran out of time, on alive2's own budget or on ours. */
+export function timedOut(check: Pick<CheckResult, "outcome" | "detail">): boolean {
+  return check.outcome === "unknown" && /^(ERROR: Timeout|killed after)/.test(check.detail);
+}
+
 /** Read the outcome out of what alive-tv printed. */
 export function read(
   stdout: string,

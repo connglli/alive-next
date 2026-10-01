@@ -45,7 +45,7 @@
 // claim. The hypothesis is declared with the parameter facts, as the outer's
 // declaration is, and the callee takes no function attribute: induction
 // cannot prove willreturn.
-import type { CheckResult } from "../drivers/alive2.ts";
+import { type CheckResult, timedOut } from "../drivers/alive2.ts";
 import type { Assertion, Attrs, Llops, Predicate } from "../drivers/llops.ts";
 import { applyEffect, child, head, type Side, type Tree } from "./goals.ts";
 import type { Steps } from "./steps.ts";
@@ -473,9 +473,7 @@ export function explainAssumeRefusal(
 
   if (check?.outcome === "unknown") {
     lines.push(
-      check.detail.startsWith("killed after")
-        ? "alive2 ran out of time."
-        : "alive2 could not settle whether they hold.",
+      timedOut(check) ? "alive2 ran out of time." : "alive2 could not settle whether they hold.",
     );
     return lines.join("\n");
   }

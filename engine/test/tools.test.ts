@@ -373,14 +373,14 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(session.verdict).toBe("unknown");
   });
 
-  test("goal_check reports earlier check history on retry", async () => {
+  test("goal_check reports earlier checks, and suggests a cut on a timeout", async () => {
     class SequenceChecker implements Checker {
       constructor(private outcomes: ("correct" | "incorrect" | "unknown")[]) {}
       async check(): Promise<CheckResult> {
         const outcome = this.outcomes.shift() ?? "unknown";
         return {
           outcome,
-          detail: "",
+          detail: outcome === "unknown" ? "ERROR: Timeout" : "",
           invocation: {
             binary: "seq-checker",
             flags: [],
@@ -405,11 +405,13 @@ describe.skipIf(!built)("the tool layer", () => {
     const first = await callFrom(seqTools, "goal_check", { gid: "g1", timeout_ms: 1000 });
     expect(first).toContain("g1 not settled, 1000ms budget");
     expect(first).not.toContain("earlier check");
+    expect(first).toContain("## Suggestion\nalive2 may run out of time");
 
     const second = await callFrom(seqTools, "goal_check", { gid: "g1", timeout_ms: 5000 });
     expect(second).toContain(
       "earlier check: not settled on a 1000ms budget; g1 proved, 5000ms budget",
     );
+    expect(second).not.toContain("## Suggestion");
   });
 
   test("tx_commit surfaces eager check outcome with budget and elapsed time", async () => {

@@ -34,7 +34,7 @@ The framework chooses the refinement direction of every check and passes \`--dis
 
 ## How to use program cuts
 
-Cuts make large program pairs manageable. alive2 may fail to return when a query requires reasoning about too much computation at once. A useful cut moves the difficult computation into a function that both outer programs call in the same way. The outer proof can then treat that computation as a call instead of analyzing its body.
+Cuts make large program pairs manageable, since alive2 may fail to return when one query covers too much computation. A useful cut separates what is hard. It can move a difficult computation into a function both outer programs call in the same way, so the outer treats it as a call. Or, where the two sides compute a value differently and then use it, for example as an address to read, it can cut between computing and using, so one goal shows the two values equal and the other uses one shared value.
 
 A cut is made at an instruction or at a block. At an instruction, the callee is the rest of the body from that instruction, and the outer calls it once, where the instruction was. At a block, the cut detaches the block, which does more: the block and every block it reaches move into the callee, the block's phis become the callee's parameters, and every branch to the block becomes a call, so the outer calls the callee once for each edge that entered the block. Detach a join to separate the code before a merge from the code after it.
 

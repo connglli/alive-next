@@ -10,7 +10,7 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AliveTv, AliveTvCrash, read } from "../core/drivers/alive2.ts";
+import { AliveTv, AliveTvCrash, read, timedOut } from "../core/drivers/alive2.ts";
 
 const CORRECT = `
 ----------------------------------------
@@ -104,6 +104,7 @@ describe("reading what alive-tv printed", () => {
     const result = read(TIMED_OUT);
     expect(result.outcome).toBe("unknown");
     expect(result.detail).toContain("Timeout");
+    expect(timedOut(result)).toBe(true);
   });
 
   test("an alive2 error", () => {
@@ -211,6 +212,7 @@ describe("running alive-tv", () => {
       const result = await new AliveTv(path).check("a", "b", { timeoutMs: 100 });
       expect(result.outcome).toBe("unknown");
       expect(result.detail).toContain("killed after 200ms");
+      expect(timedOut(result)).toBe(true);
       // The budget it was given is what it was given, however it ended.
       expect(result.invocation.timeoutMs).toBe(100);
     } finally {

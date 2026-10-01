@@ -1,9 +1,15 @@
 // goal_check: ask alive2 whether a goal's claim holds as it stands.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { timedOut } from "../../core/drivers/alive2.ts";
 import type { Session } from "../../core/session.ts";
 import type { CheckGoalResult } from "../../core/state/steps.ts";
-import { formatDetail, toolResultFrom } from "./format.ts";
+import { formatDetail, formatSection, toolResultFrom } from "./format.ts";
+
+// Shown when alive2 runs out of time, which is when a cut is worth weighing
+// against a larger budget; it gives the prompt's advice on cuts in brief.
+const CUT_SUGGESTION =
+  "alive2 may run out of time when one query covers too much computation, so a cut may settle this pair where a larger budget does not. A cut can move a hard computation into a function both sides call, or separate where the two sides compute a value from where they use it.";
 
 /** A goal's outcome in the words the other answers use. */
 function said(outcome: CheckGoalResult["outcome"]): string {
@@ -48,7 +54,10 @@ export function createCheckTool(session: Session) {
         checked.outcome === "proved",
         `${prior}${gid} ${said(checked.outcome)}, ${budget}`,
         checked,
-        [formatDetail(checked.check)],
+        [
+          formatDetail(checked.check),
+          timedOut(checked.check) ? formatSection("Suggestion", CUT_SUGGESTION) : "",
+        ],
       );
     },
   });
