@@ -132,6 +132,8 @@ describe.skipIf(!built)("the tool layer", () => {
 
     const facts = await call("goal_analyze", { gid: "g2", side: "src", kind: "defined" });
     expect(facts).toContain("noundef");
+    expect(facts).not.toContain("not_undef");
+    expect(facts).not.toContain("not_poison");
 
     expect(
       await call("tree_strengthen", { gid: "g1", param_attrs: { "0": { noundef: true } } }),

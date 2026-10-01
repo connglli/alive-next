@@ -1,7 +1,7 @@
 // goal_analyze: what an LLVM analysis says about one side of a goal.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { AnalyzeKind } from "../../core/drivers/llops.ts";
+import type { AnalyzeKind, Fact } from "../../core/drivers/llops.ts";
 import type { Session } from "../../core/session.ts";
 import { formatSection, toolResult } from "./format.ts";
 
@@ -27,7 +27,11 @@ export function createAnalyzeTool(session: Session) {
     execute: async (_id, { gid, side, kind, point }) => {
       const found = await session.analyze(gid, side, kind, point);
       if (!found.ok) return toolResult(false, `refused: ${found.message}`, found);
-      const facts = found.facts.map((fact) => JSON.stringify(fact)).join("\n");
+      // The no-undef model rules undef out, so a value is noundef exactly when
+      // it is not poison, and not_undef and not_poison say no more than that.
+      const shown = ({ not_undef, not_poison, ...fact }: Fact) =>
+        not_poison === undefined ? fact : { ...fact, noundef: not_poison };
+      const facts = found.facts.map((fact) => JSON.stringify(shown(fact))).join("\n");
       return toolResult(
         true,
         facts ? formatSection("Facts", facts) : `nothing to say about ${gid} ${side}`,
