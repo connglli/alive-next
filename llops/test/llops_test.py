@@ -527,6 +527,15 @@ bb2:
     self.assertEqual(marks, list(range(6)))
     self.assertIn("  store i32 %0, ptr %1, align 4                   ; #1\n", r["module"])
 
+  def test_lists_the_body_by_index(self):
+    body = self.good(run("number", {"module": self.PROGRAM}))["body"]
+    self.assertEqual([entry["block"] for entry in body], ["%entry"] + ["%bb1"] * 3 + ["%bb2"] * 2)
+    self.assertEqual(body[0]["text"], "switch i32 %0, label %bb2 [ i32 1, label %bb1 ]")
+    self.assertEqual(
+      body[4], {"block": "%bb2", "text": body[4]["text"], "value": "%2", "phi": True}
+    )
+    self.assertNotIn("value", body[1])
+
   def test_a_mark_names_what_it_marks(self):
     r = self.good(run("edit", {"module": self.PROGRAM, "op": "erase", "v": "#2"}))
     self.assertNotIn("call void @g", r["module"])
