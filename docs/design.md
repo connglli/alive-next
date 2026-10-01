@@ -37,7 +37,6 @@ Induction proves a pair of loops only when both reach the header with the same s
 * Reordering transformations (interchange, fusion, fission, tiling, reversal): the two sides agree on memory only at the end, which takes a quantified invariant.
 * An irreducible loop, whose second entry breaks the single entry a split at a block needs.
 * A pointer carried as loop state: a fact compares addresses, not the objects the pointers may access.
-* A loop whose loaded values flow into its hypothesis: sound, but the query times out at a 60 s budget.
 
 ## Parameter definedness and the no-undef model
 
