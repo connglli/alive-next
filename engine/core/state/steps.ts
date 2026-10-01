@@ -9,9 +9,9 @@
 // That runs here rather than around the outside, because whether the path is
 // still alive belongs in the answer the agent reads.
 import type { CheckOutcome, CheckResult, Invocation } from "../drivers/alive2.ts";
-import { type Llops, moduleLines } from "../drivers/llops.ts";
+import type { Llops } from "../drivers/llops.ts";
 import type { Llrwt, LlrwtInvocation, RuleInfo } from "../drivers/llrwt.ts";
-import { definedRefAt, named, resolveRef } from "../refs.ts";
+import { named, resolveRef } from "../refs.ts";
 import { child, type Goal, head, type Side, type Tree, workable } from "./goals.ts";
 import { sha256 } from "./hash.ts";
 import type { Narrowed, NoWindow, Window } from "./narrow.ts";
@@ -571,16 +571,18 @@ export class Steps {
     side: Side,
   ): Promise<Conditioned | undefined> {
     const mappedFacts: Record<string, Record<string, unknown>> = {};
-    const rawLines = moduleLines(before);
+    const [raw, outer] = await Promise.all([
+      this.llops.number(before),
+      this.llops.number(narrowed.outer),
+    ]);
     // A precondition names a value as the step opens on it, and the window's
     // parameters are that same program's values. Either the name is the
-    // parameter's own, or the line that defines it is shared with the outer,
-    // whose value at that line is the canonical one the parameter carries.
+    // parameter's own, or the instruction that defines it is shared with the
+    // outer, whose value at that index is the canonical one the parameter carries.
     for (const [ref, fact] of Object.entries(preconditions)) {
       const clean = named(ref);
-      const rawIdx = rawLines ? resolveRef(rawLines, ref) : -1;
-      const outerLines = moduleLines(narrowed.outer);
-      const outerVal = rawIdx >= 0 && outerLines ? definedRefAt(outerLines, rawIdx) : undefined;
+      const rawIdx = raw.ok ? resolveRef(raw.body, ref) : -1;
+      const outerVal = outer.ok && rawIdx >= 0 ? outer.body[rawIdx]?.value : undefined;
 
       const idx = narrowed.params.findIndex((p) => p.live === clean || p.live === outerVal);
       if (idx >= 0) {

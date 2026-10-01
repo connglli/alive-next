@@ -20,14 +20,20 @@
 // after it is renumbered. The wide one runs from that first disagreement to
 // the end of the block, which is what a change in length leaves, and is still
 // smaller than the whole function by everything it does not take.
-import { type Llops, type Module, moduleBlocks, type OutlineParam } from "../drivers/llops.ts";
+import {
+  blocksOf,
+  type Instruction,
+  type Llops,
+  type Module,
+  type OutlineParam,
+} from "../drivers/llops.ts";
 import { type Ref, resolveRef } from "../refs.ts";
 
 /** The name the outlined window has in both halves. */
 const CALLEE = "outlined_window";
 
 const BLOCKS: NoWindow = { why: "the edit changes the number of blocks" };
-const NO_BODY: NoWindow = { why: "a side has no body" };
+const WHOLE: NoWindow = { why: "the window would be the whole body" };
 
 /** A step's obligation, narrowed to the window the edit touched. */
 export interface Narrowed {
@@ -74,20 +80,23 @@ export async function narrow(
   const [was, now] = await Promise.all([llops.canon(before), llops.canon(after)]);
   if (!was.ok) return { why: was.message };
   if (!now.ok) return { why: now.message };
-  const oldBlocks = moduleBlocks(was.module);
-  const newBlocks = moduleBlocks(now.module);
-  if (!oldBlocks || !newBlocks) return NO_BODY;
+  const [oldBody, newBody] = await Promise.all([
+    llops.number(was.module),
+    llops.number(now.module),
+  ]);
+  if (!oldBody.ok) return { why: oldBody.message };
+  if (!newBody.ok) return { why: newBody.message };
 
-  const tries = candidates(oldBlocks, newBlocks);
+  const tries = candidates(blocksOf(oldBody.body), blocksOf(newBody.body));
   if ("why" in tries) return tries;
   // The last try is the widest, so its reason is the one worth reporting.
-  let last = NO_BODY;
+  const reasons: NoWindow[] = [];
   for (const [oldAt, newAt] of tries) {
     const found = await outlineBoth(llops, was.module, now.module, oldAt, newAt);
     if (!("why" in found)) return found;
-    last = found;
+    reasons.push(found);
   }
-  return last;
+  return reasons.at(-1) ?? WHOLE;
 }
 
 /** Outline the window `userWindow` names in `before`, or say why not. */
@@ -97,18 +106,23 @@ export async function narrowAt(
   after: Module,
   userWindow: Window,
 ): Promise<Narrowed | NoWindow> {
-  const rawBody = moduleBlocks(before)?.flat();
-  if (!rawBody) return NO_BODY;
-  const resolved = resolveWindow(rawBody, userWindow);
+  const listed = await llops.number(before);
+  if (!listed.ok) return { why: listed.message };
+  const resolved = resolveWindow(listed.body, userWindow);
   if (!resolved)
     return { why: `${userWindow.from}..${userWindow.to} names no run of instructions` };
 
   const [was, now] = await Promise.all([llops.canon(before), llops.canon(after)]);
   if (!was.ok) return { why: was.message };
   if (!now.ok) return { why: now.message };
-  const oldBlocks = moduleBlocks(was.module);
-  const newBlocks = moduleBlocks(now.module);
-  if (!oldBlocks || !newBlocks) return NO_BODY;
+  const [oldBody, newBody] = await Promise.all([
+    llops.number(was.module),
+    llops.number(now.module),
+  ]);
+  if (!oldBody.ok) return { why: oldBody.message };
+  if (!newBody.ok) return { why: newBody.message };
+  const oldBlocks = blocksOf(oldBody.body);
+  const newBlocks = blocksOf(newBody.body);
   if (oldBlocks.length !== newBlocks.length) return BLOCKS;
 
   // The window ends as far before its block's terminator on the new side as
@@ -128,11 +142,11 @@ export async function narrowAt(
 }
 
 function resolveWindow(
-  bodyLines: string[],
+  body: Instruction[],
   w: Window,
 ): { window: Window; fromIdx: number; toIdx: number } | undefined {
-  const fromIdx = resolveRef(bodyLines, w.from);
-  const toIdx = resolveRef(bodyLines, w.to);
+  const fromIdx = resolveRef(body, w.from);
+  const toIdx = resolveRef(body, w.to);
   if (fromIdx < 0 || toIdx < 0 || toIdx < fromIdx) return undefined;
   return { window: { from: `#${fromIdx}`, to: `#${toIdx}` }, fromIdx, toIdx };
 }
@@ -142,12 +156,15 @@ function resolveWindow(
  * first disagree, since everything before that is shared by construction, and
  * stay in the block that happens in, which is the same block on both sides.
  */
-function candidates(oldBlocks: string[][], newBlocks: string[][]): [Window, Window][] | NoWindow {
+function candidates(
+  oldBlocks: Instruction[][],
+  newBlocks: Instruction[][],
+): [Window, Window][] | NoWindow {
   if (oldBlocks.length !== newBlocks.length) return BLOCKS;
   // Phis are left out: no window holds one, and in a loop the header's phis
   // read what the body defines, so renumbering the body changes their text.
   const block = oldBlocks.findIndex(
-    (lines, i) => afterPhis(lines).join("\n") !== afterPhis(newBlocks[i] ?? []).join("\n"),
+    (block, i) => afterPhis(block).join("\n") !== afterPhis(newBlocks[i] ?? []).join("\n"),
   );
   const [oldLines, newLines] = [
     afterPhis(oldBlocks[block] ?? []),
@@ -178,25 +195,25 @@ function candidates(oldBlocks: string[][], newBlocks: string[][]): [Window, Wind
   if (oldStart > 0 || oldBlocks.length > 1) {
     tries.push([at(oldStart, oldSpan.start + oldLast), at(newStart, newSpan.start + newLast)]);
   }
-  return tries.length > 0 ? tries : { why: "the window would be the whole body" };
+  return tries.length > 0 ? tries : WHOLE;
 }
 
 /** Each block's first index after its phis, and its last before the terminator. */
-function spans(blocks: string[][]): { start: number; last: number }[] {
+function spans(blocks: Instruction[][]): { start: number; last: number }[] {
   let start = 0;
-  return blocks.map((lines) => {
+  return blocks.map((block) => {
     const span = {
-      start: start + (lines.length - afterPhis(lines).length),
-      last: start + lines.length - 2,
+      start: start + block.filter((instruction) => instruction.phi).length,
+      last: start + block.length - 2,
     };
-    start += lines.length;
+    start += block.length;
     return span;
   });
 }
 
-/** A block's lines after its phis. */
-function afterPhis(lines: string[]): string[] {
-  return lines.slice(lines.findIndex((line) => !/^%[\w.$-]+ = phi /.test(line)));
+/** The texts of a block's instructions after its phis. */
+function afterPhis(block: Instruction[]): string[] {
+  return block.filter((instruction) => !instruction.phi).map((instruction) => instruction.text);
 }
 
 function at(from: number, to: number): Window {
@@ -205,7 +222,7 @@ function at(from: number, to: number): Window {
   return { from: `#${from}`, to: `#${to}` };
 }
 
-/** How much of the two bodies is shared at each end, in whole lines. */
+/** How much of the two bodies is shared at each end, in whole instructions. */
 function common(oldBody: string[], newBody: string[]): { prefix: number; suffix: number } {
   let prefix = 0;
   while (

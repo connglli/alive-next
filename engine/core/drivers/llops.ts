@@ -43,6 +43,21 @@ export interface ValidateResult {
   functions?: Record<string, FunctionMeta>;
 }
 
+/** One instruction as llops lists a body: the one at index N is in position N. */
+export interface Instruction {
+  /** Its block, as a reference such as `%bb1`. */
+  block: string;
+  /** Its text on one line. */
+  text: string;
+  /** The value it defines, as `%3` or `%x`, if it defines one. */
+  value?: string;
+  phi: boolean;
+}
+
+export interface NumberResult extends ModuleResult {
+  body: Instruction[];
+}
+
 export interface ModuleResult {
   module: Module;
 }
@@ -179,8 +194,8 @@ export class Llops {
     return this.run("canon", { module });
   }
 
-  /** The module with each instruction marked `; #N`, for a reader. */
-  number(module: Module): Promise<LlopsResult<ModuleResult>> {
+  /** The module with each instruction marked `; #N`, for a reader, and its instructions by index. */
+  number(module: Module): Promise<LlopsResult<NumberResult>> {
     return this.run("number", { module });
   }
 
@@ -357,27 +372,13 @@ export class Llops {
   }
 }
 
-/** The one function's instructions, block by block, labels dropped, so an index is llops' `#N`. */
-export function moduleBlocks(module: Module): string[][] | undefined {
-  const lines = module.split("\n");
-  const entry = lines.indexOf("entry:");
-  if (entry < 0) return undefined;
-  const end = lines.indexOf("}", entry);
-  if (end < 0) return undefined;
-  const blocks: string[][] = [[]];
-  let open = false;
-  for (const line of lines.slice(entry + 1, end).map((l) => l.trim())) {
-    const block = blocks[blocks.length - 1] as string[];
-    // A switch prints its cases on lines of their own, up to a closing `]`.
-    if (open) block[block.length - 1] += ` ${line}`;
-    else if (/^("[^"]*"|[\w.$-]+):(\s|$)/.test(line)) blocks.push([]);
-    else if (line) block.push(line);
-    open = (open || line.endsWith("[")) && line !== "]";
+/** A body's instructions, block by block, in index order. */
+export function blocksOf(body: Instruction[]): Instruction[][] {
+  const blocks: Instruction[][] = [];
+  for (const instruction of body) {
+    const last = blocks[blocks.length - 1];
+    if (last?.[0]?.block === instruction.block) last.push(instruction);
+    else blocks.push([instruction]);
   }
   return blocks;
-}
-
-/** The instructions of a module's one function, in the order they are printed. */
-export function moduleLines(module: Module): string[] | undefined {
-  return moduleBlocks(module)?.flat();
 }

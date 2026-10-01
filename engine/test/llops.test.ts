@@ -70,6 +70,7 @@ exit:
     if (!marked.ok) throw new Error(marked.message);
     expect(marked.module).toMatch(/%m = mul i32 %x, %y +; #0\n/);
     expect(marked.module).toMatch(/ret i32 %s +; #2\n/);
+    expect(marked.body.map((instruction) => instruction.value)).toEqual(["%m", "%s", undefined]);
   });
 
   test("edits by any of the reference forms", async () => {
