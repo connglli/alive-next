@@ -223,7 +223,9 @@ describe.skipIf(!built)("the tool layer", () => {
     // Which question settled the step is not in the answer: the writer has no
     // move that depends on it, and the log and the certificate keep it.
     const committed = await call("tx_commit", {});
-    expect(committed).toContain("certified, g1 src is p2");
+    expect(committed).toContain(
+      "certified, g1 src is p2, the new pair is proved: the two sides are the same program",
+    );
     expect(committed).not.toContain("window");
     expect(await call("goal_show", { ref: "g1" })).toContain("(was p1)");
   });

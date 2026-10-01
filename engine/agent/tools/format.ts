@@ -89,8 +89,10 @@ export function formatEager(eager: CheckResult | undefined): string {
   if (!eager) return "";
   const said = `, the new pair is ${outcomeWord(eager.outcome)}`;
   const budgetMs = eager.invocation.timeoutMs;
+  // A check that never asked alive2 says why, which tells more than its timing.
+  const unasked = eager.outcome === "correct" && !eager.summary && eager.detail;
+  if (eager.outcome === "error" || unasked) return `${said}: ${eager.detail}`;
   if (eager.outcome === "unknown") return `${said} in ${budgetMs}ms, so the goal stays open`;
-  if (eager.outcome === "error") return `${said}: ${eager.detail}`;
   return `${said} in ${eager.ms}ms (${budgetMs}ms budget)`;
 }
 
