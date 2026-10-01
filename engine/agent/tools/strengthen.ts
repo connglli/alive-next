@@ -70,7 +70,7 @@ export function createStrengthenTool(session: Session) {
       return toolResultFrom(
         session,
         true,
-        `strengthened contract on ${gid}, ${proved} of ${stronger.checks.length} checks came back correct`,
+        `strengthened the interface of ${gid}, ${proved} of ${stronger.checks.length} checks came back correct`,
         stronger,
       );
     },

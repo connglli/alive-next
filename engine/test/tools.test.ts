@@ -135,7 +135,7 @@ describe.skipIf(!built)("the tool layer", () => {
 
     expect(
       await call("tree_strengthen", { gid: "g1", param_attrs: { "0": { noundef: true } } }),
-    ).toContain("strengthened contract on g1");
+    ).toContain("strengthened the interface of g1");
 
     // The yes-man discharges both halves, and the last of them ends the run.
     expect(await call("goal_check", { gid: "g2" })).toContain("g2 proved");
@@ -724,7 +724,9 @@ entry:
     await callFrom(tools, "tree_strengthen", { gid: "g1", predicates });
     const late = await callFrom(tools, "goal_unfold", { gid: "g2", side: "tgt" });
     expect(late).toContain("FAILURE");
-    expect(late).toContain("unfold before strengthening");
+    expect(late).toContain(
+      "g2 holds the proof of facts a strengthen added; unfold before strengthening",
+    );
   });
 
   test("run_list_rules reports a broken rewriter instead of crashing", async () => {

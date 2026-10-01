@@ -205,8 +205,17 @@ export class Strengthen {
         return { kind: "refused", phase: "hypothesis", reason: next.message, effects: [] };
       const check = await this.steps.refinementCheck(entered, next.module);
       if (check.outcome !== "correct") {
-        const reason = `one iteration of @${name} is not shown to keep the contract before @${hypothesis}`;
-        return { kind: "refused", phase: "hypothesis", reason, check, effects: [] };
+        const reason = `one iteration of @${name} is not shown to keep the facts before @${hypothesis}`;
+        // alive2's Source and Target read as the goal's two sides, and are not.
+        const explanation = `Source and Target are both the callee's src, and only Target asserts the facts before the call, which the example's arguments break.\n\n${check.detail}`;
+        return {
+          kind: "refused",
+          phase: "hypothesis",
+          reason,
+          ...(check.outcome === "incorrect" ? { explanation } : {}),
+          check,
+          effects: [],
+        };
       }
       checks.push(check);
       kept = { from: await this.store.put(entered), hash: await this.store.put(next.module) };

@@ -398,7 +398,7 @@ export class Session {
           ),
       );
       if (proved) {
-        const message = `${gid} holds the proof of a strengthened contract; unfold before strengthening`;
+        const message = `${gid} holds the proof of facts a strengthen added; unfold before strengthening`;
         return { kind: "refused", code: "strengthened", message };
       }
       return this.editingRefusal(gid, side) ?? this.steps.unfold(tree, gid, side);
