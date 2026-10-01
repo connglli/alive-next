@@ -81,6 +81,12 @@ exit:
 }
 `;
 
+// The same loop with a counter `%2` the src lacks.
+const COUNTED = LOOP.replace(
+  "  %i.next = add i32 %i, 1\n",
+  "  %k = phi i32 [ %n, %entry ], [ %k.next, %loop ]\n  %i.next = add i32 %i, 1\n  %k.next = add i32 %k, -1\n",
+);
+
 async function start(program = PROGRAM, other = program) {
   const src = await store.put(program);
   const tgt = await store.put(other);
@@ -193,12 +199,8 @@ join:
 
   test("carries state only the tgt has, which the src passes as poison", async () => {
     // The tgt's `%2` is a counter the src lacks, so it goes under the new key `k`.
-    const counted = LOOP.replace(
-      "  %i.next = add i32 %i, 1\n",
-      "  %k = phi i32 [ %n, %entry ], [ %k.next, %loop ]\n  %i.next = add i32 %i, 1\n  %k.next = add i32 %k, -1\n",
-    );
     const splits = new Splits(store, llops);
-    const result = await splits.split(await start(LOOP, counted), "g1", "%bb1", "%bb1", {
+    const result = await splits.split(await start(LOOP, COUNTED), "g1", "%bb1", "%bb1", {
       "%1": "%1",
       "%0": "%0",
       k: "%2",
@@ -208,6 +210,18 @@ join:
     const tree = record(result.effects);
     expect(store.get(head(goal(tree, "g2"), "src"))).toContain("i32 poison)");
     expect(goal(tree, "g3").detach?.phis).toEqual({ src: [0], tgt: [0, 2] });
+  });
+
+  test("a preview lists the tgt's values at its cut, the src's among them or not", async () => {
+    const preview = await new Splits(store, llops).preview(
+      await start(LOOP, COUNTED),
+      "g1",
+      "%bb1",
+      "%bb1",
+    );
+    if (preview.kind !== "preview") throw new Error(preview.message);
+    expect(preview.params.map((param) => param.live)).toEqual(["%1", "%0"]);
+    expect(preview.tgtParams?.map((param) => param.live)).toEqual(["%1", "%2", "%0"]);
   });
 
   test("refuses a cut whose halves do not go back together as the side", async () => {

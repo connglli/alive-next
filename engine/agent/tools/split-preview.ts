@@ -9,7 +9,7 @@ export function createSplitPreviewTool(session: Session) {
     name: "tree_split_preview",
     label: "Split Preview",
     description:
-      "Preview tree_split at an instruction (`%N` or `#N`) or a block (`%bbN`) on each side without changing the goal tree. Without value_map, it answers with the src values that would cross the cut; with one, it says whether the tgt side lines up with them.",
+      "Preview tree_split at an instruction (`%N` or `#N`) or a block (`%bbN`) on each side without changing the goal tree. Without value_map, it answers with the values that would cross the cut on each side; with one, it says whether the tgt side lines up with the src's.",
     parameters: Type.Object({
       gid: Type.String(),
       src_cut: Type.String({
@@ -50,7 +50,9 @@ export function createSplitPreviewTool(session: Session) {
           "value_map is valid. Both sides outline cleanly. Call tree_split with these arguments to apply the cut.",
         );
       } else {
+        const tgt = (preview.tgtParams ?? []).map((param) => `${param.live} ${param.type}`);
         lines.push(
+          `the tgt's values at its cut: ${tgt.join(", ")}`,
           'Provide value_map: { "<src_value>": "<tgt_value>", ... } covering all live values when calling tree_split.',
         );
       }

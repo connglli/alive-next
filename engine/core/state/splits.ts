@@ -29,6 +29,8 @@ export type SplitPreviewResult =
       kind: "preview";
       /** The signature both sides share if cut. */
       params: OutlineParam[];
+      /** The tgt's own values at its cut, which a value_map pairs the src's with. */
+      tgtParams?: OutlineParam[];
       callee: string;
       /** Present when the cut detaches a block and value_map was provided. */
       detach?: Detach;
@@ -65,7 +67,7 @@ export class Splits {
 
   /**
    * Preview cutting `gid` at `srcCut` on its src side and `tgtCut` on its tgt side.
-   * If `valueMap` is omitted, computes and returns the src live-in signature.
+   * If `valueMap` is omitted, computes the src live-in signature and the tgt's own live-ins.
    * If `valueMap` is provided, validates that the tgt suffix lines up with that signature.
    */
   async preview(
@@ -89,16 +91,20 @@ export class Splits {
       const message = "both cuts name a block, or neither does";
       return { kind: "refused", side: "tgt", code: "invalid", message };
     }
-    const cutSrc = (params?: OutlineParam[]): Promise<LlopsResult<DetachResult>> =>
+    const cutAlone = (module: string, cut: Ref, params?: OutlineParam[]) =>
       atBlock
-        ? this.llops.detachSrc(srcModule, srcCut, callee, params)
-        : this.llops.outlineSrc(srcModule, srcCut, callee, params);
+        ? this.llops.detachSrc(module, cut, callee, params)
+        : this.llops.outlineSrc(module, cut, callee, params);
+    const cutSrc = (params?: OutlineParam[]): Promise<LlopsResult<DetachResult>> =>
+      cutAlone(srcModule, srcCut, params);
     const first = await cutSrc();
     if (!first.ok)
       return { kind: "refused", side: "src", code: first.code, message: first.message };
 
     if (!valueMap) {
-      return { kind: "preview", params: first.params, callee };
+      const own = await cutAlone(tgtModule, tgtCut);
+      if (!own.ok) return { kind: "refused", side: "tgt", code: own.code, message: own.message };
+      return { kind: "preview", params: first.params, tgtParams: own.params, callee };
     }
 
     const tgt: LlopsResult<DetachResult> = atBlock

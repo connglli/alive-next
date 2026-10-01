@@ -783,6 +783,7 @@ entry:
     expect(sigRes).toContain("Preview of cut on g1 at src %2, tgt %2:");
     expect(sigRes).toContain("parameters:");
     expect(sigRes).toContain("the src's %1");
+    expect(sigRes).toContain("the tgt's values at its cut: %1 i32, %0 i32");
     expect(sigRes).toContain("Provide value_map");
     // Ensure goal tree was NOT modified
     expect(previewSession.tree.goals.get("g1")?.status).toBe("open");
