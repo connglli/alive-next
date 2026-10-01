@@ -37,6 +37,9 @@ import { LAYOUT } from "../../core/toolchain.ts";
 /** The names Pi's built-ins had, which the sandbox tools now carry. */
 export const SANDBOX_TOOLS = ["read", "write", "edit", "grep", "ls", "find", "bash"] as const;
 
+/** The variable a shell command travels in. */
+const COMMAND = "ALIVE_NEXT_COMMAND";
+
 /** The toolchain's binary directories, joined at the tail of a PATH. */
 function toolchainPath(path: string | undefined, toolchain: string): string {
   const bins = Object.entries(LAYOUT).flatMap(([name, { at }]) =>
@@ -173,12 +176,15 @@ function sandboxedShell(workdir: string, toolchain: string): BashOperations {
         },
       });
       await ready;
-      const wrapped = await SandboxManager.wrapWithSandbox(command);
+      // The command reaches the shell through the environment, not as text:
+      // the sandbox runtime re-quotes the text it wraps, and its quoting turns
+      // `!` into `\!` whenever the command also holds a `'`.
+      const wrapped = await SandboxManager.wrapWithSandbox(`eval "$${COMMAND}"`);
       const child = spawn("bash", ["-c", wrapped], {
         cwd,
         detached: true,
         stdio: ["ignore", "pipe", "pipe"],
-        env,
+        env: { ...env, [COMMAND]: command },
       });
       return new Promise((resolve, reject) => {
         let timedOut = false;

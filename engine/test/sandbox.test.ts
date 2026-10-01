@@ -269,6 +269,18 @@ sandboxed("bash", () => {
     }
   });
 
+  test("runs a command holding a quote and a bang as written", async () => {
+    await expect(call(tools().bash, { command: "printf '%s\\n' 'a != b'" })).resolves.toContain(
+      "a != b",
+    );
+  });
+
+  test("runs a quoted heredoc as written", async () => {
+    await expect(
+      call(tools().bash, { command: "cat <<'EOF'\nif (!done) x != y;\nEOF" }),
+    ).resolves.toContain("if (!done) x != y;");
+  });
+
   test("the system's tmp directory is writable", async () => {
     const marker = "/tmp/alive-sandbox-marker";
     rmSync(marker, { force: true });
