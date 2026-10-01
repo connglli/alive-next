@@ -10,7 +10,8 @@ import type { Session } from "../../core/session.ts";
 import { formatEdits, formatProgram, toolResult } from "./format.ts";
 
 const Ref = Type.String({
-  description: "A value as the program prints it, %3 or %x, or #7 for the instruction at index 7.",
+  description:
+    "A value as the program prints it, such as %3 or %x, or #7 for the instruction at index 7 of the body, counting from 0 at its first instruction; arguments are not counted.",
 });
 const Where = Type.Union([Type.Literal("before"), Type.Literal("after")]);
 const Insts = Type.Array(Type.String(), {

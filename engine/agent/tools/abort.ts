@@ -9,7 +9,7 @@ export function createAbortTool(session: Session) {
     name: "tx_abort",
     label: "Abort",
     description:
-      "Discard the open transaction. Nothing was certified, so nothing is undone; the head is where it was before tx_begin.",
+      "Discard the open transaction. Nothing was checked, so the side stays as it was before tx_begin.",
     parameters: Type.Object({}),
     execute: async () => {
       const thrown = await session.abort();

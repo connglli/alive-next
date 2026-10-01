@@ -19,7 +19,9 @@ export function createCheckTool(session: Session) {
     parameters: Type.Object({
       gid: Type.String({ description: "The goal to check." }),
       timeout_ms: Type.Optional(
-        Type.Integer({ description: "Solver budget for this call. Spending it is your decision." }),
+        Type.Integer({
+          description: "How long the solver may run, in ms, up to the cap run_status shows.",
+        }),
       ),
       unroll: Type.Optional(
         Type.Integer({

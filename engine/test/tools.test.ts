@@ -800,7 +800,7 @@ entry:
       value_map: { "%0": "%0", "%1": "%1" },
     });
     expect(validRes).toContain(
-      "value_map lines up: tree_split with these arguments makes the cut.",
+      "The value_map is valid: tree_split with the same arguments makes this cut.",
     );
     expect(previewSession.tree.goals.get("g1")?.status).toBe("open");
 

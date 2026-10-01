@@ -9,13 +9,13 @@ export function createRewriteTool(session: Session) {
     name: "goal_rewrite",
     label: "Rewrite",
     description:
-      "Rewrite the src side of one goal with the verified rewriter's named rules, applied to fixpoint. Call `run_list_rules` to see what it offers. The rules' proofs certify the move, so no solver runs for the step itself. Input the rules do not match passes through unchanged or is refused, and then the head does not move. The goal's new pair is then eagerly checked once on a small budget, so a rewrite that finishes a chain discharges the goal here.",
+      "Rewrite the src side of one goal with the verified rewriter's named rules, applied until none matches. Call `run_list_rules` to see what it offers. The rules' proofs certify the move, so no solver runs for the step itself. If the rules match nothing, the side does not change. After a rewrite, the goal's new pair is checked once on a small budget, so the last step of a proof proves the goal here.",
     parameters: Type.Object({
       gid: Type.String({ description: "The goal to rewrite." }),
       // TODO: Support tgt->src rewrites (some kind of anti-optimizations).
       rules: Type.Array(Type.String(), {
         minItems: 1,
-        description: "Rule names from `run_list_rules`, applied to fixpoint.",
+        description: "Rule names from `run_list_rules`.",
       }),
     }),
     execute: async (_id, { gid, rules }) => {

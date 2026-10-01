@@ -10,30 +10,29 @@ export function createCommitTool(session: Session) {
     name: "tx_commit",
     label: "Commit",
     description:
-      "Validate the open transaction with alive2, in the direction the side implies, and advance the head if it holds. Local step narrowing is attempted automatically over the changed instructions; an explicit window can optionally be given in the PRE-EDIT (before) program. On refusal the head does not move and the scratch stays open, so edit it further or discard it with tx_abort. A counterexample comes back as a hint. The goal's new pair is then eagerly checked once on a small budget, so a step that finishes a chain discharges the goal here.",
+      "Check the open transaction as one step with alive2, in the direction tx_begin stated. If the step holds, the side becomes the edited program. alive2 first checks only the instructions the edits changed, or the window you give, and then the whole function if needed. If the commit is refused, the side does not change and the transaction stays open, so you can edit further or discard it with tx_abort. A counterexample is only a hint. After a step, the goal's new pair is checked once on a small budget, so the last step of a proof proves the goal here.",
     parameters: Type.Object({
       window: Type.Optional(
         Type.Object(
           {
             from: Type.String({
               description:
-                "Reference to start instruction of the window in the PRE-EDIT (before/head) program.",
+                "The window's first instruction, as %N or #N in the program the transaction started from.",
             }),
             to: Type.String({
-              description:
-                "Reference to end instruction of the window in the PRE-EDIT (before/head) program.",
+              description: "The window's last instruction, as %N or #N in the same program.",
             }),
           },
           {
             description:
-              "Optional explicit window in the PRE-EDIT (before/head) program: instructions of one block that cover every edit, unchanged ones allowed. Its post-edit counterpart is derived, whatever the edits named.",
+              "A window you choose, in the program the transaction started from: a run of instructions in one block that includes every changed instruction and may include unchanged ones. The matching window in the edited program is found for you, even if the edits renamed values.",
           },
         ),
       ),
       preconditions: Type.Optional(
         Type.Record(Type.String(), Type.Any(), {
           description:
-            "Preconditions on live-in values of the window named in the PRE-EDIT (before/head) program (e.g. { '%v1': { 'noundef': true } }).",
+            "Preconditions on values the window uses, named as in the program the transaction started from, for example { '%v1': { 'noundef': true } }.",
         }),
       ),
     }),

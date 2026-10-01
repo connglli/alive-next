@@ -40,7 +40,7 @@ export function createSplitPreviewTool(session: Session) {
       ];
 
       if (value_map) {
-        lines.push("value_map lines up: tree_split with these arguments makes the cut.");
+        lines.push("The value_map is valid: tree_split with the same arguments makes this cut.");
       } else {
         const tgt = (preview.tgtParams ?? []).map((param) => `${param.live} ${param.type}`);
         lines.push(

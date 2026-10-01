@@ -11,7 +11,7 @@ export function createStrengthenTool(session: Session) {
     name: "tree_strengthen",
     label: "Strengthen",
     description:
-      "Strengthen the interface of a function cut at a split boundary. Supports parameter attributes (param_attrs), function-level attributes (fn_attrs), and preconditions (predicates). Preconditions are certified at the caller before being assumed on the callee, and function attributes are certified on the callee before being assumed on the caller.",
+      "Add facts to the interface of the function a goal was cut into. Parameter attributes (param_attrs) and preconditions (predicates) are first proved where the outer program calls the function, and for a loop also where one iteration calls the hypothesis; only then may the callee assume them. Function attributes (fn_attrs) are first proved on the callee; only then may the outer program assume them.",
     parameters: Type.Object({
       gid: Type.String({ description: "The goal that was cut, not one of its children." }),
       param_attrs: Type.Optional(
@@ -38,7 +38,7 @@ export function createStrengthenTool(session: Session) {
           ]),
           {
             description:
-              'Preconditions over the callee\'s arguments, named !0, !1, ... by position. Each is a comparison, e.g. {"op": "ule", "lhs": "!1", "rhs": "!0"}, or lines of IR whose last line defines an i1, e.g. {"insts": ["%rest = sub i32 !3, !0", "%ok = icmp eq i32 !2, %rest"]}.',
+              'Preconditions over the callee\'s arguments, named !0, !1, ... by parameter index, as in param_attrs. Each is a comparison, e.g. {"op": "ule", "lhs": "!1", "rhs": "!0"}, or lines of IR whose last line defines an i1, e.g. {"insts": ["%rest = sub i32 !3, !0", "%ok = icmp eq i32 !2, %rest"]}.',
           },
         ),
       ),
