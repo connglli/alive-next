@@ -145,6 +145,8 @@ export class Strengthen {
       return { kind: "refused", phase: "callee_attr", reason, effects: [] };
     }
 
+    // The parameters the facts name: the keys of param_attrs and each `!N` in a predicate.
+    const named = new Set([...params, ...predicates.flatMap(namedIn)]);
     const landed: Effect[] = [];
     const checks: CheckResult[] = [];
     let by: StepRef | undefined;
@@ -202,14 +204,18 @@ export class Strengthen {
       const check = await this.steps.refinementCheck(entered, next.module);
       if (check.outcome !== "correct") {
         const reason = `one iteration of @${name} is not shown to keep the facts before @${hypothesis}`;
+        const calls = await this.callsOf(this.store.get(head(callee, "src")), hypothesis);
         // alive2's Source and Target read as the goal's two sides, and are not.
         const explanation =
-          "Source and Target are both the callee's src, and only Target asserts the facts before the call, which the example's arguments break.";
+          poisonExplained(calls, hypothesis, named) ??
+          (check.outcome === "incorrect"
+            ? "Source and Target are both the callee's src, and only Target asserts the facts before the call, which the example's arguments break."
+            : undefined);
         return {
           kind: "refused",
           phase: "hypothesis",
           reason,
-          ...(check.outcome === "incorrect" ? { explanation } : {}),
+          ...(explanation ? { explanation } : {}),
           check,
           effects: [],
         };
@@ -239,7 +245,10 @@ export class Strengthen {
       const assumed = one.module;
       const proof = await this.steps.checkStep(tree, outer.id, "src", assumed, { eager: false });
       if (proof.kind !== "certified") {
-        const explanation = explainAssumeRefusal(params, rawParamAttrs, proof.check, outer.id);
+        const calls = await this.callsOf(this.store.get(head(outer, "src")), name);
+        const explanation =
+          poisonExplained(calls, name, named) ??
+          explainAssumeRefusal(params, rawParamAttrs, proof.check, outer.id, calls[0]?.at);
         return {
           kind: "refused",
           phase: "assume",
@@ -430,6 +439,15 @@ export class Strengthen {
     return text;
   }
 
+  /** Each call of `fn` in a module, by the `#N` that names it, with its arguments. */
+  private async callsOf(module: string, fn: string): Promise<Call[]> {
+    const listed = await this.llops.number(module);
+    if (!listed.ok) return [];
+    return listed.body.flatMap((instruction, at) =>
+      instruction.calls === `@${fn}` ? [{ at, args: instruction.args ?? [] }] : [],
+    );
+  }
+
   private land(tree: Tree, landed: Effect[], effects: Effect[]): void {
     for (const effect of effects) {
       applyEffect(tree, effect);
@@ -449,6 +467,7 @@ export function explainAssumeRefusal(
   paramAttrs: Record<number, Attrs>,
   check?: CheckResult,
   outerGid?: string,
+  point?: number,
 ): string {
   const lines: string[] = [];
 
@@ -482,11 +501,34 @@ export function explainAssumeRefusal(
     const firstFact = paramAttrs[params[0] ?? 0] ?? {};
     const kind = firstFact.noundef ? "defined" : firstFact.range ? "ranges" : "pointer";
     lines.push(
-      `To see what the outer guarantees, run goal_analyze on ${outerGid} with kind "${kind}".`,
+      `To see what the outer guarantees, run goal_analyze on ${outerGid} with kind "${kind}"${point === undefined ? "" : ` and point "#${point}"`}.`,
     );
   }
 
   return lines.join("\n");
+}
+
+/** A call by the `#N` that names it, with its arguments. */
+interface Call {
+  at: number;
+  args: string[];
+}
+
+/** The parameters a predicate names as `!N`. */
+function namedIn(predicate: Predicate): number[] {
+  const text =
+    "insts" in predicate ? predicate.insts.join(" ") : `${predicate.lhs} ${predicate.rhs}`;
+  return [...text.matchAll(/!(\d+)/g)].map((match) => Number(match[1]));
+}
+
+/** The first call that passes poison for a parameter the facts name, said as a fix. */
+function poisonExplained(calls: Call[], fn: string, named: Set<number>): string | undefined {
+  for (const { at, args } of calls) {
+    const param = args.findIndex((arg, index) => arg === "poison" && named.has(index));
+    if (param >= 0)
+      return `At #${at} the src still passes poison for parameter ${param} of @${fn}, so no fact about it can hold there. Make the src pass a real value at that call first.`;
+  }
+  return undefined;
 }
 
 /** The value an example line assigns, which is what follows the first '=' or '->'. */

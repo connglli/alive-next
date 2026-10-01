@@ -52,6 +52,10 @@ export interface Instruction {
   /** The value it defines, as `%3` or `%x`, if it defines one. */
   value?: string;
   phi: boolean;
+  /** For a call, the function it calls by name. */
+  calls?: string;
+  /** For a call, its arguments as references or constants, such as `%3` or `poison`. */
+  args?: string[];
 }
 
 export interface NumberResult extends ModuleResult {

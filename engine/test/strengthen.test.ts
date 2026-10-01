@@ -152,6 +152,23 @@ async function detached(): Promise<Tree> {
   return record(result.effects);
 }
 
+/** The loop with a counter only the tgt has, cut so that the src passes poison for it. */
+async function ghosted(): Promise<Tree> {
+  const src = await store.put(LOOP);
+  const tgt = await store.put(
+    LOOP.replace(
+      "  %i.next = add i32 %i, 1\n",
+      "  %k = phi i32 [ %n, %entry ], [ %k.next, %loop ]\n  %i.next = add i32 %i, 1\n  %k.next = add i32 %k, -1\n",
+    ),
+  );
+  events.push({ kind: "start", src, tgt, config: {}, versions: {} });
+  const map = { "%1": "%1", "%0": "%0", k: "%2" };
+  const result = await new Splits(store, llops).split(replay(), "g1", "%bb1", "%bb1", map);
+  if (result.kind !== "split") throw new Error(result.message);
+  return record(result.effects);
+}
+const ABOUT_THE_COUNTER = [{ op: "ule" as const, lhs: "!2", rhs: "!1" }];
+
 /** The tree once the effects a move returned are in the log. */
 function replayWith(effects: Effect[]): Tree {
   events.push({ kind: "tool_result", id: "2", tool: "strengthen", effects, result: null, ms: 1 });
@@ -188,6 +205,32 @@ describe.skipIf(!built)("strengthening a loop", () => {
     // The one question asked is the iteration's, before the outer's.
     expect(checker.calls).toHaveLength(1);
     expect(checker.calls[0]?.tgt).toContain("@outlined_g3.ih(");
+  });
+
+  test("names the hypothesis call that passes poison for a parameter the facts name", async () => {
+    const result = await strengthening(new FakeChecker(["incorrect"])).strengthen(
+      await ghosted(),
+      "g1",
+      { predicates: ABOUT_THE_COUNTER },
+    );
+    if (result.kind !== "refused") throw new Error("expected a refusal");
+    expect(result.phase).toBe("hypothesis");
+    expect(result.explanation).toMatch(
+      /^At #\d+ the src still passes poison for parameter 2 of @outlined_g3\.ih, so no fact about it can hold there\./,
+    );
+  });
+
+  test("names the outer's call that passes poison for a parameter the facts name", async () => {
+    const result = await strengthening(new FakeChecker(["correct", "incorrect"])).strengthen(
+      await ghosted(),
+      "g1",
+      { predicates: ABOUT_THE_COUNTER },
+    );
+    if (result.kind !== "refused") throw new Error("expected a refusal");
+    expect(result.phase).toBe("assume");
+    expect(result.explanation).toMatch(
+      /^At #\d+ the src still passes poison for parameter 2 of @outlined_g3,/,
+    );
   });
 
   test("a contract is proved before both calls, the loop's in the callee's chain", async () => {
@@ -529,8 +572,9 @@ Target:
       { 0: { range: { min: 0, max: 256 } } },
       check,
       "g2",
+      1,
     );
-    expect(explanation).toContain('goal_analyze on g2 with kind "ranges"');
+    expect(explanation).toContain('goal_analyze on g2 with kind "ranges" and point "#1"');
   });
 
   test("explainAssumeRefusal sends pointer facts to the pointer analysis", () => {

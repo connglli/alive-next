@@ -25,6 +25,7 @@ import type { Interpreter } from "../core/state/counterexamples.ts";
 import type { Checker } from "../core/state/steps.ts";
 import { cut } from "../examples/cut.ts";
 import { loop } from "../examples/loop.ts";
+import { offset } from "../examples/offset.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 const llops = new Llops(toolchain.path("llops"));
@@ -704,6 +705,28 @@ entry:
     expect(editingRefused).toContain("FAILURE");
     expect(editingRefused).toContain("refused: a transaction is open on g1 src");
     await callFrom(rewritingTools, "tx_abort", {});
+  });
+
+  test("tree_split says which parameter the src passes poison for, and when a fact can hold", async () => {
+    const ghosted = await Session.start({
+      dir: join(dir, "ghost-session"),
+      src: offset.src,
+      tgt: offset.tgt,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    const map = { "%3": "%3", "%4": "%4", "%0": "%0", "%1": "%1", "%2": "%2", off: "%5" };
+    const res = await callFrom(createProofAssistantTools(ghosted), "tree_split", {
+      gid: "g1",
+      src_cut: "%bb1",
+      tgt_cut: "%bb1",
+      value_map: map,
+    });
+    expect(res).toContain(
+      "The src has no value for parameter 5, so it passes poison. A fact about it holds only once the src passes a real value at the outer's call and at @outlined_g3.ih.",
+    );
   });
 
   test("goal_unfold unfolds either half of a loop cut, before strengthening", async () => {

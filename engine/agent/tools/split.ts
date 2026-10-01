@@ -9,7 +9,7 @@ export function createSplitTool(session: Session) {
     name: "tree_split",
     label: "Split",
     description:
-      "Cut a goal at an instruction or a block on each side, making an outer goal that calls a fresh function and a callee goal that is its body. At an instruction (`%N`, or `#N` for the instruction marked `; #N`, which also names one defining no value, such as a store), the callee is the rest of the body from it. At a block (`%bbN`), it is the block and every block it reaches, and each branch to the block becomes a call; a loop's back edge calls the hypothesis the result names instead, a declaration standing for the callee. value_map pairs each src value crossing the cut with the tgt value standing for it. To pass a tgt value that has no src counterpart, add it under a key that is not a src value; the src passes `poison` for it. Callee parameters may be `poison` until tree_strengthen proves them `noundef`, so a cut is usually followed by one.",
+      "Cut a goal on each side at an instruction or a block, into an outer goal calling a fresh function and a callee goal holding its body. At an instruction (`%N`, or `#N` for one marked `; #N`, even a store), the callee is the rest of the body. At a block (`%bbN`), it is the block and all it reaches; each branch to the block becomes a call, and a loop's back edge calls the hypothesis that stands for the callee. value_map pairs each src value crossing the cut with its tgt value. A tgt value with no src counterpart goes under a key that is not a src value, and the src passes `poison` for it, since every value refines `poison`, while only 0 refines 0. No fact about that parameter holds until the src passes a real value. Any callee parameter may be `poison` until tree_strengthen proves it `noundef`, so a cut is usually followed by one.",
     parameters: Type.Object({
       gid: Type.String(),
       src_cut: Type.String({
@@ -34,6 +34,14 @@ export function createSplitTool(session: Session) {
       const params = split.params
         .map((param, at) => `  ${at}: ${param.param} ${param.type}, the src's ${param.live}`)
         .join("\n");
+      const ghosts = split.params.flatMap((param, at) => (param.live === "poison" ? [at] : []));
+      const calls = split.detach?.hypothesis
+        ? `at the outer's call and at @${split.detach.hypothesis}`
+        : "at the outer's call";
+      const ghostly =
+        ghosts.length === 0
+          ? ""
+          : `\n\nThe src has no value for parameter${ghosts.length === 1 ? "" : "s"} ${ghosts.join(", ")}, so it passes poison. A fact about ${ghosts.length === 1 ? "it" : "them"} holds only once the src passes a real value ${calls}.`;
       return toolResultFrom(
         session,
         true,
@@ -43,7 +51,7 @@ export function createSplitTool(session: Session) {
           ...(split.detach?.hypothesis ? [`back edges call @${split.detach.hypothesis}`] : []),
         ].join("\n"),
         split,
-        [formatSection("Parameters", params)],
+        [formatSection("Parameters", `${params}${ghostly}`)],
       );
     },
   });
