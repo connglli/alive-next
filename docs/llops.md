@@ -66,6 +66,12 @@ Every local name is dropped, so LLVM numbers values in definition order with the
 
 A module holding an `undef` value is refused with the error code `undef`. Every stored program passes through canon, and every program is reasoned about under the [no-`undef` model](./design.md), so the refusal keeps every stored program inside the model. The value, not the word, is what is refused: poison is a value of its own and passes, a local called `%undef` is an ordinary name, and metadata passes, since none of them put an `undef` into a runtime state.
 
+## number
+
+Request `{ "module": "<ir text>" }`, response `{ "ok": true, "module": ... }`.
+
+The module comes back with each instruction of its function marked `; #N`, the [reference](#value-references) that names it, at the column LLVM writes its own comments. Each mark is what `#N` resolves to, and the marks are comments, so the text still parses as the program it marks.
+
 ## edit
 
 Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module": ... }`. One op per call.

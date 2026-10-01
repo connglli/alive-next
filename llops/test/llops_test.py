@@ -10,6 +10,7 @@ drivers do. Run through `make test-llops`, or directly:
 
 import json
 import os
+import re
 import subprocess
 import unittest
 
@@ -498,6 +499,45 @@ entry:
     # address, but the initializer is inspected at module scope.
     module = "@g = global i32 undef\n\n" + F_SIMPLE
     self.bad(run("canon", {"module": module}), "undef")
+
+
+class TestNumber(Case):
+  PROGRAM = """declare void @g(i32)
+
+define i32 @f(i32 %0, ptr %1) {
+entry:
+  switch i32 %0, label %bb2 [
+    i32 1, label %bb1
+  ]
+
+bb1:
+  store i32 %0, ptr %1, align 4
+  call void @g(i32 %0)
+  br label %bb2
+
+bb2:
+  %2 = phi i32 [ 1, %bb1 ], [ 0, %entry ]
+  ret i32 %2
+}
+"""
+
+  def test_marks_each_instruction_with_its_index(self):
+    r = self.good(run("number", {"module": self.PROGRAM}))
+    marks = [int(n) for n in re.findall(r"; #(\d+)$", r["module"], re.M)]
+    self.assertEqual(marks, list(range(6)))
+    self.assertIn("  store i32 %0, ptr %1, align 4                   ; #1\n", r["module"])
+
+  def test_a_mark_names_what_it_marks(self):
+    r = self.good(run("edit", {"module": self.PROGRAM, "op": "erase", "v": "#2"}))
+    self.assertNotIn("call void @g", r["module"])
+
+  def test_the_marks_are_comments(self):
+    marked = self.good(run("number", {"module": self.PROGRAM}))["module"]
+    canon = [self.good(run("canon", {"module": m}))["module"] for m in (marked, self.PROGRAM)]
+    self.assertEqual(canon[0], canon[1])
+
+  def test_needs_the_program_shape(self):
+    self.bad(run("number", {"module": "declare i32 @h(i32)"}), "shape_error")
 
 
 class TestRefs(Case):

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/IR/AssemblyAnnotationWriter.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
@@ -44,8 +45,8 @@ std::unique_ptr<ModuleWithCtx> parseModule(llvm::StringRef text, std::string *er
 
 // Print a module as IR text. The ModuleID and source_filename headers are
 // dropped because they carry the input buffer name, which would make two
-// equal programs differ in bytes.
-std::string printModule(llvm::Module &M);
+// equal programs differ in bytes. An annotator adds comments to the text.
+std::string printModule(llvm::Module &M, llvm::AssemblyAnnotationWriter *annotator = nullptr);
 
 // Print a module with every local value renumbered: names are dropped so
 // LLVM numbers values in definition order, and blocks are named by position.
@@ -106,11 +107,19 @@ public:
   // The reference that names V in printed IR, for example "%3" or "%x".
   std::string print(const llvm::Value &V);
 
+  // The N in `#N` that names I: its index in the body as given, or nothing
+  // for an instruction the body did not have.
+  std::optional<unsigned> indexOf(const llvm::Instruction &I) const;
+
 private:
   llvm::Function &fn;
   llvm::ModuleSlotTracker mst;
   std::vector<llvm::WeakVH> body;
 };
+
+// Print a module with each instruction of its function marked `; #N`, the
+// reference that names it, at the column LLVM writes its own comments.
+std::string printNumbered(llvm::Module &M, const ValueRefs &refs);
 
 // Whether a call is as outline and detach make it, with nothing on it.
 bool plainCall(const llvm::CallInst &call);

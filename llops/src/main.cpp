@@ -9,6 +9,7 @@
 #include "edit.h"
 #include "harness.h"
 #include "irutil.h"
+#include "number.h"
 #include "opt.h"
 #include "outline.h"
 #include "validate.h"
@@ -25,6 +26,7 @@ const char *kUsage = "usage: llops <subcommand> < request.json > response.json\n
                      "subcommands:\n"
                      "  validate   check the program shape\n"
                      "  canon      renumber values canonically\n"
+                     "  number     mark each instruction with the #N that names it\n"
                      "  edit       apply one semantic edit op\n"
                      "  opt        apply one structural optimizer op\n"
                      "  outline    move a suffix or a window into a function\n"
@@ -81,6 +83,8 @@ int main(int argc, char **argv) {
     return respond(llops::validateCmd(*args));
   if (cmd == "canon")
     return respond(llops::canonCmd(*args));
+  if (cmd == "number")
+    return respond(llops::numberCmd(*args));
   if (cmd == "edit")
     return respond(llops::editCmd(*args));
   if (cmd == "opt")

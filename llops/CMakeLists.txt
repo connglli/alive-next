@@ -31,6 +31,7 @@ set(LLOPS_SOURCES
   src/irutil.cpp
   src/validate.cpp
   src/canon.cpp
+  src/number.cpp
   src/edit.cpp
   src/snippet.cpp
   src/opt.cpp

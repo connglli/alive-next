@@ -12,6 +12,7 @@
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
+#include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -46,12 +47,12 @@ std::unique_ptr<ModuleWithCtx> parseModule(llvm::StringRef text, std::string *er
   return mwc;
 }
 
-std::string printModule(llvm::Module &M) {
+std::string printModule(llvm::Module &M, llvm::AssemblyAnnotationWriter *annotator) {
   M.setModuleIdentifier("");
   M.setSourceFileName("");
   std::string out;
   llvm::raw_string_ostream os(out);
-  M.print(os, nullptr);
+  M.print(os, annotator);
   // With no header lines left, LLVM's separator before the first definition
   // becomes a leading blank line.
   return llvm::StringRef(out).ltrim('\n').str();
@@ -391,20 +392,48 @@ llvm::Instruction *ValueRefs::resolveInst(llvm::StringRef ref) {
   return llvm::dyn_cast_or_null<llvm::Instruction>(resolve(ref));
 }
 
+std::optional<unsigned> ValueRefs::indexOf(const llvm::Instruction &I) const {
+  for (unsigned index = 0; index < body.size(); ++index)
+    if (static_cast<const llvm::Value *>(body[index]) == &I)
+      return index;
+  return std::nullopt;
+}
+
+namespace {
+
+// Writes `; #N` after each instruction of the body.
+class Marks : public llvm::AssemblyAnnotationWriter {
+public:
+  explicit Marks(const ValueRefs &refs) : refs(refs) {}
+
+  void printInfoComment(const llvm::Value &V, llvm::formatted_raw_ostream &os) override {
+    const auto *I = llvm::dyn_cast<llvm::Instruction>(&V);
+    auto index = I ? refs.indexOf(*I) : std::nullopt;
+    if (!index)
+      return;
+    os.PadToColumn(50);
+    os << "; #" << *index;
+  }
+
+private:
+  const ValueRefs &refs;
+};
+
+} // namespace
+
+std::string printNumbered(llvm::Module &M, const ValueRefs &refs) {
+  Marks marks(refs);
+  return printModule(M, &marks);
+}
+
 std::string ValueRefs::print(const llvm::Value &V) {
   // An instruction that defines no value has neither a name nor a slot, so
   // its reference is its position. Every reference this returns resolves
   // back to the same value.
-  if (const auto *I = llvm::dyn_cast<llvm::Instruction>(&V)) {
-    if (!I->hasName() && mst.getLocalSlot(I) < 0) {
-      unsigned index = 0;
-      for (auto &other : llvm::instructions(fn)) {
-        if (&other == I)
-          return "#" + std::to_string(index);
-        ++index;
-      }
-    }
-  }
+  if (const auto *I = llvm::dyn_cast<llvm::Instruction>(&V))
+    if (!I->hasName() && mst.getLocalSlot(I) < 0)
+      if (auto index = indexOf(*I))
+        return "#" + std::to_string(*index);
   std::string out;
   llvm::raw_string_ostream os(out);
   V.printAsOperand(os, /*PrintType=*/false, mst);
