@@ -41,6 +41,14 @@ llvm::json::Object numberCmd(llvm::json::Object &args) {
                              {"phi", llvm::isa<llvm::PHINode>(I)}};
     if (!I.getType()->isVoidTy())
       entry["value"] = shape.refs->print(I);
+    if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&I)) {
+      if (const llvm::Function *fn = call->getCalledFunction())
+        entry["calls"] = "@" + fn->getName().str();
+      llvm::json::Array arguments;
+      for (const llvm::Use &arg : call->args())
+        arguments.push_back(shape.refs->print(*arg.get()));
+      entry["args"] = std::move(arguments);
+    }
     body[*shape.refs->indexOf(I)] = std::move(entry);
   }
 

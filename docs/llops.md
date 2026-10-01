@@ -72,7 +72,7 @@ Request `{ "module": "<ir text>" }`, response `{ "ok": true, "module": ..., "bod
 
 The module comes back with each instruction of its function marked `; #N`, the [reference](#value-references) that names it, at the column LLVM writes its own comments. Each mark is what `#N` resolves to, and the marks are comments, so the text still parses as the program it marks.
 
-`body` lists the same instructions as data, the one at index N in position N: its `block`, its `text` on one line, the `value` it defines if it defines one, and whether it is a `phi`.
+`body` lists the same instructions as data, the one at index N in position N: its `block`, its `text` on one line, the `value` it defines if it defines one, whether it is a `phi`, and for a call, the function it `calls` and its `args` as references or constants.
 
 ## edit
 

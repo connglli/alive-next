@@ -536,6 +536,12 @@ bb2:
     )
     self.assertNotIn("value", body[1])
 
+  def test_lists_a_call_and_its_arguments(self):
+    module = self.PROGRAM.replace("call void @g(i32 %0)", "call void @g(i32 poison)")
+    body = self.good(run("number", {"module": module}))["body"]
+    self.assertEqual((body[2]["calls"], body[2]["args"]), ("@g", ["poison"]))
+    self.assertNotIn("calls", body[1])
+
   def test_a_mark_names_what_it_marks(self):
     r = self.good(run("edit", {"module": self.PROGRAM, "op": "erase", "v": "#2"}))
     self.assertNotIn("call void @g", r["module"])
