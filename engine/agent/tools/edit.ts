@@ -11,7 +11,7 @@ import { formatEdits, formatProgram, toolResult } from "./format.ts";
 
 const Ref = Type.String({
   description:
-    "A value as the program prints it, such as %3 or %x, or #7 for the instruction at index 7 of the body, counting from 0 at its first instruction; arguments are not counted.",
+    "A value as the program prints it, such as %3 or %x, or #7 for the instruction marked `; #7`.",
 });
 const Where = Type.Union([Type.Literal("before"), Type.Literal("after")]);
 const Insts = Type.Array(Type.String(), {
@@ -85,11 +85,18 @@ export function createEditTool(session: Session) {
     execute: async (_id, params) => {
       const edited = await session.edit(params as EditOp);
       if (edited.kind === "refused") {
-        return toolResult(false, formatProgram(`refused: ${edited.message}`, edited.text), edited);
+        return toolResult(
+          false,
+          formatProgram(`refused: ${edited.message}`, await session.number(edited.text)),
+          edited,
+        );
       }
       return toolResult(
         true,
-        formatProgram(`applied, ${formatEdits(edited.ops)} so far`, edited.text),
+        formatProgram(
+          `applied, ${formatEdits(edited.ops)} so far`,
+          await session.number(edited.text),
+        ),
         {
           kind: edited.kind,
           ops: edited.ops,

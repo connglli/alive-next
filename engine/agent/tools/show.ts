@@ -8,10 +8,10 @@ import type { Session, SideView } from "../../core/session.ts";
 import { formatProgram, toolResult } from "./format.ts";
 
 /** One side: what it is called now, what it has been, and what it says. */
-function side(which: "src" | "tgt", view: SideView): string {
+async function side(session: Session, which: "src" | "tgt", view: SideView): Promise<string> {
   const was = view.history.slice(0, -1);
   const earlier = was.length > 0 ? ` (was ${was.join(", ")})` : "";
-  return formatProgram(`${which} ${view.id}${earlier}`, view.text);
+  return formatProgram(`${which} ${view.id}${earlier}`, await session.number(view.text));
 }
 
 export function createShowTool(session: Session) {
@@ -26,15 +26,17 @@ export function createShowTool(session: Session) {
     execute: async (_id, { ref }) => {
       if (/^p\d+$/.test(ref)) {
         const view = await session.program(ref);
-        return toolResult(true, formatProgram(view.id, view.text), view);
+        return toolResult(true, formatProgram(view.id, await session.number(view.text)), view);
       }
       const view = await session.show(ref);
       const what = view.role ? `${view.role} of ${view.parent}, cut into @${view.callee}` : "root";
       return toolResult(
         true,
-        [`${view.gid} ${what}, ${view.status}`, side("src", view.src), side("tgt", view.tgt)].join(
-          "\n",
-        ),
+        [
+          `${view.gid} ${what}, ${view.status}`,
+          await side(session, "src", view.src),
+          await side(session, "tgt", view.tgt),
+        ].join("\n"),
         view,
       );
     },

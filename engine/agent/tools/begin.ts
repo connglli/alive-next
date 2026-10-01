@@ -22,7 +22,7 @@ export function createBeginTool(session: Session) {
         true,
         formatProgram(
           `editing ${gid} ${side}, from ${nameFor(session, opened.from)}: ${must}`,
-          opened.text,
+          await session.number(opened.text),
         ),
         { gid, side, from: opened.from },
       );

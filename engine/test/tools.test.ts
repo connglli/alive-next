@@ -198,6 +198,7 @@ describe.skipIf(!built)("the tool layer", () => {
     const opened = await call("tx_begin", { gid: "g1", side: "src" });
     expect(opened).toContain("editing g1 src, from p1: what you commit must refine it");
     expect(opened).toContain("%2 = mul i32 %1, 8");
+    expect(opened).toMatch(/%2 = mul i32 %1, 8 +; #1\n/);
 
     // A refusal answers with the program it refused, which is where the value
     // the caller meant is to be found.

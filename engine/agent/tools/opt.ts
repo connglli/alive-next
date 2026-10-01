@@ -64,14 +64,25 @@ export function createOptTool(session: Session) {
         edited = await session.opt({ what: params.what, v: params.v });
       }
       if (edited.kind === "refused") {
-        return toolResult(false, formatProgram(`refused: ${edited.message}`, edited.text), edited);
+        return toolResult(
+          false,
+          formatProgram(`refused: ${edited.message}`, await session.number(edited.text)),
+          edited,
+        );
       }
       if (edited.kind === "unchanged") {
-        return toolResult(true, formatProgram("unchanged: nothing to fold", edited.text), edited);
+        return toolResult(
+          true,
+          formatProgram("unchanged: nothing to fold", await session.number(edited.text)),
+          edited,
+        );
       }
       return toolResult(
         true,
-        formatProgram(`applied, ${formatEdits(edited.ops)} so far`, edited.text),
+        formatProgram(
+          `applied, ${formatEdits(edited.ops)} so far`,
+          await session.number(edited.text),
+        ),
         {
           kind: edited.kind,
           ops: edited.ops,

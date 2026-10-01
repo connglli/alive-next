@@ -65,6 +65,13 @@ exit:
     expect(twice.module).toBe(once.module);
   });
 
+  test("numbers each instruction by the #N that names it", async () => {
+    const marked = await llops.number(F);
+    if (!marked.ok) throw new Error(marked.message);
+    expect(marked.module).toMatch(/%m = mul i32 %x, %y +; #0\n/);
+    expect(marked.module).toMatch(/ret i32 %s +; #2\n/);
+  });
+
   test("edits by any of the reference forms", async () => {
     const canonical = await llops.canon(F);
     if (!canonical.ok) throw new Error(canonical.message);

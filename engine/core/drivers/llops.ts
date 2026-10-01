@@ -179,6 +179,11 @@ export class Llops {
     return this.run("canon", { module });
   }
 
+  /** The module with each instruction marked `; #N`, for a reader. */
+  number(module: Module): Promise<LlopsResult<ModuleResult>> {
+    return this.run("number", { module });
+  }
+
   edit(module: Module, op: EditOp): Promise<LlopsResult<ModuleResult>> {
     return this.run("edit", { module, ...op });
   }

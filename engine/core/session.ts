@@ -311,6 +311,12 @@ export class Session {
     );
   }
 
+  /** A program as a reader is shown it, each instruction marked with its `#N`. */
+  async number(text: string): Promise<string> {
+    const marked = await this.llops.number(text);
+    return marked.ok ? marked.module : text;
+  }
+
   /**
    * Move a side's head back to a program it has been. Later steps stay in the
    * log, unused, and whatever the proof they carried had settled comes undone
