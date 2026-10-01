@@ -674,6 +674,16 @@ describe("checking a goal", () => {
     expect(checker.calls).toHaveLength(0);
   });
 
+  test("points a looping pair checked without a factor at the cut that proves it", async () => {
+    const checker = new FakeChecker([]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const result = await steps.checkGoal(await treeOf(LOOP, LATE), "g1");
+    expect(result.outcome).toBe("unknown");
+    expect(result.check.detail).toContain("proved by splitting it at its loop header");
+    expect(result.check.detail).toContain("only searches it for a counterexample");
+    expect(checker.calls).toHaveLength(0);
+  });
+
   test("refutes the run when the pair is the root's original one", async () => {
     const steps = new Steps(
       store,

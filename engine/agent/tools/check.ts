@@ -9,7 +9,7 @@ export function createCheckTool(session: Session) {
     name: "goal_check",
     label: "Check",
     description:
-      "Ask whether a goal's tgt refines its src as the two stand. Proved discharges the goal. Refuted ends the run only when this goal is the root checked against its original pair; elsewhere it is a hint, since a valid step can overshoot and a callee's entry is conservative. A pair that loops is never proved: with `unroll` it is searched for a counterexample, which is a hint whose input run_report_cex certifies.",
+      "Ask whether a goal's tgt refines its src as the two stand. Proved discharges the goal. Refuted ends the run only when this goal is the root checked against its original pair; elsewhere it is a hint, since a valid step can overshoot and a callee's entry is conservative. A pair that loops is proved by tree_split at its loop header; `unroll` only searches it for a counterexample, whose input run_report_cex certifies.",
     parameters: Type.Object({
       gid: Type.String({ description: "The goal to check." }),
       timeout_ms: Type.Optional(

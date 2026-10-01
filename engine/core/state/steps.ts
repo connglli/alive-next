@@ -265,7 +265,9 @@ export class Steps {
     if (loops && unroll === undefined)
       return {
         outcome: "unknown",
-        check: unasked(`${LOOPS}; give an unroll factor to search those`),
+        check: unasked(
+          "a pair that loops is proved by splitting it at its loop header; an unroll factor only searches it for a counterexample",
+        ),
         effects: [],
       };
     const key = historyKey(srcHash, tgtHash, loops ? unroll : undefined);
