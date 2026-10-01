@@ -6,7 +6,7 @@
 // the text is asked for. And a move that changed where the run stands says so,
 // because the model sees nothing between calls but what it is handed.
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
-import type { CheckResult } from "../../core/drivers/alive2.ts";
+import type { CheckOutcome, CheckResult } from "../../core/drivers/alive2.ts";
 import { type GoalStanding, type Session, standings } from "../../core/session.ts";
 import type { Timeouts } from "../../core/state/steps.ts";
 import type { Hash } from "../../core/state/trajectory.ts";
@@ -71,15 +71,26 @@ export function formatBudgets(budgets: Timeouts): string {
   ].join(", ");
 }
 
+/** A checker's answer in the words a result uses. */
+export function outcomeWord(outcome: CheckOutcome): string {
+  const words = {
+    correct: "proved",
+    incorrect: "refuted",
+    unknown: "not settled",
+    error: "not checked",
+  };
+  return words[outcome];
+}
+
 /** What the check of a new pair says: proved discharges the goal, anything else continues the run. */
 export function formatEager(eager: CheckResult | undefined): string {
   if (!eager) return "";
-  const outcome =
-    eager.outcome === "correct" ? "proved" : eager.outcome === "incorrect" ? "refuted" : "unknown";
+  const said = `, the new pair is ${outcomeWord(eager.outcome)}`;
+  const budgetMs = eager.invocation.timeoutMs;
+  if (eager.outcome === "unknown") return `${said} in ${budgetMs}ms, so the goal stays open`;
+  if (eager.outcome === "error") return `${said}: ${eager.detail}`;
   const detail = eager.outcome === "incorrect" && eager.detail ? `\n${eager.detail}` : "";
-  return outcome === "proved"
-    ? `, the new pair is proved in ${eager.ms}ms (${eager.invocation.timeoutMs}ms budget)`
-    : `, the new pair is ${outcome} (${eager.ms}ms, ${eager.invocation.timeoutMs}ms budget)${detail}`;
+  return `${said} in ${eager.ms}ms (${budgetMs}ms budget)${detail}`;
 }
 
 /** The name a program goes by, which is what a caller says back to us. */

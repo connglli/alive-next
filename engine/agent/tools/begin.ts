@@ -16,9 +16,14 @@ export function createBeginTool(session: Session) {
     }),
     execute: async (_id, { gid, side }) => {
       const opened = await session.begin(gid, side);
+      const must =
+        side === "src" ? "what you commit must refine it" : "it must refine what you commit";
       return toolResult(
         true,
-        formatProgram(`editing ${gid} ${side}, from ${nameFor(session, opened.from)}`, opened.text),
+        formatProgram(
+          `editing ${gid} ${side}, from ${nameFor(session, opened.from)}: ${must}`,
+          opened.text,
+        ),
         { gid, side, from: opened.from },
       );
     },

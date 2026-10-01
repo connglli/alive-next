@@ -191,8 +191,12 @@ describe.skipIf(!built)("the tool layer", () => {
   });
 
   test("a transaction reads and writes through the tools", async () => {
+    expect(await call("tx_begin", { gid: "g1", side: "tgt" })).toContain(
+      "editing g1 tgt, from p2: it must refine what you commit",
+    );
+    await call("tx_abort", {});
     const opened = await call("tx_begin", { gid: "g1", side: "src" });
-    expect(opened).toContain("editing g1 src");
+    expect(opened).toContain("editing g1 src, from p1: what you commit must refine it");
     expect(opened).toContain("%2 = mul i32 %1, 8");
 
     // A refusal answers with the program it refused, which is where the value
@@ -434,7 +438,9 @@ describe.skipIf(!built)("the tool layer", () => {
       insts: ["%s = mul i32 8, %1"],
     });
     const res = await callFrom(eagerTools, "tx_commit", {});
-    expect(res).toContain("certified, head is p3, the new pair is unknown (7ms, 3000ms budget)");
+    expect(res).toContain(
+      "certified, head is p3, the new pair is not settled in 3000ms, so the goal stays open",
+    );
   });
 
   test("tx_commit surfaces counterexample detail when eager check is refuted", async () => {
@@ -471,7 +477,7 @@ describe.skipIf(!built)("the tool layer", () => {
       insts: ["%s = mul i32 8, %1"],
     });
     const res = await callFrom(eagerTools, "tx_commit", {});
-    expect(res).toContain("certified, head is p3, the new pair is refuted (12ms, 3000ms budget)");
+    expect(res).toContain("certified, head is p3, the new pair is refuted in 12ms (3000ms budget)");
     expect(res).toContain("Example:\ni32 %x = 42");
   });
 
@@ -504,7 +510,7 @@ describe.skipIf(!built)("the tool layer", () => {
     await callFrom(fbTools, "tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
     const res = await callFrom(fbTools, "tx_commit", {});
     expect(res).toContain(
-      "whole-function fallback: window check (before: #1..#1, after: #1..#1) was unknown in 12ms on a 3000ms budget",
+      "certified, asked of the whole function after its window #1..#1 (#1..#1 after the edit) was not settled in 12ms on a 3000ms budget",
     );
   });
 
@@ -537,7 +543,7 @@ describe.skipIf(!built)("the tool layer", () => {
     await callFrom(rfbTools, "tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
     const res = await callFrom(rfbTools, "tx_commit", {});
     expect(res).toContain(
-      "refused on a 30000ms budget: unknown (whole-function fallback: window check (before: #1..#1, after: #1..#1) was unknown in 15ms on a 3000ms budget); transaction remains open",
+      "refused: the step is not settled on a 30000ms budget, asked of the whole function after its window #1..#1 (#1..#1 after the edit) was not settled in 15ms on a 3000ms budget; transaction remains open",
     );
   });
 
@@ -570,7 +576,7 @@ describe.skipIf(!built)("the tool layer", () => {
       preconditions: { "%nope": { noundef: true } },
     });
     expect(res).toContain(
-      "certified (the preconditions were not used: some preconditions do not name a value of the window), head is p2",
+      "certified without its preconditions, since some preconditions do not name a value of the window, head is p2",
     );
   });
 
@@ -611,7 +617,7 @@ describe.skipIf(!built)("the tool layer", () => {
       window: { from: "%2", to: "%2" },
       preconditions: { "%1": { noundef: true } },
     });
-    expect(res).toContain("(before: %2..%2");
+    expect(res).toContain("its window %2..%2");
     expect(res).toContain("with preconditions (parameter 0: noundef)");
   });
 

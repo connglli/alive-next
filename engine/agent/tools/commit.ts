@@ -3,7 +3,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
 import type { Fallback } from "../../core/state/steps.ts";
-import { formatEager, nameFor, toolResultFrom } from "./format.ts";
+import { formatEager, nameFor, outcomeWord, toolResultFrom } from "./format.ts";
 
 export function createCommitTool(session: Session) {
   return defineTool({
@@ -26,7 +26,7 @@ export function createCommitTool(session: Session) {
           },
           {
             description:
-              "Optional explicit window in the PRE-EDIT (before/head) program. The corresponding window in the post-edit scratch is derived automatically.",
+              "Optional explicit window in the PRE-EDIT (before/head) program: instructions of one block that cover every edit, unchanged ones allowed. Its post-edit counterpart is derived, whatever the edits named.",
           },
         ),
       ),
@@ -44,51 +44,51 @@ export function createCommitTool(session: Session) {
         // spent failing, and a refusal that spent nothing says that instead.
         const budgetMs = step.check.invocation.timeoutMs;
         const budget = budgetMs > 0 ? ` on a ${budgetMs}ms budget` : "";
-        const fallback = fallbackSummary(step.fallback);
+        const said = `the step is ${outcomeWord(step.check.outcome)}${budget}${asked(step.fallback)}`;
+        const detail = step.check.detail ? `\n${step.check.detail}` : "";
         return toolResultFrom(
           session,
           false,
-          `refused${budget}: ${step.check.detail || step.check.outcome}${fallback}; transaction remains open`,
+          `refused: ${said}; transaction remains open${detail}`,
           step,
         );
       }
-      const fallback = fallbackSummary(step.fallback);
       const eager = formatEager(step.eager);
       return toolResultFrom(
         session,
         true,
-        `certified${fallback}, head is ${nameFor(session, step.hash)}${eager}`,
+        `certified${asked(step.fallback)}, head is ${nameFor(session, step.hash)}${eager}`,
         step,
       );
     },
   });
 }
 
-function fallbackSummary(fallback?: Fallback): string {
+/** How the step was asked, when not as the window its edits touched. */
+function asked(fallback?: Fallback): string {
   if (fallback?.reason === "preconditions_refused") {
-    return ` (the preconditions were not used: ${fallback.conditioning})`;
+    return ` without its preconditions, since ${fallback.conditioning}`;
   }
   if (fallback?.reason === "window_unproved" && fallback.narrowed) {
-    const narrowOutcome =
-      fallback.narrowed.outcome === "incorrect" ? "refuted" : fallback.narrowed.outcome;
-    const ms = fallback.narrowed.ms;
-    const budgetMs = fallback.narrowed.invocation.timeoutMs;
-    const budget = budgetMs > 0 ? ` on a ${budgetMs}ms budget` : "";
-    const bounds = fallback.window
-      ? ` (before: ${fallback.window.before.from}..${fallback.window.before.to}, after: ${fallback.window.after.from}..${fallback.window.after.to})`
-      : "";
+    const { outcome, ms, invocation } = fallback.narrowed;
+    const budget = invocation.timeoutMs > 0 ? ` on a ${invocation.timeoutMs}ms budget` : "";
+    const { before, after } = fallback.window ?? {};
+    const bounds =
+      before && after
+        ? ` ${before.from}..${before.to} (${after.from}..${after.to} after the edit)`
+        : "";
     const pre =
       fallback.preconditions && Object.keys(fallback.preconditions).length > 0
         ? ` with preconditions (${factsOf(fallback.preconditions)})`
         : "";
-    const conditioning = fallback.conditioning
-      ? `; the preconditions were not used: ${fallback.conditioning}`
+    const without = fallback.conditioning
+      ? `, without its preconditions since ${fallback.conditioning}`
       : "";
-    return ` (whole-function fallback: window check${bounds}${pre} was ${narrowOutcome} in ${ms}ms${budget}${conditioning})`;
+    return `, asked of the whole function after its window${bounds}${pre} was ${outcomeWord(outcome)} in ${ms}ms${budget}${without}`;
   }
   if (fallback?.reason === "no_window") {
-    const why = fallback.narrowing ? `, since ${fallback.narrowing}` : "";
-    return ` (whole-function fallback: no window${why})`;
+    const since = fallback.narrowing ? ` since ${fallback.narrowing}` : "";
+    return `, asked of the whole function with no window${since}`;
   }
   return "";
 }
