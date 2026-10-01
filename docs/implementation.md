@@ -80,7 +80,7 @@ Event kinds:
 
 `engine/agent/` is the one part of the engine that drives a model, and nothing verification-critical is in it: a bug here spends tokens and produces no proof, and cannot produce a wrong one. `bun run agent a.ll b.ll` proves one pair with the configured model, writing the session directory an example writes.
 
-The tool surface is stated rather than discovered. Pi's defaults are dropped, the allowlist names every tool that exists, ours arrive as custom tools, and the resource loader is told to read no extensions, skills, prompts, themes or context files from the machine, so what a run can do is what `agent.ts` says and not what is installed beside it. Tools run sequentially, because they mutate one goal tree. The shell and the file tools are built for the run's scratch directory and confined to it (`tools/sandbox.ts`).
+The tool surface is stated rather than discovered. Pi's defaults are dropped, the allowlist names every tool that exists, ours arrive as custom tools, and the resource loader is told to read no extensions, skills, prompts, themes or context files from the machine, so what a run can do is what `agent.ts` says and not what is installed beside it. Tools run sequentially, because they mutate one goal tree. The shell and the file tools are built for the run's scratch directory (`tools/sandbox.ts`).
 
 The loop stops on a verdict or on the budget. A tool that settles the root sets Pi's `terminate` hint, and the same test runs again after the turn, since Pi honours the hint only when every result in a batch carries it. The budget is `--max-steps` and `--max-seconds`, unbounded when neither is given, and running out is not a failure: "unknown" is one of the three outputs.
 

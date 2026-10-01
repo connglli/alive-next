@@ -1,12 +1,10 @@
 // Confining the sandbox tools to the scratch directory.
 //
 // read, write, edit, grep, ls, find and bash are the only way a model
-// touches the machine, and the whole point of them is that the touching goes
-// no further than the run's scratch directory: the run's record, Pi's
-// credentials and the repository all live outside it. What is tested here is
-// the door, one refusal at a time: a path that resolves outside is refused, a
-// symlink planted inside cannot smuggle one out, and the shell cannot write
-// anywhere but the scratch directory.
+// touches the machine. What is tested here is the door, one refusal at a
+// time: a path that resolves outside the scratch directory is refused, a
+// symlink planted inside cannot smuggle one out, and the shell writes only
+// the scratch directory and /tmp and cannot read the run's record.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {

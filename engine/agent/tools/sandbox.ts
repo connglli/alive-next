@@ -1,8 +1,8 @@
 // The sandbox: the seven tools a model touches the machine through (read,
-// write, edit, grep, ls, find, bash), each a Pi implementation confined to
-// the run's workdir directory, the shell by bubblewrap, the file tools
-// through their operation hooks, both keeping everything else out: the run's
-// record, Pi's credentials, the repository, the network.
+// write, edit, grep, ls, find, bash), each a Pi implementation. The file
+// tools reach only the run's workdir directory, through their operation
+// hooks; the shell, under bubblewrap, writes only there and in /tmp, and
+// reads all but the run's record and Pi's credentials, with no network.
 //
 // The bare names replace Pi's built-ins on purpose, which is Pi's own
 // tool-override pattern, and what a replacement keeps is the built-in
