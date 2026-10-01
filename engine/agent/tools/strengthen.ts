@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import type { Attrs, Predicate } from "../../core/drivers/llops.ts";
 import type { Session } from "../../core/session.ts";
 import type { StrengthenContract } from "../../core/state/strengthen.ts";
-import { toolResultFrom } from "./format.ts";
+import { formatDetail, toolResultFrom } from "./format.ts";
 
 export function createStrengthenTool(session: Session) {
   return defineTool({
@@ -54,12 +54,13 @@ export function createStrengthenTool(session: Session) {
         return toolResultFrom(session, false, `refused: ${stronger.message}`, stronger);
       }
       if (stronger.kind === "refused") {
-        const said = stronger.explanation
-          ? `\n\n${stronger.explanation}`
-          : stronger.check?.detail
-            ? `\n\n${stronger.check.detail}`
-            : "";
-        return toolResultFrom(session, false, `refused: ${stronger.reason}${said}`, stronger);
+        // The outer's refusal is explained from alive2's example, so the
+        // example is not repeated; every other refusal shows what alive2 said.
+        const why = stronger.explanation ? `\n\n${stronger.explanation}` : "";
+        const detail = stronger.phase === "assume" ? "" : formatDetail(stronger.check);
+        return toolResultFrom(session, false, `refused: ${stronger.reason}${why}`, stronger, [
+          detail,
+        ]);
       }
       return toolResultFrom(session, true, `strengthened the interface of ${gid}`, stronger);
     },

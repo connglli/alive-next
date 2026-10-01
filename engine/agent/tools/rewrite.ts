@@ -2,7 +2,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { formatEager, formatMoved, toolResultFrom } from "./format.ts";
+import { formatEager, formatEagerDetail, formatMoved, toolResultFrom } from "./format.ts";
 
 export function createRewriteTool(session: Session) {
   return defineTool({
@@ -33,6 +33,7 @@ export function createRewriteTool(session: Session) {
         true,
         `rewrote with ${rules.join(", ")}, ${formatMoved(session, rewritten.effects)}${eager}`,
         rewritten,
+        [formatEagerDetail(rewritten.eager)],
       );
     },
   });

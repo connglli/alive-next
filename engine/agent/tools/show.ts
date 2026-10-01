@@ -36,7 +36,7 @@ export function createShowTool(session: Session) {
           `${view.gid} ${what}, ${view.status}`,
           await side(session, "src", view.src),
           await side(session, "tgt", view.tgt),
-        ].join("\n"),
+        ].join("\n\n"),
         view,
       );
     },

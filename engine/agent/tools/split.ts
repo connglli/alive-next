@@ -2,7 +2,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { toolResultFrom } from "./format.ts";
+import { formatSection, toolResultFrom } from "./format.ts";
 
 export function createSplitTool(session: Session) {
   return defineTool({
@@ -41,9 +41,9 @@ export function createSplitTool(session: Session) {
           `${gid} is cut into @${split.callee}`,
           `outer ${split.children.outer}, callee ${split.children.callee}`,
           ...(split.detach?.hypothesis ? [`back edges call @${split.detach.hypothesis}`] : []),
-          `parameters:\n${params}`,
         ].join("\n"),
         split,
+        [formatSection("Parameters", params)],
       );
     },
   });

@@ -66,23 +66,29 @@ export function createOptTool(session: Session) {
       if (edited.kind === "refused") {
         return toolResult(
           false,
-          formatProgram(`refused: ${edited.message}`, await session.number(edited.text)),
+          [
+            `refused: ${edited.message}`,
+            formatProgram("Edited program", await session.number(edited.text)),
+          ].join("\n\n"),
           edited,
         );
       }
       if (edited.kind === "unchanged") {
         return toolResult(
           true,
-          formatProgram("unchanged: nothing to fold", await session.number(edited.text)),
+          [
+            "unchanged: nothing to fold",
+            formatProgram("Edited program", await session.number(edited.text)),
+          ].join("\n\n"),
           edited,
         );
       }
       return toolResult(
         true,
-        formatProgram(
+        [
           `applied, ${formatEdits(edited.ops)} so far`,
-          await session.number(edited.text),
-        ),
+          formatProgram("Edited program", await session.number(edited.text)),
+        ].join("\n\n"),
         {
           kind: edited.kind,
           ops: edited.ops,

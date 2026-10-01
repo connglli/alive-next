@@ -203,7 +203,8 @@ export class Strengthen {
       if (check.outcome !== "correct") {
         const reason = `one iteration of @${name} is not shown to keep the facts before @${hypothesis}`;
         // alive2's Source and Target read as the goal's two sides, and are not.
-        const explanation = `Source and Target are both the callee's src, and only Target asserts the facts before the call, which the example's arguments break.\n\n${check.detail}`;
+        const explanation =
+          "Source and Target are both the callee's src, and only Target asserts the facts before the call, which the example's arguments break.";
         return {
           kind: "refused",
           phase: "hypothesis",

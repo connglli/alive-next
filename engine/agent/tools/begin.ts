@@ -20,10 +20,10 @@ export function createBeginTool(session: Session) {
         side === "src" ? "what you commit must refine it" : "it must refine what you commit";
       return toolResult(
         true,
-        formatProgram(
+        [
           `editing ${gid} ${side}, from ${nameFor(session, opened.from)}: ${must}`,
-          await session.number(opened.text),
-        ),
+          formatProgram(nameFor(session, opened.from), await session.number(opened.text)),
+        ].join("\n\n"),
         { gid, side, from: opened.from },
       );
     },

@@ -3,7 +3,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { AnalyzeKind } from "../../core/drivers/llops.ts";
 import type { Session } from "../../core/session.ts";
-import { toolResult } from "./format.ts";
+import { formatSection, toolResult } from "./format.ts";
 
 const KINDS: AnalyzeKind[] = ["knownbits", "ranges", "pointer", "defined"];
 
@@ -28,7 +28,11 @@ export function createAnalyzeTool(session: Session) {
       const found = await session.analyze(gid, side, kind, point);
       if (!found.ok) return toolResult(false, `refused: ${found.message}`, found);
       const facts = found.facts.map((fact) => JSON.stringify(fact)).join("\n");
-      return toolResult(true, facts || `nothing to say about ${gid} ${side}`, found);
+      return toolResult(
+        true,
+        facts ? formatSection("Facts", facts) : `nothing to say about ${gid} ${side}`,
+        found,
+      );
     },
   });
 }

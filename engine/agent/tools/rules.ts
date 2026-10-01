@@ -2,7 +2,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { toolResultFrom } from "./format.ts";
+import { formatSection, toolResultFrom } from "./format.ts";
 
 export function createRulesTool(session: Session) {
   return defineTool({
@@ -16,7 +16,7 @@ export function createRulesTool(session: Session) {
       const lines = rules.map((rule) =>
         rule.pattern ? `- name: ${rule.name}; pattern: ${rule.pattern}.` : `- name: ${rule.name}.`,
       );
-      return toolResultFrom(session, true, `rules:\n${lines.join("\n")}`, { rules });
+      return toolResultFrom(session, true, formatSection("Rules", lines.join("\n")), { rules });
     },
   });
 }

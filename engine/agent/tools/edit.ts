@@ -87,16 +87,19 @@ export function createEditTool(session: Session) {
       if (edited.kind === "refused") {
         return toolResult(
           false,
-          formatProgram(`refused: ${edited.message}`, await session.number(edited.text)),
+          [
+            `refused: ${edited.message}`,
+            formatProgram("Edited program", await session.number(edited.text)),
+          ].join("\n\n"),
           edited,
         );
       }
       return toolResult(
         true,
-        formatProgram(
+        [
           `applied, ${formatEdits(edited.ops)} so far`,
-          await session.number(edited.text),
-        ),
+          formatProgram("Edited program", await session.number(edited.text)),
+        ].join("\n\n"),
         {
           kind: edited.kind,
           ops: edited.ops,

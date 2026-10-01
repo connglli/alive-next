@@ -184,7 +184,7 @@ describe.skipIf(!built)("strengthening a loop", () => {
     expect(result).toMatchObject({ kind: "refused", phase: "hypothesis", effects: [] });
     if (result.kind !== "refused") throw new Error("unreachable");
     expect(result.explanation).toContain("Source and Target are both the callee's src");
-    expect(result.explanation).toContain("ERROR: Value mismatch");
+    expect(result.check?.detail).toContain("ERROR: Value mismatch");
     // The one question asked is the iteration's, before the outer's.
     expect(checker.calls).toHaveLength(1);
     expect(checker.calls[0]?.tgt).toContain("@outlined_g3.ih(");

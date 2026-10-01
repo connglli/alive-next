@@ -45,13 +45,15 @@ export function toolResultFrom(
   ok: boolean,
   text: string,
   details: unknown,
+  parts: string[] = [],
 ): AgentToolResult<unknown> {
   const moved = ((details as { effects?: unknown[] }).effects ?? []).length > 0;
   const settled = session.verdict !== "unknown";
   const said = [
     text,
-    moved ? formatGoalTree(session, standings(session.tree)) : "",
-    settled ? `the root is ${session.verdict}` : "",
+    settled ? `the root is ${session.verdict === "verified" ? "verified" : "refuted"}` : "",
+    ...parts,
+    moved ? formatSection("Goal tree", formatGoalTree(session, standings(session.tree))) : "",
   ]
     .filter((part) => part !== "")
     .join("\n\n");
@@ -89,8 +91,28 @@ export function formatEager(eager: CheckResult | undefined): string {
   const budgetMs = eager.invocation.timeoutMs;
   if (eager.outcome === "unknown") return `${said} in ${budgetMs}ms, so the goal stays open`;
   if (eager.outcome === "error") return `${said}: ${eager.detail}`;
-  const detail = eager.outcome === "incorrect" && eager.detail ? `\n${eager.detail}` : "";
-  return `${said} in ${eager.ms}ms (${budgetMs}ms budget)${detail}`;
+  return `${said} in ${eager.ms}ms (${budgetMs}ms budget)`;
+}
+
+/** The example a refuted check of the new pair found; anything else it said is noise. */
+export function formatEagerDetail(eager: CheckResult | undefined): string {
+  return eager?.outcome === "incorrect" ? formatDetail(eager) : "";
+}
+
+/** One part of an answer under its title, so a reader can tell the parts apart. */
+export function formatSection(title: string, body: string): string {
+  return `## ${title}\n${body}`;
+}
+
+/**
+ * What a check printed. alive2's own output, which comes with its summary,
+ * goes under its title in a fence; our words about a check that never ran
+ * stay as they are.
+ */
+export function formatDetail(check: CheckResult | undefined): string {
+  const detail = check?.detail.trim() ?? "";
+  if (!detail || !check?.summary) return detail;
+  return formatSection("alive2", `\`\`\`text\n${detail}\n\`\`\``);
 }
 
 /** Where a step left its side, as "g1 src is p3". */
@@ -110,8 +132,8 @@ export function nameFor(session: Session, hash: Hash): string {
 }
 
 /** A program as the model reads it: what to call it, then what it says. */
-export function formatProgram(heading: string, text: string): string {
-  return `${heading}\n\`\`\`llvm\n${text.trimEnd()}\n\`\`\``;
+export function formatProgram(title: string, text: string): string {
+  return formatSection(title, `\`\`\`llvm\n${text.trimEnd()}\n\`\`\``);
 }
 
 /** One goal on one line: what it is, where it stands, and its two programs. */

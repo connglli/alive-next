@@ -246,7 +246,7 @@ describe.skipIf(!built)("the tool layer", () => {
 
     expect(refused).toContain("the transaction stays open");
     expect(await callFrom(refusingTools, "run_status", {})).toContain(
-      "editing g1 src, 1 edit so far",
+      "editing: g1 src, 1 edit so far",
     );
     expect(await callFrom(refusingTools, "tx_edit", { op: "commute", v: "%2" })).toContain(
       "applied, 2 edits so far",
@@ -787,10 +787,10 @@ entry:
       tgt_cut: "%2",
     });
     expect(sigRes).toContain("cutting g1 at src %2 and tgt %2 would make @outlined_g3");
-    expect(sigRes).toContain("parameters:");
+    expect(sigRes).toContain("## Parameters\n");
     expect(sigRes).toContain("the src's %1");
-    expect(sigRes).toContain("the tgt's values at its cut: %1 i32, %0 i32");
-    expect(sigRes).toContain("tree_split needs a value_map from each src value above");
+    expect(sigRes).toContain("## tgt values at its cut\n  %1 i32\n  %0 i32");
+    expect(sigRes).toContain("tree_split needs a value_map from each src value below");
     // Ensure goal tree was NOT modified
     expect(previewSession.tree.goals.get("g1")?.status).toBe("open");
 

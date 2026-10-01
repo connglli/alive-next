@@ -2,7 +2,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { toolResultFrom } from "./format.ts";
+import { formatSection, toolResultFrom } from "./format.ts";
 
 export function createSplitPreviewTool(session: Session) {
   return defineTool({
@@ -34,22 +34,20 @@ export function createSplitPreviewTool(session: Session) {
         .map((param, at) => `  ${at}: ${param.param} ${param.type}, the src's ${param.live}`)
         .join("\n");
 
-      const lines = [
-        `cutting ${gid} at src ${src_cut} and tgt ${tgt_cut} would make @${preview.callee}`,
-        `parameters:\n${params}`,
-      ];
-
+      const cutting = `cutting ${gid} at src ${src_cut} and tgt ${tgt_cut} would make @${preview.callee}`;
       if (value_map) {
-        lines.push("The value_map is valid: tree_split with the same arguments makes this cut.");
-      } else {
-        const tgt = (preview.tgtParams ?? []).map((param) => `${param.live} ${param.type}`);
-        lines.push(
-          `the tgt's values at its cut: ${tgt.join(", ")}`,
-          'tree_split needs a value_map from each src value above to a tgt value, as { "<src_value>": "<tgt_value>" }.',
-        );
+        const valid = "The value_map is valid: tree_split with the same arguments makes this cut.";
+        return toolResultFrom(session, true, `${cutting}\n${valid}`, preview, [
+          formatSection("Parameters", params),
+        ]);
       }
-
-      return toolResultFrom(session, true, lines.join("\n\n"), preview);
+      const tgt = (preview.tgtParams ?? []).map((param) => `  ${param.live} ${param.type}`);
+      const needs =
+        'tree_split needs a value_map from each src value below to a tgt value, as { "<src_value>": "<tgt_value>" }.';
+      return toolResultFrom(session, true, `${cutting}\n${needs}`, preview, [
+        formatSection("Parameters", params),
+        formatSection("tgt values at its cut", tgt.join("\n")),
+      ]);
     },
   });
 }

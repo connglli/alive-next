@@ -2,7 +2,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { formatEager, formatMoved, toolResultFrom } from "./format.ts";
+import { formatEager, formatEagerDetail, formatMoved, toolResultFrom } from "./format.ts";
 
 export function createUnfoldTool(session: Session) {
   return defineTool({
@@ -27,6 +27,7 @@ export function createUnfoldTool(session: Session) {
         true,
         `unfolded, ${formatMoved(session, unfolded.effects)}${eager}`,
         unfolded,
+        [formatEagerDetail(unfolded.eager)],
       );
     },
   });

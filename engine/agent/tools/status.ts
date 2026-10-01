@@ -1,7 +1,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { formatBudgets, formatEdits, formatGoalTree, toolResult } from "./format.ts";
+import { formatBudgets, formatEdits, formatGoalTree, formatSection, toolResult } from "./format.ts";
 
 export function createStatusTool(session: Session) {
   return defineTool({
@@ -13,15 +13,17 @@ export function createStatusTool(session: Session) {
     execute: async () => {
       const standing = await session.status();
       const editing = standing.editing
-        ? `\nediting ${standing.editing.gid} ${standing.editing.side}, ${formatEdits(standing.editing.ops)} so far`
+        ? `\nediting: ${standing.editing.gid} ${standing.editing.side}, ${formatEdits(standing.editing.ops)} so far`
         : "";
       return toolResult(
         true,
         [
-          formatGoalTree(session, standing.goals),
-          `verdict ${standing.verdict}${editing}`,
-          formatBudgets(standing.budgets),
-        ].join("\n"),
+          formatSection("Goal tree", formatGoalTree(session, standing.goals)),
+          formatSection(
+            "Run",
+            `verdict: ${standing.verdict}${editing}\n${formatBudgets(standing.budgets)}`,
+          ),
+        ].join("\n\n"),
         standing,
       );
     },

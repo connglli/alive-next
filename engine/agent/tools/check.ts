@@ -3,7 +3,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
 import type { CheckGoalResult } from "../../core/state/steps.ts";
-import { toolResultFrom } from "./format.ts";
+import { formatDetail, toolResultFrom } from "./format.ts";
 
 /** A goal's outcome in the words the other answers use. */
 function said(outcome: CheckGoalResult["outcome"]): string {
@@ -32,7 +32,6 @@ export function createCheckTool(session: Session) {
     }),
     execute: async (_id, { gid, timeout_ms, unroll }) => {
       const checked = await session.check(gid, timeout_ms, unroll);
-      const detail = checked.check.detail ? `\n${checked.check.detail}` : "";
       // What it ran on, because a timeout means nothing without the budget it
       // ran out of, and asking for more than the cap is answered by the cap.
       const budgetMs = checked.check.invocation.timeoutMs;
@@ -47,8 +46,9 @@ export function createCheckTool(session: Session) {
       return toolResultFrom(
         session,
         checked.outcome === "proved",
-        `${prior}${gid} ${said(checked.outcome)}, ${budget}${detail}`,
+        `${prior}${gid} ${said(checked.outcome)}, ${budget}`,
         checked,
+        [formatDetail(checked.check)],
       );
     },
   });

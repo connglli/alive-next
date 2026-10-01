@@ -3,7 +3,14 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
 import type { Fallback } from "../../core/state/steps.ts";
-import { formatEager, formatMoved, outcomeWord, toolResultFrom } from "./format.ts";
+import {
+  formatDetail,
+  formatEager,
+  formatEagerDetail,
+  formatMoved,
+  outcomeWord,
+  toolResultFrom,
+} from "./format.ts";
 
 export function createCommitTool(session: Session) {
   return defineTool({
@@ -45,12 +52,12 @@ export function createCommitTool(session: Session) {
         const budget = budgetMs > 0 ? ` on a ${budgetMs}ms budget` : "";
         const said = `the step is ${outcomeWord(step.check.outcome)}${budget}`;
         const how = asked(step.fallback, budgetMs > 0);
-        const detail = step.check.detail ? `\n${step.check.detail}` : "";
         return toolResultFrom(
           session,
           false,
-          `refused: ${said}, and the transaction stays open${how}${detail}`,
+          `refused: ${said}, and the transaction stays open${how}`,
           step,
+          [formatDetail(step.check)],
         );
       }
       const eager = formatEager(step.eager);
@@ -59,6 +66,7 @@ export function createCommitTool(session: Session) {
         true,
         `certified, ${formatMoved(session, step.effects)}${eager}${asked(step.fallback, true)}`,
         step,
+        [formatEagerDetail(step.eager)],
       );
     },
   });
