@@ -28,9 +28,9 @@ There are two ways to change a goal:
 
 ## How to use certified steps
 
-Optimization opportunities in the \`src\` side or anti-optimization opportunities in the \`tgt\` side help find certified steps. Prefer the verified rewriter for optimizations on the \`src\` side where its integer arithmetic and bitwise peephole rules apply: it is cheap and needs no solver. Input its rules do not match, such as floating point numbers, vectors, memory operations or calls, passes through unchanged or fails with its reason. Otherwise, or when transforming the \`tgt\` side, find small changes so that alive2 can verify them. Wrap a chain of changes in a transaction which, when committed, will verify the change, even inside a loop.
+Optimization opportunities in the \`src\` side or anti-optimization opportunities in the \`tgt\` side help find certified steps. Prefer the verified rewriter for optimizations on the \`src\` side where its integer arithmetic and bitwise peephole rules apply: it is cheap and needs no solver. Its rules do not cover floating point, vectors, memory operations or calls; on those, the program is left unchanged or the rewrite is refused with a reason. Otherwise, or when transforming the \`tgt\` side, find small changes so that alive2 can verify them. Wrap a chain of changes in a transaction which, when committed, will verify the change, even inside a loop.
 
-The framework chooses the required refinement direction, so do not specify it yourself. The framework automatically enforces the no-\`undef\` model by passing \`--disable-undef-input\` to alive2, so do not worry.
+The framework chooses the refinement direction of every check and passes \`--disable-undef-input\` to alive2, so you specify neither.
 
 ## How to use program cuts
 
@@ -38,11 +38,9 @@ Cuts make large program pairs manageable. alive2 may fail to return when a query
 
 A cut is made at an instruction or at a block. At an instruction, the callee is the rest of the body from that instruction, and the outer calls it once, where the instruction was. At a block, the cut detaches the block, which does more: the block and every block it reaches move into the callee, the block's phis become the callee's parameters, and every branch to the block becomes a call, so the outer calls the callee once for each edge that entered the block. Detach a join to separate the code before a merge from the code after it.
 
-A cut creates fresh callee parameters. These parameters may be poison, may have ranges, and may have other preconditions. alive2 cannot prove the callee goal until their required preconditions such as non-poison definedness are established. Prove those preconditions in the caller, where the actual arguments are known. Only then is it useful to query the callee goal.
+A cut creates fresh callee parameters, which may be poison or hold any value of their type. alive2 cannot prove the callee goal until the facts it needs about them, such as that a parameter is not poison, are proved. Prove those facts in the outer, where the actual arguments are known. Only then is it useful to check the callee goal.
 
-A loop is proved by induction: cut at its header, and the callee is one iteration that calls a hypothesis, standing for the rest of the loop, where it would branch back. A fact that iteration needs about its parameters, such as \`j <= i\` for a \`sub nuw i32 %i, %j\` after the loop, is proved like any precondition, and holds only if the loop's entry establishes it and every iteration keeps it.
-
-Similarly: The framework chooses the required refinement direction and passes \`--disable-undef-input\` when querying the outer goal or the callee goal.
+A loop is proved by induction: cut at its header, and the callee is one iteration that calls a hypothesis, standing for the rest of the loop, where it would branch back. A fact that iteration needs about its parameters, such as \`j <= i\` for a \`sub nuw i32 %i, %j\` after the loop, is proved like any other fact, and holds only if the loop's entry establishes it and every iteration keeps it.
 
 ## Interpreting failures
 
