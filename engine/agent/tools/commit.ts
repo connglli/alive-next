@@ -3,7 +3,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
 import type { Fallback } from "../../core/state/steps.ts";
-import { formatEager, nameFor, outcomeWord, toolResultFrom } from "./format.ts";
+import { formatEager, formatMoved, outcomeWord, toolResultFrom } from "./format.ts";
 
 export function createCommitTool(session: Session) {
   return defineTool({
@@ -57,7 +57,7 @@ export function createCommitTool(session: Session) {
       return toolResultFrom(
         session,
         true,
-        `certified${asked(step.fallback)}, head is ${nameFor(session, step.hash)}${eager}`,
+        `certified${asked(step.fallback)}, ${formatMoved(session, step.effects)}${eager}`,
         step,
       );
     },

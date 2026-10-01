@@ -26,7 +26,7 @@ export function createAnalyzeTool(session: Session) {
     }),
     execute: async (_id, { gid, side, kind, point }) => {
       const found = await session.analyze(gid, side, kind, point);
-      if (!found.ok) return toolResult(false, `${found.code}: ${found.message}`, found);
+      if (!found.ok) return toolResult(false, `refused: ${found.message}`, found);
       const facts = found.facts.map((fact) => JSON.stringify(fact)).join("\n");
       return toolResult(true, facts || `nothing to say about ${gid} ${side}`, found);
     },

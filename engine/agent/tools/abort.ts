@@ -2,7 +2,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { toolResult } from "./format.ts";
+import { formatEdits, toolResult } from "./format.ts";
 
 export function createAbortTool(session: Session) {
   return defineTool({
@@ -13,11 +13,15 @@ export function createAbortTool(session: Session) {
     parameters: Type.Object({}),
     execute: async () => {
       const thrown = await session.abort();
-      return toolResult(true, `dropped ${thrown.ops.length} ops on ${thrown.gid} ${thrown.side}`, {
-        gid: thrown.gid,
-        side: thrown.side,
-        ops: thrown.ops.length,
-      });
+      return toolResult(
+        true,
+        `dropped ${formatEdits(thrown.ops.length)} on ${thrown.gid} ${thrown.side}`,
+        {
+          gid: thrown.gid,
+          side: thrown.side,
+          ops: thrown.ops.length,
+        },
+      );
     },
   });
 }

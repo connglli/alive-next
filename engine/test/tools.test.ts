@@ -214,7 +214,7 @@ describe.skipIf(!built)("the tool layer", () => {
       v: "%2",
       insts: ["%s = shl i32 %1, 3"],
     });
-    expect(applied).toContain("applied, 1 so far");
+    expect(applied).toContain("applied, 1 edit so far");
     expect(applied).toContain("shl i32");
 
     // The src is now the tgt, byte for byte, so it is the program the tgt
@@ -222,7 +222,7 @@ describe.skipIf(!built)("the tool layer", () => {
     // Which question settled the step is not in the answer: the writer has no
     // move that depends on it, and the log and the certificate keep it.
     const committed = await call("tx_commit", {});
-    expect(committed).toContain("certified, head is p2");
+    expect(committed).toContain("certified, g1 src is p2");
     expect(committed).not.toContain("window");
     expect(await call("goal_show", { ref: "g1" })).toContain("(was p1)");
   });
@@ -245,12 +245,12 @@ describe.skipIf(!built)("the tool layer", () => {
 
     expect(refused).toContain("transaction remains open");
     expect(await callFrom(refusingTools, "run_status", {})).toContain(
-      "editing g1 src, 1 ops so far",
+      "editing g1 src, 1 edit so far",
     );
     expect(await callFrom(refusingTools, "tx_edit", { op: "commute", v: "%2" })).toContain(
-      "applied, 2 so far",
+      "applied, 2 edits so far",
     );
-    expect(await callFrom(refusingTools, "tx_abort", {})).toContain("dropped 2 ops");
+    expect(await callFrom(refusingTools, "tx_abort", {})).toContain("dropped 2 edits on g1 src");
   });
 
   test("a set_body that pastes a whole define is refused by the contract", async () => {
@@ -259,7 +259,7 @@ describe.skipIf(!built)("the tool layer", () => {
       op: "set_body",
       body: "define i32 @f(i32 noundef %x) {\nentry:\n  %a = add i32 %x, 1\n  ret i32 %a\n}\n",
     });
-    expect(refused).toContain("set_body_contract");
+    expect(refused).toContain("refused: set_body takes the body after 'entry:'");
     expect(refused).toContain("the body after 'entry:'");
     await call("tx_abort", {});
   });
@@ -271,7 +271,7 @@ describe.skipIf(!built)("the tool layer", () => {
       v: "%1",
       insts: ["  %g = add i32 %0, 1", "  ret i32 %g"],
     });
-    expect(refused).toContain("snippet_terminator");
+    expect(refused).toContain("refused: a snippet is instructions only");
     expect(refused).toContain("stays in place");
     await call("tx_abort", {});
   });
@@ -280,7 +280,7 @@ describe.skipIf(!built)("the tool layer", () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     await call("tx_edit", { op: "replace", v: "%1", insts: ["%1 = add i32 %0, 0"] });
     const folded = await call("tx_opt", { what: "simplify", v: "%1" });
-    expect(folded).toContain("applied, 2 so far");
+    expect(folded).toContain("applied, 2 edits so far");
     expect(folded).toContain("mul i32 %0, 8");
     expect(folded).not.toContain("add i32 %0, 0");
     await call("tx_abort", {});
@@ -305,7 +305,7 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(unchanged).toContain("nothing to fold");
     // The ops counter should not have advanced: a no-op is not an op.
     const edited = await call("tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
-    expect(edited).toContain("applied, 1 so far");
+    expect(edited).toContain("applied, 1 edit so far");
     await call("tx_abort", {});
   });
 
@@ -321,7 +321,7 @@ describe.skipIf(!built)("the tool layer", () => {
   test("a flag edit reaches the scratch and the refusals stay loud", async () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     const flagged = await call("tx_edit", { op: "flags", v: "%2", flags: { nuw: true } });
-    expect(flagged).toContain("applied, 1 so far");
+    expect(flagged).toContain("applied, 1 edit so far");
     expect(flagged).toContain("nuw");
 
     const refused = await call("tx_edit", { op: "flags", v: "%1", flags: { exact: true } });
@@ -397,11 +397,13 @@ describe.skipIf(!built)("the tool layer", () => {
     const seqTools = createProofAssistantTools(seqSession);
 
     const first = await callFrom(seqTools, "goal_check", { gid: "g1", timeout_ms: 1000 });
-    expect(first).toContain("g1 unknown, 1000ms budget");
+    expect(first).toContain("g1 not settled, 1000ms budget");
     expect(first).not.toContain("earlier check");
 
     const second = await callFrom(seqTools, "goal_check", { gid: "g1", timeout_ms: 5000 });
-    expect(second).toContain("earlier check: unknown on a 1000ms budget; g1 proved, 5000ms budget");
+    expect(second).toContain(
+      "earlier check: not settled on a 1000ms budget; g1 proved, 5000ms budget",
+    );
   });
 
   test("tx_commit surfaces eager check outcome with budget and elapsed time", async () => {
@@ -439,7 +441,7 @@ describe.skipIf(!built)("the tool layer", () => {
     });
     const res = await callFrom(eagerTools, "tx_commit", {});
     expect(res).toContain(
-      "certified, head is p3, the new pair is not settled in 3000ms, so the goal stays open",
+      "certified, g1 src is p3, the new pair is not settled in 3000ms, so the goal stays open",
     );
   });
 
@@ -477,7 +479,9 @@ describe.skipIf(!built)("the tool layer", () => {
       insts: ["%s = mul i32 8, %1"],
     });
     const res = await callFrom(eagerTools, "tx_commit", {});
-    expect(res).toContain("certified, head is p3, the new pair is refuted in 12ms (3000ms budget)");
+    expect(res).toContain(
+      "certified, g1 src is p3, the new pair is refuted in 12ms (3000ms budget)",
+    );
     expect(res).toContain("Example:\ni32 %x = 42");
   });
 
@@ -576,7 +580,7 @@ describe.skipIf(!built)("the tool layer", () => {
       preconditions: { "%nope": { noundef: true } },
     });
     expect(res).toContain(
-      "certified without its preconditions, since some preconditions do not name a value of the window, head is p2",
+      "certified without its preconditions, since some preconditions do not name a value of the window, g1 src is p2",
     );
   });
 
@@ -666,7 +670,7 @@ entry:
       rules: ["addi-zero-to-x"],
     });
     expect(res).toContain("SUCCESS");
-    expect(res).toContain("rewrote g1 src with addi-zero-to-x");
+    expect(res).toContain("rewrote with addi-zero-to-x, g1 src is p");
     expect(res).toContain("the new pair is proved");
     expect(rewriting.verdict).toBe("verified");
 
@@ -684,7 +688,7 @@ entry:
       rules: ["bad-rule"],
     });
     expect(unknownRefused).toContain("FAILURE");
-    expect(unknownRefused).toContain("refused, unknown_rule: unknown rule: bad-rule");
+    expect(unknownRefused).toContain("refused: unknown rule: bad-rule");
 
     await callFrom(rewritingTools, "tx_begin", { gid: "g1", side: "src" });
     const editingRefused = await callFrom(rewritingTools, "goal_rewrite", {
@@ -692,7 +696,7 @@ entry:
       rules: ["addi-zero-to-x"],
     });
     expect(editingRefused).toContain("FAILURE");
-    expect(editingRefused).toContain("refused, editing: a transaction is open on g1 src");
+    expect(editingRefused).toContain("refused: a transaction is open on g1 src");
     await callFrom(rewritingTools, "tx_abort", {});
   });
 
@@ -720,9 +724,9 @@ entry:
 
     const unfolded = await callFrom(tools, "goal_unfold", { gid: "g3", side: "src" });
     expect(unfolded).toContain("SUCCESS");
-    expect(unfolded).toContain("unfolded g3 src");
+    expect(unfolded).toContain("unfolded, g3 src is p");
     expect(await callFrom(tools, "goal_unfold", { gid: "g2", side: "src" })).toContain(
-      "unfolded g2 src",
+      "unfolded, g2 src is p",
     );
 
     // j <= i, which the unfolded outer proves before it calls the loop.
@@ -780,11 +784,11 @@ entry:
       src_cut: "%2",
       tgt_cut: "%2",
     });
-    expect(sigRes).toContain("Preview of cut on g1 at src %2, tgt %2:");
+    expect(sigRes).toContain("cutting g1 at src %2 and tgt %2 would make @outlined_g3");
     expect(sigRes).toContain("parameters:");
     expect(sigRes).toContain("the src's %1");
     expect(sigRes).toContain("the tgt's values at its cut: %1 i32, %0 i32");
-    expect(sigRes).toContain("Provide value_map");
+    expect(sigRes).toContain("tree_split needs a value_map from each src value above");
     // Ensure goal tree was NOT modified
     expect(previewSession.tree.goals.get("g1")?.status).toBe("open");
 
@@ -795,7 +799,9 @@ entry:
       tgt_cut: "%2",
       value_map: { "%0": "%0", "%1": "%1" },
     });
-    expect(validRes).toContain("value_map is valid. Both sides outline cleanly.");
+    expect(validRes).toContain(
+      "value_map lines up: tree_split with these arguments makes the cut.",
+    );
     expect(previewSession.tree.goals.get("g1")?.status).toBe("open");
 
     // 3. Preview with invalid value_map -> refused

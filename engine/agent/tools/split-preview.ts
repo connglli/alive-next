@@ -28,32 +28,24 @@ export function createSplitPreviewTool(session: Session) {
     execute: async (_id, { gid, src_cut, tgt_cut, value_map }) => {
       const preview = await session.splitPreview(gid, src_cut, tgt_cut, value_map);
       if (preview.kind === "refused") {
-        return toolResultFrom(
-          session,
-          false,
-          `refused, ${preview.code}: ${preview.message}`,
-          preview,
-        );
+        return toolResultFrom(session, false, `refused: ${preview.message}`, preview);
       }
       const params = preview.params
         .map((param, at) => `  ${at}: ${param.param} ${param.type}, the src's ${param.live}`)
         .join("\n");
 
       const lines = [
-        `Preview of cut on ${gid} at src ${src_cut}, tgt ${tgt_cut}:`,
-        `outlined function signature: @${preview.callee}`,
+        `cutting ${gid} at src ${src_cut} and tgt ${tgt_cut} would make @${preview.callee}`,
         `parameters:\n${params}`,
       ];
 
       if (value_map) {
-        lines.push(
-          "value_map is valid. Both sides outline cleanly. Call tree_split with these arguments to apply the cut.",
-        );
+        lines.push("value_map lines up: tree_split with these arguments makes the cut.");
       } else {
         const tgt = (preview.tgtParams ?? []).map((param) => `${param.live} ${param.type}`);
         lines.push(
           `the tgt's values at its cut: ${tgt.join(", ")}`,
-          'Provide value_map: { "<src_value>": "<tgt_value>", ... } covering all live values when calling tree_split.',
+          'tree_split needs a value_map from each src value above to a tgt value, as { "<src_value>": "<tgt_value>" }.',
         );
       }
 

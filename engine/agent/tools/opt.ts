@@ -7,7 +7,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
 import type { EditResult } from "../../core/state/transactions.ts";
-import { formatProgram, toolResult } from "./format.ts";
+import { formatEdits, formatProgram, toolResult } from "./format.ts";
 
 const OptParams = Type.Union(
   [
@@ -64,19 +64,19 @@ export function createOptTool(session: Session) {
         edited = await session.opt({ what: params.what, v: params.v });
       }
       if (edited.kind === "refused") {
-        return toolResult(
-          false,
-          formatProgram(`refused, ${edited.code}: ${edited.message}`, edited.text),
-          edited,
-        );
+        return toolResult(false, formatProgram(`refused: ${edited.message}`, edited.text), edited);
       }
       if (edited.kind === "unchanged") {
-        return toolResult(true, formatProgram(`unchanged, nothing to fold`, edited.text), edited);
+        return toolResult(true, formatProgram("unchanged: nothing to fold", edited.text), edited);
       }
-      return toolResult(true, formatProgram(`applied, ${edited.ops} so far`, edited.text), {
-        kind: edited.kind,
-        ops: edited.ops,
-      });
+      return toolResult(
+        true,
+        formatProgram(`applied, ${formatEdits(edited.ops)} so far`, edited.text),
+        {
+          kind: edited.kind,
+          ops: edited.ops,
+        },
+      );
     },
   });
 }

@@ -9,7 +9,7 @@ import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { CheckOutcome, CheckResult } from "../../core/drivers/alive2.ts";
 import { type GoalStanding, type Session, standings } from "../../core/session.ts";
 import type { Timeouts } from "../../core/state/steps.ts";
-import type { Hash } from "../../core/state/trajectory.ts";
+import type { Effect, Hash } from "../../core/state/trajectory.ts";
 
 /**
  * A tool's answer: what the model reads, and the result itself for the log.
@@ -91,6 +91,17 @@ export function formatEager(eager: CheckResult | undefined): string {
   if (eager.outcome === "error") return `${said}: ${eager.detail}`;
   const detail = eager.outcome === "incorrect" && eager.detail ? `\n${eager.detail}` : "";
   return `${said} in ${eager.ms}ms (${budgetMs}ms budget)${detail}`;
+}
+
+/** Where a step left its side, as "g1 src is p3". */
+export function formatMoved(session: Session, effects: Effect[]): string {
+  const step = effects.find((effect) => effect.effect === "step");
+  return step?.effect === "step" ? `${step.gid} ${step.side} is ${nameFor(session, step.to)}` : "";
+}
+
+/** How many edits a transaction holds, in words. */
+export function formatEdits(count: number): string {
+  return `${count} edit${count === 1 ? "" : "s"}`;
 }
 
 /** The name a program goes by, which is what a caller says back to us. */

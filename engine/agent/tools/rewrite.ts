@@ -2,7 +2,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { formatEager, nameFor, toolResultFrom } from "./format.ts";
+import { formatEager, formatMoved, toolResultFrom } from "./format.ts";
 
 export function createRewriteTool(session: Session) {
   return defineTool({
@@ -22,12 +22,7 @@ export function createRewriteTool(session: Session) {
       const side = "src";
       const rewritten = await session.rewrite(gid, side, rules);
       if (rewritten.kind === "refused") {
-        return toolResultFrom(
-          session,
-          false,
-          `refused, ${rewritten.code}: ${rewritten.message}`,
-          rewritten,
-        );
+        return toolResultFrom(session, false, `refused: ${rewritten.message}`, rewritten);
       }
       if (rewritten.kind === "unchanged") {
         return toolResultFrom(session, false, "unchanged: no rule fired on this side", rewritten);
@@ -36,7 +31,7 @@ export function createRewriteTool(session: Session) {
       return toolResultFrom(
         session,
         true,
-        `rewrote ${gid} ${side} with ${rules.join(", ")}, head is ${nameFor(session, rewritten.hash)}${eager}`,
+        `rewrote with ${rules.join(", ")}, ${formatMoved(session, rewritten.effects)}${eager}`,
         rewritten,
       );
     },

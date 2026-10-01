@@ -2,7 +2,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { formatEager, nameFor, toolResultFrom } from "./format.ts";
+import { formatEager, formatMoved, toolResultFrom } from "./format.ts";
 
 export function createUnfoldTool(session: Session) {
   return defineTool({
@@ -19,18 +19,13 @@ export function createUnfoldTool(session: Session) {
     execute: async (_id, { gid, side }) => {
       const unfolded = await session.unfold(gid, side);
       if (unfolded.kind === "refused") {
-        return toolResultFrom(
-          session,
-          false,
-          `refused, ${unfolded.code}: ${unfolded.message}`,
-          unfolded,
-        );
+        return toolResultFrom(session, false, `refused: ${unfolded.message}`, unfolded);
       }
       const eager = formatEager(unfolded.eager);
       return toolResultFrom(
         session,
         true,
-        `unfolded ${gid} ${side}, head is ${nameFor(session, unfolded.hash)}${eager}`,
+        `unfolded, ${formatMoved(session, unfolded.effects)}${eager}`,
         unfolded,
       );
     },

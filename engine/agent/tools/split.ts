@@ -29,7 +29,7 @@ export function createSplitTool(session: Session) {
         return toolResultFrom(session, false, `refused: ${split.message}`, split);
       }
       if (split.kind === "refused") {
-        return toolResultFrom(session, false, `refused, ${split.code}: ${split.message}`, split);
+        return toolResultFrom(session, false, `refused: ${split.message}`, split);
       }
       const params = split.params
         .map((param, at) => `  ${at}: ${param.param} ${param.type}, the src's ${param.live}`)

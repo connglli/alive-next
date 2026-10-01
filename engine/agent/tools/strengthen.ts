@@ -59,20 +59,9 @@ export function createStrengthenTool(session: Session) {
           : stronger.check?.detail
             ? `\n\n${stronger.check.detail}`
             : "";
-        return toolResultFrom(
-          session,
-          false,
-          `refused in the ${stronger.phase} phase: ${stronger.reason}${said}`,
-          stronger,
-        );
+        return toolResultFrom(session, false, `refused: ${stronger.reason}${said}`, stronger);
       }
-      const proved = stronger.checks.filter((check) => check.outcome === "correct").length;
-      return toolResultFrom(
-        session,
-        true,
-        `strengthened the interface of ${gid}, ${proved} of ${stronger.checks.length} checks came back correct`,
-        stronger,
-      );
+      return toolResultFrom(session, true, `strengthened the interface of ${gid}`, stronger);
     },
   });
 }
