@@ -471,7 +471,7 @@ describe.skipIf(!built)("strengthening", () => {
         strengthen.strengthen(tree, "g1", {
           param_attrs: { [bad]: { noundef: true } } as unknown as Record<number, Attrs>,
         }),
-      ).rejects.toThrow(new RegExp(`'${bad}' is not a parameter position`));
+      ).rejects.toThrow(new RegExp(`by parameter index, 0, 1, ..., not '${bad}'`));
     }
     expect(tree.goals.get("g1")?.status).toBe("split");
   });
@@ -511,10 +511,9 @@ Target:
       ms: 10,
     };
     const explanation = explainAssumeRefusal([1], { 1: { noundef: true } }, check, "g2");
-    expect(explanation).toContain("The assumption on parameter 1 does not hold in the caller.");
-    expect(explanation).toContain("Caller counterexample: i32 %1 = poison");
-    expect(explanation).toContain("a parameter evaluates to poison");
-    expect(explanation).toContain("goal_analyze on outer goal 'g2' with kind: \"defined\"");
+    expect(explanation).toContain("The outer's example input: i32 %1 = poison");
+    expect(explanation).toContain("a parameter is poison, and no fact holds for a poison value");
+    expect(explanation).toContain('goal_analyze on g2 with kind "defined"');
   });
 
   test("explainAssumeRefusal names the range analysis for a failed range fact", () => {
@@ -531,7 +530,7 @@ Target:
       check,
       "g2",
     );
-    expect(explanation).toContain("goal_analyze on outer goal 'g2' with kind: \"ranges\"");
+    expect(explanation).toContain('goal_analyze on g2 with kind "ranges"');
   });
 
   test("explainAssumeRefusal sends pointer facts to the pointer analysis", () => {
@@ -543,7 +542,7 @@ Target:
       ms: 10,
     };
     const explanation = explainAssumeRefusal([0], { 0: { nonnull: true } }, check, "g2");
-    expect(explanation).toContain("goal_analyze on outer goal 'g2' with kind: \"pointer\"");
+    expect(explanation).toContain('goal_analyze on g2 with kind "pointer"');
   });
 
   test("explainAssumeRefusal reads the arrow style alive2 sometimes prints", () => {
@@ -566,8 +565,8 @@ i32 %1 -> poison
       check,
       "g2",
     );
-    expect(explanation).toContain("Caller counterexample: i32 %0 -> 0, i32 %1 -> poison");
-    expect(explanation).toContain("a parameter evaluates to poison");
+    expect(explanation).toContain("The outer's example input: i32 %0 -> 0, i32 %1 -> poison");
+    expect(explanation).toContain("a parameter is poison, and no fact holds for a poison value");
   });
 
   test("explainAssumeRefusal reads a value that contains its own '='", () => {
@@ -585,12 +584,14 @@ ptr %p = pointer(non-local, block_id=1, offset=0) / Address=#x04
     };
     const explanation = explainAssumeRefusal([0], { 0: { noundef: true } }, check, "g2");
     expect(explanation).toContain(
-      "Caller counterexample: ptr %p = pointer(non-local, block_id=1, offset=0) / Address=#x04",
+      "The outer's example input: ptr %p = pointer(non-local, block_id=1, offset=0) / Address=#x04",
     );
-    expect(explanation).not.toContain("a parameter evaluates to poison");
+    expect(explanation).not.toContain(
+      "a parameter is poison, and no fact holds for a poison value",
+    );
   });
 
-  test("explainAssumeRefusal says all the parameters when several were asked", () => {
+  test("explainAssumeRefusal shows the whole example when several were asked", () => {
     const detail = `ERROR: Source is more defined than target
 
 Example:
@@ -615,11 +616,8 @@ Target:
       check,
       "g2",
     );
-    expect(explanation).toContain(
-      "The assumptions on parameter(s) 0, 1 do not hold in the caller.",
-    );
-    expect(explanation).toContain("Caller counterexample: i32 %0 = 1, i32 %1 = poison");
-    expect(explanation).toContain("a parameter evaluates to poison");
+    expect(explanation).toContain("The outer's example input: i32 %0 = 1, i32 %1 = poison");
+    expect(explanation).toContain("a parameter is poison, and no fact holds for a poison value");
   });
 
   test("explainAssumeRefusal tells a killed check from one the solver gave up on", () => {
@@ -631,7 +629,7 @@ Target:
       ms: 150001,
     };
     expect(explainAssumeRefusal([0], { 0: { noundef: true } }, killed)).toContain(
-      "ran out of time in the solver",
+      "alive2 ran out of time.",
     );
 
     const gaveUp: CheckResult = {
@@ -642,7 +640,7 @@ Target:
       ms: 900,
     };
     expect(explainAssumeRefusal([0], { 0: { noundef: true } }, gaveUp)).toContain(
-      "could not settle whether the assumptions hold",
+      "alive2 could not settle whether they hold.",
     );
   });
 

@@ -66,7 +66,7 @@ export function divergence(src: RunResult, tgt: RunResult): Divergence {
   if (src.outcome === "ub") {
     return {
       confirmed: false,
-      reason: `the src has UB on this input (${src.reason}), so every target refines it`,
+      reason: `the src has UB on this input (${src.reason}), so every tgt refines it`,
     };
   }
   if (tgt.outcome === "ub") {
@@ -116,7 +116,7 @@ export class Counterexamples {
     if (root.status === "proved") {
       return {
         kind: "refused",
-        reason: `${root.id} is proved, so a divergence would be a contradiction rather than a verdict`,
+        reason: `${root.id} is already proved, so no input can refute it`,
         input,
       };
     }

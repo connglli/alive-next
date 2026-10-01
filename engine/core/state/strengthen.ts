@@ -108,18 +108,14 @@ export class Strengthen {
     const keys = Object.keys(rawParamAttrs);
     const bad = keys.find((key) => !/^(?:0|[1-9]\d*)$/.test(key));
     if (bad !== undefined)
-      throw new Error(
-        `${gid}: '${bad}' is not a parameter position; parameter attributes are keyed by index (0, 1, ...)`,
-      );
+      throw new Error(`param_attrs is keyed by parameter index, 0, 1, ..., not '${bad}'`);
     const params = keys.map(Number).sort((a, b) => a - b);
     const hasParamAttrs = params.length > 0;
     const hasFnAttrs = Object.keys(fnAttrs).length > 0;
     const hasPredicates = predicates.length > 0;
 
     if (!hasParamAttrs && !hasFnAttrs && !hasPredicates) {
-      throw new Error(
-        `${gid}: no parameter attributes, function attributes, or predicates to strengthen`,
-      );
+      throw new Error(`there is nothing to add: give param_attrs, fn_attrs or predicates`);
     }
 
     const parent = tree.goals.get(gid);
@@ -138,7 +134,7 @@ export class Strengthen {
         return {
           kind: "refused",
           phase: "assume",
-          reason: `${goal.id} is ${goal.status}, so it cannot take the attribute`,
+          reason: `${goal.id} is ${goal.status}, so its interface can no longer change`,
           effects: [],
         };
       }
@@ -171,7 +167,7 @@ export class Strengthen {
           return {
             kind: "refused" as const,
             phase: "attribute" as const,
-            reason: `entry predicates failed on callee: ${assumeRes.message}`,
+            reason: `the predicates cannot be added at the callee's entry: ${assumeRes.message}`,
           };
         }
         current = assumeRes.module;
@@ -246,7 +242,7 @@ export class Strengthen {
         return {
           kind: "refused",
           phase: "assume",
-          reason: "the assumes were not certified",
+          reason: `the facts are not shown to hold where the outer calls @${name}`,
           explanation,
           check: proof.check,
           effects: landed,
@@ -274,7 +270,7 @@ export class Strengthen {
           return {
             kind: "refused",
             phase: "callee_attr",
-            reason: `cannot apply function attributes to callee ${side}: ${withAttrs.message}`,
+            reason: `the function attributes cannot be put on the callee's ${side}: ${withAttrs.message}`,
             effects: landed,
           };
         }
@@ -283,7 +279,7 @@ export class Strengthen {
           return {
             kind: "refused",
             phase: "callee_attr",
-            reason: `callee ${side} does not satisfy function attributes: ${check.outcome}`,
+            reason: `the callee's ${side} is not shown to keep the function attributes`,
             check,
             effects: landed,
           };
@@ -311,7 +307,7 @@ export class Strengthen {
           return {
             kind: "refused",
             phase: "attribute",
-            reason: `the attributes on the outer ${side} were not certified`,
+            reason: `the step that adds the attributes to the outer's ${side} is not certified`,
             check: step.check,
             effects: landed,
           };
@@ -369,7 +365,7 @@ export class Strengthen {
           return {
             kind: "refused",
             phase: "attribute",
-            reason: `the attributes on @${hypothesis} in the callee's ${side} were not certified`,
+            reason: `the step that adds the attributes to @${hypothesis} in the callee's ${side} is not certified`,
             check: step.check,
             effects: landed,
           };
@@ -453,20 +449,13 @@ export function explainAssumeRefusal(
   check?: CheckResult,
   outerGid?: string,
 ): string {
-  const header =
-    params.length === 0
-      ? "The predicates do not hold in the caller."
-      : params.length === 1
-        ? `The assumption on parameter ${params[0]} does not hold in the caller.`
-        : `The assumptions on parameter(s) ${params.join(", ")} do not hold in the caller.`;
-
-  const lines: string[] = [header];
+  const lines: string[] = [];
 
   if (check?.outcome === "unknown") {
     lines.push(
       check.detail.startsWith("killed after")
-        ? "Checking the assumptions ran out of time in the solver."
-        : "The solver could not settle whether the assumptions hold.",
+        ? "alive2 ran out of time."
+        : "alive2 could not settle whether they hold.",
     );
     return lines.join("\n");
   }
@@ -479,22 +468,20 @@ export function explainAssumeRefusal(
   const exampleStr = exampleLines.join(", ");
 
   if (exampleStr) {
-    lines.push(`Caller counterexample: ${exampleStr}`);
+    lines.push(`The outer's example input: ${exampleStr}`);
   }
 
   const values = exampleLines.map(assignedValue);
   const isPoison = values.some((value) => value.includes("poison"));
   if (isPoison) {
-    lines.push(
-      `On caller input ${exampleStr}, a parameter evaluates to poison, which triggers undefined behavior under llvm.assume.`,
-    );
+    lines.push("On that input a parameter is poison, and no fact holds for a poison value.");
   }
 
   if (outerGid && params.length > 0) {
     const firstFact = paramAttrs[params[0] ?? 0] ?? {};
     const kind = firstFact.noundef ? "defined" : firstFact.range ? "ranges" : "pointer";
     lines.push(
-      `Hint: run goal_analyze on outer goal '${outerGid}' with kind: "${kind}" to inspect what facts the caller actually guarantees before strengthening.`,
+      `To see what the outer guarantees, run goal_analyze on ${outerGid} with kind "${kind}".`,
     );
   }
 

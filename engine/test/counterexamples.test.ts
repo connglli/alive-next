@@ -129,7 +129,7 @@ describe("the divergence rule", () => {
   test("a src with UB settles nothing, since every target refines it", () => {
     const found = divergence(ub("division by zero"), ran("i32 1"));
     expect(found.confirmed).toBe(false);
-    expect(found.reason).toContain("every target refines it");
+    expect(found.reason).toContain("every tgt refines it");
   });
 
   test("a run llubi would not make is not evidence", () => {
@@ -215,6 +215,6 @@ describe.skipIf(!built)("reporting a counterexample", () => {
     const result = await new Counterexamples(store, llops, new Canned([])).report(tree, INPUT);
     expect(result).toMatchObject({ kind: "refused" });
     if (result.kind !== "refused") throw new Error("unreachable");
-    expect(result.reason).toContain("g1 is proved");
+    expect(result.reason).toContain("g1 is already proved, so no input can refute it");
   });
 });

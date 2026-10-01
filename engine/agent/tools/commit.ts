@@ -43,12 +43,13 @@ export function createCommitTool(session: Session) {
         // spent failing, and a refusal that spent nothing says that instead.
         const budgetMs = step.check.invocation.timeoutMs;
         const budget = budgetMs > 0 ? ` on a ${budgetMs}ms budget` : "";
-        const said = `the step is ${outcomeWord(step.check.outcome)}${budget}${asked(step.fallback)}`;
+        const said = `the step is ${outcomeWord(step.check.outcome)}${budget}`;
+        const how = asked(step.fallback, budgetMs > 0);
         const detail = step.check.detail ? `\n${step.check.detail}` : "";
         return toolResultFrom(
           session,
           false,
-          `refused: ${said}; transaction remains open${detail}`,
+          `refused: ${said}, and the transaction stays open${how}${detail}`,
           step,
         );
       }
@@ -56,17 +57,18 @@ export function createCommitTool(session: Session) {
       return toolResultFrom(
         session,
         true,
-        `certified${asked(step.fallback)}, ${formatMoved(session, step.effects)}${eager}`,
+        `certified, ${formatMoved(session, step.effects)}${eager}${asked(step.fallback, true)}`,
         step,
       );
     },
   });
 }
 
-/** How the step was asked, when not as the window its edits touched. */
-function asked(fallback?: Fallback): string {
+/** How the step was checked, when not through the window its edits touched, one line a fact. */
+function asked(fallback: Fallback | undefined, whole: boolean): string {
+  const then = whole ? ", so the whole function was checked" : "";
   if (fallback?.reason === "preconditions_refused") {
-    return ` without its preconditions, since ${fallback.conditioning}`;
+    return `\nthe preconditions were not used, since ${fallback.conditioning}`;
   }
   if (fallback?.reason === "window_unproved" && fallback.narrowed) {
     const { outcome, ms, invocation } = fallback.narrowed;
@@ -80,14 +82,14 @@ function asked(fallback?: Fallback): string {
       fallback.preconditions && Object.keys(fallback.preconditions).length > 0
         ? ` with preconditions (${factsOf(fallback.preconditions)})`
         : "";
-    const without = fallback.conditioning
-      ? `, without its preconditions since ${fallback.conditioning}`
+    const unused = fallback.conditioning
+      ? `\nthe preconditions were not used, since ${fallback.conditioning}`
       : "";
-    return `, asked of the whole function after its window${bounds}${pre} was ${outcomeWord(outcome)} in ${ms}ms${budget}${without}`;
+    return `\nthe window${bounds}${pre} was ${outcomeWord(outcome)} in ${ms}ms${budget}${then}${unused}`;
   }
   if (fallback?.reason === "no_window") {
-    const since = fallback.narrowing ? ` since ${fallback.narrowing}` : "";
-    return `, asked of the whole function with no window${since}`;
+    const since = fallback.narrowing ? `, since ${fallback.narrowing}` : "";
+    return `\nno window was found${since}${then}`;
   }
   return "";
 }

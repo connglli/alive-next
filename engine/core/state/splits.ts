@@ -88,7 +88,7 @@ export class Splits {
     const tgtModule = this.store.get(head(goal, "tgt"));
     const atBlock = namesBlock(srcCut, srcModule);
     if (atBlock !== namesBlock(tgtCut, tgtModule)) {
-      const message = "both cuts name a block, or neither does";
+      const message = "the two cuts must both name blocks or both name instructions";
       return { kind: "refused", side: "tgt", code: "invalid", message };
     }
     const cutAlone = (module: string, cut: Ref, params?: OutlineParam[]) =>

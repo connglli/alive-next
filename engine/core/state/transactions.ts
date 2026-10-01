@@ -48,6 +48,11 @@ export type EditResult =
   | { kind: "unchanged"; text: string; ops: number }
   | { kind: "refused"; code: string; message: string; text: string };
 
+/** What a move is told while a transaction is open, and what to do about it. */
+export function openMessage(transaction: Transaction): string {
+  return `a transaction is open on ${transaction.gid} ${transaction.side}; commit or abort it first`;
+}
+
 /** Thrown when the agent asks for something the session cannot mean. */
 export class TransactionError extends Error {
   constructor(message: string) {
@@ -86,9 +91,7 @@ export class Transactions {
 
   begin(tree: Tree, gid: string, side: Side): Transaction {
     if (this.current) {
-      throw new TransactionError(
-        `a transaction is already open on ${this.current.gid} ${this.current.side}`,
-      );
+      throw new TransactionError(openMessage(this.current));
     }
     const goal = workable(tree, gid);
     const from = head(goal, side);

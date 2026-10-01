@@ -582,7 +582,9 @@ describe("stepping", () => {
     if (result.kind !== "refused") throw new Error("expected the step to be refused");
     expect(result.fallback?.narrowed?.outcome).toBe("unknown");
     expect(result.fallback?.preconditions).toBeUndefined();
-    expect(result.fallback?.conditioning).toBe("the facts do not hold at the call site");
+    expect(result.fallback?.conditioning).toBe(
+      "the preconditions are not shown to hold before the window",
+    );
   });
 
   test("a conditioning refusal is said when the plain window still certifies", async () => {
@@ -626,7 +628,7 @@ describe("stepping", () => {
     });
 
     if (result.kind !== "certified") throw new Error("expected the step to be certified");
-    expect(result.fallback?.conditioning).toContain("the window could not be inlined");
+    expect(result.fallback?.conditioning).toContain("the window cannot be put back");
   });
 
   test("refuses a step to the program that is already there", async () => {

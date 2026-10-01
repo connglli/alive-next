@@ -319,7 +319,7 @@ export class Steps {
 
     if (afterText === beforeText) {
       // Nothing moved, so there is nothing to certify and nothing to record.
-      return { kind: "refused", check: unasked("the program is the one already there") };
+      return { kind: "refused", check: unasked("the edits leave the program as it was") };
     }
 
     const narrowed = options.narrowed && "why" in options.narrowed ? undefined : options.narrowed;
@@ -468,7 +468,7 @@ export class Steps {
       return {
         kind: "refused",
         code: "side_unsupported",
-        message: "rewriting is supported on src only; peephole rules optimize forward",
+        message: "only the src can be rewritten, since the rules only optimize",
       };
     }
     if (rules.length === 0) {
@@ -606,7 +606,7 @@ export class Steps {
     if (!res.ok)
       return {
         kind: "refused",
-        reason: `a fact could not be assumed at the call site: ${res.message}`,
+        reason: `a precondition cannot be assumed before the window: ${res.message}`,
       };
     const outerAssumed = res.module;
 
@@ -621,14 +621,17 @@ export class Steps {
     const whole = side === "src" ? before : after;
     const inlined = await this.llops.inline(outerAssumed, half, narrowed.callee);
     if (!inlined.ok)
-      return { kind: "refused", reason: `the window could not be inlined: ${inlined.message}` };
+      return { kind: "refused", reason: `the window cannot be put back: ${inlined.message}` };
 
     const assumeCheck = await this.check(
       { src: whole, tgt: inlined.module },
       { timeoutMs: this.timeouts.alive2Ms },
     );
     if (assumeCheck.outcome !== "correct")
-      return { kind: "refused", reason: "the facts do not hold at the call site" };
+      return {
+        kind: "refused",
+        reason: "the preconditions are not shown to hold before the window",
+      };
 
     // Phase 2: Add attributes to both window halves and check small pair
     let condBefore = narrowed.before;
@@ -641,7 +644,10 @@ export class Steps {
         this.llops.edit(condAfter, op),
       ]);
       if (!resFrom.ok || !resTo.ok)
-        return { kind: "refused", reason: "a fact could not be attributed" };
+        return {
+          kind: "refused",
+          reason: "a precondition cannot be put on the window's parameter",
+        };
       condBefore = resFrom.module;
       condAfter = resTo.module;
     }
@@ -740,7 +746,8 @@ function rootPair(tree: Tree, gid: string, goal: Goal): boolean {
   );
 }
 
-const LOOPS = "a program loops, and alive-tv answers a loop only for the iterations it unrolls";
+const LOOPS =
+  "alive2 checks a program that loops only through a window, or for the iterations it unrolls";
 
 /**
  * An answer that cost no solver time, shaped like one that did. Its budget is

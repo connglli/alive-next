@@ -243,7 +243,7 @@ describe.skipIf(!built)("the tool layer", () => {
     await callFrom(refusingTools, "tx_edit", { op: "commute", v: "%2" });
     const refused = await callFrom(refusingTools, "tx_commit", {});
 
-    expect(refused).toContain("transaction remains open");
+    expect(refused).toContain("the transaction stays open");
     expect(await callFrom(refusingTools, "run_status", {})).toContain(
       "editing g1 src, 1 edit so far",
     );
@@ -514,7 +514,7 @@ describe.skipIf(!built)("the tool layer", () => {
     await callFrom(fbTools, "tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
     const res = await callFrom(fbTools, "tx_commit", {});
     expect(res).toContain(
-      "certified, asked of the whole function after its window #1..#1 (#1..#1 after the edit) was not settled in 12ms on a 3000ms budget",
+      "\nthe window #1..#1 (#1..#1 after the edit) was not settled in 12ms on a 3000ms budget, so the whole function was checked",
     );
   });
 
@@ -547,7 +547,7 @@ describe.skipIf(!built)("the tool layer", () => {
     await callFrom(rfbTools, "tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
     const res = await callFrom(rfbTools, "tx_commit", {});
     expect(res).toContain(
-      "refused: the step is not settled on a 30000ms budget, asked of the whole function after its window #1..#1 (#1..#1 after the edit) was not settled in 15ms on a 3000ms budget; transaction remains open",
+      "refused: the step is not settled on a 30000ms budget, and the transaction stays open\nthe window #1..#1 (#1..#1 after the edit) was not settled in 15ms on a 3000ms budget, so the whole function was checked",
     );
   });
 
@@ -579,8 +579,9 @@ describe.skipIf(!built)("the tool layer", () => {
     const res = await callFrom(dropTools, "tx_commit", {
       preconditions: { "%nope": { noundef: true } },
     });
+    expect(res).toContain("certified, g1 src is p2");
     expect(res).toContain(
-      "certified without its preconditions, since some preconditions do not name a value of the window, g1 src is p2",
+      "\nthe preconditions were not used, since some preconditions do not name a value of the window",
     );
   });
 
@@ -621,7 +622,7 @@ describe.skipIf(!built)("the tool layer", () => {
       window: { from: "%2", to: "%2" },
       preconditions: { "%1": { noundef: true } },
     });
-    expect(res).toContain("its window %2..%2");
+    expect(res).toContain("the window %2..%2");
     expect(res).toContain("with preconditions (parameter 0: noundef)");
   });
 

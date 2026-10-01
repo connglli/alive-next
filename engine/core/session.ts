@@ -58,6 +58,7 @@ import { type Effect, type Entry, type Event, type Hash, Trajectory } from "./st
 import {
   type EditingRefusal,
   type EditResult,
+  openMessage,
   type Transaction,
   Transactions,
 } from "./state/transactions.ts";
@@ -375,7 +376,7 @@ export class Session {
         return {
           kind: "refused",
           code: "side_unsupported",
-          message: "rewriting is supported on src only; peephole rules optimize forward",
+          message: "only the src can be rewritten, since the rules only optimize",
         };
       }
       return this.editingRefusal(gid, side) ?? this.steps.rewrite(tree, gid, side, rules);
@@ -413,7 +414,7 @@ export class Session {
   private editingRefusal(gid: string, side: Side) {
     const editing = this.editing.open();
     if (!editing || !this.editing.isEditing(gid, side)) return undefined;
-    return { kind: "refused" as const, code: "editing", message: transactionMessage(editing) };
+    return { kind: "refused" as const, code: "editing", message: openMessage(editing) };
   }
 
   /** The rewriter's rule table, which is what a rewrite offers. */
@@ -491,7 +492,7 @@ export class Session {
       async (tree): Promise<SessionSplitResult> => {
         const editing = this.editing.open();
         if (editing && this.editing.isEditing(gid)) {
-          return { kind: "editing", message: transactionMessage(editing) };
+          return { kind: "editing", message: openMessage(editing) };
         }
         return this.splits.split(tree, gid, srcCut, tgtCut, valueMap);
       },
@@ -503,7 +504,7 @@ export class Session {
     return this.act("unsplit", { gid }, async (tree) => {
       const editing = this.editing.open();
       if (editing && this.editing.isEditingBelow(tree, gid)) {
-        return { kind: "editing", message: transactionMessage(editing) };
+        return { kind: "editing", message: openMessage(editing) };
       }
       return { kind: "unsplit", effects: this.splits.unsplit(tree, gid) };
     });
@@ -515,7 +516,7 @@ export class Session {
       const parent = goalOf(tree, gid);
       const editing = this.editing.open();
       if (editing && [parent.id, ...parent.children].some((id) => this.editing.isEditing(id))) {
-        return { kind: "editing", message: transactionMessage(editing) };
+        return { kind: "editing", message: openMessage(editing) };
       }
       return this.strengthening.strengthen(tree, gid, contract);
     });
@@ -639,10 +640,6 @@ function goalOf(tree: Tree, gid: string): Goal {
   const goal = tree.goals.get(gid);
   if (!goal) throw new Error(`no goal ${gid}`);
   return goal;
-}
-
-function transactionMessage(transaction: Transaction): string {
-  return `a transaction is open on ${transaction.gid} ${transaction.side}`;
 }
 
 /** Every goal without its programs, which is the tree as a reader sees it. */
