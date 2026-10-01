@@ -118,7 +118,9 @@ async function callFrom(tools: ToolDefinition[], name: string, args: unknown): P
 
 describe.skipIf(!built)("the tool layer", () => {
   test("proves a pair, one tool call at a time", async () => {
-    expect(await call("run_status", {})).toContain("g1 root, open");
+    const status = await call("run_status", {});
+    expect(status).toContain("g1 root, open");
+    expect(status).toContain("budgets per query: a check");
 
     const shown = await call("goal_show", { ref: "g1" });
     expect(shown).toContain("src p1");

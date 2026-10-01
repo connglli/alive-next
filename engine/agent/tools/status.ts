@@ -8,7 +8,7 @@ export function createStatusTool(session: Session) {
     name: "run_status",
     label: "Status",
     description:
-      "The goal tree: every goal, whether it is open, split, proved or refuted, and the two programs it holds, followed by what a check and a commit may spend. Names no program text, so it is the cheap thing to call before deciding what to do next.",
+      "The goal tree: every goal, whether it is open, split, proved or refuted, and the two programs it holds, followed by the budget of each query. Names no program text, so it is the cheap thing to call before deciding what to do next.",
     parameters: Type.Object({}),
     execute: async () => {
       const standing = await session.status();
