@@ -32,7 +32,7 @@ import {
   type WriteOperations,
 } from "@earendil-works/pi-coding-agent";
 import { repoRoot } from "../../core/config.ts";
-import { LAYOUT } from "../../core/toolchain.ts";
+import { LAYOUT, type ToolName } from "../../core/toolchain.ts";
 
 /** The names Pi's built-ins had, which the sandbox tools now carry. */
 export const SANDBOX_TOOLS = ["read", "write", "edit", "grep", "ls", "find", "bash"] as const;
@@ -40,11 +40,12 @@ export const SANDBOX_TOOLS = ["read", "write", "edit", "grep", "ls", "find", "ba
 /** The variable a shell command travels in. */
 const COMMAND = "ALIVE_NEXT_COMMAND";
 
+/** The toolchain's binaries the shell can run. */
+const BINARIES = (Object.keys(LAYOUT) as ToolName[]).filter((name) => name !== "llvm-config");
+
 /** The toolchain's binary directories, joined at the tail of a PATH. */
 function toolchainPath(path: string | undefined, toolchain: string): string {
-  const bins = Object.entries(LAYOUT).flatMap(([name, { at }]) =>
-    name === "llvm-config" ? [] : [join(toolchain, dirname(at))],
-  );
+  const bins = BINARIES.map((name) => join(toolchain, dirname(LAYOUT[name].at)));
   return [...(path ? [path] : []), ...bins].join(":");
 }
 
@@ -301,8 +302,7 @@ export function createSandboxTools(workdir: string, toolchain?: string): ToolDef
     defineTool({
       name: bash.name,
       label: bash.label,
-      description:
-        "Run one shell command where the agent is allowed to work. Commands start in the workdir directory and the machine is sandboxed: the whole filesystem is read-only except the workdir directory and the system's /tmp, the network is closed, and the environment is the host's own, with the toolchain's binaries at the tail of PATH. Output streams, the exit status ends the answer, and a command that hangs is killed when its timeout runs out.",
+      description: `Run one shell command in the workdir directory. The machine is sandboxed: the filesystem is read-only except the workdir and /tmp, the network is closed, and PATH ends with the toolchain: ${BINARIES.join(", ")}. The framework runs alive-tv with \`--disable-undef-input --smt-to=<budget in ms>\`, so the same flags ask the same question. Output streams, and a command that hangs is killed when its timeout runs out.`,
       parameters: bash.parameters,
       execute: (id, params, signal, onUpdate) => bash.execute(id, params, signal, onUpdate),
     }),

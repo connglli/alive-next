@@ -848,6 +848,13 @@ describe("the tool surface", () => {
     for (const name of ours) expect(name).toMatch(/^(run|goal|tx|tree)_/);
   });
 
+  test("the shell names the toolchain it can run", () => {
+    const bash = createSandboxTools(".").find((tool) => tool.name === "bash");
+    expect(bash?.description).toContain(
+      "PATH ends with the toolchain: llops, alive-tv, llubi, llrwt",
+    );
+  });
+
   test("every tool takes an object, which is what a provider insists on", () => {
     expect(schemas.length).toBe(names.length);
     const notObjects = schemas
