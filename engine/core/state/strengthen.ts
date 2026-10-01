@@ -125,7 +125,8 @@ export class Strengthen {
     const parent = tree.goals.get(gid);
     if (!parent) throw new Error(`no goal ${gid}`);
     if (parent.children.length === 0) {
-      throw new Error(`${gid} is ${parent.status}, not split`);
+      const cutBy = parent.parent ? `; strengthen ${parent.parent}, which cut it` : "";
+      throw new Error(`${gid} is ${parent.status}, not split${cutBy}`);
     }
     const outer = child(tree, parent, "outer");
     const callee = child(tree, parent, "callee");

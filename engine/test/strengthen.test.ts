@@ -449,6 +449,13 @@ describe.skipIf(!built)("strengthening", () => {
     ).rejects.toThrow(/g1 is open, not split/);
   });
 
+  test("names the goal that cut a child it is given", async () => {
+    const tree = await cut();
+    await expect(
+      strengthening(new FakeChecker([])).strengthen(tree, "g3", { param_attrs: { 0: RANGE } }),
+    ).rejects.toThrow(/g3 is open, not split; strengthen g1, which cut it/);
+  });
+
   test("facts are keyed by parameter position", async () => {
     const tree = await cut();
     const strengthen = new Strengthen(
