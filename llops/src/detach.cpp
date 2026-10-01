@@ -137,6 +137,18 @@ bool tgtParams(llvm::json::Object &args, llvm::Function &F, ValueRefs &refs, con
     err = errResponse("bad_request", "a tgt detach needs 'params' and 'value_map'");
     return false;
   }
+  // Every value the map misses at once, so one refusal says all it needs.
+  std::string missing;
+  for (const auto &entry : *spec) {
+    const auto *obj = entry.getAsObject();
+    auto live = obj ? obj->getString("live") : std::nullopt;
+    if (live && !valueMap->getString(*live))
+      missing += (missing.empty() ? "'" : ", '") + live->str() + "'";
+  }
+  if (!missing.empty()) {
+    err = errResponse("bad_request", "value_map leaves out " + missing);
+    return false;
+  }
   std::vector<std::string> passed;
   for (const auto &entry : *spec) {
     llvm::Value *v = mappedParam(entry, *valueMap, F, refs, err);

@@ -1382,6 +1382,8 @@ entry:
 
   def test_value_map_must_cover_every_live_value(self):
     self.bad(self.outline_tgt({"%m": "%prod"}), "bad_request")
+    r = self.bad(self.outline_tgt({}), "bad_request")
+    self.assertIn("value_map leaves out '%m', '%x'", r["error"]["message"])
 
   def test_mapped_value_must_be_in_scope_at_the_cut(self):
     self.bad(self.outline_tgt({"%m": "%prod", "%x": "%sum"}), "invalid")
@@ -1503,6 +1505,8 @@ class TestDetach(Case):
     t = self.good(self.detach(tgt, "%loop", "k", params=s["params"], value_map=live))
     self.assertEqual(t["phis"], [0])
     self.reattaches(tgt, t, "k")
+    r = self.bad(self.detach(tgt, "%loop", "k", params=s["params"], value_map={"%i": "%i"}))
+    self.assertIn("value_map leaves out '%k', '%n'", r["error"]["message"])
 
   def test_one_tgt_value_for_two_parameters_comes_back(self):
     # k copies n on the src side, so the tgt's n stands for both, and each
