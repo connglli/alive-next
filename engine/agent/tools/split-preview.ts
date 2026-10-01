@@ -2,7 +2,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { formatSection, toolResultFrom } from "./format.ts";
+import { formatParams, formatSection, toolResultFrom } from "./format.ts";
 
 export function createSplitPreviewTool(session: Session) {
   return defineTool({
@@ -30,22 +30,17 @@ export function createSplitPreviewTool(session: Session) {
       if (preview.kind === "refused") {
         return toolResultFrom(session, false, `refused: ${preview.message}`, preview);
       }
-      const params = preview.params
-        .map((param, at) => `  ${at}: ${param.param} ${param.type}, the src's ${param.live}`)
-        .join("\n");
-
+      const params = formatParams(preview.params, preview.detach?.hypothesis);
       const cutting = `cutting ${gid} at src ${src_cut} and tgt ${tgt_cut} would make @${preview.callee}`;
       if (value_map) {
         const valid = "The value_map is valid: tree_split with the same arguments makes this cut.";
-        return toolResultFrom(session, true, `${cutting}\n${valid}`, preview, [
-          formatSection("Parameters", params),
-        ]);
+        return toolResultFrom(session, true, `${cutting}\n${valid}`, preview, [params]);
       }
       const tgt = (preview.tgtParams ?? []).map((param) => `  ${param.live} ${param.type}`);
       const needs =
         'tree_split needs a value_map from each src value below to a tgt value, as { "<src_value>": "<tgt_value>" }.';
       return toolResultFrom(session, true, `${cutting}\n${needs}`, preview, [
-        formatSection("Parameters", params),
+        params,
         formatSection("tgt values at its cut", tgt.join("\n")),
       ]);
     },

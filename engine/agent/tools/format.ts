@@ -7,6 +7,7 @@
 // because the model sees nothing between calls but what it is handed.
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { CheckOutcome, CheckResult } from "../../core/drivers/alive2.ts";
+import type { OutlineParam } from "../../core/drivers/llops.ts";
 import { type GoalStanding, type Session, standings } from "../../core/session.ts";
 import type { Timeouts } from "../../core/state/steps.ts";
 import type { Effect, Hash } from "../../core/state/trajectory.ts";
@@ -118,6 +119,19 @@ export function formatDetail(check: CheckResult | undefined): string {
   const detail = check?.detail.trim() ?? "";
   if (!detail || !check?.summary) return detail;
   return formatSection("alive2", `\`\`\`text\n${detail}\n\`\`\``);
+}
+
+/** A cut's parameters, and why no fact holds yet for one the src passes poison for. */
+export function formatParams(params: OutlineParam[], hypothesis?: string): string {
+  const lines = params.map(
+    (param, at) => `  ${at}: ${param.param} ${param.type}, the src's ${param.live}`,
+  );
+  const ghosts = params.flatMap((param, at) => (param.live === "poison" ? [at] : []));
+  if (ghosts.length === 0) return formatSection("Parameters", lines.join("\n"));
+  const calls = hypothesis ? `at the outer's call and at @${hypothesis}` : "at the outer's call";
+  const one = ghosts.length === 1;
+  const ghostly = `The src has no value for parameter${one ? "" : "s"} ${ghosts.join(", ")}, so it passes poison. A fact about ${one ? "it" : "them"} holds only once the src passes a real value ${calls}.`;
+  return formatSection("Parameters", `${lines.join("\n")}\n\n${ghostly}`);
 }
 
 /** Where a step left its side, as "g1 src is p3". */

@@ -709,7 +709,7 @@ entry:
     await callFrom(rewritingTools, "tx_abort", {});
   });
 
-  test("tree_split says which parameter the src passes poison for, and when a fact can hold", async () => {
+  test("tree_split and its preview say which parameter the src passes poison for", async () => {
     const ghosted = await Session.start({
       dir: join(dir, "ghost-session"),
       src: offset.src,
@@ -720,15 +720,14 @@ entry:
       rewriter: unrewriting,
     });
     const map = { "%3": "%3", "%4": "%4", "%0": "%0", "%1": "%1", "%2": "%2", off: "%5" };
-    const res = await callFrom(createProofAssistantTools(ghosted), "tree_split", {
-      gid: "g1",
-      src_cut: "%bb1",
-      tgt_cut: "%bb1",
-      value_map: map,
-    });
-    expect(res).toContain(
-      "The src has no value for parameter 5, so it passes poison. A fact about it holds only once the src passes a real value at the outer's call and at @outlined_g3.ih.",
-    );
+    const cut = { gid: "g1", src_cut: "%bb1", tgt_cut: "%bb1", value_map: map };
+    const ghostTools = createProofAssistantTools(ghosted);
+    const preview = await callFrom(ghostTools, "tree_split_preview", cut);
+    const res = await callFrom(ghostTools, "tree_split", cut);
+    const said =
+      "The src has no value for parameter 5, so it passes poison. A fact about it holds only once the src passes a real value at the outer's call and at @outlined_g3.ih.";
+    expect(preview).toContain(said);
+    expect(res).toContain(said);
   });
 
   test("goal_unfold unfolds either half of a loop cut, before strengthening", async () => {

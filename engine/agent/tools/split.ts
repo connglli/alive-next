@@ -2,7 +2,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
-import { formatSection, toolResultFrom } from "./format.ts";
+import { formatParams, toolResultFrom } from "./format.ts";
 
 export function createSplitTool(session: Session) {
   return defineTool({
@@ -31,17 +31,6 @@ export function createSplitTool(session: Session) {
       if (split.kind === "refused") {
         return toolResultFrom(session, false, `refused: ${split.message}`, split);
       }
-      const params = split.params
-        .map((param, at) => `  ${at}: ${param.param} ${param.type}, the src's ${param.live}`)
-        .join("\n");
-      const ghosts = split.params.flatMap((param, at) => (param.live === "poison" ? [at] : []));
-      const calls = split.detach?.hypothesis
-        ? `at the outer's call and at @${split.detach.hypothesis}`
-        : "at the outer's call";
-      const ghostly =
-        ghosts.length === 0
-          ? ""
-          : `\n\nThe src has no value for parameter${ghosts.length === 1 ? "" : "s"} ${ghosts.join(", ")}, so it passes poison. A fact about ${ghosts.length === 1 ? "it" : "them"} holds only once the src passes a real value ${calls}.`;
       return toolResultFrom(
         session,
         true,
@@ -51,7 +40,7 @@ export function createSplitTool(session: Session) {
           ...(split.detach?.hypothesis ? [`back edges call @${split.detach.hypothesis}`] : []),
         ].join("\n"),
         split,
-        [formatSection("Parameters", `${params}${ghostly}`)],
+        [formatParams(split.params, split.detach?.hypothesis)],
       );
     },
   });
