@@ -120,7 +120,7 @@ describe.skipIf(!built)("the tool layer", () => {
   test("proves a pair, one tool call at a time", async () => {
     const status = await call("run_status", {});
     expect(status).toContain("g1 root, open");
-    expect(status).toContain("budgets per query: a check");
+    expect(status).toContain("budgets per query: a check 30000ms by default and at most 60000ms");
 
     const shown = await call("goal_show", { ref: "g1" });
     expect(shown).toContain("src p1");
@@ -485,7 +485,7 @@ describe.skipIf(!built)("the tool layer", () => {
     });
     const res = await callFrom(eagerTools, "tx_commit", {});
     expect(res).toContain(
-      "certified, g1 src is p3, the new pair is refuted in 12ms (3000ms budget)",
+      "certified, g1 src is p3, the new pair is refuted in 12ms (3000ms budget); the goal stays open, and the example is only a hint",
     );
     expect(res).toContain("Example:\ni32 %x = 42");
   });

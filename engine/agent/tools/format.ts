@@ -67,7 +67,7 @@ export function toolResultFrom(
  */
 export function formatBudgets(budgets: Timeouts): string {
   return [
-    `budgets per query: a check ${budgets.checkDefaultMs}ms and at most ${budgets.checkCapMs}ms`,
+    `budgets per query: a check ${budgets.checkDefaultMs}ms by default and at most ${budgets.checkCapMs}ms`,
     `a commit ${budgets.alive2Ms}ms`,
     `the check after a step ${budgets.eagerCheckMs}ms`,
   ].join(", ");
@@ -93,7 +93,10 @@ export function formatEager(eager: CheckResult | undefined): string {
   const unasked = eager.outcome === "correct" && !eager.summary && eager.detail;
   if (eager.outcome === "error" || unasked) return `${said}: ${eager.detail}`;
   if (eager.outcome === "unknown") return `${said} in ${budgetMs}ms, so the goal stays open`;
-  return `${said} in ${eager.ms}ms (${budgetMs}ms budget)`;
+  const timed = `${said} in ${eager.ms}ms (${budgetMs}ms budget)`;
+  return eager.outcome === "incorrect"
+    ? `${timed}; the goal stays open, and the example is only a hint`
+    : timed;
 }
 
 /** The example a refuted check of the new pair found; anything else it said is noise. */

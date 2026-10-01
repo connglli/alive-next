@@ -32,7 +32,7 @@ export function createCommitTool(session: Session) {
           },
           {
             description:
-              "A window you choose, in the program the transaction started from: a run of instructions in one block that includes every changed instruction and may include unchanged ones. The matching window in the edited program is found for you, even if the edits renamed values.",
+              "A window you choose, in the program the transaction started from: a run of instructions in one block that includes every changed instruction, may include unchanged ones, and reads the same values before and after the edits. Its match in the edited program is found for you, even if the edits renamed values. A window that does not fit refuses the commit.",
           },
         ),
       ),
