@@ -1255,6 +1255,61 @@ entry:
 
 
 class TestOpt(Case):
+  SPILLED = """define i32 @f(i32 %x) {
+entry:
+  %a = alloca i32, align 4
+  store i32 %x, ptr %a, align 4
+  %v = load i32, ptr %a, align 4
+  %r = add i32 %v, 0
+  ret i32 %r
+}
+"""
+
+  def test_a_pipeline_keeps_the_module_after_each_pass_that_changed_it(self):
+    r = self.good(self.opt("pipeline", module=self.SPILLED, passes="mem2reg,instcombine"))
+    self.assertEqual([stage["pass"] for stage in r["stages"]], ["mem2reg", "instcombine"])
+    self.assertEqual(self.body(r["stages"][0]["module"]), ["%r = add i32 %x, 0", "ret i32 %r"])
+    self.assertEqual(self.body(r["stages"][1]["module"]), ["ret i32 %x"])
+
+  def test_a_pass_that_changes_nothing_is_no_stage(self):
+    r = self.good(self.opt("pipeline", module=self.SPILLED, passes="instcombine,instcombine"))
+    self.assertEqual([stage["pass"] for stage in r["stages"]], ["instcombine"])
+
+  def test_a_pipeline_runs_for_the_target_the_module_names(self):
+    # Whether the loop vectorizes is the target's cost model's decision.
+    loop = """target triple = "x86_64-unknown-linux-gnu"
+
+define void @f(ptr noalias %a, ptr noalias %b) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i64 [ 0, %entry ], [ %i.next, %loop ]
+  %pa = getelementptr inbounds i32, ptr %a, i64 %i
+  %pb = getelementptr inbounds i32, ptr %b, i64 %i
+  %v = load i32, ptr %pb, align 4
+  %w = add i32 %v, 1
+  store i32 %w, ptr %pa, align 4
+  %i.next = add nuw nsw i64 %i, 1
+  %c = icmp ult i64 %i.next, 1024
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret void
+}
+"""
+    targetless = loop.replace('target triple = "x86_64-unknown-linux-gnu"\n\n', "")
+    self.assertNotEqual(targetless, loop)
+    for module, vectorized in ((loop, True), (targetless, False)):
+      with self.subTest(vectorized=vectorized):
+        passes = [
+          stage["pass"] for stage in self.good(self.opt("pipeline", module=module))["stages"]
+        ]
+        self.assertEqual("loop-vectorize" in passes, vectorized)
+
+  def test_a_pipeline_that_does_not_parse_is_refused(self):
+    self.bad(self.opt("pipeline", passes="nonsense"), "bad_request")
+
   def test_simplify_folds_an_instruction_away(self):
     module = """define i32 @f(i32 %x) {
 entry:

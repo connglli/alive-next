@@ -161,6 +161,22 @@ entry:
     expect(result.module).not.toContain("add i32 %x, 0");
   });
 
+  test("opt keeps each stage of a pipeline", async () => {
+    const module = `define i32 @f(i32 %x) {
+entry:
+  %a = alloca i32, align 4
+  store i32 %x, ptr %a, align 4
+  %v = load i32, ptr %a, align 4
+  %r = add i32 %v, 0
+  ret i32 %r
+}
+`;
+    const result = await llops.pipelineStages(module, "mem2reg,instcombine");
+    if (!result.ok) throw new Error(result.message);
+    expect(result.stages.map((stage) => stage.pass)).toEqual(["mem2reg", "instcombine"]);
+    expect(result.stages[1]?.module).toContain("ret i32 %x");
+  });
+
   test("flags: nuw on trunc", async () => {
     const module = `define i16 @f(i32 %x) {
 entry:

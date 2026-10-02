@@ -119,10 +119,13 @@ Request `{ "module": ..., "what": "<op>", ... }`, response `{ "ok": true, "modul
 | --- | --- | --- |
 | `simplify` | `v` | fold one instruction with `simplifyInstruction` |
 | `instcombine` | optional `max_iterations`, `debug_counter` | run LLVM's InstCombine pass over the function |
+| `pipeline` | optional `passes` | run a pass pipeline for the module's target, `default<O3>` unless `passes` names another |
 
 `simplify` rewrites the instruction's uses to the simplified value and erases the instruction; nothing else in the body moves, so the step stays as small as it was asked to be, and an instruction with nothing to fold comes back unchanged. The terminator cannot be simplified.
 
 `instcombine` combines instructions across the function. `max_iterations` is a positive integer and defaults to LLVM's default of one. `debug_counter` n runs only the n-th `instcombine-visit`, counting from 0; without it every visit runs. Invalid values are refused.
+
+`pipeline` answers `stages` instead of `module`: each pass that changed the module, in the order they ran, as `{ "pass", "module" }` with the pass by its name in a pipeline and the module after it. A pass manager is never a stage, and `passes` that do not parse are refused.
 
 ## outline
 

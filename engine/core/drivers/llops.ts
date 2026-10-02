@@ -73,6 +73,13 @@ export interface Instruction {
   args?: string[];
 }
 
+/** The module after a pass of a pipeline that changed it. */
+export interface Stage {
+  /** The pass by its name in a pipeline, such as `instcombine`. */
+  pass: string;
+  module: Module;
+}
+
 export interface NumberResult extends ModuleResult {
   body: Instruction[];
 }
@@ -323,6 +330,12 @@ export class Llops {
   /** Apply one structural optimizer op to an instruction or the whole function. */
   opt(module: Module, op: OptOp): Promise<LlopsResult<ModuleResult>> {
     return this.run("opt", { module, ...op });
+  }
+
+  /** Run a pass pipeline, `default<O3>` unless `passes` names another, keeping each stage. */
+  pipelineStages(module: Module, passes?: string): Promise<LlopsResult<{ stages: Stage[] }>> {
+    const what = "pipeline";
+    return this.run("opt", passes ? { module, what, passes } : { module, what });
   }
 
   /**
