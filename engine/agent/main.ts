@@ -10,15 +10,8 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
-import { certify } from "../cert/main.ts";
-import { loadConfig, repoRoot } from "../core/config.ts";
-import { AliveTv } from "../core/drivers/alive2.ts";
-import { Llops } from "../core/drivers/llops.ts";
-import { Llrwt } from "../core/drivers/llrwt.ts";
-import { Llubi } from "../core/drivers/llubi.ts";
-import { Session } from "../core/session.ts";
-import { timeoutsFrom } from "../core/state/steps.ts";
-import { Toolchain } from "../core/toolchain.ts";
+import { repoRoot } from "../core/config.ts";
+import { closeRun, stamp, startRun } from "../core/run.ts";
 import { createProofAssistant, createServices } from "./agent.ts";
 import type { Limits } from "./budget.ts";
 import { chooseModel, listAvailableModels, THINKING_LEVELS } from "./model.ts";
@@ -67,12 +60,7 @@ if (!srcPath || !tgtPath) {
 const src = readProgram(srcPath);
 const tgt = readProgram(tgtPath);
 
-const config = loadConfig();
-const timeouts = timeoutsFrom(config.timeouts);
-const toolchain = new Toolchain(config.toolchain);
-const built = await toolchain.insist();
-
-const dir = where ?? join(repoRoot(), "sessions", `agent-${timestamp()}`);
+const dir = where ?? join(repoRoot(), "sessions", `agent-${stamp()}`);
 const scratch = join(dir, "scratch");
 
 // What a settled run says, on the screen the run is being watched on. Pi's
@@ -108,22 +96,7 @@ const choice = tryOrExit(() =>
 );
 
 mkdirSync(scratch, { recursive: true });
-const session = await Session.start({
-  dir,
-  src,
-  tgt,
-  llops: new Llops(toolchain.path("llops")),
-  checker: new AliveTv(toolchain.path("alive-tv"), timeouts.alive2Ms),
-  interp: new Llubi(toolchain.path("llubi"), config.timeouts.llubiMs),
-  rewriter: new Llrwt(toolchain.path("llrwt"), timeouts.llrwtMs, {
-    mlirTranslate: toolchain.mlir("mlir-translate"),
-    mlirOpt: toolchain.mlir("mlir-opt"),
-  }),
-  timeouts,
-  config,
-  toolchain: built,
-  eager: true,
-});
+const { session, config } = await startRun({ src, tgt, dir, eager: true });
 
 const started = Date.now();
 let summary: string | undefined;
@@ -252,20 +225,10 @@ function parseThinkingLevel(level: string): ThinkingLevel {
  */
 function finishRun(): void {
   if (summary !== undefined) return;
-  const outcome = session.finish();
-  const goals = [...session.tree.goals.values()]
-    .map((goal) => `${goal.id} ${goal.status}`)
-    .join(", ");
+  const { outcome, lines } = closeRun(session, started);
   const settled = outcome !== "unknown";
-  const lines = [`status=${outcome} in ${Date.now() - started}ms: ${goals}`];
-  if (settled) lines.push(certify(dir, join(dir, "certificate")));
   summary = `${lines.map((line) => `  ${line}`).join("\n")}\n`;
   // A verdict is news where the run is being watched; the shell gets it too,
   // once the screen is the shell's again.
   announce?.(lines.join("\n"), settled ? "info" : "warning");
-}
-
-/** A directory name that sorts by when it was made. */
-function timestamp(): string {
-  return new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "").replace("T", "-");
 }
