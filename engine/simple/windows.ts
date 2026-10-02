@@ -67,7 +67,7 @@ function widened(
 }
 
 /** The numbered bodies of a goal's two sides. */
-async function bodies(
+export async function bodies(
   session: Session,
   llops: Llops,
   gid: string,
