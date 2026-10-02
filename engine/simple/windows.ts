@@ -7,10 +7,20 @@
 import type { Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { factsAt } from "./facts.ts";
+import type { Limits } from "./limits.ts";
 import { isTerminator, type Region, regions } from "./regions.ts";
 
 /** The name both windows get, so that the tgt's one inlines where the src's one was. */
 const CALLEE = "simple.region";
+
+/** A goal being stepped, toward its tgt unless `toward` names another program. */
+interface Run {
+  session: Session;
+  llops: Llops;
+  gid: string;
+  limits: Limits;
+  toward?: string;
+}
 
 /**
  * Commits each region a window can hold, last to first so that no step moves
@@ -20,16 +30,18 @@ export async function stepWindows(
   session: Session,
   llops: Llops,
   gid: string,
-  growth: number,
+  limits: Limits,
+  toward?: string,
 ): Promise<Region[]> {
-  const [src, tgt] = await bodies(session, llops, gid);
+  const run = { session, llops, gid, limits, toward };
+  const [src, tgt] = await bodies(session, llops, gid, toward);
   const found = regions(src, tgt);
   const across = partners(src, tgt, found);
   for (const region of [...found].reverse()) {
     const at = region.src.length && region.tgt.length ? region : widened(src, tgt, region, across);
-    if (at?.window) await step(session, llops, gid, at, growth, floor(src, found, at));
+    if (at?.window) await step(run, at, floor(src, found, at));
   }
-  return regions(...(await bodies(session, llops, gid)));
+  return regions(...(await bodies(session, llops, gid, toward)));
 }
 
 /** The tgt partner of each src instruction outside every region; they pair one to one, in order. */
@@ -66,14 +78,18 @@ function widened(
   return undefined;
 }
 
-/** The numbered bodies of a goal's two sides. */
+/** The numbered bodies of a goal's src and its tgt, or of the program it is stepped toward. */
 export async function bodies(
   session: Session,
   llops: Llops,
   gid: string,
+  toward?: string,
 ): Promise<[Instruction[], Instruction[]]> {
   const view = await session.show(gid);
-  const [src, tgt] = await Promise.all([llops.number(view.src.text), llops.number(view.tgt.text)]);
+  const [src, tgt] = await Promise.all([
+    llops.number(view.src.text),
+    llops.number(toward ?? view.tgt.text),
+  ]);
   if (!src.ok || !tgt.ok) throw new Error(`cannot number the sides of ${gid}`);
   return [src.body, tgt.body];
 }
@@ -95,34 +111,22 @@ function floor(src: Instruction[], found: Region[], region: Region): number {
 }
 
 /** Certifies one region as a step: its window, then grown windows, then its window with facts. */
-async function step(
-  session: Session,
-  llops: Llops,
-  gid: string,
-  region: Region,
-  growth: number,
-  floor: number,
-) {
+async function step(run: Run, region: Region, floor: number) {
   let at: Region | undefined = region;
-  for (let layer = 0; at && layer <= growth; layer++) {
-    const tried = await attempt(session, llops, gid, at, false);
-    if (tried.certified || !tried.reads) return tried.certified;
-    const numbered = await llops.number((await session.show(gid)).src.text);
+  for (let layer = 0; at && layer <= run.limits.growth; layer++) {
+    const tried = await attempt(run, at, false);
+    if (tried.certified || !tried.reads || !run.limits.windows) return tried.certified;
+    const numbered = await run.llops.number((await run.session.show(run.gid)).src.text);
     at = numbered.ok ? grown(numbered.body, at, tried.reads, floor) : undefined;
   }
-  return (await attempt(session, llops, gid, region, true)).certified;
+  return run.limits.facts && (await attempt(run, region, true)).certified;
 }
 
 /** One commit of a region's window, with facts about what it reads when asked. */
-async function attempt(
-  session: Session,
-  llops: Llops,
-  gid: string,
-  at: Region,
-  withFacts: boolean,
-) {
+async function attempt(run: Run, at: Region, withFacts: boolean) {
+  const { session, llops, gid } = run;
   const view = await session.show(gid);
-  const spliced = await splice(llops, view.src.text, view.tgt.text, at);
+  const spliced = await splice(llops, view.src.text, run.toward ?? view.tgt.text, at);
   if (!spliced) return { certified: false };
   const from = `#${at.src[0]}`;
   const preconditions = withFacts ? await factsAt(llops, view.src.text, from, spliced.reads) : {};
@@ -136,9 +140,12 @@ async function attempt(
     return { certified: false };
   }
   // The whole function is what windows avoid, so it is not asked, after the
-  // window or after the step.
-  const options = { window: { from, to: `#${at.src.at(-1)}` }, whole: false, eager: false };
-  const result = await session.commit(withFacts ? { ...options, preconditions } : options);
+  // window or after the step; with windows off, it is the only question.
+  const window = { from, to: `#${at.src.at(-1)}` };
+  const options = run.limits.windows
+    ? { window, whole: false, eager: false, ...(withFacts ? { preconditions } : {}) }
+    : { narrow: false, eager: false };
+  const result = await session.commit(options);
   return { certified: result.kind === "certified", reads: spliced.reads };
 }
 
@@ -156,7 +163,7 @@ async function splice(llops: Llops, src: string, tgt: string, at: Region) {
 }
 
 /** The text `set_body` takes: the lines after `entry:` up to the closing brace on its own line. */
-function bodyOf(module: string): string {
+export function bodyOf(module: string): string {
   const lines = module.split("\n");
   const start = lines.indexOf("entry:") + 1;
   return lines.slice(start, lines.indexOf("}", start)).join("\n");

@@ -10,11 +10,14 @@ import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
+import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { stepWindows } from "../simple/windows.ts";
 import { pairs } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 const llops = new Llops(toolchain.path("llops"));
+/** The search's limits, with the window growth a test asks for. */
+const grow = (growth: number) => ({ ...DEFAULT_LIMITS, growth });
 const built = await llops
   .version()
   .then(() => true)
@@ -86,7 +89,7 @@ describe.skipIf(!built)("windows", () => {
   test("one commit per region: a rewritten instruction, a rewritten pair, a commuted mul", async () => {
     const checker = windowsOnly(() => true);
     const session = await start("e2", checker);
-    expect(await stepWindows(session, llops, "g1", 0)).toEqual([]);
+    expect(await stepWindows(session, llops, "g1", grow(0))).toEqual([]);
     expect(checker.windows).toHaveLength(3);
     expect(await arrived(session)).toBe(true);
   });
@@ -95,7 +98,7 @@ describe.skipIf(!built)("windows", () => {
     // Only a window that holds the sexts can show the mul does not overflow.
     const checker = windowsOnly((src) => src.includes("sext"));
     const session = await start("varA", checker);
-    expect(await stepWindows(session, llops, "g1", 1)).toEqual([]);
+    expect(await stepWindows(session, llops, "g1", grow(1))).toEqual([]);
     expect(checker.windows.map((window) => window.includes("sext"))).toEqual([false, true]);
     expect(await arrived(session)).toBe(true);
   });
@@ -120,7 +123,7 @@ entry:
         30_000,
         { about: name, refines: true, ...pair },
       );
-      expect([name, await stepWindows(session, llops, "g1", 0)]).toEqual([name, []]);
+      expect([name, await stepWindows(session, llops, "g1", grow(0))]).toEqual([name, []]);
       expect(await arrived(session)).toBe(true);
     }
   });
@@ -128,7 +131,7 @@ entry:
   test("a window that cannot grow far enough leaves its region", async () => {
     const checker = windowsOnly((src) => src.includes("sext"));
     const session = await start("varA", checker);
-    expect(await stepWindows(session, llops, "g1", 0)).toHaveLength(1);
+    expect(await stepWindows(session, llops, "g1", grow(0))).toHaveLength(1);
     expect(await arrived(session)).toBe(false);
   });
 });
@@ -138,7 +141,7 @@ describe.skipIf(!solving)("windows with alive-tv", () => {
     "%s arrives at its tgt",
     async (name) => {
       const session = await start(name, aliveTv, 5_000);
-      expect(await stepWindows(session, llops, "g1", 1)).toEqual([]);
+      expect(await stepWindows(session, llops, "g1", grow(1))).toEqual([]);
       expect(await arrived(session)).toBe(true);
     },
     120_000,
@@ -151,7 +154,7 @@ describe.skipIf(!solving)("windows with alive-tv", () => {
     "%s keeps its region",
     async (name) => {
       const session = await start(name, aliveTv, 5_000);
-      expect(await stepWindows(session, llops, "g1", 1)).toHaveLength(1);
+      expect(await stepWindows(session, llops, "g1", grow(1))).toHaveLength(1);
     },
     120_000,
   );

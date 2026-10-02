@@ -70,8 +70,9 @@ entry:
     const [region] = regions(...(await bodies(session, llops, "g1")));
     if (!region) throw new Error("expected a region");
     expect(region.window).toBe(false);
-    const goals = await peel(session, llops, "g1", region);
-    expect(await left(session, goals)).toEqual([0, 1]);
+    const peeled = await peel(session, llops, "g1", region);
+    expect(await left(session, peeled.goals)).toEqual([0, 1]);
+    expect(peeled.goals.indexOf(peeled.region)).toBe(1);
   });
 
   test("a phi with code after it is cut after it, then at its block", async () => {
@@ -96,9 +97,9 @@ j:
     const session = await start(src, src.replace("[ %b, %e ]", "[ %x, %e ]"));
     const [region] = regions(...(await bodies(session, llops, "g1")));
     if (!region) throw new Error("expected a region");
-    const goals = await peel(session, llops, "g1", region);
+    const peeled = await peel(session, llops, "g1", region);
     // Detaching the phi's block turns the phi into the callee's parameter, so
     // the difference moves to the value the outer passes it.
-    expect(await left(session, goals)).toEqual([1, 0, 0]);
+    expect(await left(session, peeled.goals)).toEqual([1, 0, 0]);
   });
 });

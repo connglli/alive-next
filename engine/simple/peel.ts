@@ -7,23 +7,25 @@ import type { Session } from "../core/session.ts";
 import { diff, type Region } from "./regions.ts";
 import { bodies } from "./windows.ts";
 
-/** Peels `region` out of goal `gid`, and returns the goals left in body order. */
+/** Peels `region` out of goal `gid`: the goals left in body order, and the one holding it. */
 export async function peel(session: Session, llops: Llops, gid: string, region: Region) {
   const [src, tgt] = await bodies(session, llops, gid);
   const [a, b, c, d] = [region.src[0], region.src.at(-1), region.tgt[0], region.tgt.at(-1)];
-  if (a === undefined || b === undefined || c === undefined || d === undefined) return [gid];
+  const none = { goals: [gid], region: gid };
+  if (a === undefined || b === undefined || c === undefined || d === undefined) return none;
   const after: string[] = [];
   let at = gid;
   if (src[b + 1]?.block === src[b]?.block && tgt[d + 1]?.block === tgt[d]?.block) {
     const split = await cut(session, llops, at, `#${b + 1}`, `#${d + 1}`);
-    if (!split) return [gid];
+    if (!split) return none;
     after.push(split.callee);
     at = split.outer;
   }
-  if (a === 0 && c === 0) return [at, ...after];
+  if (a === 0 && c === 0) return { goals: [at, ...after], region: at };
   const head = src[a]?.phi ? [src[a]?.block, tgt[c]?.block] : [`#${a}`, `#${c}`];
   const split = await cut(session, llops, at, head[0] ?? "", head[1] ?? "");
-  return split ? [split.outer, split.callee, ...after] : [at, ...after];
+  if (!split) return { goals: [at, ...after], region: at };
+  return { goals: [split.outer, split.callee, ...after], region: split.callee };
 }
 
 /** One cut, passing each value that crosses it as the tgt value the diff matched with it. */
