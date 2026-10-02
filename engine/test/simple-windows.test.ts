@@ -120,8 +120,9 @@ describe.skipIf(!solving)("windows with alive-tv", () => {
     120_000,
   );
 
-  // e4 is not a refinement. alive2 cannot prove varA's window even once it
-  // holds the sexts: it needs the fact that the mul does not overflow.
+  // e4 is not a refinement. varA's window is out of alive2's reach even with the
+  // sexts in it, and no fact helps, since its operands are poison whenever an
+  // input is.
   test.each(["e4", "varA"])(
     "%s keeps its region",
     async (name) => {
