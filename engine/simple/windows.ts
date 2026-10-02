@@ -7,7 +7,7 @@
 import type { Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { factsAt } from "./facts.ts";
-import { type Region, regions } from "./regions.ts";
+import { isTerminator, type Region, regions } from "./regions.ts";
 
 /** The name both windows get, so that the tgt's one inlines where the src's one was. */
 const CALLEE = "simple.region";
@@ -24,10 +24,46 @@ export async function stepWindows(
 ): Promise<Region[]> {
   const [src, tgt] = await bodies(session, llops, gid);
   const found = regions(src, tgt);
-  for (const region of [...found].reverse())
-    if (region.window && region.src.length > 0 && region.tgt.length > 0)
-      await step(session, llops, gid, region, growth, floor(src, found, region));
+  const across = partners(src, tgt, found);
+  for (const region of [...found].reverse()) {
+    const at = region.src.length && region.tgt.length ? region : widened(src, tgt, region, across);
+    if (at?.window) await step(session, llops, gid, at, growth, floor(src, found, at));
+  }
   return regions(...(await bodies(session, llops, gid)));
+}
+
+/** The tgt partner of each src instruction outside every region; they pair one to one, in order. */
+function partners(src: Instruction[], tgt: Instruction[], found: Region[]): Map<number, number> {
+  const [mine, theirs] = [
+    new Set(found.flatMap((r) => r.src)),
+    new Set(found.flatMap((r) => r.tgt)),
+  ];
+  const outside = [
+    src.map((_, i) => i).filter((i) => !mine.has(i)),
+    tgt.map((_, j) => j).filter((j) => !theirs.has(j)),
+  ];
+  return new Map(outside[0]?.map((i, k) => [i, outside[1]?.[k] ?? -1]));
+}
+
+/** A deletion or insertion widened by a shared neighbour, so both windows hold something. */
+function widened(
+  src: Instruction[],
+  tgt: Instruction[],
+  region: Region,
+  across: Map<number, number>,
+) {
+  const back = new Map([...across].map(([i, j]) => [j, i]));
+  const own = region.src.length > 0 ? region.src : region.tgt;
+  const block = (region.src.length > 0 ? src : tgt)[own[0] ?? -1]?.block;
+  for (const k of [(own[0] ?? 0) - 1, (own.at(-1) ?? 0) + 1]) {
+    const [i, j] = region.src.length > 0 ? [k, across.get(k)] : [back.get(k), k];
+    const [s, t] = [src[i ?? -1], tgt[j ?? -1]];
+    if (i === undefined || j === undefined || !s || !t || s.phi || isTerminator(s)) continue;
+    if ((region.src.length > 0 ? s : t).block !== block) continue;
+    const sorted = (xs: number[], x: number) => [...xs, x].sort((a, b) => a - b);
+    return { src: sorted(region.src, i), tgt: sorted(region.tgt, j), window: true };
+  }
+  return undefined;
 }
 
 /** The numbered bodies of a goal's two sides. */

@@ -207,6 +207,6 @@ function finish(src: Instruction[], tgt: Instruction[], region: Region): Region 
   return { ...region, window };
 }
 
-function isTerminator(instruction: Instruction): boolean {
+export function isTerminator(instruction: Instruction): boolean {
   return ["ret", "br", "switch", "unreachable"].includes(instruction.opcode);
 }

@@ -62,8 +62,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function start(name: string, checker: Checker, alive2Ms = 30_000) {
-  const pair = pairs[name];
+async function start(name: string, checker: Checker, alive2Ms = 30_000, pair = pairs[name]) {
   if (!pair) throw new Error(`no pair ${name}`);
   return Session.start({
     dir: join(dir, name),
@@ -99,6 +98,31 @@ describe.skipIf(!built)("windows", () => {
     expect(await stepWindows(session, llops, "g1", 1)).toEqual([]);
     expect(checker.windows.map((window) => window.includes("sext"))).toEqual([false, true]);
     expect(await arrived(session)).toBe(true);
+  });
+
+  test("a deleted or an inserted instruction is stepped with its neighbour", async () => {
+    const src = `define i32 @f(i32 %x) {
+entry:
+  %a = add i32 %x, 1
+  %d = add i32 %a, 7
+  %b = mul i32 %a, 3
+  ret i32 %b
+}
+`;
+    const tgt = src.replace("  %d = add i32 %a, 7\n", "");
+    for (const [name, pair] of [
+      ["deleted", { src, tgt }],
+      ["inserted", { src: tgt, tgt: src }],
+    ] as const) {
+      const session = await start(
+        name,
+        windowsOnly(() => true),
+        30_000,
+        { about: name, refines: true, ...pair },
+      );
+      expect([name, await stepWindows(session, llops, "g1", 0)]).toEqual([name, []]);
+      expect(await arrived(session)).toBe(true);
+    }
   });
 
   test("a window that cannot grow far enough leaves its region", async () => {
