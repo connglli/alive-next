@@ -16,5 +16,5 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true
   },
-  "include": ["core", "agent", "cert", "examples", "test"]
+  "include": ["core", "agent", "cert", "examples", "simple", "test"]
 }
