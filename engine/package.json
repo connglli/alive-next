@@ -18,6 +18,7 @@
     "test": "bun test",
     "examples": "bun run examples/main.ts",
     "cert": "bun run cert/main.ts",
-    "agent": "bun run agent/main.ts"
+    "agent": "bun run agent/main.ts",
+    "simple": "bun run simple/main.ts"
   }
 }
