@@ -5,7 +5,7 @@
 // the kernel replays.
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
-import { cutLoop } from "./cuts.ts";
+import { cutBalanced, cutLoop } from "./cuts.ts";
 import type { Limits } from "./limits.ts";
 import { peel } from "./peel.ts";
 import { regions } from "./regions.ts";
@@ -55,8 +55,9 @@ async function jump(session: Session, gid: string, stage: string) {
 }
 
 /**
- * Closes a goal by windows, a check and peeling, and returns the goals left
- * open. A goal a peel left holding its region alone is not peeled again.
+ * Closes a goal by windows and a check, or else cuts it, at a loop header,
+ * around a region, or where its expensive operations split evenly, and solves
+ * what the cut leaves. Returns the goals left open.
  */
 async function solve(
   session: Session,
@@ -71,19 +72,20 @@ async function solve(
     ? await stepWindows(session, llops, gid, limits)
     : regions(...(await bodies(session, llops, gid)));
   if ((await session.check(gid)).outcome === "proved") return [];
-  const loop = budget.cuts > 0 ? await cutLoop(session, llops, gid) : undefined;
-  if (loop) {
+  if (budget.cuts <= 0) return [gid];
+  // Solves the goals a cut left, except that the one holding a peeled region is not peeled again.
+  const spend = async (goals: string[], held?: string) => {
     budget.cuts -= 1;
-    const outer = await solve(session, llops, loop.outer, limits, budget, true);
-    return [...outer, ...(await solve(session, llops, loop.callee, limits, budget, true))];
-  }
+    const open: string[] = [];
+    for (const goal of goals)
+      open.push(...(await solve(session, llops, goal, limits, budget, goal !== held)));
+    return open;
+  };
+  const loop = await cutLoop(session, llops, gid);
+  if (loop) return spend([loop.outer, loop.callee]);
   const region = left[0];
-  if (!region || !peelable || budget.cuts <= 0) return [gid];
-  const peeled = await peel(session, llops, gid, region);
-  if (peeled.goals.length < 2) return [gid];
-  budget.cuts -= 1;
-  const open: string[] = [];
-  for (const goal of peeled.goals)
-    open.push(...(await solve(session, llops, goal, limits, budget, goal !== peeled.region)));
-  return open;
+  const peeled = region && peelable ? await peel(session, llops, gid, region) : undefined;
+  if (peeled && peeled.goals.length > 1) return spend(peeled.goals, peeled.region);
+  const halves = await cutBalanced(session, llops, gid);
+  return halves ? spend([halves.outer, halves.callee]) : [gid];
 }

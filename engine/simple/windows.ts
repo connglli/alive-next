@@ -45,7 +45,11 @@ export async function stepWindows(
 }
 
 /** The tgt partner of each src instruction outside every region; they pair one to one, in order. */
-function partners(src: Instruction[], tgt: Instruction[], found: Region[]): Map<number, number> {
+export function partners(
+  src: Instruction[],
+  tgt: Instruction[],
+  found: Region[],
+): Map<number, number> {
   const [mine, theirs] = [
     new Set(found.flatMap((r) => r.src)),
     new Set(found.flatMap((r) => r.tgt)),
