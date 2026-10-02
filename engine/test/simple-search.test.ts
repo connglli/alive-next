@@ -10,6 +10,8 @@ import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
+import { induction } from "../examples/induction.ts";
+import { nested } from "../examples/nested.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { search } from "../simple/search.ts";
 import { pairs } from "./simple-pairs.ts";
@@ -138,6 +140,16 @@ describe.skipIf(!solving)("search with alive-tv", () => {
   test("leaves e4, which is no refinement, unknown", async () => {
     expect(await run("e4")).toBe("unknown");
   }, 120_000);
+
+  test.each([induction, nested])(
+    "cuts the loops of $name at their headers and proves them by induction",
+    async (scenario) => {
+      const session = await start(scenario.src, scenario.tgt, aliveTv);
+      expect(await search(session, llops, limits)).toBe("verified");
+      expect(moves(session)).toContain("split");
+    },
+    60_000,
+  );
 
   test("refutes a pair at the root", async () => {
     const src = "define i32 @f(i32 %x) {\nentry:\n  %r = add i32 %x, 1\n  ret i32 %r\n}\n";

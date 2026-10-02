@@ -1,9 +1,11 @@
 // The simple searcher. It rewrites the root's src into its tgt region by region,
-// first through the stages the optimizer makes of the src, then peels what no
-// window holds into goals of their own and closes each goal by a check. Every
-// move is a session move, so whatever it proves, the kernel replays.
+// first through the stages the optimizer makes of the src, then cuts loops at
+// their headers, peels what no window holds into goals of their own, and closes
+// each goal by a check. Every move is a session move, so whatever it proves,
+// the kernel replays.
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
+import { cutLoop } from "./cuts.ts";
 import type { Limits } from "./limits.ts";
 import { peel } from "./peel.ts";
 import { regions } from "./regions.ts";
@@ -69,6 +71,12 @@ async function solve(
     ? await stepWindows(session, llops, gid, limits)
     : regions(...(await bodies(session, llops, gid)));
   if ((await session.check(gid)).outcome === "proved") return [];
+  const loop = budget.cuts > 0 ? await cutLoop(session, llops, gid) : undefined;
+  if (loop) {
+    budget.cuts -= 1;
+    const outer = await solve(session, llops, loop.outer, limits, budget, true);
+    return [...outer, ...(await solve(session, llops, loop.callee, limits, budget, true))];
+  }
   const region = left[0];
   if (!region || !peelable || budget.cuts <= 0) return [gid];
   const peeled = await peel(session, llops, gid, region);
