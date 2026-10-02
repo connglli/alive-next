@@ -1,10 +1,12 @@
 // Steps a goal's src toward its tgt one region at a time. For each region,
 // llops outlines it from both programs and inlines the tgt's window into the
 // src's outer, which replaces only that region. The commit names the region as
-// its window, and when alive2 refuses, the window grows backward over the
-// instructions that define the values it reads.
+// its window. When alive2 refuses, the window grows backward over the
+// instructions that define the values it reads, and last, the window is tried
+// again with what the analyses know about those values.
 import type { Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
+import { factsAt } from "./facts.ts";
 import { type Region, regions } from "./regions.ts";
 
 /** The name both windows get, so that the tgt's one inlines where the src's one was. */
@@ -56,7 +58,7 @@ function floor(src: Instruction[], found: Region[], region: Region): number {
   return start;
 }
 
-/** Certifies one region as a step, growing its window while alive2 refuses it. */
+/** Certifies one region as a step: its window, then grown windows, then its window with facts. */
 async function step(
   session: Session,
   llops: Llops,
@@ -67,22 +69,39 @@ async function step(
 ) {
   let at: Region | undefined = region;
   for (let layer = 0; at && layer <= growth; layer++) {
-    const view = await session.show(gid);
-    const spliced = await splice(llops, view.src.text, view.tgt.text, at);
-    if (!spliced) return false;
-    await session.begin(gid, "src");
-    const edited = await session.edit({ op: "set_body", body: bodyOf(spliced.module) });
-    // The edit refuses a region that calls a function the src does not declare.
-    if (edited.kind === "refused") {
-      await session.abort();
-      return false;
-    }
-    const window = { from: `#${at.src[0]}`, to: `#${at.src.at(-1)}` };
-    if ((await session.commit({ window })).kind === "certified") return true;
-    const numbered = await llops.number(view.src.text);
-    at = numbered.ok ? grown(numbered.body, at, spliced.reads, floor) : undefined;
+    const tried = await attempt(session, llops, gid, at, false);
+    if (tried.certified || !tried.reads) return tried.certified;
+    const numbered = await llops.number((await session.show(gid)).src.text);
+    at = numbered.ok ? grown(numbered.body, at, tried.reads, floor) : undefined;
   }
-  return false;
+  return (await attempt(session, llops, gid, region, true)).certified;
+}
+
+/** One commit of a region's window, with facts about what it reads when asked. */
+async function attempt(
+  session: Session,
+  llops: Llops,
+  gid: string,
+  at: Region,
+  withFacts: boolean,
+) {
+  const view = await session.show(gid);
+  const spliced = await splice(llops, view.src.text, view.tgt.text, at);
+  if (!spliced) return { certified: false };
+  const from = `#${at.src[0]}`;
+  const preconditions = withFacts ? await factsAt(llops, view.src.text, from, spliced.reads) : {};
+  if (withFacts && Object.keys(preconditions).length === 0)
+    return { certified: false, reads: spliced.reads };
+  await session.begin(gid, "src");
+  const edited = await session.edit({ op: "set_body", body: bodyOf(spliced.module) });
+  // The edit refuses a region that calls a function the src does not declare.
+  if (edited.kind === "refused") {
+    await session.abort();
+    return { certified: false };
+  }
+  const window = { from, to: `#${at.src.at(-1)}` };
+  const result = await session.commit(withFacts ? { window, preconditions } : { window });
+  return { certified: result.kind === "certified", reads: spliced.reads };
 }
 
 /** The src with region `at` replaced by the tgt's code, and the values the src window reads. */
