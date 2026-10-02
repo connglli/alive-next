@@ -1,4 +1,5 @@
-// Tests peeling a region that no window can hold into a goal of its own.
+// Tests cutting goals: peeling a region that no window can hold into a goal of
+// its own, and cutting where a goal's expensive operations split evenly.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +9,7 @@ import { Llops } from "../core/drivers/llops.ts";
 import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
+import { cutBalanced } from "../simple/cuts.ts";
 import { peel } from "../simple/peel.ts";
 import { regions } from "../simple/regions.ts";
 import { bodies } from "../simple/windows.ts";
@@ -101,5 +103,24 @@ j:
     // Detaching the phi's block turns the phi into the callee's parameter, so
     // the difference moves to the value the outer passes it.
     expect(await left(session, peeled.goals)).toEqual([1, 0, 0]);
+  });
+
+  test("a balanced cut splits the multiplies evenly", async () => {
+    const src = `define i32 @f(i32 %x, i32 %y) {
+entry:
+  %a = mul i32 %x, %y
+  %b = mul i32 %a, %x
+  %c = mul i32 %b, %y
+  %d = mul i32 %c, %x
+  %r = add i32 %d, 1
+  ret i32 %r
+}
+`;
+    const session = await start(src, src.replace("add i32 %d, 1", "add i32 %d, 2"));
+    const halves = await cutBalanced(session, llops, "g1");
+    if (!halves) throw new Error("expected a cut");
+    const muls = async (gid: string) =>
+      (await bodies(session, llops, gid))[0].filter((i) => i.opcode === "mul").length;
+    expect([await muls(halves.outer), await muls(halves.callee)]).toEqual([2, 2]);
   });
 });
