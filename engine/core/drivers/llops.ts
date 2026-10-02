@@ -49,9 +49,24 @@ export interface Instruction {
   block: string;
   /** Its text on one line. */
   text: string;
+  opcode: string;
+  /** Its result type, `void` when it defines no value. */
+  type: string;
+  /** Its flags in printed order, such as `nsw` or `nnan`. */
+  flags: string[];
+  /** Its operands in LLVM's order, as references or constants. */
+  operands: string[];
+  commutative: boolean;
+  /**
+   * Its text without the result, with `poison` for each operand the function
+   * defines and `%_` for each block.
+   */
+  form: string;
   /** The value it defines, as `%3` or `%x`, if it defines one. */
   value?: string;
   phi: boolean;
+  /** For a phi, the blocks its values come from, in order. */
+  blocks?: string[];
   /** For a call, the function it calls by name. */
   calls?: string;
   /** For a call, its arguments as references or constants, such as `%3` or `poison`. */

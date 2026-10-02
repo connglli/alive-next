@@ -531,10 +531,50 @@ bb2:
     body = self.good(run("number", {"module": self.PROGRAM}))["body"]
     self.assertEqual([entry["block"] for entry in body], ["%entry"] + ["%bb1"] * 3 + ["%bb2"] * 2)
     self.assertEqual(body[0]["text"], "switch i32 %0, label %bb2 [ i32 1, label %bb1 ]")
-    self.assertEqual(
-      body[4], {"block": "%bb2", "text": body[4]["text"], "value": "%2", "phi": True}
-    )
+    phi = {
+      "block": "%bb2",
+      "text": body[4]["text"],
+      "opcode": "phi",
+      "type": "i32",
+      "flags": [],
+      "operands": ["1", "0"],
+      "commutative": False,
+      "form": "phi i32 [ 1, %_ ], [ 0, %_ ]",
+      "value": "%2",
+      "phi": True,
+      "blocks": ["%bb1", "%entry"],
+    }
+    self.assertEqual(body[4], phi)
+    self.assertEqual(body[0]["form"], "switch i32 poison, label %_ [ i32 1, label %_ ]")
     self.assertNotIn("value", body[1])
+
+  def test_describes_each_instruction(self):
+    module = self.PROGRAM.replace(
+      "  br label %bb2\n",
+      "  %a = add nuw nsw i32 %0, 7\n  %c = icmp ult i32 %a, %0\n  br label %bb2\n",
+    )
+    body = self.good(run("number", {"module": module}))["body"]
+    described = [
+      (e["opcode"], e["type"], e["flags"], e["operands"], e["commutative"]) for e in body
+    ]
+    self.assertEqual(described[3], ("add", "i32", ["nuw", "nsw"], ["%0", "7"], True))
+    self.assertEqual(described[4], ("icmp", "i1", [], ["%a", "%0"], False))
+    self.assertEqual(described[1], ("store", "void", [], ["%0", "%1"], False))
+
+  def test_a_form_is_the_operation_whatever_values_it_reads(self):
+    def form(inst):
+      module = f"define void @f(i32 %x, i32 %y, ptr %p) {{\nentry:\n  {inst}\n  ret void\n}}\n"
+      return self.good(run("number", {"module": module}))["body"][0]["form"]
+
+    self.assertEqual(form("%a = add nsw i32 %x, %y"), "add nsw i32 poison, poison")
+    self.assertEqual(form("%a = add nsw i32 %y, %x"), form("%a = add nsw i32 %x, %y"))
+    for one, other in (
+      ("%a = add i32 %x, 1", "%a = add i32 %x, 2"),
+      ("%a = icmp ult i32 %x, %y", "%a = icmp slt i32 %x, %y"),
+      ("%a = load i32, ptr %p, align 4", "%a = load i32, ptr %p, align 2"),
+    ):
+      with self.subTest(one=one):
+        self.assertNotEqual(form(one), form(other))
 
   def test_lists_a_call_and_its_arguments(self):
     module = self.PROGRAM.replace("call void @g(i32 %0)", "call void @g(i32 poison)")
