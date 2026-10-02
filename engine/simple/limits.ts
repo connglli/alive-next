@@ -8,7 +8,7 @@ export interface Limits {
   rootMs: number;
   /** How many times a refused window may grow. */
   growth: number;
-  /** How many regions may be peeled into goals of their own. */
+  /** How many times the search may cut a goal, counting a peel's two cuts as one. */
   cuts: number;
   /** Whether to step through the optimizer's own stages before the tgt. */
   stages: boolean;
