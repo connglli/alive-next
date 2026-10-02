@@ -6,10 +6,11 @@
 // Pi draws the run, in its TUI, which is also where a model is logged into and
 // picked. Nothing is drawn here, and what the screen shows is in the trajectory
 // too.
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
+import { readArgs, readCount, readPair, tryOrExit } from "../core/args.ts";
 import { repoRoot } from "../core/config.ts";
 import { closeRun, stamp, startRun } from "../core/run.ts";
 import { createProofAssistant, createServices } from "./agent.ts";
@@ -49,16 +50,9 @@ if (flags.listModels) {
 }
 
 // A run is one pair, so both sides are named or there is nothing to prove.
-const [srcPath, tgtPath, where] = flags.rest;
-if (!srcPath || !tgtPath) {
-  const given = flags.rest.length === 0 ? "no program" : "only one program";
-  exitWithError(`${given} given, and a run proves one against another`);
-}
-
 // Both programs, and the model, before anything is created, so a command line
 // naming a file or a model that is not there leaves nothing behind it.
-const src = readProgram(srcPath);
-const tgt = readProgram(tgtPath);
+const { src, tgt, where } = readPair(flags.rest);
 
 const dir = where ?? join(repoRoot(), "sessions", `agent-${stamp()}`);
 const scratch = join(dir, "scratch");
@@ -141,28 +135,6 @@ await new InteractiveMode(agent.runtime, {
  * sentence is nothing: `--help` is where the usage is, and a model that does
  * not exist is better answered by naming what does.
  */
-function exitWithError(wrong: string): never {
-  console.error(`Error: ${wrong}`);
-  process.exit(2);
-}
-
-function tryOrExit<T>(reading: () => T): T {
-  try {
-    return reading();
-  } catch (wrong) {
-    return exitWithError(wrong instanceof Error ? wrong.message : String(wrong));
-  }
-}
-
-/** A program the command line named, or a sentence saying why there is none. */
-function readProgram(path: string): string {
-  try {
-    return readFileSync(path, "utf8");
-  } catch (wrong) {
-    return exitWithError(`cannot read ${path}: ${(wrong as NodeJS.ErrnoException).code ?? wrong}`);
-  }
-}
-
 interface Flags {
   model?: string;
   provider?: string;
@@ -175,40 +147,22 @@ interface Flags {
   rest: string[];
 }
 
-/**
- * The command line. Throws on a flag it does not know rather than treating it
- * as a file, since a mistyped flag would otherwise become a missing pair.
- */
+/** The agent's command line. */
 function parseArgs(args: string[]): Flags {
   const flags: Flags = { limits: {}, rest: [] };
-  for (let at = 0; at < args.length; at += 1) {
-    const arg = args[at] as string;
-    const value = (): string => {
-      const next = args[++at];
-      if (next === undefined) throw new Error(`${arg} wants a value`);
-      return next;
-    };
+  flags.rest = readArgs(args, (arg, value) => {
     if (arg === "-m" || arg === "--model") flags.model = value();
     else if (arg === "--provider") flags.provider = value();
     else if (arg === "--thinking") flags.thinking = parseThinkingLevel(value());
     else if (arg === "--list-models") flags.listModels = true;
     else if (arg === "--pause") flags.pause = true;
-    else if (arg === "--max-steps") flags.limits.maxSteps = count(arg, value());
-    else if (arg === "--max-seconds") flags.limits.maxSeconds = count(arg, value());
+    else if (arg === "--max-steps") flags.limits.maxSteps = readCount(arg, value());
+    else if (arg === "--max-seconds") flags.limits.maxSeconds = readCount(arg, value());
     else if (arg === "-h" || arg === "--help") flags.help = true;
-    else if (arg.startsWith("-")) throw new Error(`no such option ${arg}`);
-    else flags.rest.push(arg);
-  }
+    else return false;
+    return true;
+  });
   return flags;
-}
-
-/** A count a flag carries, which is whole and above zero or it bounds nothing. */
-function count(flag: string, given: string): number {
-  const value = Number(given);
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${flag} must be a whole number above zero, not ${given}`);
-  }
-  return value;
 }
 
 function parseThinkingLevel(level: string): ThinkingLevel {
