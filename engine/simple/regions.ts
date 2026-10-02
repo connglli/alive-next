@@ -25,6 +25,11 @@ type Step = { move: Move; inside?: Move[] };
 
 /** The regions where `tgt` differs from `src`, in the order of the body. */
 export function regions(src: Instruction[], tgt: Instruction[]): Region[] {
+  return diff(src, tgt).regions;
+}
+
+/** The regions, and for each src block and value, the tgt one it is matched with. */
+export function diff(src: Instruction[], tgt: Instruction[]) {
   const [a, b] = [blocksOf(src), blocksOf(tgt)];
   const content = (body: Instruction[], block: number[] = []) =>
     block.map((i) => body[i]?.form).join("\n");
@@ -36,7 +41,8 @@ export function regions(src: Instruction[], tgt: Instruction[]): Region[] {
       ? { move, inside: within(src, tgt, a[move.src], b[move.tgt]) }
       : { move },
   );
-  const reads = readsAlike(src, tgt, pairing(src, tgt, a, b, steps));
+  const pairs = pairing(src, tgt, a, b, steps);
+  const reads = readsAlike(src, tgt, pairs);
   const out: Region[] = [];
   let loose: Region = { src: [], tgt: [], window: false };
   for (const { move, inside } of steps) {
@@ -50,7 +56,7 @@ export function regions(src: Instruction[], tgt: Instruction[]): Region[] {
     out.push(...group(src, tgt, inside, reads));
   }
   if (loose.src.length || loose.tgt.length) out.push(loose);
-  return out;
+  return { regions: out, pairs };
 }
 
 /** The instruction indices of each block, in the order of the body. */
