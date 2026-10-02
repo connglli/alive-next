@@ -1400,6 +1400,27 @@ declare i32 @k.ih(i32)
     step["window"]["to"] = self.built.program(other["module"])
     self.refused(self.built.write(), "recorded program differs")
 
+  def test_a_window_that_allocates(self):
+    # Its halves put the program back together, and its pair holds, but in a
+    # frame of its own the window's memory would end before the function's.
+    step = self.windowed()
+
+    def spilled(digest: str) -> str:
+      """The program with the window's argument stored to the stack and loaded back."""
+      text = self.text(digest)
+      mul = "  %1 = mul i32 %0, 2\n"
+      self.assertIn(mul, text)
+      spill = (
+        "  %a = alloca i32, align 4\n  store i32 %0, ptr %a, align 4\n"
+        "  %v = load i32, ptr %a, align 4\n  %1 = mul i32 %v, 2\n"
+      )
+      return self.built.program(canonical(text.replace(mul, spill)))
+
+    step["from"] = spilled(step["from"])
+    step["window"]["from"] = spilled(step["window"]["from"])
+    self.built.goals["g1"]["start"]["src"] = step["from"]
+    self.refused(self.built.write(), "allocates stack memory")
+
   def test_a_step_of_a_kind_the_checker_does_not_know(self):
     pair = {"src": self.src, "tgt": self.tgt}
     self.built.goal("g1", pair, pair, [{"kind": "trust-me"}], {"kind": "check"})

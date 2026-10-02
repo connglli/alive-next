@@ -9,6 +9,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
@@ -494,6 +495,62 @@ bool plainCall(const llvm::CallInst &call) {
          call.getCallingConv() == llvm::CallingConv::C &&
          call.getTailCallKind() == llvm::CallInst::TCK_None &&
          !(fp && fp->getFastMathFlags().any());
+}
+
+namespace {
+
+// What an instruction of a callee depends on that the callee does not share
+// with the code around its call, or nothing.
+std::optional<std::string> frameHazard(const llvm::Instruction &I, bool window) {
+  static const std::string ownFrame = ", and a callee has a frame of its own";
+  static const std::string variadic =
+      ", which works on variadic arguments, and a callee is passed none";
+  if (window && llvm::isa<llvm::AllocaInst>(I))
+    return "allocates stack memory, which a window frees when it returns rather than when the "
+           "function does";
+  if (llvm::isa<llvm::VAArgInst>(I))
+    return "holds a va_arg" + variadic;
+  auto *call = llvm::dyn_cast<llvm::CallInst>(&I);
+  if (!call)
+    return std::nullopt;
+  if (call->isMustTailCall())
+    return "holds a musttail call, which must match the signature of the function it is in, "
+           "and a callee has a signature of its own";
+  if (call->hasInAllocaArgument() || call->getOperandBundle(llvm::LLVMContext::OB_preallocated))
+    return "passes an inalloca or preallocated argument, which belongs to the frame that makes "
+           "the call" +
+           ownFrame;
+  std::string why;
+  switch (call->getIntrinsicID()) {
+  case llvm::Intrinsic::stacksave:
+  case llvm::Intrinsic::stackrestore:
+  case llvm::Intrinsic::returnaddress:
+  case llvm::Intrinsic::addressofreturnaddress:
+  case llvm::Intrinsic::frameaddress:
+  case llvm::Intrinsic::sponentry:
+  case llvm::Intrinsic::localescape:
+  case llvm::Intrinsic::localrecover:
+    why = ", which depends on the frame it runs in" + ownFrame;
+    break;
+  case llvm::Intrinsic::vastart:
+  case llvm::Intrinsic::vacopy:
+  case llvm::Intrinsic::vaend:
+    why = variadic;
+    break;
+  default:
+    return std::nullopt;
+  }
+  return "calls '@" + call->getCalledFunction()->getName().str() + "'" + why;
+}
+
+} // namespace
+
+std::optional<Diag> frameDependence(const llvm::Function &callee, bool window) {
+  for (const auto &I : llvm::instructions(callee))
+    if (auto what = frameHazard(I, window))
+      return Diag{Diag::Severity::Error, "frame_dependent",
+                  "'@" + callee.getName().str() + "' " + *what};
+  return std::nullopt;
 }
 
 bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F,

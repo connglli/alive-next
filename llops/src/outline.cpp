@@ -286,6 +286,8 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
     live.push_back(refs.print(*I));
 
   llvm::Function *callee = moveOut(M, *BB, window, inside, *calleeName, params, out);
+  if (auto d = frameDependence(*callee, /*window=*/true))
+    return errResponse(d->code, d->message);
   for (unsigned i = 0; i < paramInfo.size(); ++i)
     (*paramInfo[i].getAsObject())["param"] =
         "%" + std::next(callee->arg_begin(), i)->getName().str();
@@ -354,6 +356,10 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   if (decl->getFunctionType() != callee->getFunctionType())
     return errResponse("type_mismatch", "the outer does not declare '@" + calleeName->str() +
                                             "' as the callee defines it");
+  // Only a call the function does not return right after is a window.
+  bool window = !llvm::isa<llvm::ReturnInst>(call->getNextNode());
+  if (auto d = frameDependence(*callee, window))
+    return errResponse(d->code, d->message);
 
   // The map covers both halves of the move: the callee's parameters become
   // the call's arguments, and every symbol the callee body names is redirected

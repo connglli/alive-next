@@ -2521,6 +2521,166 @@ entry:
     self.bad(self.unfold(OUTER, callee=marked), "invalid")
 
 
+# Code for each way a body can depend on the frame it runs in, needing nothing
+# from the body around it: its lines, then the declarations they call.
+FRAME_DEPENDENT = {
+  "stacksave": (
+    ["%h = call ptr @llvm.stacksave.p0()", "call void @llvm.stackrestore.p0(ptr %h)"],
+    "declare ptr @llvm.stacksave.p0()\ndeclare void @llvm.stackrestore.p0(ptr)\n",
+  ),
+  "frameaddress": (
+    ["%h = call ptr @llvm.frameaddress.p0(i32 0)"],
+    "declare ptr @llvm.frameaddress.p0(i32)\n",
+  ),
+  "va_start": (["call void @llvm.va_start.p0(ptr null)"], "declare void @llvm.va_start.p0(ptr)\n"),
+  "va_arg": (["%h = va_arg ptr null, i32"], ""),
+  "inalloca": (["%h = call i32 @h(ptr inalloca(i32) null)"], "declare i32 @h(ptr inalloca(i32))\n"),
+  "preallocated": (
+    [
+      "%t = call token @llvm.call.preallocated.setup(i32 1)",
+      "%a = call ptr @llvm.call.preallocated.arg(token %t, i32 0) preallocated(i32)",
+      '%h = call i32 @h(ptr preallocated(i32) %a) [ "preallocated"(token %t) ]',
+    ],
+    "declare token @llvm.call.preallocated.setup(i32)\n"
+    "declare ptr @llvm.call.preallocated.arg(token, i32)\n"
+    "declare i32 @h(ptr preallocated(i32))\n",
+  ),
+}
+
+# Both variadic, so that va_start is well formed in either.
+STRAIGHT = """define i32 @f(i32 %x, ...) {
+entry:
+  %r = add i32 %x, 1
+  ret i32 %r
+}
+"""
+JOINED = """define i32 @f(i32 %x, ...) {
+entry:
+  br label %next
+
+next:
+  %r = add i32 %x, 1
+  ret i32 %r
+}
+"""
+ALLOCATES = """define i32 @f(i32 %x) {
+entry:
+  %a = alloca i32, align 4
+  store i32 %x, ptr %a, align 4
+  %v = load i32, ptr %a, align 4
+  %r = add i32 %v, 1
+  ret i32 %r
+}
+"""
+
+
+class TestFrameDependent(Case):
+  def holding(self, module, label, hazard):
+    """`module` with the hazard's code first in block `label`."""
+    lines, decls = FRAME_DEPENDENT[hazard]
+    at = f"{label}:\n"
+    self.assertIn(at, module)
+    return module.replace(at, at + "".join(f"  {line}\n" for line in lines), 1) + "\n" + decls
+
+  def refused(self, sub, request):
+    self.bad(run(sub, request), "frame_dependent")
+
+  def test_outline_takes_none_in_a_cut_or_a_window(self):
+    for hazard, (lines, _) in FRAME_DEPENDENT.items():
+      with self.subTest(hazard=hazard):
+        module = self.holding(STRAIGHT, "entry", hazard)
+        self.assertTrue(self.conforms(module))
+        self.refused("outline", {"module": module, "side": "src", "cut": "#0", "callee": "g"})
+        window = {"module": module, "cut": "#0", "to": f"#{len(lines) - 1}", "callee": "r"}
+        self.refused("outline", window)
+
+  def test_detach_takes_none(self):
+    for hazard in FRAME_DEPENDENT:
+      with self.subTest(hazard=hazard):
+        module = self.holding(JOINED, "next", hazard)
+        self.assertTrue(self.conforms(module))
+        self.refused("detach", {"module": module, "side": "src", "block": "%next", "callee": "k"})
+
+  def test_inline_puts_none_back(self):
+    cut = self.good(run("outline", {"module": STRAIGHT, "side": "src", "cut": "%r", "callee": "g"}))
+    for hazard in FRAME_DEPENDENT:
+      with self.subTest(hazard=hazard):
+        callee = self.holding(cut["callee"], "rest", hazard)
+        self.refused("inline", {"outer": cut["outer"], "callee": callee, "callee_name": "g"})
+
+  def test_reattach_puts_none_back(self):
+    half = self.good(
+      run("detach", {"module": JOINED, "side": "src", "block": "%next", "callee": "k"})
+    )
+    for hazard in FRAME_DEPENDENT:
+      with self.subTest(hazard=hazard):
+        callee = self.holding(half["callee"], "next", hazard)
+        request = {"outer": half["outer"], "callee": callee, "callee_name": "k"}
+        self.refused("reattach", {**request, "phis": half["phis"]})
+
+  def test_unfold_copies_none(self):
+    for hazard in FRAME_DEPENDENT:
+      with self.subTest(hazard=hazard):
+        callee = self.holding(CALLEE, "head", hazard)
+        self.refused("unfold", {"module": callee, "hypothesis": "k.ih"})
+        self.refused("unfold", {"module": OUTER, "callee": callee, "hypothesis": "k.ih"})
+
+  def test_musttail_stays_in_its_function(self):
+    module = """define i32 @f(i32 %x) {
+entry:
+  %y = add i32 %x, 1
+  %t = musttail call i32 @h(i32 %y)
+  ret i32 %t
+}
+
+declare i32 @h(i32)
+"""
+    self.assertTrue(self.conforms(module))
+    self.refused("outline", {"module": module, "side": "src", "cut": "%y", "callee": "g"})
+
+  def test_a_window_does_not_allocate(self):
+    self.refused("outline", {"module": ALLOCATES, "cut": "%a", "to": "%v", "callee": "r"})
+
+  def test_a_window_uses_the_memory_of_its_caller(self):
+    r = self.good(run("outline", {"module": ALLOCATES, "cut": "#1", "to": "%v", "callee": "r"}))
+    back = run("inline", {"outer": r["outer"], "callee": r["callee"], "callee_name": "r"})
+    self.assertEqual(self.canon(self.good(back)["module"]), self.canon(ALLOCATES))
+
+  def test_a_cut_takes_its_memory_along(self):
+    # A suffix's frame ends where its function's does, so its memory lives as long.
+    r = self.good(run("outline", {"module": ALLOCATES, "side": "src", "cut": "%a", "callee": "g"}))
+    back = run("inline", {"outer": r["outer"], "callee": r["callee"], "callee_name": "g"})
+    self.assertEqual(self.canon(self.good(back)["module"]), self.canon(ALLOCATES))
+
+  def test_inline_allocates_only_where_the_function_returns_right_after(self):
+    def allocating(to):
+      r = self.good(run("outline", {"module": F_SIMPLE, "cut": "m", "to": to, "callee": "r"}))
+      callee = r["callee"].replace("entry:\n", "entry:\n  %a = alloca i32, align 4\n", 1)
+      self.assertNotEqual(callee, r["callee"])
+      return {"outer": r["outer"], "callee": callee, "callee_name": "r"}
+
+    self.good(run("inline", allocating("s")))
+    self.refused("inline", allocating("m"))
+
+  def test_a_loop_that_allocates_is_cut_at_its_header(self):
+    # Each iteration's call returns only when the loop does, so every object
+    # lives until the function returns, as in place.
+    whole = STILL.replace(
+      "  %i.next = add i32 %i, %k\n",
+      "  %a = alloca i32, align 4\n  store i32 %i, ptr %a, align 4\n  %i.next = add i32 %i, %k\n",
+    )
+    self.assertNotEqual(whole, STILL)
+    half = self.good(
+      run("detach", {"module": whole, "side": "src", "block": "%loop", "callee": "k"})
+    )
+    request = {"outer": half["outer"], "callee": half["callee"], "callee_name": "k"}
+    request.update(phis=half["phis"], hypothesis=half["hypothesis"])
+    self.assertEqual(self.canon(self.good(run("reattach", request))["module"]), self.canon(whole))
+    self.good(run("unfold", {"module": half["callee"], "hypothesis": "k.ih"}))
+    unfold = {"module": half["outer"], "callee": half["callee"], "hypothesis": "k.ih"}
+    self.good(run("unfold", unfold))
+
+
 class TestAssume(Case):
   F = """define i32 @f(i32 %n) {
 entry:

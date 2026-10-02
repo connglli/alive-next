@@ -157,6 +157,8 @@ Both sides answer with the same `params`, so a caller can compare them. A tgt va
 
 The callee is declared with no attributes. An attribute is an assumption the call site has to honour, so adding one is a proof obligation that belongs to the strengthen flow rather than to the cut.
 
+The callee runs in a frame of its own, so `outline`, `detach`, `inline`, `reattach` and `unfold` refuse with `frame_dependent` a callee that depends on its frame: a call of `llvm.stacksave`, `llvm.stackrestore`, `llvm.returnaddress`, `llvm.addressofreturnaddress`, `llvm.frameaddress`, `llvm.sponentry`, `llvm.localescape` or `llvm.localrecover`; a `va_arg` or a call of `llvm.va_start`, `llvm.va_copy` or `llvm.va_end`; a `musttail` call; or a call with an `inalloca` or `preallocated` argument. A window, which returns before the rest of the body runs, may not hold an `alloca` either.
+
 ### A window rather than a suffix
 
 `to` names the far end, in the same block, and the outlined instructions are the ones from `cut` to there. The terminator stays where it is, and the callee hands back what the rest of the body still uses:
@@ -285,6 +287,7 @@ A request that asks for conditions and operand bundles produces two assumes, bec
 | `snippet_terminator` | a snippet carries a terminator; the block's own stays |
 | `set_body_contract` | a set_body body is module text, not the body's instructions |
 | `not_single_entry` | a block a cut would move is entered other than where the cut is made |
+| `frame_dependent` | code a cut would move, or put back, depends on the frame it runs in |
 
 ## Building and testing
 
