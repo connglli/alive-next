@@ -99,8 +99,10 @@ async function attempt(
     await session.abort();
     return { certified: false };
   }
-  const window = { from, to: `#${at.src.at(-1)}` };
-  const result = await session.commit(withFacts ? { window, preconditions } : { window });
+  // The whole function is what windows avoid, so it is not asked, after the
+  // window or after the step.
+  const options = { window: { from, to: `#${at.src.at(-1)}` }, whole: false, eager: false };
+  const result = await session.commit(withFacts ? { ...options, preconditions } : options);
   return { certified: result.kind === "certified", reads: spliced.reads };
 }
 
