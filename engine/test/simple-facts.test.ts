@@ -11,10 +11,13 @@ import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
 import { factsAt } from "../simple/facts.ts";
+import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { stepWindows } from "../simple/windows.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 const llops = new Llops(toolchain.path("llops"));
+/** The search's limits, with the window growth a test asks for. */
+const grow = (growth: number) => ({ ...DEFAULT_LIMITS, growth });
 const built = await llops
   .version()
   .then(() => true)
@@ -112,6 +115,6 @@ entry:
       rewriter: {} as Llrwt,
       timeouts: timeoutsFrom({ alive2Ms: 5_000 }),
     });
-    expect(await stepWindows(session, llops, "g1", 1)).toEqual([]);
+    expect(await stepWindows(session, llops, "g1", grow(1))).toEqual([]);
   }, 60_000);
 });
