@@ -182,6 +182,51 @@ describe.skipIf(!built)("transactions", () => {
     expect(checker.calls[0]?.tgt).toContain("mul i32 %p1, %p0");
   });
 
+  test("a window that settles nothing refuses the step when the whole function is not to be asked", async () => {
+    const checker = new FakeChecker(["unknown"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const transactions = new Transactions(store, llops);
+    const goals = await tree();
+
+    transactions.begin(goals, "g1", "src");
+    await transactions.edit({ op: "commute", v: "%2" });
+    const result = await transactions.commit(goals, steps, { whole: false });
+
+    expect(result.kind).toBe("refused");
+    expect(checker.calls).toHaveLength(1);
+    expect(checker.calls[0]?.tgt).toContain("@outlined_window");
+  });
+
+  test("with narrowing off, a step asks the whole function", async () => {
+    const checker = new FakeChecker(["correct", "unknown"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const transactions = new Transactions(store, llops);
+    const goals = await tree();
+
+    transactions.begin(goals, "g1", "src");
+    await transactions.edit({ op: "commute", v: "%2" });
+    const result = await transactions.commit(goals, steps, { narrow: false });
+
+    if (result.kind !== "certified") throw new Error("expected the commit to land");
+    expect(result.by).toBe("whole");
+    expect(checker.calls[0]?.tgt).not.toContain("@outlined_window");
+  });
+
+  test("a step that is not eager leaves the new pair unchecked", async () => {
+    const checker = new FakeChecker(["correct"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const transactions = new Transactions(store, llops);
+    const goals = await tree();
+
+    transactions.begin(goals, "g1", "src");
+    await transactions.edit({ op: "commute", v: "%2" });
+    const result = await transactions.commit(goals, steps, { eager: false });
+
+    if (result.kind !== "certified") throw new Error("expected the commit to land");
+    expect(result.eager).toBeUndefined();
+    expect(checker.calls).toHaveLength(1);
+  });
+
   test("refuses a window it was asked for, saying why it does not outline", async () => {
     const checker = new FakeChecker([]);
     const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);

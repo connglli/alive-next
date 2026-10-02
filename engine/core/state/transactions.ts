@@ -15,7 +15,7 @@
 import type { EditOp, Llops, OptOp } from "../drivers/llops.ts";
 import { head, type Side, type Tree, workable } from "./goals.ts";
 import { narrow, narrowAt, type Window } from "./narrow.ts";
-import type { CheckStepResult, Steps } from "./steps.ts";
+import type { CheckStepOptions, CheckStepResult, Steps } from "./steps.ts";
 import type { Store } from "./store.ts";
 import type { Hash } from "./trajectory.ts";
 
@@ -47,6 +47,13 @@ export type EditResult =
   | { kind: "applied"; text: string; ops: number }
   | { kind: "unchanged"; text: string; ops: number }
   | { kind: "refused"; code: string; message: string; text: string };
+
+/** How a commit checks its step. */
+export interface CommitOptions extends Pick<CheckStepOptions, "preconditions" | "whole" | "eager"> {
+  window?: Window;
+  /** Whether to look for a window to check instead of the whole function. On by default. */
+  narrow?: boolean;
+}
 
 /** What a move is told while a transaction is open, and what to do about it. */
 export function openMessage(transaction: Transaction): string {
@@ -150,10 +157,7 @@ export class Transactions {
   async commit(
     tree: Tree,
     steps: Steps,
-    options?: {
-      window?: Window;
-      preconditions?: Record<string, Record<string, unknown>>;
-    },
+    options?: CommitOptions,
     imm_abort: boolean = true,
   ): Promise<CheckStepResult> {
     const transaction = this.require();
@@ -163,9 +167,12 @@ export class Transactions {
     // asked as a question about the whole function.
     const goal = workable(tree, transaction.gid);
     const before = this.store.get(head(goal, transaction.side));
-    const narrowed = options?.window
-      ? await narrowAt(this.llops, before, transaction.text, options.window)
-      : await narrow(this.llops, before, transaction.text);
+    const narrowed =
+      options?.narrow === false
+        ? { why: "narrowing is off" }
+        : options?.window
+          ? await narrowAt(this.llops, before, transaction.text, options.window)
+          : await narrow(this.llops, before, transaction.text);
     // An agent-named window is a request, not a hint: when the search finds no
     // window it is right to fall back to the whole function, but a window the
     // caller named and that will not outline means the caller asked for
@@ -191,6 +198,8 @@ export class Transactions {
       {
         narrowed,
         preconditions: options?.preconditions,
+        whole: options?.whole,
+        eager: options?.eager,
       },
     );
     if (!imm_abort && result.kind === "certified") this.current = undefined;

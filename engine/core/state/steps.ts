@@ -87,6 +87,11 @@ export interface CheckStepOptions {
    */
   preconditions?: Record<string, Record<string, unknown>>;
   /**
+   * Whether to check the whole function when the check of the window does not
+   * prove the step. On by default.
+   */
+  whole?: boolean;
+  /**
    * Whether to check the goal's new pair afterwards. On by default, because
    * catching a discharge early is the point of it, and off for the steps
    * inside a larger operation, whose intermediate states are not states the
@@ -377,6 +382,14 @@ export class Steps {
             narrowing:
               options.narrowed && "why" in options.narrowed ? options.narrowed.why : undefined,
           };
+      if (options.whole === false)
+        return {
+          kind: "refused",
+          check:
+            local ?? unasked("there is no window, and asking the whole function is turned off"),
+          narrowed: local,
+          fallback,
+        };
       const whole = await this.check(orient(side, beforeText, afterText), {
         timeoutMs: this.timeouts.alive2Ms,
       });

@@ -40,7 +40,6 @@ import {
   verdict,
   workable,
 } from "./state/goals.ts";
-import type { Window } from "./state/narrow.ts";
 import { type SplitPreviewResult, type SplitResult, Splits } from "./state/splits.ts";
 import {
   type Checker,
@@ -56,6 +55,7 @@ import { canonWith, Store } from "./state/store.ts";
 import { Strengthen, type StrengthenContract, type StrengthenResult } from "./state/strengthen.ts";
 import { type Effect, type Entry, type Event, type Hash, Trajectory } from "./state/trajectory.ts";
 import {
+  type CommitOptions,
   type EditingRefusal,
   type EditResult,
   openMessage,
@@ -449,13 +449,7 @@ export class Session {
   }
 
   /** Certify the open transaction as one step. */
-  commit(
-    options?: {
-      window?: Window;
-      preconditions?: Record<string, Record<string, unknown>>;
-    },
-    imm_abort: boolean = true,
-  ): Promise<CheckStepResult> {
+  commit(options?: CommitOptions, imm_abort: boolean = true): Promise<CheckStepResult> {
     return this.act("tx_commit", { ...options, imm_abort }, (tree) =>
       this.editing.commit(tree, this.steps, options, imm_abort),
     );
