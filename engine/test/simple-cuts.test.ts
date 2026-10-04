@@ -12,6 +12,7 @@ import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { timeoutsFrom } from "../core/state/steps.ts";
 import { loop } from "../examples/loop.ts";
+import { rotated } from "../examples/rotated.ts";
 import { strchr } from "../examples/strchr.ts";
 import { cut, cutBalanced, cutLoop } from "../simple/cuts.ts";
 import { strengthenCut } from "../simple/facts.ts";
@@ -323,6 +324,15 @@ exit:
     const facts = { param_attrs: { 0: { noundef: true, dereferenceable: 1024 } } };
     await strengthenLoop(session, "g1", facts, []);
     expect(statuses(session, [halves.callee])).toEqual(["proved"]);
+  }, 120_000);
+
+  test("a rotated loop is cut at its exit, then at its header", async () => {
+    const session = await solved("rotated", rotated.src, rotated.tgt);
+    const exit = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    if (!exit) throw new Error("expected a cut at the exit");
+    const header = await cutLoop(session, llops, exit.outer, DEFAULT_LIMITS);
+    if (!header) throw new Error("expected a cut at the header");
+    expect((await session.check(header.callee)).outcome).toBe("proved");
   }, 120_000);
 
   test("a loop cut keeps a comparison with zero that each iteration keeps", async () => {
