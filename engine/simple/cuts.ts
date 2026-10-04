@@ -58,6 +58,9 @@ export async function cut(
   if (split.kind !== "split") return undefined;
   const lives = split.params.map((param) => param.live);
   if (!limits.facts) return split.children;
+  // Houdini proposes noundef on every parameter, so a loop cut takes its
+  // invariants alone: a strengthen that restates an attribute changes nothing
+  // where the outer declares the callee, and that step is refused.
   if (split.detach?.hypothesis) await strengthenLoop(session, gid, split.params);
   else await strengthenCut(session, llops, gid, text, pointOf(src, srcCut), lives);
   return split.children;
