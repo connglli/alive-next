@@ -52,7 +52,12 @@ import {
   type UnfoldStepResult,
 } from "./state/steps.ts";
 import { canonWith, Store } from "./state/store.ts";
-import { Strengthen, type StrengthenContract, type StrengthenResult } from "./state/strengthen.ts";
+import {
+  Strengthen,
+  type StrengthenContract,
+  type StrengthenPreview,
+  type StrengthenResult,
+} from "./state/strengthen.ts";
 import { type Effect, type Entry, type Event, type Hash, Trajectory } from "./state/trajectory.ts";
 import {
   type CommitOptions,
@@ -520,6 +525,17 @@ export class Session {
       }
       return this.strengthening.strengthen(tree, gid, contract);
     });
+  }
+
+  /**
+   * Preview strengthening a cut without modifying the goal tree or store: the
+   * part of the contract that holds where the outer calls the callee and, for
+   * a loop, that one iteration keeps.
+   */
+  strengthenPreview(gid: string, contract: StrengthenContract): Promise<StrengthenPreview> {
+    return this.act("strengthen_preview", { gid, ...contract }, async (tree) =>
+      this.strengthening.preview(tree, gid, contract),
+    );
   }
 
   /**

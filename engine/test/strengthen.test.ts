@@ -274,6 +274,41 @@ describe.skipIf(!built)("strengthening a loop", () => {
   });
 });
 
+/** That i is 0, which holds where the loop is entered and no iteration keeps. */
+const AT_ZERO = { op: "eq" as const, lhs: "!0", rhs: 0 };
+
+describe.skipIf(!built)("previewing a strengthen", () => {
+  test("drops a fact that holds on entry but that an iteration does not keep", async () => {
+    // Each fact is asked alone at the outer's call, then at the hypothesis's.
+    const checker = new FakeChecker([
+      ...["correct", "correct", "correct"],
+      ...["correct", "correct", "incorrect"],
+    ] as CheckOutcome[]);
+    const tree = await detached();
+    const result = await strengthening(checker).preview(tree, "g1", {
+      param_attrs: { 1: { noundef: true } },
+      predicates: [...WITHIN, AT_ZERO],
+    });
+    expect(result).toMatchObject({
+      kind: "preview",
+      holds: { param_attrs: { 1: { noundef: true } }, predicates: WITHIN },
+    });
+    const asked = checker.calls.map((call) => call.tgt.includes("@outlined_g3.ih("));
+    expect(asked).toEqual([false, false, false, true, true, true]);
+  });
+
+  test("assumes in the iteration only the facts that held on entry", async () => {
+    const checker = new FakeChecker(["incorrect", "correct", "correct"]);
+    const tree = await detached();
+    const result = await strengthening(checker).preview(tree, "g1", {
+      predicates: [...WITHIN, AT_ZERO],
+    });
+    expect(result).toMatchObject({ kind: "preview", holds: { predicates: [AT_ZERO] } });
+    expect(checker.calls).toHaveLength(3);
+    expect(checker.calls[2]?.src).not.toContain("icmp ule");
+  });
+});
+
 describe.skipIf(!built)("strengthening", () => {
   test("proves the fact, then attributes it in four programs", async () => {
     const checker = new FakeChecker(["correct", "correct", "correct", "unknown", "unknown"]);

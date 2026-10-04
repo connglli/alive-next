@@ -47,7 +47,7 @@
 // cannot prove willreturn.
 import { type CheckResult, timedOut } from "../drivers/alive2.ts";
 import type { Assertion, Attrs, Llops, Predicate } from "../drivers/llops.ts";
-import { applyEffect, child, head, type Side, type Tree } from "./goals.ts";
+import { applyEffect, child, type Goal, head, type Side, type Tree } from "./goals.ts";
 import type { Steps } from "./steps.ts";
 import type { Store } from "./store.ts";
 import type { Effect, Hash, StepRef } from "./trajectory.ts";
@@ -82,6 +82,11 @@ export type StrengthenResult =
       effects: Effect[];
     };
 
+/** The part of a contract that a strengthen would prove, as `preview` answers it. */
+export type StrengthenPreview =
+  | { kind: "preview"; holds: StrengthenContract }
+  | { kind: "refused"; reason: string };
+
 export class Strengthen {
   constructor(
     private readonly store: Store,
@@ -103,13 +108,7 @@ export class Strengthen {
     const rawParamAttrs = contract.param_attrs ?? {};
     const fnAttrs = contract.fn_attrs ?? {};
     const predicates = contract.predicates ?? [];
-
-    // Parameter attributes are keyed by zero-based argument index.
-    const keys = Object.keys(rawParamAttrs);
-    const bad = keys.find((key) => !/^(?:0|[1-9]\d*)$/.test(key));
-    if (bad !== undefined)
-      throw new Error(`param_attrs is keyed by parameter index, 0, 1, ..., not '${bad}'`);
-    const params = keys.map(Number).sort((a, b) => a - b);
+    const params = paramsOf(rawParamAttrs);
     const hasParamAttrs = params.length > 0;
     const hasFnAttrs = Object.keys(fnAttrs).length > 0;
     const hasPredicates = predicates.length > 0;
@@ -118,28 +117,10 @@ export class Strengthen {
       throw new Error(`there is nothing to add: give param_attrs, fn_attrs or predicates`);
     }
 
-    const parent = tree.goals.get(gid);
-    if (!parent) throw new Error(`no goal ${gid}`);
-    if (parent.children.length === 0) {
-      const cutBy = parent.parent ? `; strengthen ${parent.parent}, which cut it` : "";
-      throw new Error(`${gid} is ${parent.status}, not split${cutBy}`);
-    }
-    const outer = child(tree, parent, "outer");
-    const callee = child(tree, parent, "callee");
-    const name = callee.callee;
-    if (!name) throw new Error(`${callee.id} does not say what it was outlined from`);
-
-    for (const goal of [outer, callee]) {
-      if (goal.status === "split" || goal.status === "refuted") {
-        return {
-          kind: "refused",
-          phase: "assume",
-          reason: `${goal.id} is ${goal.status}, so its interface can no longer change`,
-          effects: [],
-        };
-      }
-    }
-    const hypothesis = callee.detach?.hypothesis;
+    const halves = this.halves(tree, gid);
+    if ("reason" in halves)
+      return { kind: "refused", phase: "assume", reason: halves.reason, effects: [] };
+    const { outer, callee, name, hypothesis } = halves;
     if (hypothesis && hasFnAttrs) {
       const reason = `@${name} calls @${hypothesis}, so it takes no function attributes: induction cannot prove willreturn`;
       return { kind: "refused", phase: "callee_attr", reason, effects: [] };
@@ -150,32 +131,7 @@ export class Strengthen {
     const landed: Effect[] = [];
     const checks: CheckResult[] = [];
     let by: StepRef | undefined;
-    const assertions: Assertion[] = [
-      ...params.map((p) => ({ fact: rawParamAttrs[p] as Attrs, of: `!${p}` })),
-      ...predicates,
-    ];
-
-    // The callee with the contract at its entry, as Phase 3 materializes it.
-    const applyToCallee = async (mod: string) => {
-      let current = mod;
-      if (hasParamAttrs || hasFnAttrs) {
-        const attrRes = await this.attribute(current, name, params, rawParamAttrs, fnAttrs);
-        if (typeof attrRes !== "string") return attrRes;
-        current = attrRes;
-      }
-      if (hasPredicates) {
-        const assumeRes = await this.llops.assume(current, { at: "start", fn: name }, predicates);
-        if (!assumeRes.ok) {
-          return {
-            kind: "refused" as const,
-            phase: "attribute" as const,
-            reason: `the predicates cannot be added at the callee's entry: ${assumeRes.message}`,
-          };
-        }
-        current = assumeRes.module;
-      }
-      return current;
-    };
+    const assertions = assertionsOf(contract);
 
     // At the callee's start only its arguments are in scope, so llops refuses
     // a contract that names anything else. Ask that before anything lands.
@@ -192,7 +148,7 @@ export class Strengthen {
     // loop does not keep changes nothing.
     let kept: { from: Hash; hash: Hash } | undefined;
     if (hypothesis && (hasParamAttrs || hasPredicates)) {
-      const entered = await applyToCallee(this.store.get(head(callee, "src")));
+      const entered = await this.materialize(this.store.get(head(callee, "src")), name, contract);
       if (typeof entered !== "string") return { ...entered, effects: [] };
       const next = await this.llops.assume(
         entered,
@@ -333,9 +289,9 @@ export class Strengthen {
     // Both sides advance simultaneously under one atomic `strengthen` effect.
     const srcRes = kept
       ? this.store.get(kept.from)
-      : await applyToCallee(this.store.get(head(callee, "src")));
+      : await this.materialize(this.store.get(head(callee, "src")), name, contract);
     if (typeof srcRes !== "string") return { ...srcRes, effects: landed };
-    const tgtRes = await applyToCallee(this.store.get(head(callee, "tgt")));
+    const tgtRes = await this.materialize(this.store.get(head(callee, "tgt")), name, contract);
     if (typeof tgtRes !== "string") return { ...tgtRes, effects: landed };
 
     this.land(tree, landed, [
@@ -394,6 +350,90 @@ export class Strengthen {
       this.land(tree, landed, cross.effects);
     }
     return { kind: "strengthened", effects: landed, checks };
+  }
+
+  /**
+   * The part of `contract` that strengthening split goal `gid` would prove:
+   * the facts that hold where the outer calls the callee and, for a loop's
+   * callee, that one iteration keeps with those facts assumed at its entry.
+   * Each parameter's attributes and each predicate is a fact, asked alone, and
+   * nothing lands, so only `strengthen` makes one count.
+   */
+  async preview(tree: Tree, gid: string, contract: StrengthenContract): Promise<StrengthenPreview> {
+    if (Object.keys(contract.fn_attrs ?? {}).length > 0)
+      throw new Error("a preview takes param_attrs and predicates, not fn_attrs");
+    const halves = this.halves(tree, gid);
+    if ("reason" in halves) return { kind: "refused", reason: halves.reason };
+    const { outer, callee, name, hypothesis } = halves;
+    const caller = this.store.get(head(outer, "src"));
+    const entering: Assertion[] = [];
+    for (const fact of assertionsOf(contract))
+      if (await this.holdsBefore(caller, name, fact)) entering.push(fact);
+    if (!hypothesis || entering.length === 0)
+      return { kind: "preview", holds: contractOf(entering) };
+    const entered = await this.materialize(
+      this.store.get(head(callee, "src")),
+      name,
+      contractOf(entering),
+    );
+    if (typeof entered !== "string") return { kind: "refused", reason: entered.reason };
+    const kept: Assertion[] = [];
+    for (const fact of entering)
+      if (await this.holdsBefore(entered, hypothesis, fact)) kept.push(fact);
+    return { kind: "preview", holds: contractOf(kept) };
+  }
+
+  /** The two goals split goal `gid` left, or why its interface can no longer change. */
+  private halves(tree: Tree, gid: string): Halves | { reason: string } {
+    const parent = tree.goals.get(gid);
+    if (!parent) throw new Error(`no goal ${gid}`);
+    if (parent.children.length === 0) {
+      const cutBy = parent.parent ? `; strengthen ${parent.parent}, which cut it` : "";
+      throw new Error(`${gid} is ${parent.status}, not split${cutBy}`);
+    }
+    const outer = child(tree, parent, "outer");
+    const callee = child(tree, parent, "callee");
+    const name = callee.callee;
+    if (!name) throw new Error(`${callee.id} does not say what it was outlined from`);
+    for (const goal of [outer, callee])
+      if (goal.status === "split" || goal.status === "refuted")
+        return { reason: `${goal.id} is ${goal.status}, so its interface can no longer change` };
+    return { outer, callee, name, hypothesis: callee.detach?.hypothesis };
+  }
+
+  /** The callee `fn` in `module` with `contract` at its entry, as Phase 3 materializes it. */
+  private async materialize(module: string, fn: string, contract: StrengthenContract) {
+    const paramAttrs = contract.param_attrs ?? {};
+    const fnAttrs = contract.fn_attrs ?? {};
+    const predicates = contract.predicates ?? [];
+    let current = module;
+    if (Object.keys(paramAttrs).length > 0 || Object.keys(fnAttrs).length > 0) {
+      const attrRes = await this.attribute(current, fn, paramsOf(paramAttrs), paramAttrs, fnAttrs);
+      if (typeof attrRes !== "string") return attrRes;
+      current = attrRes;
+    }
+    if (predicates.length > 0) {
+      const assumeRes = await this.llops.assume(current, { at: "start", fn }, predicates);
+      if (!assumeRes.ok) {
+        return {
+          kind: "refused" as const,
+          phase: "attribute" as const,
+          reason: `the predicates cannot be added at the callee's entry: ${assumeRes.message}`,
+        };
+      }
+      current = assumeRes.module;
+    }
+    return current;
+  }
+
+  /**
+   * Whether `fact` holds before each call of `fn` in `module`: alive2 shows it
+   * when assuming the fact there adds no UB.
+   */
+  private async holdsBefore(module: string, fn: string, fact: Assertion) {
+    const assumed = await this.llops.assume(module, { at: "before_calls", fn }, [fact]);
+    if (!assumed.ok) return false;
+    return (await this.steps.refinementCheck(module, assumed.module)).outcome === "correct";
   }
 
   /** The program with parameter and function attributes added. */
@@ -506,10 +546,50 @@ export function explainAssumeRefusal(
   return lines.join("\n");
 }
 
+/** The two goals a cut left, the function it outlined, and its hypothesis for a loop. */
+interface Halves {
+  outer: Goal;
+  callee: Goal;
+  name: string;
+  hypothesis?: string;
+}
+
 /** A call by the `#N` that names it, with its arguments. */
 interface Call {
   at: number;
   args: string[];
+}
+
+/** The parameters `param_attrs` names, in order; its keys are zero-based argument indices. */
+function paramsOf(paramAttrs: Record<number, Attrs>): number[] {
+  const keys = Object.keys(paramAttrs);
+  const bad = keys.find((key) => !/^(?:0|[1-9]\d*)$/.test(key));
+  if (bad !== undefined)
+    throw new Error(`param_attrs is keyed by parameter index, 0, 1, ..., not '${bad}'`);
+  return keys.map(Number).sort((a, b) => a - b);
+}
+
+/** A contract's facts as `llops assume` takes them: one per parameter, then the predicates. */
+function assertionsOf(contract: StrengthenContract): Assertion[] {
+  const paramAttrs = contract.param_attrs ?? {};
+  const attributes = paramsOf(paramAttrs).map((p) => ({
+    fact: paramAttrs[p] as Attrs,
+    of: `!${p}`,
+  }));
+  return [...attributes, ...(contract.predicates ?? [])];
+}
+
+/** The contract that states `facts`, the inverse of `assertionsOf`. */
+function contractOf(facts: Assertion[]): StrengthenContract {
+  const paramAttrs: Record<number, Attrs> = {};
+  const predicates: Predicate[] = [];
+  for (const fact of facts)
+    if ("fact" in fact) paramAttrs[Number(fact.of.slice(1))] = fact.fact;
+    else predicates.push(fact);
+  return {
+    ...(Object.keys(paramAttrs).length > 0 ? { param_attrs: paramAttrs } : {}),
+    ...(predicates.length > 0 ? { predicates } : {}),
+  };
 }
 
 /** The parameters a predicate names as `!N`. */
