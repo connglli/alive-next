@@ -53,6 +53,9 @@ make deps-status                          # Inspect toolchain and host dependenc
 cd engine && bun run agent a.ll b.ll      # Run interactive Pi agent on an IR pair
 cd engine && bun run agent --pause a.ll b.ll # Open agent paused to configure model/settings
 
+# Running the Simple Searcher
+cd engine && bun run simple a.ll b.ll     # Search for a proof without a model
+
 # Scenarios and Verification
 make examples                             # Run the worked tutorial scenarios into sessions/
 python3 kernel/check.py sessions/<id>/certificate  # Independently replay certificate
