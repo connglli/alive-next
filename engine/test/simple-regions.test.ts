@@ -120,6 +120,19 @@ entry:
     expect(await diff(src, tgt)).toEqual([{ src: [0], tgt: [0, 1], window: true }]);
   });
 
+  test("a value pairs with the argument a matched instruction reads", async () => {
+    const src = `define i32 @f(i32 %x) {
+entry:
+  %k = or i32 %x, 0
+  %r = mul i32 %k, 3
+  ret i32 %r
+}
+`;
+    const copy = "  %k = or i32 %x, 0\n  %r = mul i32 %k, 3";
+    const tgt = src.replace(copy, "  %r = mul i32 %x, 3");
+    expect(await diff(src, tgt)).toEqual([{ src: [0], tgt: [], window: true }]);
+  });
+
   test("a region that holds a terminator is no window", async () => {
     const src = `define i32 @f(i32 %x) {
 entry:
