@@ -189,6 +189,58 @@ entry:
     expect(statuses(session, [halves.callee])).toEqual(["proved"]);
   }, 120_000);
 
+  test("a cut passes the bits the analyses know to its callee", async () => {
+    // The paper's straight-line callee: the tgt drops the and that clears the
+    // lowest bit, which is right only because t is even.
+    const src = `define i64 @f(i64 noundef %x, i64 noundef %p1) {
+entry:
+  %t = shl i64 %x, 1
+  %v7 = sub i64 %p1, %t
+  %v8 = sdiv i64 %v7, 2
+  %v9 = mul i64 %v8, 2
+  %r = add i64 %t, %v9
+  %h = and i64 %r, -2
+  ret i64 %h
+}
+`;
+    const tgt = src.replace(
+      "  %v9 = mul i64 %v8, 2\n  %r = add i64 %t, %v9\n  %h = and i64 %r, -2\n  ret i64 %h",
+      "  %k2 = shl i64 %v8, 1\n  %r = add i64 %t, %k2\n  ret i64 %r",
+    );
+    const session = await solved("even", src, tgt);
+    const halves = await cut(session, llops, "g1", DEFAULT_LIMITS, "#1", "#1");
+    if (!halves) throw new Error("expected a cut");
+    expect(statuses(session, [halves.callee])).toEqual(["proved"]);
+  }, 120_000);
+
+  test("a loop cut keeps an analysis fact and an invariant together", async () => {
+    // The tgt marks n + i nsw, which needs both i <= n, an invariant, and an
+    // upper bound on n from the mask, which only the analyses give.
+    const src = `define i32 @f(i32 noundef %x) {
+entry:
+  %n = and i32 %x, 1023
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %c = icmp ult i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %i.next = add i32 %i, 1
+  br label %head
+
+exit:
+  %d = add i32 %n, %i
+  ret i32 %d
+}
+`;
+    const session = await solved("both", src, src.replace("add i32 %n", "add nsw i32 %n"));
+    const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    if (!halves) throw new Error("expected a cut");
+    expect(statuses(session, [halves.callee])).toEqual(["proved"]);
+  }, 120_000);
+
   test("a loop cut keeps a comparison with zero that each iteration keeps", async () => {
     // The tgt tests for the key before the end, which is right only for a key
     // that is not zero, as the guard before the loop makes sure.
