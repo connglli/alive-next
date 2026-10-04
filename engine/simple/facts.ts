@@ -65,15 +65,38 @@ export async function cutFacts(
 export async function strengthenCut(session: Session, gid: string, candidates: StrengthenContract) {
   if (size(candidates) === 0) return;
   if ((await session.strengthen(gid, candidates)).kind === "strengthened") return;
-  const preview = await session.strengthenPreview(gid, candidates);
-  if (preview.kind !== "preview") return;
-  const holds = size(preview.holds);
-  if (holds > 0 && holds < size(candidates)) await session.strengthen(gid, preview.holds);
+  const holds = await holding(session, gid, candidates);
+  if (size(holds) > 0 && size(holds) < size(candidates)) await session.strengthen(gid, holds);
 }
 
-/** How many facts a contract states. */
+/** The part of `candidates` a preview finds holds, with noundef alone where attributes fail. */
+async function holding(
+  session: Session,
+  gid: string,
+  candidates: StrengthenContract,
+): Promise<StrengthenContract> {
+  const preview = await session.strengthenPreview(gid, candidates);
+  if (preview.kind !== "preview") return {};
+  const lost = noundefLost(candidates, preview.holds);
+  if (Object.keys(lost).length === 0) return preview.holds;
+  const again = await session.strengthenPreview(gid, { param_attrs: lost });
+  const kept = again.kind === "preview" ? again.holds.param_attrs : {};
+  return { ...preview.holds, param_attrs: { ...preview.holds.param_attrs, ...kept } };
+}
+
+/** Noundef alone for each parameter whose other candidate attributes `holds` drops. */
+function noundefLost(candidates: StrengthenContract, holds: StrengthenContract) {
+  const kept = holds.param_attrs ?? {};
+  const lost = Object.entries(candidates.param_attrs ?? {}).filter(
+    ([k, attrs]) => !(k in kept) && attrs.noundef === true && Object.keys(attrs).length > 1,
+  );
+  return Object.fromEntries(lost.map(([k]) => [k, { noundef: true }]));
+}
+
+/** How many attributes and predicates a contract states. */
 export function size(contract: StrengthenContract): number {
-  return Object.keys(contract.param_attrs ?? {}).length + (contract.predicates ?? []).length;
+  const attrs = Object.values(contract.param_attrs ?? {}).flatMap((one) => Object.keys(one));
+  return attrs.length + (contract.predicates ?? []).length;
 }
 
 /** What the analyses of `kinds` know just before `point`, looked up by kind and value. */
