@@ -79,7 +79,7 @@ entry:
 `;
     const session = await start(
       src,
-      src.replace("  %c = sub i32 %b, %x\n  ret i32 %c", "  ret i32 %b"),
+      src.replace("  %c = sub i32 %b, %x\n  ret i32 %c", "  ret i32 0"),
     );
     const [region] = regions(...(await bodies(session, llops, "g1")));
     if (!region) throw new Error("expected a region");

@@ -30,13 +30,14 @@ describe.skipIf(!built)("regions", () => {
   test("find the regions of the small pairs", async () => {
     // e3's last add is in no region, because each division is matched with the
     // vector lane extracted for it, so the add reads the same values on both
-    // sides.
+    // sides. e4's mul reads the freeze the tgt dropped where the tgt's reads
+    // the shl, so the two pair up and the freeze alone differs.
     const expected: Record<string, string[]> = {
       e1: ["1/1", "3/3", "4/4", "6/6"],
       e1alt: ["2/2", "4/4", "6/6", "7/7"],
       e2: ["1/1", "3,4/3,4", "5/5"],
       e3: ["0/0", "3,4,5,6/3,4,5,6,7,8,9,10"],
-      e4: ["2,3/2"],
+      e4: ["2/"],
       varA: ["2/2"],
       varB: ["0,1/0,1", "3/3"],
     };
@@ -103,6 +104,20 @@ entry:
 `;
     const found = await diff(src, tgt);
     expect(found).toEqual([{ src: [0, 1, 2], tgt: [0, 1], window: false }]);
+  });
+
+  test("the values two matched instructions read pair up", async () => {
+    const src = `define i32 @f(i32 %x) {
+entry:
+  %a = mul i32 %x, 2
+  ret i32 %a
+}
+`;
+    // The returns match, so the mul and the freeze they return pair up,
+    // though the two sides compute them in different numbers of steps, and the
+    // return stays out of the region, which a window can then hold.
+    const tgt = src.replace("%a = mul i32 %x, 2", "%h = shl i32 %x, 1\n  %a = freeze i32 %h");
+    expect(await diff(src, tgt)).toEqual([{ src: [0], tgt: [0, 1], window: true }]);
   });
 
   test("a region that holds a terminator is no window", async () => {

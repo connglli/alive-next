@@ -42,7 +42,7 @@ export function diff(src: Instruction[], tgt: Instruction[]) {
       : { move },
   );
   const pairs = pairing(src, tgt, a, b, steps);
-  const reads = readsAlike(src, tgt, pairs);
+  const reads = matchedReads(src, tgt, pairs);
   const out: Region[] = [];
   let loose: Region = { src: [], tgt: [], window: false };
   for (const { move, inside } of steps) {
@@ -57,6 +57,16 @@ export function diff(src: Instruction[], tgt: Instruction[]) {
   }
   if (loose.src.length || loose.tgt.length) out.push(loose);
   return { regions: out, pairs };
+}
+
+/** The blocks and values a body defines, which a diff has to match rather than compare. */
+function ownOf(body: Instruction[]): Set<string> {
+  return new Set(body.flatMap((i) => [i.block, ...(i.value ? [i.value] : [])]));
+}
+
+/** Whether a src name stands for a tgt one: matched when a body defines it, identical otherwise. */
+function standsFor(pairs: Map<string, string>, mine: Set<string>, theirs: Set<string>) {
+  return (x = "", y = "") => (mine.has(x) || theirs.has(y) ? pairs.get(x) === y : x === y);
 }
 
 /** The instruction indices of each block, in the order of the body. */
@@ -153,19 +163,42 @@ function pairing(
     add(src[a[move.src ?? -1]?.[0] ?? -1]?.block, tgt[b[move.tgt ?? -1]?.[0] ?? -1]?.block);
     for (const pair of inside) add(src[pair.src ?? -1]?.value, tgt[pair.tgt ?? -1]?.value);
   }
+  throughOperands(src, tgt, steps, pairs);
   return pairs;
+}
+
+/** Pairs what matched instructions read, a commutative one only where its other operand agrees. */
+function throughOperands(
+  src: Instruction[],
+  tgt: Instruction[],
+  steps: Step[],
+  pairs: Map<string, string>,
+) {
+  const [mine, theirs] = [ownOf(src), ownOf(tgt)];
+  const agree = standsFor(pairs, mine, theirs);
+  for (let grown = true; grown; ) {
+    grown = false;
+    for (const { inside } of steps)
+      for (const { src: i, tgt: j } of inside ?? []) {
+        const [s, t] = [src[i ?? -1], tgt[j ?? -1]];
+        if (!s || !t || s.form !== t.form) continue;
+        s.operands.forEach((x, k) => {
+          const y = t.operands[k] ?? "";
+          if (!mine.has(x) || !theirs.has(y) || pairs.has(x)) return;
+          if (s.commutative && !agree(s.operands[1 - k], t.operands[1 - k])) return;
+          pairs.set(x, y);
+          grown = true;
+        });
+      }
+  }
 }
 
 /** Whether two instructions read the same values and blocks, in order or swapped. */
 type Reads = (i: number, j: number, swapped: boolean) => boolean;
 
 /** Constants and arguments must be identical; values and blocks of the bodies must be matched. */
-function readsAlike(src: Instruction[], tgt: Instruction[], pairs: Map<string, string>): Reads {
-  const own = (body: Instruction[]) =>
-    new Set(body.flatMap((i) => [i.block, ...(i.value ? [i.value] : [])]));
-  const [mine, theirs] = [own(src), own(tgt)];
-  const same = (a: string, b: string) =>
-    mine.has(a) || theirs.has(b) ? pairs.get(a) === b : a === b;
+function matchedReads(src: Instruction[], tgt: Instruction[], pairs: Map<string, string>): Reads {
+  const same = standsFor(pairs, ownOf(src), ownOf(tgt));
   const read = (i?: Instruction) => [...(i?.operands ?? []), ...(i?.blocks ?? [])];
   return (i, j, swapped) => {
     const [a, b] = [read(src[i]), read(tgt[j])];
