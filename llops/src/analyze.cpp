@@ -3,6 +3,10 @@
 #include "irutil.h"
 
 #include "llvm/Analysis/AssumptionCache.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/ConstantRange.h"
@@ -21,6 +25,13 @@ std::string apToString(const llvm::APInt &V, unsigned radix, bool isSigned) {
   llvm::SmallVector<char, 24> buf;
   V.toString(buf, radix, isSigned);
   return std::string(buf.data(), buf.size());
+}
+
+std::string typeName(const llvm::Type &T) {
+  std::string out;
+  llvm::raw_string_ostream os(out);
+  T.print(os);
+  return out;
 }
 
 // Known bits, as three masks over the value's width. A bit is unknown when it
@@ -75,6 +86,81 @@ void pointerFact(llvm::Value &V, const llvm::DataLayout &DL, llvm::json::Object 
   fact["nonnull"] = bytes > 0 && !canBeNull;
 }
 
+// How a fact spells each kind of expression ScalarEvolution builds.
+const char *scevOp(llvm::SCEVTypes type) {
+  switch (type) {
+  case llvm::scConstant:
+    return "const";
+  case llvm::scVScale:
+    return "vscale";
+  case llvm::scTruncate:
+    return "trunc";
+  case llvm::scZeroExtend:
+    return "zext";
+  case llvm::scSignExtend:
+    return "sext";
+  case llvm::scAddExpr:
+    return "add";
+  case llvm::scMulExpr:
+    return "mul";
+  case llvm::scUDivExpr:
+    return "udiv";
+  case llvm::scAddRecExpr:
+    return "addrec";
+  case llvm::scUMaxExpr:
+    return "umax";
+  case llvm::scSMaxExpr:
+    return "smax";
+  case llvm::scUMinExpr:
+    return "umin";
+  case llvm::scSMinExpr:
+    return "smin";
+  case llvm::scSequentialUMinExpr:
+    return "umin_seq";
+  case llvm::scPtrToInt:
+    return "ptrtoint";
+  case llvm::scUnknown:
+    return "value";
+  case llvm::scCouldNotCompute:
+    return "unknown";
+  }
+  llvm_unreachable("an expression of no kind");
+}
+
+// An expression as a tree: a constant or a value at a leaf, the loop of a
+// recurrence, {start,+,step,...} in that loop, and the wrap flags of a sum, a
+// product or a recurrence.
+llvm::json::Object scevTree(const llvm::SCEV &S, ValueRefs &refs) {
+  llvm::json::Object node{{"op", scevOp(S.getSCEVType())}};
+  node["type"] = typeName(*S.getType());
+  if (const auto *C = llvm::dyn_cast<llvm::SCEVConstant>(&S)) {
+    node["value"] = apToString(C->getAPInt(), 10, true);
+    return node;
+  }
+  if (const auto *U = llvm::dyn_cast<llvm::SCEVUnknown>(&S)) {
+    node["value"] = refs.print(*U->getValue());
+    return node;
+  }
+  llvm::json::Array operands;
+  for (const llvm::SCEV *op : S.operands())
+    operands.push_back(scevTree(*op, refs));
+  node["operands"] = std::move(operands);
+  if (const auto *AR = llvm::dyn_cast<llvm::SCEVAddRecExpr>(&S))
+    node["loop"] = refs.print(*AR->getLoop()->getHeader());
+  if (llvm::isa<llvm::SCEVAddExpr, llvm::SCEVMulExpr, llvm::SCEVAddRecExpr>(&S)) {
+    const auto *N = llvm::cast<llvm::SCEVNAryExpr>(&S);
+    llvm::json::Array flags;
+    if (N->hasNoUnsignedWrap())
+      flags.push_back("nuw");
+    if (N->hasNoSignedWrap())
+      flags.push_back("nsw");
+    if (N->hasNoSelfWrap())
+      flags.push_back("nw");
+    node["flags"] = std::move(flags);
+  }
+  return node;
+}
+
 } // namespace
 
 llvm::json::Object analyzeCmd(llvm::json::Object &args) {
@@ -82,10 +168,11 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
   auto kind = args.getString("kind");
   if (!text || !kind)
     return errResponse("bad_request", "analyze needs 'module' and 'kind'");
-  if (*kind != "knownbits" && *kind != "ranges" && *kind != "pointer" && *kind != "defined") {
-    return errResponse("bad_request",
-                       "analyze 'kind' must be 'knownbits', 'ranges', 'pointer' or 'defined'");
-  }
+  const llvm::StringRef kinds[] = {"knownbits", "ranges", "pointer", "defined", "scev"};
+  if (!llvm::is_contained(kinds, *kind))
+    return errResponse(
+        "bad_request",
+        "analyze 'kind' must be 'knownbits', 'ranges', 'pointer', 'defined' or 'scev'");
 
   std::string parseErr;
   auto mwc = parseModule(*text, &parseErr);
@@ -117,6 +204,10 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
   // The definedness analysis reads llvm.assume operand bundles, and a bundle
   // counts only where it dominates the point.
   llvm::DominatorTree DT(*F);
+  llvm::LoopInfo LI(DT);
+  llvm::TargetLibraryInfoImpl TLII(M.getTargetTriple());
+  llvm::TargetLibraryInfo TLI(TLII);
+  llvm::ScalarEvolution SE(*F, TLI, AC, DT, LI);
 
   llvm::json::Array facts;
   auto addFact = [&](llvm::Value &V) {
@@ -124,16 +215,19 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
     // one kind that has something to say about every type.
     bool applies = *kind == "defined"   ? true
                    : *kind == "pointer" ? V.getType()->isPointerTy()
+                   : *kind == "scev"    ? SE.isSCEVable(V.getType())
                                         : V.getType()->isIntegerTy();
     if (!applies)
       return; // the analysis has nothing to say about this value
     llvm::json::Object fact;
     fact["value"] = refs.print(V);
-    std::string ty;
-    llvm::raw_string_ostream os(ty);
-    V.getType()->print(os);
-    fact["type"] = std::move(ty);
-    if (*kind == "knownbits")
+    fact["type"] = typeName(*V.getType());
+    if (*kind == "scev") {
+      const llvm::SCEV *S = SE.getSCEV(&V);
+      if (const auto *U = llvm::dyn_cast<llvm::SCEVUnknown>(S); U && U->getValue() == &V)
+        return; // ScalarEvolution knows the value only as itself
+      fact["scev"] = scevTree(*S, refs);
+    } else if (*kind == "knownbits")
       knownBitsFact(V, DL, AC, DT, point, fact);
     else if (*kind == "ranges")
       rangeFact(V, AC, DT, point, fact);

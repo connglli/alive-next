@@ -3527,6 +3527,39 @@ entry:
     at, _ = self.facts(module, "defined", point="#0")
     self.assertFalse(at["%x"]["noundef"])
 
+  COUNTDOWN = """define i32 @f(i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %left = phi i32 [ %n, %entry ], [ %left.next, %loop ]
+  %i.next = add i32 %i, 1
+  %left.next = add i32 %left, -1
+  %c = icmp ne i32 %left.next, 0
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret i32 %i.next
+}
+"""
+
+  def test_scev_gives_a_recurrence_in_its_loop(self):
+    facts, _ = self.facts(self.COUNTDOWN, "scev", point="i.next")
+    left = facts["%left"]["scev"]
+    self.assertEqual((left["op"], left["loop"]), ("addrec", "%loop"))
+    start, step = left["operands"]
+    self.assertEqual((start["op"], start["value"]), ("value", "%n"))
+    self.assertEqual((step["op"], step["value"]), ("const", "-1"))
+    self.assertNotIn("%n", facts)
+
+  def test_scev_gives_an_expression_as_a_tree(self):
+    facts, _ = self.facts(self.MASKED, "scev")
+    b = facts["%b"]["scev"]
+    self.assertEqual(b["op"], "add")
+    self.assertEqual([o["op"] for o in b["operands"]], ["const", "zext"])
+    self.assertEqual(b["operands"][1]["operands"][0]["type"], "i8")
+
   def test_only_the_relevant_values_are_reported(self):
     facts, _ = self.facts(F_MEMORY, "pointer")
     self.assertEqual(list(facts), ["%p"])

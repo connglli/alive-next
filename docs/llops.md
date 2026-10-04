@@ -231,6 +231,7 @@ Every fact carries `value` and `type`. The kind decides the rest:
 * `ranges` adds `signed_min`, `signed_max`, `unsigned_min` and `unsigned_max`, decimal, each interpretation computed separately.
 * `pointer` adds `align`, `dereferenceable` and `nonnull`.
 * `defined` adds `noundef`, `not_undef` and `not_poison`, and applies to every type. `noundef` is the conjunction of the other two, in the sense the attribute has.
+* `scev` adds `scev`, the expression ScalarEvolution gives the value, as a tree of nodes with an `op`, a `type` and `operands`. A `const` or `value` leaf has a `value` instead, and an `addrec`, the recurrence `{start,+,step}`, has the header of its `loop`; `add`, `mul` and `addrec` nodes have wrap `flags`. A value it knows only as itself gets no fact.
 
 Analyses only propose; [design.md](./design.md) says why that keeps them out of the trust base.
 

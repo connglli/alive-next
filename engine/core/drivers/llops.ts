@@ -109,7 +109,18 @@ export interface DetachResult extends OutlineResult {
   phis?: number[];
 }
 
-export type AnalyzeKind = "knownbits" | "ranges" | "pointer" | "defined";
+export type AnalyzeKind = "knownbits" | "ranges" | "pointer" | "defined" | "scev";
+
+/** An expression ScalarEvolution gives a value, with a constant or a value at a leaf. */
+export interface Scev {
+  op: string;
+  type: string;
+  value?: string;
+  operands?: Scev[];
+  /** The header of the loop a recurrence (`addrec`) is in. */
+  loop?: string;
+  flags?: string[];
+}
 
 /** A fact about one value. Which fields are present follows the kind. */
 export interface Fact {
@@ -129,6 +140,7 @@ export interface Fact {
   noundef?: boolean;
   not_undef?: boolean;
   not_poison?: boolean;
+  scev?: Scev;
 }
 
 /** One argument for a harness, matched to the entry's parameter by position. */

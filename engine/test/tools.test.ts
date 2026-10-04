@@ -730,6 +730,21 @@ entry:
     expect(res).toContain(said);
   });
 
+  test("goal_analyze shows an expression as ScalarEvolution prints it", async () => {
+    const looping = await Session.start({
+      dir: join(dir, "scev-session"),
+      src: offset.src,
+      tgt: offset.tgt,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    const ask = { gid: "g1", side: "tgt", kind: "scev", point: "%6" };
+    const facts = await callFrom(createProofAssistantTools(looping), "goal_analyze", ask);
+    expect(facts).toContain('"scev":"{0,+,4}<nuw><nsw><nw><%bb1>"');
+  });
+
   test("goal_unfold unfolds either half of a loop cut, before strengthening", async () => {
     const looping = await Session.start({
       dir: join(dir, "unfold-session"),
