@@ -12,7 +12,7 @@ import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
 import { induction } from "../examples/induction.ts";
 import { nested } from "../examples/nested.ts";
-import { DEFAULT_LIMITS } from "../simple/limits.ts";
+import { DEFAULT_LIMITS, type Limits } from "../simple/limits.ts";
 import { search } from "../simple/search.ts";
 import { pairs } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
@@ -57,7 +57,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function start(src: string, tgt: string, checker: Checker) {
+function start(src: string, tgt: string, checker: Checker, alive2Ms = 5_000) {
   return Session.start({
     dir: join(dir, "run"),
     src,
@@ -66,7 +66,7 @@ function start(src: string, tgt: string, checker: Checker) {
     checker,
     interp: {} as Interpreter,
     rewriter: {} as Llrwt,
-    timeouts: timeoutsFrom({ alive2Ms: 5_000, checkDefaultMs: 5_000 }),
+    timeouts: timeoutsFrom({ alive2Ms, checkDefaultMs: 5_000 }),
   });
 }
 
@@ -129,13 +129,26 @@ entry:
 });
 
 describe.skipIf(!solving)("search with alive-tv", () => {
-  const run = async (name: string) => {
+  const run = async (name: string, more: Partial<Limits> = {}, alive2Ms?: number) => {
     const pair = pairs[name];
     if (!pair) throw new Error(`no pair ${name}`);
-    return search(await start(pair.src, pair.tgt, aliveTv), llops, limits);
+    return search(await start(pair.src, pair.tgt, aliveTv, alive2Ms), llops, {
+      ...limits,
+      ...more,
+    });
   };
 
-  test("verifies e1", async () => expect(await run("e1")).toBe("verified"), 60_000);
+  test.each(["e1", "e1alt", "e2", "e3", "varB"])(
+    "verifies %s through its windows",
+    async (name) => expect(await run(name)).toBe("verified"),
+    60_000,
+  );
+
+  test("verifies varA through the optimizer's stages", async () => {
+    // instcombine adds the nsw itself, and the whole-function step to its stage
+    // takes alive2 longer than a window gets.
+    expect(await run("varA", { stages: true }, 30_000)).toBe("verified");
+  }, 180_000);
 
   test("leaves e4, which is no refinement, unknown", async () => {
     expect(await run("e4")).toBe("unknown");
