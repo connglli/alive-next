@@ -1,7 +1,8 @@
 // Tests the simple searcher's diff on canonical programs, as a session stores them.
 import { describe, expect, test } from "bun:test";
 import { Llops } from "../core/drivers/llops.ts";
-import { regions } from "../simple/regions.ts";
+import { countdown } from "../examples/countdown.ts";
+import { diff as match, regions } from "../simple/regions.ts";
 import { pairs } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
@@ -131,6 +132,13 @@ entry:
     const copy = "  %k = or i32 %x, 0\n  %r = mul i32 %k, 3";
     const tgt = src.replace(copy, "  %r = mul i32 %x, 3");
     expect(await diff(src, tgt)).toEqual([{ src: [0], tgt: [], window: true }]);
+  });
+
+  test("a loop the tgt reshaped pairs its header's phis but not its exits", async () => {
+    // The tgt if-converts the body and branches to the exit on another test.
+    const { pairs } = match(await body(countdown.src), await body(countdown.tgt));
+    expect([pairs.get("%1"), pairs.get("%2")]).toEqual(["%1", "%2"]);
+    expect(pairs.has("%bb2")).toBe(false);
   });
 
   test("a region that holds a terminator is no window", async () => {
