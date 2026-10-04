@@ -336,6 +336,14 @@ exit:
       expect((await session.show(gid)).src.text).not.toContain("poison");
   }, 120_000);
 
+  test("a loop cut keeps the relation two counters of the loop keep", async () => {
+    // The tgt stops when left reaches 0, which is i reaching n only while left is n - i.
+    const session = await solved("counters", countdown.src, countdown.tgt);
+    const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    if (!halves) throw new Error("expected a cut");
+    expect(statuses(session, [halves.outer, halves.callee])).toEqual(["proved", "proved"]);
+  }, 120_000);
+
   test("a rotated loop is cut at its exit, then at its header", async () => {
     const session = await solved("rotated", rotated.src, rotated.tgt);
     const exit = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);

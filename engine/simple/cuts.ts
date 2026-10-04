@@ -6,13 +6,15 @@
 // strengthened with the invariants Houdini finds among those facts and some
 // templates. A balanced cut splits a goal's expensive operations between its
 // halves, so each half asks alive2 a smaller question.
-import type { Instruction, Llops } from "../core/drivers/llops.ts";
+import type { Instruction, Llops, OutlineParam } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
+import type { SplitResult } from "../core/state/splits.ts";
 import { cutFacts, strengthenCut } from "./facts.ts";
 import { fillCut } from "./fill.ts";
 import { strengthenLoop } from "./invariants.ts";
 import type { Limits } from "./limits.ts";
 import { diff } from "./regions.ts";
+import { relationsAt, type Side } from "./relations.ts";
 import { bodies, partners } from "./windows.ts";
 
 /**
@@ -46,32 +48,69 @@ export async function cut(
 ) {
   const preview = await session.splitPreview(gid, srcCut, tgtCut);
   if (preview.kind !== "preview") return undefined;
-  const text = (await session.show(gid)).src.text;
   const [src, tgt] = await bodies(session, llops, gid);
-  const { pairs } = diff(src, tgt);
-  const own = new Set(src.flatMap((i) => (i.value ? [i.value] : [])));
-  const map: Record<string, string> = {};
-  for (const { live } of preview.params) {
-    const partner = own.has(live) ? pairs.get(live) : live;
-    if (!partner) return undefined;
-    map[live] = partner;
-  }
-  // A tgt value the src does not pass crosses under a key no src value has.
-  const passed = new Set(Object.values(map));
-  const lacked = (preview.tgtParams ?? []).filter(({ live }) => !passed.has(live));
-  for (const { live } of lacked) map[`tgt${live}`] = live;
+  const map = valueMap(preview.params, preview.tgtParams ?? [], src, tgt);
+  if (!map) return undefined;
   const split = await session.split(gid, srcCut, tgtCut, map);
   if (split.kind !== "split") return undefined;
   if (!(await fillCut(session, llops, split))) {
     await session.unsplit(gid);
     return undefined;
   }
-  const lives = split.params.map((param) => param.live);
   if (!limits.facts) return split.children;
-  const facts = await cutFacts(llops, text, pointOf(src, srcCut), lives);
-  if (split.detach?.hypothesis) await strengthenLoop(session, gid, facts, split.params);
-  else await strengthenCut(session, gid, facts);
+  const view = await session.show(gid);
+  const lives = split.params.map((param) => param.live);
+  const tgtOnly = Object.entries(map).flatMap(([key, live]) =>
+    key === `tgt${live}` ? [live] : [],
+  );
+  const images = lives.map((live) => (live === "poison" ? tgtOnly.shift() : map[live]));
+  const [srcLoop, tgtLoop] = split.detach?.hypothesis ? [srcCut, tgtCut] : [];
+  await strengthenSplit(session, llops, gid, split, [
+    { module: view.src.text, point: pointOf(src, srcCut), values: lives, loop: srcLoop },
+    { module: view.tgt.text, point: pointOf(tgt, tgtCut), values: images, loop: tgtLoop },
+  ]);
   return split.children;
+}
+
+/**
+ * The tgt partner of each value the src passes, and each tgt value the src
+ * lacks under a key no src value has, or nothing when a src value has none.
+ */
+function valueMap(
+  params: OutlineParam[],
+  tgtParams: OutlineParam[],
+  src: Instruction[],
+  tgt: Instruction[],
+) {
+  const { pairs } = diff(src, tgt);
+  const own = new Set(src.flatMap((i) => (i.value ? [i.value] : [])));
+  const map: Record<string, string> = {};
+  for (const { live } of params) {
+    const partner = own.has(live) ? pairs.get(live) : live;
+    if (!partner) return undefined;
+    map[live] = partner;
+  }
+  const passed = new Set(Object.values(map));
+  for (const { live } of tgtParams) if (!passed.has(live)) map[`tgt${live}`] = live;
+  return map;
+}
+
+/** Strengthens `split` with the src's facts and the relations among what it passes. */
+async function strengthenSplit(
+  session: Session,
+  llops: Llops,
+  gid: string,
+  split: Extract<SplitResult, { kind: "split" }>,
+  [mine, theirs]: [Side, Side],
+) {
+  const lives = split.params.map((param) => param.live);
+  const facts = await cutFacts(llops, mine.module, mine.point, lives);
+  const types = split.params.map((param) => param.type);
+  const relations = await relationsAt(llops, [mine, theirs], types);
+  const candidates = { ...facts, predicates: [...(facts.predicates ?? []), ...relations] };
+  const loop = split.detach?.hypothesis !== undefined;
+  if (loop) await strengthenLoop(session, gid, candidates, split.params);
+  else await strengthenCut(session, gid, candidates);
 }
 
 /**
