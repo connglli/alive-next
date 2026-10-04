@@ -15,7 +15,7 @@ const USAGE = `usage: bun run simple [options] <src.ll> <tgt.ll> [<directory>]
       --no-stages         do not step through the optimizer's stages
       --no-steps          do not rewrite the src, only cut and check
       --no-windows        check each step on the whole function
-      --no-preconditions  do not ask what the analyses know
+      --no-preconditions  give windows and cuts no preconditions
       --no-cuts           do not cut
   -h, --help`;
 

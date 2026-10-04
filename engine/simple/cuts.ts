@@ -2,11 +2,13 @@
 // crosses it as the tgt value the diff matched with it, and strengthens the cut
 // with what the analyses know about those values. A cut at the header of
 // a loop leaves one iteration, whose back edge calls the hypothesis, so the
-// goals it leaves prove by induction. A balanced cut splits a goal's expensive
+// goals it leaves prove by induction, and it is strengthened with the
+// invariants Houdini finds instead. A balanced cut splits a goal's expensive
 // operations between its halves, so each half asks alive2 a smaller question.
 import type { Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { strengthenCut } from "./facts.ts";
+import { strengthenLoop } from "./invariants.ts";
 import type { Limits } from "./limits.ts";
 import { diff } from "./regions.ts";
 import { bodies, partners } from "./windows.ts";
@@ -55,7 +57,9 @@ export async function cut(
   const split = await session.split(gid, srcCut, tgtCut, map);
   if (split.kind !== "split") return undefined;
   const lives = split.params.map((param) => param.live);
-  if (limits.facts) await strengthenCut(session, llops, gid, text, pointOf(src, srcCut), lives);
+  if (!limits.facts) return split.children;
+  if (split.detach?.hypothesis) await strengthenLoop(session, gid, split.params);
+  else await strengthenCut(session, llops, gid, text, pointOf(src, srcCut), lives);
   return split.children;
 }
 
