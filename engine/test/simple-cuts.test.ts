@@ -11,6 +11,7 @@ import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { timeoutsFrom } from "../core/state/steps.ts";
+import { countdown } from "../examples/countdown.ts";
 import { loop } from "../examples/loop.ts";
 import { rotated } from "../examples/rotated.ts";
 import { strchr } from "../examples/strchr.ts";
@@ -324,6 +325,15 @@ exit:
     const facts = { param_attrs: { 0: { noundef: true, dereferenceable: 1024 } } };
     await strengthenLoop(session, "g1", facts, []);
     expect(statuses(session, [halves.callee])).toEqual(["proved"]);
+  }, 120_000);
+
+  test("a cut passes the src's own value where the tgt passes one it lacks", async () => {
+    // The tgt counts down to its exit in a value the src does not have.
+    const session = await solved("countdown", countdown.src, countdown.tgt);
+    const halves = await cutLoop(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false });
+    if (!halves) throw new Error("expected a cut");
+    for (const gid of [halves.outer, halves.callee])
+      expect((await session.show(gid)).src.text).not.toContain("poison");
   }, 120_000);
 
   test("a rotated loop is cut at its exit, then at its header", async () => {
