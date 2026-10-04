@@ -64,6 +64,11 @@ llvm::json::Array flagsOf(const llvm::Instruction &I) {
     add(op->hasNoUnsignedWrap(), "nuw");
     add(op->hasNoSignedWrap(), "nsw");
   }
+  // A trunc carries the same two flags without being an overflowing operator.
+  if (const auto *trunc = llvm::dyn_cast<llvm::TruncInst>(&I)) {
+    add(trunc->hasNoUnsignedWrap(), "nuw");
+    add(trunc->hasNoSignedWrap(), "nsw");
+  }
   if (const auto *op = llvm::dyn_cast<llvm::PossiblyExactOperator>(&I))
     add(op->isExact(), "exact");
   if (const auto *op = llvm::dyn_cast<llvm::PossiblyNonNegInst>(&I))

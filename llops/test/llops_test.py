@@ -561,6 +561,13 @@ bb2:
     self.assertEqual(described[4], ("icmp", "i1", [], ["%a", "%0"], False))
     self.assertEqual(described[1], ("store", "void", [], ["%0", "%1"], False))
 
+  def test_lists_the_flags_of_a_trunc(self):
+    module = (
+      "define i16 @f(i32 %x) {\nentry:\n  %a = trunc nuw nsw i32 %x to i16\n  ret i16 %a\n}\n"
+    )
+    body = self.good(run("number", {"module": module}))["body"]
+    self.assertEqual(body[0]["flags"], ["nuw", "nsw"])
+
   def test_a_form_is_the_operation_whatever_values_it_reads(self):
     def form(inst):
       module = f"define void @f(i32 %x, i32 %y, ptr %p) {{\nentry:\n  {inst}\n  ret void\n}}\n"
