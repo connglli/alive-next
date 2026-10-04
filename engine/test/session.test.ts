@@ -12,6 +12,7 @@ import { Llops } from "../core/drivers/llops.ts";
 import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
+import { applyEffect } from "../core/state/goals.ts";
 import { type Checker, DEFAULT_TIMEOUTS, timeoutsFrom } from "../core/state/steps.ts";
 import { parse } from "../core/state/trajectory.ts";
 import { cut } from "../examples/cut.ts";
@@ -128,6 +129,16 @@ async function session(): Promise<Session> {
 function log(run: Session): ReturnType<typeof parse> {
   return parse(readFileSync(join(run.dir, "trajectory.jsonl"), "utf8"));
 }
+
+describe.skipIf(!built)("closing a session", () => {
+  test("a run closed in the middle of a move says what its log holds", async () => {
+    const run = await session();
+    // A move proves goals in the tree as it goes, and logs them when it ends.
+    applyEffect(run.tree, { effect: "proved", gid: "g1" });
+    expect(run.finish()).toBe("unknown");
+    expect(log(run).at(-1)).toMatchObject({ kind: "verdict", outcome: "unknown" });
+  });
+});
 
 describe.skipIf(!built)("reading a session", () => {
   test("show answers with both sides of a goal", async () => {

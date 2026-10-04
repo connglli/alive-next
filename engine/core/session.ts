@@ -584,8 +584,12 @@ export class Session {
     );
   }
 
-  /** Close the run with the verdict its tree has reached. */
+  /** Close the run with the verdict its log has reached. */
   finish(certificate?: string): "verified" | "counterexample" | "unknown" {
+    // A move changes the tree as it goes and logs what it did when it ends, so
+    // a run closed in the middle of one reads its verdict off the log, which
+    // is what its certificate is made from.
+    this.derived = derive(this.entries);
     const outcome = this.verdict;
     this.append({ kind: "verdict", outcome, certificate });
     return outcome;
