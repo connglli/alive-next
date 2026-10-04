@@ -1,10 +1,9 @@
-// Loop invariants by Houdini (Flanagan and Leino, FME 2001). The candidates for
-// a loop cut are noundef on each of the callee's parameters, comparisons of
-// each integer parameter with zero, and comparisons between two of its
-// parameters of one integer type. Each round previews the strengthen and keeps
-// what holds where the loop is entered and what one iteration keeps with the
-// rest assumed. When a round drops nothing, what is left is inductive, and the
-// strengthen proves it.
+// Loop invariants by Houdini. The candidates for a loop cut are noundef on each
+// of the callee's parameters, comparisons of each integer parameter with zero,
+// and comparisons between two of its parameters of one integer type. Each
+// round previews the strengthen and keeps what holds where the loop is entered
+// and what one iteration keeps with the rest assumed. When a round drops
+// nothing, what is left is inductive, and the strengthen proves it.
 import type { OutlineParam, Predicate } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { StrengthenContract } from "../core/state/strengthen.ts";
