@@ -15,6 +15,7 @@ import { loop } from "../examples/loop.ts";
 import { strchr } from "../examples/strchr.ts";
 import { cut, cutBalanced, cutLoop } from "../simple/cuts.ts";
 import { strengthenCut } from "../simple/facts.ts";
+import { strengthenLoop } from "../simple/invariants.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { peel } from "../simple/peel.ts";
 import { regions } from "../simple/regions.ts";
@@ -258,6 +259,69 @@ exit:
     const session = await solved("both", src, src.replace("add i32 %n", "add nsw i32 %n"));
     const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
     if (!halves) throw new Error("expected a cut");
+    expect(statuses(session, [halves.callee])).toEqual(["proved"]);
+  }, 120_000);
+
+  test("a loop cut keeps a pointer fact that each iteration keeps", async () => {
+    // The tgt loads from s before the loop's test, which is right only for an
+    // s that can be read, as the caller's attributes say.
+    const src = `define i32 @f(ptr noundef align 4 dereferenceable(4) %s, i32 noundef %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %body ]
+  %c = icmp ult i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %v = load i32, ptr %s, align 4
+  %acc.next = add i32 %acc, %v
+  %i.next = add i32 %i, 1
+  br label %head
+
+exit:
+  ret i32 %acc
+}
+`;
+    const tgt = src
+      .replace("  %c = icmp", "  %v = load i32, ptr %s, align 4\n  %c = icmp")
+      .replace("body:\n  %v = load i32, ptr %s, align 4\n", "body:\n");
+    const session = await solved("pointer", src, tgt);
+    const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    if (!halves) throw new Error("expected a cut");
+    expect(statuses(session, [halves.callee])).toEqual(["proved"]);
+  }, 120_000);
+
+  test("a loop cut keeps noundef when a pointer fact beside it does not prove", async () => {
+    // The tgt drops a freeze of the pointer each iteration is passed, which
+    // needs noundef, and nothing shows that 1024 bytes can be read through it.
+    const src = `define ptr @f(ptr noundef %s) {
+entry:
+  br label %head
+
+head:
+  %p = phi ptr [ %s, %entry ], [ %p.next, %body ]
+  %v = load i8, ptr %p
+  %c = icmp eq i8 %v, 0
+  br i1 %c, label %exit, label %body
+
+body:
+  %p.next = getelementptr i8, ptr %p, i64 1
+  br label %head
+
+exit:
+  %f = freeze ptr %p
+  ret ptr %f
+}
+`;
+    const tgt = src.replace("  %f = freeze ptr %p\n  ret ptr %f", "  ret ptr %p");
+    const session = await solved("noundef", src, tgt);
+    const halves = await cutLoop(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false });
+    if (!halves) throw new Error("expected a cut");
+    const facts = { param_attrs: { 0: { noundef: true, dereferenceable: 1024 } } };
+    await strengthenLoop(session, "g1", facts, []);
     expect(statuses(session, [halves.callee])).toEqual(["proved"]);
   }, 120_000);
 

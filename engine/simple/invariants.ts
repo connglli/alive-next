@@ -8,7 +8,7 @@
 import type { OutlineParam, Predicate } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { StrengthenContract } from "../core/state/strengthen.ts";
-import { size } from "./facts.ts";
+import { noundefLost, size } from "./facts.ts";
 
 /** The orders a candidate compares two parameters by, each asked both ways round. */
 const ORDERS = ["ule", "ult", "sle", "slt"] as const;
@@ -33,7 +33,8 @@ export async function strengthenLoop(
     const preview = await session.strengthenPreview(gid, candidates);
     if (preview.kind !== "preview") return;
     if (size(preview.holds) === size(candidates)) break;
-    candidates = preview.holds;
+    const lost = noundefLost(candidates, preview.holds);
+    candidates = { ...preview.holds, param_attrs: { ...preview.holds.param_attrs, ...lost } };
   }
   if (size(candidates) > 0) await session.strengthen(gid, candidates);
 }

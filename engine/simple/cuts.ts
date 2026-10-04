@@ -59,9 +59,8 @@ export async function cut(
   if (split.kind !== "split") return undefined;
   const lives = split.params.map((param) => param.live);
   if (!limits.facts) return split.children;
-  const loop = split.detach?.hypothesis !== undefined;
-  const facts = await cutFacts(llops, text, pointOf(src, srcCut), lives, loop);
-  if (loop) await strengthenLoop(session, gid, facts, split.params);
+  const facts = await cutFacts(llops, text, pointOf(src, srcCut), lives);
+  if (split.detach?.hypothesis) await strengthenLoop(session, gid, facts, split.params);
   else await strengthenCut(session, gid, facts);
   return split.children;
 }
