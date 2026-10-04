@@ -14,6 +14,7 @@ import { timeoutsFrom } from "../core/state/steps.ts";
 import { loop } from "../examples/loop.ts";
 import { strchr } from "../examples/strchr.ts";
 import { cut, cutBalanced, cutLoop } from "../simple/cuts.ts";
+import { strengthenCut } from "../simple/facts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { peel } from "../simple/peel.ts";
 import { regions } from "../simple/regions.ts";
@@ -175,6 +176,25 @@ entry:
     const halves = await cut(session, llops, "g1", DEFAULT_LIMITS, "#1", "#1");
     if (!halves) throw new Error("expected a cut");
     expect(statuses(session, [halves.outer, halves.callee])).toEqual(["proved", "proved"]);
+  }, 60_000);
+
+  test("a cut keeps noundef when a pointer fact beside it does not prove", async () => {
+    // The tgt drops a freeze of the pointer the callee is passed, which needs
+    // noundef, and nothing shows that 1024 bytes can be read through it.
+    const src = `define ptr @f(ptr noundef %p) {
+entry:
+  %q = getelementptr i8, ptr %p, i64 1
+  %f = freeze ptr %q
+  ret ptr %f
+}
+`;
+    const tgt = src.replace("  %f = freeze ptr %q\n  ret ptr %f", "  ret ptr %q");
+    const session = await solved("noundef", src, tgt);
+    const halves = await cut(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false }, "#1", "#1");
+    if (!halves) throw new Error("expected a cut");
+    const candidates = { param_attrs: { 0: { noundef: true, dereferenceable: 1024 } } };
+    await strengthenCut(session, "g1", candidates);
+    expect(statuses(session, [halves.callee])).toEqual(["proved"]);
   }, 60_000);
 
   test("a loop cut keeps the invariants that each iteration keeps", async () => {
