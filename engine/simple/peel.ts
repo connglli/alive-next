@@ -1,7 +1,6 @@
-// Cuts a goal so that a region a window cannot hold stands alone: once after
-// the region, then at its head, where a region that starts with a phi is cut
-// at its block. Each cut passes every value as the tgt value the diff matched
-// with it. A cut the framework refuses ends the peel.
+// Cuts a goal so that a region its steps left stands alone: once after the
+// region, then at its head, where a region that starts with a phi is cut at its
+// block. A cut the framework refuses ends the peel.
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { cut } from "./cuts.ts";

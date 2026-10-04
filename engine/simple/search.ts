@@ -1,8 +1,8 @@
 // The simple searcher. It rewrites the root's src into its tgt region by region,
-// first through the stages the optimizer makes of the src, then cuts loops at
-// their headers, peels what no window holds into goals of their own, and closes
-// each goal by a check. Every move is a session move, so whatever it proves,
-// the kernel replays.
+// first through the stages the optimizer makes of the src, and closes each goal
+// by a check. A goal that does not close is cut at a loop header, around a
+// region its steps left, or where its expensive operations split evenly. Every
+// move is a session move, so whatever it proves, the kernel replays.
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { cutBalanced, cutLoop } from "./cuts.ts";
