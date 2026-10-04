@@ -184,7 +184,7 @@ function throughOperands(
         if (!s || !t || s.form !== t.form) continue;
         s.operands.forEach((x, k) => {
           const y = t.operands[k] ?? "";
-          if (!mine.has(x) || !theirs.has(y) || pairs.has(x)) return;
+          if (!mine.has(x) || !y.startsWith("%") || pairs.has(x)) return;
           if (s.commutative && !agree(s.operands[1 - k], t.operands[1 - k])) return;
           pairs.set(x, y);
           grown = true;
