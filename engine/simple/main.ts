@@ -28,8 +28,13 @@ const { src, tgt, where } = readPair(flags.rest);
 const dir = where ?? join(repoRoot(), "sessions", `simple-${stamp()}`);
 const { session, llops } = await startRun({ src, tgt, dir });
 const started = Date.now();
-await search(session, llops, flags.limits);
 console.log(`  ${dir}`);
+try {
+  await search(session, llops, flags.limits);
+} catch (error) {
+  // A search that stops on an error still leaves its session and verdict.
+  console.log(`  stopped: ${(error as Error).message}`);
+}
 for (const line of closeRun(session, started).lines) console.log(`  ${line}`);
 
 interface Flags {
