@@ -200,8 +200,15 @@ export class Session {
   static async start(options: SessionStartOptions): Promise<Session> {
     const session = new Session(options.dir, options);
     if (session.log.read().length > 0) throw new Error(`${options.dir} already holds a run`);
-    await session.refuseOutsideShape("src", options.src);
-    await session.refuseOutsideShape("tgt", options.tgt);
+    const named = await session.refuseOutsideShape("src", options.src);
+    const other = await session.refuseOutsideShape("tgt", options.tgt);
+    // alive2 compares two modules' functions by name, so a pair named apart
+    // would be asked nothing at every check.
+    if (named !== other)
+      throw new Error(
+        `the src defines @${named} and the tgt @${other}; ` +
+          "alive2 compares functions by name, so give both the same name",
+      );
     // The programs are stored before the event that names them, so a crash
     // leaves an unreferenced program rather than an event pointing at nothing.
     const src = await session.store.put(options.src);
@@ -218,14 +225,19 @@ export class Session {
     return session;
   }
 
-  /** Refuse a root program outside the shape `llops validate` defines. */
-  private async refuseOutsideShape(side: Side, text: string): Promise<void> {
+  /**
+   * Refuse a root program outside the shape `llops validate` defines.
+   * Answers the name of the one function it defines.
+   */
+  private async refuseOutsideShape(side: Side, text: string): Promise<string> {
     const result = await this.llops.validate(text);
     if (!result.ok) throw new Error(`the ${side} program: llops validate: ${result.message}`);
     if (!result.conforms) {
       const why = result.diagnostics.map((d) => `${d.code}, ${d.message}`).join("; ");
       throw new Error(`the ${side} program is outside the program shape: ${why}`);
     }
+    const [name] = Object.entries(result.functions ?? {}).find(([, fn]) => fn.defined) ?? [];
+    return name ?? "";
   }
 
   /** Pick a run back up from its directory, which replays what it did. */

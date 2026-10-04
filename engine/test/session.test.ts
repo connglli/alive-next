@@ -478,6 +478,23 @@ entry:
     expect(checker.calls).toBe(0);
   });
 
+  test("a pair whose functions are named apart is refused before the run starts", async () => {
+    const checker = new YesMan();
+    const attempt = Session.start({
+      dir: join(dir, "named"),
+      src: cut.src.replace("@f(", "@src("),
+      tgt: cut.tgt.replace("@f(", "@tgt("),
+      llops,
+      checker,
+      interp: noRun,
+      rewriter: unrewriting,
+      eager: true,
+    });
+
+    await expect(attempt).rejects.toThrow(/the src defines @src and the tgt @tgt/);
+    expect(checker.calls).toBe(0);
+  });
+
   test("a pair that loops is searched for a counterexample and never proved", async () => {
     // alive-tv calls this pair correct, though the tgt is one iteration late.
     const loop = `define i32 @f(i32 noundef %n) {
