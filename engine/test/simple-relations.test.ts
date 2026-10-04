@@ -1,6 +1,7 @@
 // Tests finding linear relations among the values a cut passes.
 import { describe, expect, test } from "bun:test";
 import { Llops } from "../core/drivers/llops.ts";
+import { copiedphi } from "../examples/copiedphi.ts";
 import { countdown } from "../examples/countdown.ts";
 import { offset } from "../examples/offset.ts";
 import { relationsAt } from "../simple/relations.ts";
@@ -34,6 +35,14 @@ describe.skipIf(!built)("relations", () => {
         ],
       },
     ]);
+  });
+
+  test("two values that are always equal come out as a guess states it", async () => {
+    // The phi copies n around the loop.
+    const module = await canonical(copiedphi.src);
+    const side = { module, point: "%4", values: ["%1", "%2", "%3", "%0"], loop: "%bb1" };
+    const found = await relationsAt(llops, [side], ["i32", "i32", "i32", "i32"]);
+    expect(found).toEqual([{ op: "eq", lhs: "!1", rhs: "!3" }]);
   });
 
   test("values relate through what they are computed from", async () => {

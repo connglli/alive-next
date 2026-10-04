@@ -10,12 +10,14 @@ import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
-import { factsAt } from "../simple/facts.ts";
+import { factsAt, union } from "../simple/facts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { stepWindows } from "../simple/windows.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 const llops = new Llops(toolchain.path("llops"));
+/** A comparison a guess and a relation can both state. */
+const EQ = { op: "eq" as const, lhs: "!0", rhs: "!1" };
 /** The search's limits, with the window growth a test asks for. */
 const grow = (growth: number) => ({ ...DEFAULT_LIMITS, growth });
 const built = await llops
@@ -80,6 +82,17 @@ beforeEach(() => {
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe("candidates", () => {
+  test("are each stated once, with the analyses' attributes over a guess's", () => {
+    const guess = { param_attrs: { 0: { noundef: true } }, predicates: [EQ] };
+    const facts = { param_attrs: { 0: { noundef: true, nonnull: true } } };
+    expect(union(guess, facts, { predicates: [EQ] })).toEqual({
+      param_attrs: { 0: { noundef: true, nonnull: true } },
+      predicates: [EQ],
+    });
+  });
 });
 
 describe.skipIf(!solving)("facts with alive-tv", () => {

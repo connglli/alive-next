@@ -91,6 +91,15 @@ export function noundefLost(candidates: StrengthenContract, holds: StrengthenCon
   return Object.fromEntries(lost.map(([k]) => [k, { noundef: true }]));
 }
 
+/** What `contracts` state, each predicate once and a later one's attributes winning. */
+export function union(...contracts: StrengthenContract[]): StrengthenContract {
+  const predicates = contracts.flatMap((contract) => contract.predicates ?? []);
+  return {
+    param_attrs: Object.assign({}, ...contracts.map((contract) => contract.param_attrs)),
+    predicates: [...new Map(predicates.map((p) => [JSON.stringify(p), p])).values()],
+  };
+}
+
 /** How many attributes and predicates a contract states. */
 export function size(contract: StrengthenContract): number {
   const attrs = Object.values(contract.param_attrs ?? {}).flatMap((one) => Object.keys(one));

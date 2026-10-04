@@ -3,7 +3,7 @@
 // cannot see through and, in a loop, the iterations so far. A combination of
 // parameters whose terms cancel is a relation that holds, such as left == n - i
 // beside a counter i; a value widened to compare it with a wider one is a guess.
-import type { Llops, Predicate, Scev } from "../core/drivers/llops.ts";
+import type { Comparison, Llops, Predicate, Scev } from "../core/drivers/llops.ts";
 import { build } from "./scev.ts";
 
 /** One side of a cut: where it is analyzed, what each parameter is there, and its loop. */
@@ -25,6 +25,9 @@ interface Row extends Linear {
   param: number;
   read: Scev;
 }
+
+/** A row in a combination, with its weight. */
+type Weighted = { row: Row; c: bigint };
 
 /** The term a loop's iterations so far stand for. */
 const ITERATIONS = "iterations";
@@ -105,15 +108,27 @@ function related(rows: Row[], type: string): Predicate[] {
 }
 
 /** The predicate that the weighted sum of `used` is the sum of their constants. */
-function equation(used: { row: Row; c: bigint }[], type: string): Predicate {
-  const sum = { op: "add", type, operands: used.map(({ row, c }) => scaled(row.read, c)) };
+function equation(used: Weighted[], type: string): Predicate {
   const constant = used.reduce((total, { row, c }) => total + row.constant * c, 0n);
+  const same = equality(used, constant);
+  if (same) return same;
+  const sum = { op: "add", type, operands: used.map(({ row, c }) => scaled(row.read, c)) };
   let n = 0;
   const fresh = () => `%rel${n++}`;
   const built = build(sum, (value) => value, fresh);
   const bound = BigInt.asIntN(Number(type.slice(1)), constant);
   const test = `${fresh()} = icmp eq ${type} ${built?.result}, ${bound}`;
   return { insts: [...(built?.insts ?? []), test] };
+}
+
+/** `used` as `!i == !j`, the form a guess states, when it says no more than that. */
+function equality(used: Weighted[], constant: bigint): Comparison | undefined {
+  const [a, b, ...rest] = used;
+  if (!a || !b || rest.length > 0 || constant !== 0n) return undefined;
+  if (a.c * a.c !== 1n || a.c + b.c !== 0n) return undefined;
+  if (a.row.read.op !== "value" || b.row.read.op !== "value") return undefined;
+  const [lhs, rhs] = [a.row.param, b.row.param].sort((x, y) => x - y).map((k) => `!${k}`);
+  return lhs && rhs ? { op: "eq", lhs, rhs } : undefined;
 }
 
 /** `read` times `c`, as an expression. */
