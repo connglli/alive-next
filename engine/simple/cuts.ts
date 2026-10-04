@@ -74,13 +74,14 @@ function pointOf(src: Instruction[], at: string): string {
   return at.startsWith("#") ? at : `#${src.findIndex((i) => i.block === at && !i.phi)}`;
 }
 
-/** Cuts goal `gid` at its first loop header and the tgt's matching one, if its src loops. */
+/** Cuts goal `gid` at its first loop header, or a block that must be cut before it. */
 export async function cutLoop(session: Session, llops: Llops, gid: string, limits: Limits) {
   const [src, tgt] = await bodies(session, llops, gid);
   const header = headers(src)[0];
-  const partner = header ? diff(src, tgt).pairs.get(header) : undefined;
-  if (!header || !partner) return undefined;
-  return cut(session, llops, gid, limits, header, partner);
+  const at = header ? entryFirst(src, header) : undefined;
+  const partner = at ? diff(src, tgt).pairs.get(at) : undefined;
+  if (!at || !partner) return undefined;
+  return cut(session, llops, gid, limits, at, partner);
 }
 
 /**
@@ -117,4 +118,22 @@ function headers(body: Instruction[]): string[] {
     for (const to of i.operands)
       if ((position.get(to) ?? Infinity) <= (position.get(i.block) ?? -1)) found.add(to);
   return order.filter((block) => found.has(block));
+}
+
+/** Where to cut to detach `block`: itself, or first where outside code enters its reach. */
+function entryFirst(body: Instruction[], block: string, seen = new Set<string>()): string {
+  const next = successors(body);
+  const reached = new Set([block]);
+  for (const from of reached) for (const to of next.get(from) ?? []) reached.add(to);
+  const outside = [...next].flatMap(([from, tos]) => (reached.has(from) ? [] : tos));
+  const entry = outside.find((to) => to !== block && reached.has(to));
+  if (!entry || seen.has(entry)) return block;
+  return entryFirst(body, entry, seen.add(block));
+}
+
+/** Each block's successors: the blocks its instructions name. */
+function successors(body: Instruction[]): Map<string, string[]> {
+  const next = new Map(body.map((i) => [i.block, [] as string[]]));
+  for (const i of body) next.get(i.block)?.push(...i.operands.filter((to) => next.has(to)));
+  return next;
 }
