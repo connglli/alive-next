@@ -37,22 +37,20 @@ export async function factsAt(
 /**
  * What the analyses know about the values a cut passes, as candidates to
  * strengthen it with. Range bounds and known bits are predicates, so each can
- * be kept on its own. A loop's cut gets no pointer facts, since Houdini could
- * drop them only together with noundef.
+ * be kept on its own.
  */
 export async function cutFacts(
   llops: Llops,
   module: string,
   point: string,
   lives: string[],
-  loop: boolean,
 ): Promise<StrengthenContract> {
   const about = await analyses(llops, module, point, ["defined", "ranges", "pointer", "knownbits"]);
   const param_attrs: Record<number, Attrs> = {};
   const predicates: Predicate[] = [];
   lives.forEach((live, k) => {
     if (!about("defined", live)?.noundef) return;
-    param_attrs[k] = { noundef: true, ...(loop ? {} : pointerAttrs(about("pointer", live))) };
+    param_attrs[k] = { noundef: true, ...pointerAttrs(about("pointer", live)) };
     predicates.push(...boundsOf(k, about("ranges", live)), ...knownOf(k, about("knownbits", live)));
   });
   return { param_attrs, predicates };
@@ -85,7 +83,7 @@ async function holding(
 }
 
 /** Noundef alone for each parameter whose other candidate attributes `holds` drops. */
-function noundefLost(candidates: StrengthenContract, holds: StrengthenContract) {
+export function noundefLost(candidates: StrengthenContract, holds: StrengthenContract) {
   const kept = holds.param_attrs ?? {};
   const lost = Object.entries(candidates.param_attrs ?? {}).filter(
     ([k, attrs]) => !(k in kept) && attrs.noundef === true && Object.keys(attrs).length > 1,
