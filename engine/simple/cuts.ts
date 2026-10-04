@@ -11,8 +11,8 @@ import type { Session } from "../core/session.ts";
 import type { SplitResult } from "../core/state/splits.ts";
 import { cutFacts, strengthenCut, union } from "./facts.ts";
 import { fillCut } from "./fill.ts";
-import { guessInvariants, strengthenLoop } from "./invariants.ts";
 import type { Limits } from "./limits.ts";
+import { guessInvariants, loopCut, strengthenLoop } from "./loops.ts";
 import { diff } from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
 import { bodies, partners } from "./windows.ts";
@@ -122,14 +122,10 @@ function pointOf(src: Instruction[], at: string): string {
   return at.startsWith("#") ? at : `#${src.findIndex((i) => i.block === at && !i.phi)}`;
 }
 
-/** Cuts goal `gid` at its first loop header, or a block that must be cut before it. */
+/** Cuts goal `gid` where its first loop must be cut, if it loops. */
 export async function cutLoop(session: Session, llops: Llops, gid: string, limits: Limits) {
-  const [src, tgt] = await bodies(session, llops, gid);
-  const header = headers(src)[0];
-  const at = header ? entryFirst(src, header) : undefined;
-  const partner = at ? diff(src, tgt).pairs.get(at) : undefined;
-  if (!at || !partner) return undefined;
-  return cut(session, llops, gid, limits, at, partner);
+  const at = loopCut(...(await bodies(session, llops, gid)));
+  return at ? cut(session, llops, gid, limits, ...at) : undefined;
 }
 
 /**
@@ -151,37 +147,4 @@ export async function cutBalanced(session: Session, llops: Llops, gid: string, l
     if (halves) return halves;
   }
   return undefined;
-}
-
-/**
- * The blocks a branch goes back to, outermost first. Blocks are listed in
- * reverse postorder, so a branch to a block listed no later than its own is
- * a loop's back edge.
- */
-function headers(body: Instruction[]): string[] {
-  const order = [...new Set(body.map((i) => i.block))];
-  const position = new Map(order.map((block, k) => [block, k]));
-  const found = new Set<string>();
-  for (const i of body)
-    for (const to of i.operands)
-      if ((position.get(to) ?? Infinity) <= (position.get(i.block) ?? -1)) found.add(to);
-  return order.filter((block) => found.has(block));
-}
-
-/** Where to cut to detach `block`: itself, or first where outside code enters its reach. */
-function entryFirst(body: Instruction[], block: string, seen = new Set<string>()): string {
-  const next = successors(body);
-  const reached = new Set([block]);
-  for (const from of reached) for (const to of next.get(from) ?? []) reached.add(to);
-  const outside = [...next].flatMap(([from, tos]) => (reached.has(from) ? [] : tos));
-  const entry = outside.find((to) => to !== block && reached.has(to));
-  if (!entry || seen.has(entry)) return block;
-  return entryFirst(body, entry, seen.add(block));
-}
-
-/** Each block's successors: the blocks its instructions name. */
-function successors(body: Instruction[]): Map<string, string[]> {
-  const next = new Map(body.map((i) => [i.block, [] as string[]]));
-  for (const i of body) next.get(i.block)?.push(...i.operands.filter((to) => next.has(to)));
-  return next;
 }
