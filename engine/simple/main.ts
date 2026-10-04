@@ -1,6 +1,7 @@
 // Running the simple searcher by hand. It writes the same session directory the
 // agent and the examples write: the trajectory, the store, and the certificate
 // when the run earns one. Each switch turns one of the search's moves off.
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { readArgs, readCount, readPair, tryOrExit } from "../core/args.ts";
 import { repoRoot } from "../core/config.ts";
@@ -10,7 +11,7 @@ import { search } from "./search.ts";
 
 const USAGE = `usage: bun run simple [options] <src.ll> <tgt.ll> [<directory>]
 
-      --seconds <n>       stop after n seconds, an hour by default
+      --seconds <n>       end the whole run after n seconds, an hour by default
       --cuts <n>          allow n cuts (a region counts once), 16 by default
       --no-stages         do not step through the optimizer's stages
       --no-steps          do not rewrite the src, only cut and check
@@ -19,6 +20,7 @@ const USAGE = `usage: bun run simple [options] <src.ll> <tgt.ll> [<directory>]
       --no-cuts           do not cut
   -h, --help`;
 
+const started = Date.now();
 const flags = tryOrExit(() => parseArgs(process.argv.slice(2)));
 if (flags.help) {
   console.log(USAGE);
@@ -27,15 +29,31 @@ if (flags.help) {
 const { src, tgt, where } = readPair(flags.rest);
 const dir = where ?? join(repoRoot(), "sessions", `simple-${stamp()}`);
 const { session, llops } = await startRun({ src, tgt, dir });
-const started = Date.now();
 console.log(`  ${dir}`);
+// The time given bounds the whole run: when it is up, the checks still
+// running are stopped, since they would outlive the process, and the run
+// closes with what its log holds.
+setTimeout(
+  () => {
+    console.log("  out of time");
+    spawnSync("pkill", ["-P", String(process.pid)]);
+    close();
+    process.exit(0);
+  },
+  started + flags.limits.ms - Date.now(),
+).unref();
 try {
   await search(session, llops, flags.limits);
 } catch (error) {
   // A search that stops on an error still leaves its session and verdict.
   console.log(`  stopped: ${(error as Error).message}`);
 }
-for (const line of closeRun(session, started).lines) console.log(`  ${line}`);
+close();
+
+/** Close the run and say how it went. */
+function close() {
+  for (const line of closeRun(session, started).lines) console.log(`  ${line}`);
+}
 
 interface Flags {
   limits: Limits;

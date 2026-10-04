@@ -1,7 +1,8 @@
 // Tests the simple searcher end to end: first with stand-in checkers, then with
 // alive-tv on the small pairs.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AliveTv, type CheckResult } from "../core/drivers/alive2.ts";
@@ -126,6 +127,28 @@ entry:
     expect(await search(session, llops, { ...limits, stages: true })).toBe("verified");
     expect(moves(session).filter((move) => move === "tx_commit").length).toBeGreaterThan(0);
   });
+});
+
+describe.skipIf(!solving)("bun run simple", () => {
+  test("ends the whole run when its time is up, and leaves no check running", async () => {
+    // varA's root check alone takes its whole budget, so the time runs out in it.
+    const [src, tgt, run] = [join(dir, "src.ll"), join(dir, "tgt.ll"), join(dir, "run")];
+    writeFileSync(src, pairs.varA?.src ?? "");
+    writeFileSync(tgt, pairs.varA?.tgt ?? "");
+    const started = Date.now();
+    const child = Bun.spawn(["bun", "run", "simple/main.ts", "--seconds", "3", src, tgt, run], {
+      cwd: join(import.meta.dir, ".."),
+      env: { ...process.env, TMPDIR: dir },
+      stdout: "pipe",
+    });
+    const out = await new Response(child.stdout).text();
+    await child.exited;
+    expect(Date.now() - started).toBeLessThan(8_000);
+    expect(out).toContain("out of time");
+    expect(out).toContain("unknown in");
+    // A check still running would name files in the temporary directory.
+    expect(spawnSync("pgrep", ["-f", dir]).stdout.toString()).toBe("");
+  }, 30_000);
 });
 
 describe.skipIf(!solving)("search with alive-tv", () => {
