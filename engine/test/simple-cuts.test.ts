@@ -1,6 +1,6 @@
 // Tests cutting goals: peeling a region that no window can hold into a goal of
 // its own, cutting where a goal's expensive operations split evenly, and
-// strengthening a cut with what the analyses know.
+// strengthening a cut with what the analyses know or a loop's invariants.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +11,8 @@ import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { timeoutsFrom } from "../core/state/steps.ts";
-import { cut, cutBalanced } from "../simple/cuts.ts";
+import { loop } from "../examples/loop.ts";
+import { cut, cutBalanced, cutLoop } from "../simple/cuts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { peel } from "../simple/peel.ts";
 import { regions } from "../simple/regions.ts";
@@ -135,6 +136,25 @@ entry:
   });
 });
 
+/** A session whose checks alive-tv answers. */
+function solved(name: string, src: string, tgt: string) {
+  return Session.start({
+    dir: join(dir, name),
+    src,
+    tgt,
+    llops,
+    checker: aliveTv,
+    interp: {} as Interpreter,
+    rewriter: {} as Llrwt,
+    timeouts: timeoutsFrom({ alive2Ms: 5_000 }),
+  });
+}
+
+/** The status of each of `goals`. */
+function statuses(session: Session, goals: string[]) {
+  return goals.map((gid) => session.tree.goals.get(gid)?.status);
+}
+
 describe.skipIf(!solving)("cuts with alive-tv", () => {
   test("a cut passes what the analyses know to its callee", async () => {
     // The tgt's callee adds nuw nsw to the value it is passed, which is safe
@@ -146,25 +166,25 @@ entry:
   ret i32 %b
 }
 `;
-    const session = await Session.start({
-      dir: join(dir, "facts"),
-      src,
-      tgt: src.replace("add i32", "add nuw nsw i32"),
-      llops,
-      checker: aliveTv,
-      interp: {} as Interpreter,
-      rewriter: {} as Llrwt,
-      timeouts: timeoutsFrom({ alive2Ms: 5_000 }),
-    });
+    const session = await solved("facts", src, src.replace("add i32", "add nuw nsw i32"));
     const bare = await cut(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false }, "#1", "#1");
     if (!bare) throw new Error("expected a cut");
     expect((await session.check(bare.callee)).outcome).toBe("refuted");
     await session.unsplit("g1");
     const halves = await cut(session, llops, "g1", DEFAULT_LIMITS, "#1", "#1");
     if (!halves) throw new Error("expected a cut");
-    const statuses = [halves.outer, halves.callee].map(
-      (gid) => session.tree.goals.get(gid)?.status,
-    );
-    expect(statuses).toEqual(["proved", "proved"]);
+    expect(statuses(session, [halves.outer, halves.callee])).toEqual(["proved", "proved"]);
   }, 60_000);
+
+  test("a loop cut keeps the invariants that each iteration keeps", async () => {
+    // The tgt marks i - j nuw, which one iteration shows only knowing j <= i.
+    const session = await solved("loop", loop.src, loop.tgt);
+    const bare = await cutLoop(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false });
+    if (!bare) throw new Error("expected a cut");
+    expect((await session.check(bare.callee)).outcome).toBe("refuted");
+    await session.unsplit("g1");
+    const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    if (!halves) throw new Error("expected a cut");
+    expect(statuses(session, [halves.callee])).toEqual(["proved"]);
+  }, 120_000);
 });
