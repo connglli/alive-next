@@ -9,6 +9,7 @@
 import type { Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { cutFacts, strengthenCut } from "./facts.ts";
+import { fillCut } from "./fill.ts";
 import { strengthenLoop } from "./invariants.ts";
 import type { Limits } from "./limits.ts";
 import { diff } from "./regions.ts";
@@ -55,8 +56,16 @@ export async function cut(
     if (!partner) return undefined;
     map[live] = partner;
   }
+  // A tgt value the src does not pass crosses under a key no src value has.
+  const passed = new Set(Object.values(map));
+  const lacked = (preview.tgtParams ?? []).filter(({ live }) => !passed.has(live));
+  for (const { live } of lacked) map[`tgt${live}`] = live;
   const split = await session.split(gid, srcCut, tgtCut, map);
   if (split.kind !== "split") return undefined;
+  if (!(await fillCut(session, llops, split))) {
+    await session.unsplit(gid);
+    return undefined;
+  }
   const lives = split.params.map((param) => param.live);
   if (!limits.facts) return split.children;
   const facts = await cutFacts(llops, text, pointOf(src, srcCut), lives);
