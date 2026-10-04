@@ -4,6 +4,7 @@
 #pragma once
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/AssemblyAnnotationWriter.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
@@ -163,6 +164,37 @@ struct CmdShape {
 // on failure fills `err` and leaves `out` in a moved-from state.
 bool parseCmdShape(llvm::json::Object &args, llvm::StringRef cmd, CmdShape &out,
                    llvm::json::Object &err);
+
+// The instructions of a window, as a set: what is inside decides everything
+// else, since a value is live in when the window uses it from outside and
+// live out when something outside uses it from within.
+llvm::SmallPtrSet<llvm::Instruction *, 16> setOf(llvm::ArrayRef<llvm::Instruction *> window);
+
+// The values a window uses from outside it, in definition order: instructions
+// in the order they are printed first, then arguments. The order is what makes
+// the signature reproducible from the program alone.
+std::vector<llvm::Value *> liveInto(llvm::Function &F,
+                                    const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside);
+
+// The instructions from `cut` to `to`, or nothing when `to` does not come at
+// or after `from`.
+std::vector<llvm::Instruction *> windowOf(llvm::BasicBlock &BB, llvm::Instruction *from,
+                                          llvm::Instruction *to);
+
+// The instructions from `first` to `last`, or an error when they are not a
+// window: both must be in one block, `first` must come first, and the range
+// must hold no phi and no terminator. `hint` ends the error about the
+// terminator.
+std::vector<llvm::Instruction *> windowBetween(llvm::Instruction *first, llvm::Instruction *last,
+                                               llvm::StringRef from, llvm::StringRef to,
+                                               llvm::StringRef hint, llvm::json::Object &err);
+
+// The window values that something outside it uses, in the order the rest of
+// the body first uses them, which two versions differing only inside the
+// window share.
+std::vector<llvm::Instruction *>
+liveOutOf(llvm::Function &F, llvm::ArrayRef<llvm::Instruction *> window,
+          const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside);
 
 // One entry of a tgt signature: the tgt value `value_map` names for the
 // entry's src value, with the type the entry gives it. Returns nullptr and

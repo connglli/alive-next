@@ -25,32 +25,6 @@ namespace {
 // outline
 // ---------------------------------------------------------------------------
 
-// The instructions of a window, as a set: what is inside decides everything
-// else, since a value is live in when the window uses it from outside and
-// live out when something outside uses it from within.
-llvm::SmallPtrSet<llvm::Instruction *, 16> setOf(llvm::ArrayRef<llvm::Instruction *> window) {
-  return llvm::SmallPtrSet<llvm::Instruction *, 16>(window.begin(), window.end());
-}
-
-// The values a window uses from outside it, in definition order: instructions
-// in the order they are printed first, then arguments. The order is what makes
-// the signature reproducible from the program alone.
-std::vector<llvm::Value *> liveInto(llvm::Function &F,
-                                    const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside) {
-  llvm::SmallPtrSet<llvm::Value *, 32> used;
-  for (auto *I : inside)
-    for (const llvm::Use &U : I->operands())
-      used.insert(U.get());
-  std::vector<llvm::Value *> live;
-  for (auto &I : llvm::instructions(F))
-    if (!inside.contains(&I) && used.contains(&I))
-      live.push_back(&I);
-  for (auto &arg : F.args())
-    if (used.contains(&arg))
-      live.push_back(&arg);
-  return live;
-}
-
 // Move a window into a fresh function and leave a call where it was. The
 // callee hands back the values the rest of the body still uses: one as it is,
 // several as a struct the outer takes apart right after the call.
@@ -128,53 +102,6 @@ std::string printWithoutBody(llvm::Module &M, llvm::StringRef declName) {
   // behind should not claim them.
   drop->setAttributes(llvm::AttributeList());
   return printModule(*clone);
-}
-
-// The instructions from `cut` to `to`, or nothing when `to` does not come at
-// or after `from`.
-std::vector<llvm::Instruction *> windowOf(llvm::BasicBlock &BB, llvm::Instruction *from,
-                                          llvm::Instruction *to) {
-  std::vector<llvm::Instruction *> window;
-  bool started = false;
-  for (auto &I : BB) {
-    started |= &I == from;
-    if (!started)
-      continue;
-    window.push_back(&I);
-    if (&I == to)
-      return window;
-  }
-  return {};
-}
-
-// The window values that something outside it uses, in the order the rest of
-// the body first uses them, which two versions differing only inside the
-// window share.
-std::vector<llvm::Instruction *>
-liveOutOf(llvm::Function &F, llvm::ArrayRef<llvm::Instruction *> window,
-          const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside) {
-  llvm::DenseMap<const llvm::Instruction *, unsigned> position;
-  unsigned next = 0;
-  for (auto &I : llvm::instructions(F))
-    position[&I] = next++;
-  // Where a value is first used: the user's position, then the operand's.
-  std::vector<std::pair<std::pair<unsigned, unsigned>, llvm::Instruction *>> live;
-  for (auto *I : window) {
-    std::optional<std::pair<unsigned, unsigned>> first;
-    for (const llvm::Use &U : I->uses()) {
-      auto *user = llvm::cast<llvm::Instruction>(U.getUser());
-      std::pair<unsigned, unsigned> at{position.lookup(user), U.getOperandNo()};
-      if (!inside.contains(user) && (!first || at < *first))
-        first = at;
-    }
-    if (first)
-      live.push_back({*first, I});
-  }
-  llvm::sort(live, [](const auto &a, const auto &b) { return a.first < b.first; });
-  std::vector<llvm::Instruction *> out;
-  for (auto &entry : live)
-    out.push_back(entry.second);
-  return out;
 }
 
 // The fields of a struct built one at a time from poison, as a window builds one, or nothing.
@@ -256,15 +183,11 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
   llvm::Instruction *last = refs.resolveInst(*to);
   if (!last)
     return errResponse("not_found", "'" + to->str() + "' does not exist");
-  std::vector<llvm::Instruction *> window = windowOf(*BB, cutInst, last);
+  llvm::json::Object err;
+  std::vector<llvm::Instruction *> window = windowBetween(
+      cutInst, last, *cut, *to, "; leave 'to' out to cut the suffix away instead", err);
   if (window.empty())
-    return errResponse("invalid", "'" + to->str() + "' does not come at or after '" + cut->str() +
-                                      "' in its block");
-  if (window.back()->isTerminator())
-    return errResponse("invalid", "a window cannot take the terminator with it; leave 'to' out "
-                                  "to cut the suffix away instead");
-  if (llvm::isa<llvm::PHINode>(window.front()))
-    return errResponse("invalid", "a window cannot take a phi, which belongs to its block");
+    return err;
   llvm::SmallPtrSet<llvm::Instruction *, 16> inside = setOf(window);
   std::vector<llvm::Instruction *> out = liveOutOf(*F, window, inside);
 

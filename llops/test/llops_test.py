@@ -1977,6 +1977,90 @@ entry:
     self.bad(run("outline", {"module": F_SIMPLE, "cut": "m", "to": "m", "callee": "f"}), "invalid")
 
 
+class TestSplice(Case):
+  """Replacing a window with a copy of a window of another module."""
+
+  READS = """define i32 @f(i32 %a, i32 %b) {
+entry:
+  %c = add i32 %a, 1
+  %d = add i32 %a, 2
+  %r = xor i32 %c, %d
+  ret i32 %r
+}
+"""
+  # The tgt's window reads %c where the src's reads %a.
+  READS_OTHER = READS.replace("%d = add i32 %a, 2", "%d = add i32 %c, 1")
+
+  HANDS = """define i64 @f(i64 %e, i64 %p) {
+entry:
+  %v = mul i64 %e, 2
+  %w = mul i64 %p, 2
+  %t = add i64 %v, %w
+  %u = sub i64 %t, 1
+  ret i64 %u
+}
+"""
+  # The tgt's window also hands %s to its own rest, which this one never reads.
+  HANDS_OTHER = """define i64 @f(i64 %e, i64 %p) {
+entry:
+  %s = add i64 %e, %p
+  %q = shl i64 %s, 1
+  %u = sub i64 %q, %s
+  ret i64 %u
+}
+"""
+
+  def splice(self, module, frm, to, other, other_from, other_to, value_map):
+    with_ = {"module": other, "from": other_from, "to": other_to}
+    return self.edit(
+      "splice", module, **{"from": frm, "to": to, "with": with_, "value_map": value_map}
+    )
+
+  def test_the_copy_reads_the_partners_of_what_it_read(self):
+    m = {"%a": "%a", "%c": "%c", "%d": "%d"}
+    r = self.good(self.splice(self.READS, "d", "d", self.READS_OTHER, "d", "d", m))
+    self.assertEqual(self.canon(r["module"]), self.canon(self.READS_OTHER))
+
+  def test_later_uses_read_the_partner_of_a_replaced_value(self):
+    m = {"%e": "%e", "%p": "%p", "%t": "%q"}
+    r = self.good(self.splice(self.HANDS, "v", "t", self.HANDS_OTHER, "s", "q", m))
+    expected = """define i64 @f(i64 %e, i64 %p) {
+entry:
+  %s = add i64 %e, %p
+  %q = shl i64 %s, 1
+  %u = sub i64 %q, 1
+  ret i64 %u
+}
+"""
+    self.assertEqual(self.canon(r["module"]), self.canon(expected))
+
+  def test_a_read_without_a_partner_is_refused(self):
+    m = {"%a": "%a", "%d": "%d"}
+    self.bad(self.splice(self.READS, "d", "d", self.READS_OTHER, "d", "d", m), "invalid")
+
+  def test_a_replaced_value_used_later_needs_a_partner(self):
+    m = {"%a": "%a", "%c": "%c"}
+    self.bad(self.splice(self.READS, "d", "d", self.READS_OTHER, "d", "d", m), "invalid")
+
+  def test_a_value_with_two_partners_is_refused(self):
+    m = {"%a": "%c", "%c": "%c", "%d": "%d"}
+    self.bad(self.splice(self.READS, "d", "d", self.READS_OTHER, "d", "d", m), "invalid")
+
+  def test_a_window_cannot_take_the_terminator(self):
+    m = {"%r": "%r"}
+    self.bad(self.splice(self.READS, "r", "#3", self.READS_OTHER, "r", "#3", m), "invalid")
+
+  def test_a_function_only_the_other_declares_is_declared(self):
+    src = "define i32 @f(i32 %x) {\nentry:\n  %y = add i32 %x, 1\n  ret i32 %y\n}\n"
+    other = (
+      "declare i32 @g(i32)\n\n"
+      "define i32 @f(i32 %x) {\nentry:\n  %y = call i32 @g(i32 %x)\n  ret i32 %y\n}\n"
+    )
+    r = self.good(self.splice(src, "y", "y", other, "y", "y", {"%x": "%x", "%y": "%y"}))
+    self.assertIn("declare i32 @g(i32)", r["module"])
+    self.assertIn("call i32 @g(i32 %x)", r["module"])
+
+
 class TestInline(Case):
   def roundtrip(self, module, cut, callee="g"):
     out = self.good(run("outline", {"module": module, "side": "src", "cut": cut, "callee": callee}))

@@ -165,7 +165,14 @@ export type EditOp =
   | { op: "dedup"; a: Ref; b: Ref }
   | { op: "set_body"; body: string }
   | { op: "attrs"; fn: string; param?: number; attrs: Attrs }
-  | { op: "flags"; v: Ref; flags: Record<string, boolean> };
+  | { op: "flags"; v: Ref; flags: Record<string, boolean> }
+  | {
+      op: "splice";
+      from: Ref;
+      to: Ref;
+      with: { module: Module; from: Ref; to: Ref };
+      value_map: Record<Ref, Ref>;
+    };
 
 /** One structural optimizer pass, as the `opt` subcommand takes it. */
 export type OptOp =

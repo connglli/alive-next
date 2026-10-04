@@ -92,6 +92,7 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 | `set_body` | `body` | replace the whole body |
 | `attrs` | `fn`, optional `param`, `attrs` | put attributes on a function or parameter |
 | `flags` | `v`, `flags` | put or remove the flags an instruction can carry |
+| `splice` | `from`, `to`, `with`, `value_map` | put another module's window in place of the one from `from` to `to` |
 
 `where` is `"before"` or `"after"`. The terminator cannot be moved, erased or replaced, and nothing can be inserted after it.
 
@@ -110,6 +111,8 @@ A snippet may use the module's global variables and call its functions. When a s
 `attrs` puts attributes on a parameter when `param` is given, or on the function itself when omitted. On a parameter it accepts `noundef`, `nonnull`, `noalias`, `align`, `dereferenceable` and `range`. The last two carry a byte count and a `{ "min": n, "max": m }` pair, the range being the half-open interval `[min, max)`. On a function it accepts `nounwind`, `nofree`, `nosync`, `willreturn`, `norecurse`, `mustprogress` (each boolean `true`), and `memory` (a string such as `"none"`, `"read"`, `"write"`, or `"argmem: readwrite"`).
 
 `flags` names instruction flags with `true` or `false`, so the same op puts and removes: `{ "nuw": true }` puts `nuw` on and `{ "nsw": false }` takes `nsw` off. `nuw` and `nsw` apply to `add`, `sub`, `mul`, `shl` and `trunc`, `exact` to the divisions and shifts that carry it, `disjoint` to `or`, `nneg` to `zext` and `uitofp`, and `fast`, `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn` and `reassoc` to floating-point instructions. A flag the instruction cannot carry is refused rather than ignored, so the agent never guesses what the IR keeps.
+
+`splice` replaces the instructions from `from` to `to` with a copy of instructions from another module. `with` names them as `{ "module": ..., "from": "<ref>", "to": "<ref>" }`. Each range must lie in one block and hold no phi and no terminator. `value_map` gives each value of this module a partner in the other module. Where the copy reads a value from outside its range, it reads that value's partner in this module instead. Where the rest of the body used a replaced value, it uses that value's partner in the copy. If the copy calls a function that only the other module declares, the declaration comes with it.
 
 ## opt
 

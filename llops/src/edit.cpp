@@ -176,6 +176,168 @@ bool addFunctionAttr(llvm::Function &F, llvm::StringRef kind, const llvm::json::
   return false;
 }
 
+// The globals a value names, through the constants it is built from.
+void globalsOf(llvm::Value *v, llvm::SmallPtrSetImpl<llvm::GlobalValue *> &out) {
+  if (auto *gv = llvm::dyn_cast<llvm::GlobalValue>(v)) {
+    out.insert(gv);
+    return;
+  }
+  if (auto *c = llvm::dyn_cast<llvm::Constant>(v))
+    for (llvm::Use &U : c->operands())
+      globalsOf(U.get(), out);
+}
+
+// Point the global names a window uses at the globals of `into`, and declare
+// any function `into` lacks. Only names the window uses are taken, so no unused
+// declaration is added.
+bool adoptWindowSymbols(llvm::ArrayRef<llvm::Instruction *> window, llvm::Module &into,
+                        llvm::ValueToValueMapTy &vmap, llvm::json::Object &err) {
+  llvm::SmallPtrSet<llvm::GlobalValue *, 8> named;
+  for (auto *I : window)
+    for (llvm::Use &U : I->operands())
+      globalsOf(U.get(), named);
+  for (llvm::GlobalValue *gv : named) {
+    llvm::GlobalValue *mine = into.getNamedValue(gv->getName());
+    if (!mine) {
+      auto *fn = llvm::dyn_cast<llvm::Function>(gv);
+      if (!fn) {
+        err = errResponse("not_found", "splice: the window refers to '@" + gv->getName().str() +
+                                           "', which the module does not have");
+        return false;
+      }
+      auto *decl =
+          llvm::Function::Create(fn->getFunctionType(), fn->getLinkage(), fn->getName(), &into);
+      decl->setAttributes(fn->getAttributes());
+      mine = decl;
+    }
+    if (mine->getType() != gv->getType() || mine->getValueType() != gv->getValueType()) {
+      err = errResponse("type_mismatch", "splice: '@" + gv->getName().str() +
+                                             "' has another type in the two modules");
+      return false;
+    }
+    vmap[gv] = mine;
+  }
+  return true;
+}
+
+// Replace a window of this module with a copy of a window of another module.
+// The value map gives each value of this module a partner in the other.
+llvm::json::Object splice(llvm::json::Object &args, CmdShape &shape) {
+  auto from = args.getString("from");
+  auto to = args.getString("to");
+  auto *with = args.getObject("with");
+  auto *map = args.getObject("value_map");
+  auto otherText = with ? with->getString("module") : std::nullopt;
+  auto otherFrom = with ? with->getString("from") : std::nullopt;
+  auto otherTo = with ? with->getString("to") : std::nullopt;
+  if (!from || !to || !map || !otherText || !otherFrom || !otherTo)
+    return errResponse("bad_request", "splice needs 'from', 'to', 'value_map' and 'with', which "
+                                      "needs 'module', 'from' and 'to'");
+  // The other module is parsed into the same context, so the two share types
+  // and constants and only their own values need mapping.
+  std::string parseErr;
+  auto otherMwc = parseModule(*otherText, &parseErr, *shape.mwc->ctx);
+  if (!otherMwc)
+    return errResponse("parse_error", "splice: with: " + parseErr);
+  if (auto d = departure(*otherMwc->mod))
+    return errResponse(d->code, "splice: with: " + d->message);
+  llvm::Module &M = *shape.M;
+  llvm::Function &F = *shape.F;
+  llvm::Function &G = *singleFunction(*otherMwc->mod);
+  ValueRefs &refs = *shape.refs;
+  ValueRefs otherRefs(G);
+
+  llvm::json::Object err;
+  auto windowAt = [&](ValueRefs &r, llvm::StringRef a, llvm::StringRef b) {
+    llvm::Instruction *first = r.resolveInst(a);
+    llvm::Instruction *last = r.resolveInst(b);
+    if (!first || !last) {
+      err = errResponse("not_found", "splice: '" + (first ? b : a).str() + "' does not exist");
+      return std::vector<llvm::Instruction *>{};
+    }
+    return windowBetween(first, last, a, b, "", err);
+  };
+  std::vector<llvm::Instruction *> window = windowAt(refs, *from, *to);
+  if (window.empty())
+    return err;
+  std::vector<llvm::Instruction *> theirs = windowAt(otherRefs, *otherFrom, *otherTo);
+  if (theirs.empty())
+    return err;
+  llvm::SmallPtrSet<llvm::Instruction *, 16> inside = setOf(window);
+  llvm::SmallPtrSet<llvm::Instruction *, 16> theirsInside = setOf(theirs);
+
+  // Each value of this module and its partner in the other, both ways.
+  llvm::DenseMap<llvm::Value *, llvm::Value *> standsFor;
+  llvm::DenseMap<llvm::Value *, llvm::Value *> standsIn;
+  for (const auto &[key, val] : *map) {
+    auto other = val.getAsString();
+    llvm::Value *mine = refs.resolve(key);
+    llvm::Value *theirsValue = other ? otherRefs.resolve(*other) : nullptr;
+    if (!mine || !theirsValue)
+      return errResponse("not_found", "splice: value_map: '" + key.str() +
+                                          "' or what it maps to does not exist");
+    if (mine->getType() != theirsValue->getType())
+      return errResponse("type_mismatch", "splice: value_map: '" + key.str() + "' and '" +
+                                              other->str() + "' have different types");
+    standsFor[mine] = theirsValue;
+    auto [it, fresh] = standsIn.try_emplace(theirsValue, mine);
+    if (!fresh && it->second != mine)
+      return errResponse("invalid", "splice: value_map gives '" + other->str() + "' two partners");
+  }
+
+  // Every value the copy reads from outside its window needs a partner here.
+  llvm::ValueToValueMapTy vmap;
+  for (llvm::Value *read : liveInto(G, theirsInside)) {
+    auto it = standsIn.find(read);
+    if (it == standsIn.end())
+      return errResponse("invalid", "splice: the copy reads '" + otherRefs.print(*read) +
+                                        "', which has no partner in the value map");
+    vmap[read] = it->second;
+  }
+  if (!adoptWindowSymbols(theirs, M, vmap, err))
+    return err;
+
+  // The copy goes where the replaced window starts.
+  std::vector<llvm::Instruction *> copies;
+  for (auto *I : theirs) {
+    auto *copy = I->clone();
+    copy->setName(I->getName());
+    copy->insertBefore(window.front()->getIterator());
+    vmap[I] = copy;
+    copies.push_back(copy);
+  }
+  for (auto *copy : copies)
+    llvm::RemapInstruction(copy, vmap,
+                           llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs);
+
+  // A later use of a replaced value now uses its partner: a copied value, or a
+  // value of this module that the copy reads.
+  for (auto *I : liveOutOf(F, window, inside)) {
+    auto it = standsFor.find(I);
+    llvm::Value *now = nullptr;
+    if (it != standsFor.end()) {
+      if (auto *theirsInst = llvm::dyn_cast<llvm::Instruction>(it->second);
+          theirsInst && theirsInside.contains(theirsInst))
+        now = vmap[theirsInst];
+      else if (auto in = standsIn.find(it->second); in != standsIn.end() && in->second != I)
+        now = in->second;
+    }
+    if (!now)
+      return errResponse("invalid", "splice: '" + refs.print(*I) +
+                                        "' is used after the window but has no partner in the "
+                                        "value map");
+    std::vector<llvm::Use *> outside;
+    for (llvm::Use &U : I->uses())
+      if (!inside.contains(llvm::cast<llvm::Instruction>(U.getUser())))
+        outside.push_back(&U);
+    for (auto *U : outside)
+      U->set(now);
+  }
+  for (auto *I : llvm::reverse(window))
+    I->eraseFromParent();
+  return checkedResponse(M);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -198,6 +360,9 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
   auto missing = [&](llvm::StringRef what) {
     return errResponse("bad_request", op->str() + " needs " + what.str());
   };
+
+  if (*op == "splice")
+    return splice(args, shape);
 
   if (*op == "swap") {
     auto a = args.getString("a");

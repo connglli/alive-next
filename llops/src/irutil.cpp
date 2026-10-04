@@ -644,6 +644,84 @@ llvm::Value *mappedParam(const llvm::json::Value &entry, const llvm::json::Objec
   return tgtVal;
 }
 
+llvm::SmallPtrSet<llvm::Instruction *, 16> setOf(llvm::ArrayRef<llvm::Instruction *> window) {
+  return llvm::SmallPtrSet<llvm::Instruction *, 16>(window.begin(), window.end());
+}
+
+std::vector<llvm::Value *> liveInto(llvm::Function &F,
+                                    const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside) {
+  llvm::SmallPtrSet<llvm::Value *, 32> used;
+  for (auto *I : inside)
+    for (const llvm::Use &U : I->operands())
+      used.insert(U.get());
+  std::vector<llvm::Value *> live;
+  for (auto &I : llvm::instructions(F))
+    if (!inside.contains(&I) && used.contains(&I))
+      live.push_back(&I);
+  for (auto &arg : F.args())
+    if (used.contains(&arg))
+      live.push_back(&arg);
+  return live;
+}
+
+std::vector<llvm::Instruction *> windowOf(llvm::BasicBlock &BB, llvm::Instruction *from,
+                                          llvm::Instruction *to) {
+  std::vector<llvm::Instruction *> window;
+  bool started = false;
+  for (auto &I : BB) {
+    started |= &I == from;
+    if (!started)
+      continue;
+    window.push_back(&I);
+    if (&I == to)
+      return window;
+  }
+  return {};
+}
+
+std::vector<llvm::Instruction *> windowBetween(llvm::Instruction *first, llvm::Instruction *last,
+                                               llvm::StringRef from, llvm::StringRef to,
+                                               llvm::StringRef hint, llvm::json::Object &err) {
+  std::vector<llvm::Instruction *> window = windowOf(*first->getParent(), first, last);
+  if (window.empty())
+    err = errResponse("invalid", "'" + to.str() + "' does not come at or after '" + from.str() +
+                                     "' in its block");
+  else if (window.back()->isTerminator())
+    err = errResponse("invalid", "a window cannot take the terminator with it" + hint.str());
+  else if (llvm::isa<llvm::PHINode>(window.front()))
+    err = errResponse("invalid", "a window cannot take a phi, which belongs to its block");
+  else
+    return window;
+  return {};
+}
+
+std::vector<llvm::Instruction *>
+liveOutOf(llvm::Function &F, llvm::ArrayRef<llvm::Instruction *> window,
+          const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside) {
+  llvm::DenseMap<const llvm::Instruction *, unsigned> position;
+  unsigned next = 0;
+  for (auto &I : llvm::instructions(F))
+    position[&I] = next++;
+  // Where a value is first used: the user's position, then the operand's.
+  std::vector<std::pair<std::pair<unsigned, unsigned>, llvm::Instruction *>> live;
+  for (auto *I : window) {
+    std::optional<std::pair<unsigned, unsigned>> first;
+    for (const llvm::Use &U : I->uses()) {
+      auto *user = llvm::cast<llvm::Instruction>(U.getUser());
+      std::pair<unsigned, unsigned> at{position.lookup(user), U.getOperandNo()};
+      if (!inside.contains(user) && (!first || at < *first))
+        first = at;
+    }
+    if (first)
+      live.push_back({*first, I});
+  }
+  llvm::sort(live, [](const auto &a, const auto &b) { return a.first < b.first; });
+  std::vector<llvm::Instruction *> out;
+  for (auto &entry : live)
+    out.push_back(entry.second);
+  return out;
+}
+
 bool adoptSymbols(llvm::Module &from, llvm::Module &into, const llvm::GlobalValue *skip,
                   llvm::ValueToValueMapTy &vmap, llvm::json::Object &err) {
   for (llvm::GlobalValue &gv : from.global_values()) {
