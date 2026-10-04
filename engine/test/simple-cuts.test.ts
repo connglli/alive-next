@@ -323,7 +323,7 @@ exit:
     const halves = await cutLoop(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false });
     if (!halves) throw new Error("expected a cut");
     const facts = { param_attrs: { 0: { noundef: true, dereferenceable: 1024 } } };
-    await strengthenLoop(session, "g1", facts, []);
+    await strengthenLoop(session, "g1", facts);
     expect(statuses(session, [halves.callee])).toEqual(["proved"]);
   }, 120_000);
 

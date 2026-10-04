@@ -4,14 +4,14 @@
 // hold. A cut at the header of a loop leaves one iteration, whose back edge
 // calls the hypothesis, so the goals it leaves prove by induction, and it is
 // strengthened with the invariants Houdini finds among those facts and some
-// templates. A balanced cut splits a goal's expensive operations between its
+// guesses. A balanced cut splits a goal's expensive operations between its
 // halves, so each half asks alive2 a smaller question.
 import type { Instruction, Llops, OutlineParam } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { SplitResult } from "../core/state/splits.ts";
-import { cutFacts, strengthenCut } from "./facts.ts";
+import { cutFacts, strengthenCut, union } from "./facts.ts";
 import { fillCut } from "./fill.ts";
-import { strengthenLoop } from "./invariants.ts";
+import { guessInvariants, strengthenLoop } from "./invariants.ts";
 import type { Limits } from "./limits.ts";
 import { diff } from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
@@ -95,7 +95,7 @@ function valueMap(
   return map;
 }
 
-/** Strengthens `split` with the src's facts and the relations among what it passes. */
+/** Strengthens `split` with the analyses' facts, the relations and a loop's guesses. */
 async function strengthenSplit(
   session: Session,
   llops: Llops,
@@ -106,10 +106,10 @@ async function strengthenSplit(
   const lives = split.params.map((param) => param.live);
   const facts = await cutFacts(llops, mine.module, mine.point, lives);
   const types = split.params.map((param) => param.type);
-  const relations = await relationsAt(llops, [mine, theirs], types);
-  const candidates = { ...facts, predicates: [...(facts.predicates ?? []), ...relations] };
+  const relations = { predicates: await relationsAt(llops, [mine, theirs], types) };
   const loop = split.detach?.hypothesis !== undefined;
-  if (loop) await strengthenLoop(session, gid, candidates, split.params);
+  const candidates = union(loop ? guessInvariants(split.params) : {}, facts, relations);
+  if (loop) await strengthenLoop(session, gid, candidates);
   else await strengthenCut(session, gid, candidates);
 }
 
