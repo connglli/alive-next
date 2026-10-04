@@ -1,7 +1,9 @@
-// What the analyses know about a window's inputs, as preconditions a commit
-// can ask for. A fact about a value that may be poison can never be proved at
-// the call, so only values the analyses find noundef get facts.
+// What the analyses know about the inputs of a window or a cut, as
+// preconditions a commit can ask for or a cut can be strengthened with. A fact
+// about a value that may be poison can never be proved at the call, so only
+// values the analyses find noundef get facts.
 import type { Fact, Llops } from "../core/drivers/llops.ts";
+import type { Session } from "../core/session.ts";
 
 /** Facts by the value they are about, as `commit` takes them. */
 export type Preconditions = Record<string, Record<string, unknown>>;
@@ -31,6 +33,23 @@ export async function factsAt(
     out[value] = fact;
   }
   return out;
+}
+
+/**
+ * Strengthens the callee of split goal `gid` with what the analyses know about
+ * the values `lives` it is passed, which hold just before `point` in `src`.
+ */
+export async function strengthenCut(
+  session: Session,
+  llops: Llops,
+  gid: string,
+  src: string,
+  point: string,
+  lives: string[],
+) {
+  const facts = await factsAt(llops, src, point, lives);
+  const attrs = lives.flatMap((live, k) => (facts[live] ? [[k, facts[live]] as const] : []));
+  if (attrs.length > 0) await session.strengthen(gid, { param_attrs: Object.fromEntries(attrs) });
 }
 
 /**
