@@ -157,14 +157,35 @@ function pairing(
   steps: Step[],
 ) {
   const pairs = new Map<string, string>();
-  const add = (s?: string, t?: string) => s && t && pairs.set(s, t);
-  for (const { move, inside } of steps) {
-    if (!inside) continue;
-    add(src[a[move.src ?? -1]?.[0] ?? -1]?.block, tgt[b[move.tgt ?? -1]?.[0] ?? -1]?.block);
-    for (const pair of inside) add(src[pair.src ?? -1]?.value, tgt[pair.tgt ?? -1]?.value);
+  const set = (s?: string, t?: string) => s && t && !pairs.has(s) && pairs.set(s, t);
+  const value = (body: Instruction[], k?: number) => body[k ?? -1]?.value;
+  const block = (body: Instruction[], blocks: number[][], k?: number) =>
+    body[blocks[k ?? -1]?.[0] ?? -1]?.block;
+  const add = ({ move, inside }: Step) => {
+    set(block(src, a, move.src), block(tgt, b, move.tgt));
+    for (const pair of inside ?? []) set(value(src, pair.src), value(tgt, pair.tgt));
+  };
+  const matched = steps.filter((step) => step.inside);
+  matched.forEach(add);
+  const [at, bt] = [indexOf(src, a), indexOf(tgt, b)];
+  // Blocks paired through what matched instructions read are matched inside too.
+  for (let more = matched; more.length > 0; ) {
+    throughOperands(src, tgt, matched, pairs);
+    const done = new Set(matched.map((step) => step.move.src));
+    more = [...pairs].flatMap(([s, t]) => {
+      const [i, j] = [at.get(s), bt.get(t)];
+      if (i === undefined || j === undefined || done.has(i)) return [];
+      return [{ move: { src: i, tgt: j }, inside: within(src, tgt, a[i], b[j]) }];
+    });
+    more.forEach(add);
+    matched.push(...more);
   }
-  throughOperands(src, tgt, steps, pairs);
   return pairs;
+}
+
+/** Each block's position among the blocks of `body`, by name. */
+function indexOf(body: Instruction[], blocks: number[][]): Map<string, number> {
+  return new Map(blocks.map((block, k) => [body[block[0] ?? -1]?.block ?? "", k]));
 }
 
 /** Pairs what matched instructions read, a commutative one only where its other operand agrees. */
@@ -182,6 +203,9 @@ function throughOperands(
       for (const { src: i, tgt: j } of inside ?? []) {
         const [s, t] = [src[i ?? -1], tgt[j ?? -1]];
         if (!s || !t || s.form !== t.form) continue;
+        // A branch's targets correspond only where its condition already does.
+        const chooses = isTerminator(s) && s.operands.length > 1;
+        if (chooses && !agree(s.operands[0], t.operands[0])) continue;
         s.operands.forEach((x, k) => {
           const y = t.operands[k] ?? "";
           if (!mine.has(x) || !y.startsWith("%") || pairs.has(x)) return;
