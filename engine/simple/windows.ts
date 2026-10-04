@@ -1,17 +1,14 @@
 // Steps a goal's src toward its tgt one region at a time. For each region,
-// llops outlines it from both programs and inlines the tgt's window into the
-// src's outer, which replaces only that region. The commit names the region as
-// its window. When alive2 refuses, the window grows backward over the
-// instructions that define the values it reads, and last, the window is tried
-// again with what the analyses know about those values.
+// the `splice` edit puts the tgt's code in place of the src's, wired through
+// the values the diff pairs. The commit names the region as its window. When
+// alive2 refuses, the window grows backward over the instructions that define
+// the values either side reads, and last, the window is tried again with what
+// the analyses know about those values.
 import type { Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { factsAt } from "./facts.ts";
 import type { Limits } from "./limits.ts";
-import { isTerminator, type Region, regions } from "./regions.ts";
-
-/** The name both windows get, so that the tgt's one inlines where the src's one was. */
-const CALLEE = "simple.region";
+import { diff, isTerminator, type Region, regions } from "./regions.ts";
 
 /** A goal being stepped, toward its tgt unless `toward` names another program. */
 interface Run {
@@ -20,6 +17,8 @@ interface Run {
   gid: string;
   limits: Limits;
   toward?: string;
+  /** For each src value, the tgt value the diff pairs it with. */
+  pairs: Map<string, string>;
 }
 
 /**
@@ -33,9 +32,9 @@ export async function stepWindows(
   limits: Limits,
   toward?: string,
 ): Promise<Region[]> {
-  const run = { session, llops, gid, limits, toward };
   const [src, tgt] = await bodies(session, llops, gid, toward);
-  const found = regions(src, tgt);
+  const { regions: found, pairs } = diff(src, tgt);
+  const run = { session, llops, gid, limits, toward, pairs };
   const across = partners(src, tgt, found);
   for (const region of [...found].reverse()) {
     const at = region.src.length && region.tgt.length ? region : widened(src, tgt, region, across);
@@ -130,18 +129,27 @@ async function step(run: Run, region: Region, floor: number) {
 async function attempt(run: Run, at: Region, withFacts: boolean) {
   const { session, llops, gid } = run;
   const view = await session.show(gid);
-  const spliced = await splice(llops, view.src.text, run.toward ?? view.tgt.text, at);
-  if (!spliced) return { certified: false };
+  const tgtText = run.toward ?? view.tgt.text;
+  const [src, tgt] = await bodies(session, llops, gid, run.toward);
+  const wiring = wire(src, tgt, at, run.pairs);
+  if (!wiring) return { certified: false };
+  const { map, reads } = wiring;
   const from = `#${at.src[0]}`;
-  const preconditions = withFacts ? await factsAt(llops, view.src.text, from, spliced.reads) : {};
-  if (withFacts && Object.keys(preconditions).length === 0)
-    return { certified: false, reads: spliced.reads };
+  const preconditions = withFacts ? await factsAt(llops, view.src.text, from, reads) : {};
+  if (withFacts && Object.keys(preconditions).length === 0) return { certified: false, reads };
   await session.begin(gid, "src");
-  const edited = await session.edit({ op: "set_body", body: bodyOf(spliced.module) });
-  // The edit refuses a region that calls a function the src does not declare.
+  const edited = await session.edit({
+    op: "splice",
+    from,
+    to: `#${at.src.at(-1)}`,
+    with: { module: tgtText, from: `#${at.tgt[0]}`, to: `#${at.tgt.at(-1)}` },
+    value_map: map,
+  });
+  // A replaced value used later that has no partner refuses the splice, and a
+  // wider window may hold the instructions that use it.
   if (edited.kind === "refused") {
     await session.abort();
-    return { certified: false };
+    return { certified: false, reads };
   }
   // The whole function is what windows avoid, so it is not asked, after the
   // window or after the step; with windows off, it is the only question.
@@ -150,20 +158,43 @@ async function attempt(run: Run, at: Region, withFacts: boolean) {
     ? { window, whole: false, eager: false, ...(withFacts ? { preconditions } : {}) }
     : { narrow: false, eager: false };
   const result = await session.commit(options);
-  return { certified: result.kind === "certified", reads: spliced.reads };
+  return { certified: result.kind === "certified", reads };
 }
 
-/** The src with region `at` replaced by the tgt's code, and the values the src window reads. */
-async function splice(llops: Llops, src: string, tgt: string, at: Region) {
-  const [mine, theirs] = await Promise.all([
-    llops.outlineWindow(src, `#${at.src[0]}`, `#${at.src.at(-1)}`, CALLEE),
-    llops.outlineWindow(tgt, `#${at.tgt[0]}`, `#${at.tgt.at(-1)}`, CALLEE),
-  ]);
-  if (!mine.ok || !theirs.ok) return undefined;
-  const back = await llops.inline(mine.outer, theirs.callee, CALLEE);
-  return back.ok
-    ? { module: back.module, reads: mine.params.map((param) => param.live) }
-    : undefined;
+/**
+ * The value map that splices region `at`, from the diff's pairs, and the src
+ * values both windows read, or nothing when a read has no partner.
+ */
+function wire(src: Instruction[], tgt: Instruction[], at: Region, pairs: Map<string, string>) {
+  // The diff pairs instructions before what they read, so a tgt value's first
+  // partner is its instruction's.
+  const back = new Map<string, string>();
+  for (const [s, t] of pairs) if (!back.has(t)) back.set(t, s);
+  const valuesOf = (body: Instruction[], indices: number[]) =>
+    new Set(indices.flatMap((k) => body[k]?.value ?? []));
+  const [mine, theirs] = [valuesOf(src, at.src), valuesOf(tgt, at.tgt)];
+  const defined = new Set(tgt.flatMap((i) => i.value ?? []));
+  // Values and arguments are named with `%`; constants and functions are not.
+  const named = (ref: string) => ref.startsWith("%");
+  const map: Record<string, string> = {};
+  const reads = new Set<string>();
+  for (const k of at.src)
+    for (const x of src[k]?.operands ?? []) if (named(x) && !mine.has(x)) reads.add(x);
+  for (const k of at.tgt)
+    for (const y of tgt[k]?.operands ?? []) {
+      if (!named(y) || theirs.has(y)) continue;
+      // An argument is its own partner, since both sides have the same ones.
+      const x = defined.has(y) ? back.get(y) : y;
+      if (!x) return undefined;
+      map[x] = y;
+      reads.add(x);
+    }
+  const later = new Set(src.flatMap((i, k) => (at.src.includes(k) ? [] : i.operands)));
+  for (const s of mine) {
+    const t = pairs.get(s);
+    if (later.has(s) && t && theirs.has(t)) map[s] = t;
+  }
+  return { map, reads: [...reads] };
 }
 
 /** The text `set_body` takes: the lines after `entry:` up to the closing brace on its own line. */

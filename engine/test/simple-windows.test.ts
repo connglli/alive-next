@@ -11,7 +11,8 @@ import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
-import { stepWindows } from "../simple/windows.ts";
+import { regions } from "../simple/regions.ts";
+import { bodies, stepWindows } from "../simple/windows.ts";
 import { pairs } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
@@ -77,6 +78,50 @@ async function start(name: string, checker: Checker, alive2Ms = 30_000, pair = p
     rewriter: unrewriting,
     timeouts: timeoutsFrom({ alive2Ms }),
   });
+}
+
+/** The paper's straight-line pair, which alive2 alone does not decide in ten minutes. */
+const PAPER = {
+  about: "",
+  refines: true,
+  src: `define i64 @f(i64 noundef %p0, i64 noundef %p1, i64 noundef %p2) {
+entry:
+  %a = mul i64 %p0, 4
+  %v1 = sub i64 %p1, %a
+  %e = sdiv i64 %v1, 2
+  %v3 = mul i64 %e, 2
+  %v4 = add i64 %a, %v3
+  %v5 = mul i64 %p2, 2
+  %t = add i64 %v4, %v5
+  %v7 = sub i64 %p1, %t
+  %v8 = sdiv i64 %v7, 2
+  %v9 = mul i64 %v8, 2
+  %r = add i64 %t, %v9
+  %h = and i64 %r, -2
+  ret i64 %h
+}
+`,
+  tgt: `define i64 @f(i64 noundef %p0, i64 noundef %p1, i64 noundef %p2) {
+entry:
+  %a = shl i64 %p0, 2
+  %v1 = sub i64 %p1, %a
+  %e = sdiv i64 %v1, 2
+  %s = add i64 %e, %p2
+  %s2 = shl i64 %s, 1
+  %q = add i64 %a, %s2
+  %v7 = sub i64 %p1, %q
+  %v8 = sdiv i64 %v7, 2
+  %k = add i64 %v8, %s
+  %k2 = shl i64 %k, 1
+  %r = add i64 %k2, %a
+  ret i64 %r
+}
+`,
+};
+
+/** How many regions the goal's two sides still differ in. */
+async function regionsLeft(session: Session) {
+  return regions(...(await bodies(session, llops, "g1"))).length;
 }
 
 /** Whether the goal's src has become its tgt. */
@@ -146,6 +191,31 @@ describe.skipIf(!solving)("windows with alive-tv", () => {
     },
     120_000,
   );
+
+  test("a region whose tgt reads another value steps once its window defines it", async () => {
+    const src = `define i32 @f(i32 %a, i32 %b) {
+entry:
+  %c = add i32 %a, 1
+  %d = add i32 %a, 2
+  %r = xor i32 %c, %d
+  ret i32 %r
+}
+`;
+    const tgt = src.replace("%d = add i32 %a, 2", "%d = add i32 %c, 1");
+    const pair = { about: "", refines: true, src, tgt };
+    const session = await start("reads", aliveTv, 5_000, pair);
+    expect(await stepWindows(session, llops, "g1", grow(1))).toEqual([]);
+    expect(await arrived(session)).toBe(true);
+  }, 60_000);
+
+  test("a region whose tgt also hands a value to its own later code steps", async () => {
+    // The paper's straight-line pair. The tgt's middle region computes %q, the
+    // partner of the src's %t, and %s, which only the tgt's last region reads,
+    // so that last region alone is left.
+    const session = await start("paper", aliveTv, 5_000, PAPER);
+    expect(await regionsLeft(session)).toBe(3);
+    expect(await stepWindows(session, llops, "g1", grow(1))).toHaveLength(1);
+  }, 120_000);
 
   // e4 is not a refinement. varA's window is out of alive2's reach even with the
   // sexts in it, and no fact helps, since its operands are poison whenever an
