@@ -14,31 +14,23 @@ import { bodies, bodyOf, stepWindows } from "./windows.ts";
 /** What a search may still spend. */
 interface Budget {
   cuts: number;
-  until: number;
 }
 
 /** Searches for a proof of the root goal, giving up with the goals left open if it finds none. */
 export async function search(session: Session, llops: Llops, limits: Limits) {
-  const budget = { cuts: limits.cuts, until: Date.now() + limits.ms };
+  const budget = { cuts: limits.cuts };
   const { root } = await session.status();
   if ((await session.check(root, limits.rootMs)).outcome !== "unknown") return session.verdict;
-  if (limits.stages && limits.steps) await followStages(session, llops, root, limits, budget);
+  if (limits.stages && limits.steps) await followStages(session, llops, root, limits);
   const open = await solve(session, llops, root, limits, budget, true);
   if (open.length > 0) await session.giveUp(`no move closed ${open.join(", ")}`);
   return session.verdict;
 }
 
 /** Steps the root's src through each stage the optimizer makes of it. */
-async function followStages(
-  session: Session,
-  llops: Llops,
-  root: string,
-  limits: Limits,
-  budget: Budget,
-) {
+async function followStages(session: Session, llops: Llops, root: string, limits: Limits) {
   const run = await llops.pipelineStages((await session.show(root)).src.text);
   for (const stage of run.ok ? run.stages : []) {
-    if (Date.now() > budget.until) return;
     const canon = await llops.canon(stage.module);
     if (!canon.ok) continue;
     const left = await stepWindows(session, llops, root, limits, canon.module);
@@ -67,7 +59,6 @@ async function solve(
   budget: Budget,
   peelable: boolean,
 ): Promise<string[]> {
-  if (Date.now() > budget.until) return [gid];
   // Strengthening a cut checks its goals again, which may have proved this one.
   if ((await session.show(gid)).status === "proved") return [];
   const left = limits.steps
