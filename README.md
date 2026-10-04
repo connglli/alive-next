@@ -65,6 +65,16 @@ bun run agent --help                               # every option
 
 This agent will use the default model and provider registered in Pi. To change it, use for example `-m deepseek/deepseek-v4-flash`. Or use `--pause` to pause the agent after it starts, then set the model in Pi's TUI with `/model`, and then start it with any instruction.
 
+The simple searcher proves the same pair without a model:
+
+```sh
+cd engine
+
+bun run simple a.ll b.ll                           # search for a proof
+
+bun run simple --help                              # every option
+```
+
 More example commands:
 
 ```sh
@@ -85,3 +95,4 @@ python3 scripts/visualize.py sessions/<id> # the run as one HTML page
 * [docs/implementation.md](docs/implementation.md): how it is built.
 * [docs/llops.md](docs/llops.md): the native binary's interface.
 * [docs/agent.md](docs/agent.md): how the agent is wired.
+* [docs/simple.md](docs/simple.md): how the simple searcher searches.
