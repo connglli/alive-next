@@ -1,10 +1,13 @@
 // Cuts a goal in two at a point both sides share, passing each value that
-// crosses it as the tgt value the diff matched with it. A cut at the header of
+// crosses it as the tgt value the diff matched with it, and strengthens the cut
+// with what the analyses know about those values. A cut at the header of
 // a loop leaves one iteration, whose back edge calls the hypothesis, so the
 // goals it leaves prove by induction. A balanced cut splits a goal's expensive
 // operations between its halves, so each half asks alive2 a smaller question.
 import type { Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
+import { strengthenCut } from "./facts.ts";
+import type { Limits } from "./limits.ts";
 import { diff } from "./regions.ts";
 import { bodies, partners } from "./windows.ts";
 
@@ -33,11 +36,13 @@ export async function cut(
   session: Session,
   llops: Llops,
   gid: string,
+  limits: Limits,
   srcCut: string,
   tgtCut: string,
 ) {
   const preview = await session.splitPreview(gid, srcCut, tgtCut);
   if (preview.kind !== "preview") return undefined;
+  const text = (await session.show(gid)).src.text;
   const [src, tgt] = await bodies(session, llops, gid);
   const { pairs } = diff(src, tgt);
   const own = new Set(src.flatMap((i) => (i.value ? [i.value] : [])));
@@ -48,23 +53,35 @@ export async function cut(
     map[live] = partner;
   }
   const split = await session.split(gid, srcCut, tgtCut, map);
-  return split.kind === "split" ? split.children : undefined;
+  if (split.kind !== "split") return undefined;
+  const lives = split.params.map((param) => param.live);
+  if (limits.facts) await strengthenCut(session, llops, gid, text, pointOf(src, srcCut), lives);
+  return split.children;
+}
+
+/**
+ * Where the values a cut passes are analyzed: before the instruction it cuts
+ * at, or before the first instruction of the block it cuts at that is not a
+ * phi, where the facts hold however the block is entered.
+ */
+function pointOf(src: Instruction[], at: string): string {
+  return at.startsWith("#") ? at : `#${src.findIndex((i) => i.block === at && !i.phi)}`;
 }
 
 /** Cuts goal `gid` at its first loop header and the tgt's matching one, if its src loops. */
-export async function cutLoop(session: Session, llops: Llops, gid: string) {
+export async function cutLoop(session: Session, llops: Llops, gid: string, limits: Limits) {
   const [src, tgt] = await bodies(session, llops, gid);
   const header = headers(src)[0];
   const partner = header ? diff(src, tgt).pairs.get(header) : undefined;
   if (!header || !partner) return undefined;
-  return cut(session, llops, gid, header, partner);
+  return cut(session, llops, gid, limits, header, partner);
 }
 
 /**
  * Cuts goal `gid` where both sides agree and its expensive operations split
  * most evenly, leaving at least one in each half.
  */
-export async function cutBalanced(session: Session, llops: Llops, gid: string) {
+export async function cutBalanced(session: Session, llops: Llops, gid: string, limits: Limits) {
   const [src, tgt] = await bodies(session, llops, gid);
   const { regions } = diff(src, tgt);
   const before = (k: number) => src.slice(0, k).filter((i) => EXPENSIVE.has(i.opcode)).length;
@@ -75,7 +92,7 @@ export async function cutBalanced(session: Session, llops: Llops, gid: string) {
     .filter((point) => point.split > 0 && point.split < total)
     .sort((a, b) => a.gap - b.gap);
   for (const point of points.slice(0, TRIES)) {
-    const halves = await cut(session, llops, gid, `#${point.i}`, `#${point.j}`);
+    const halves = await cut(session, llops, gid, limits, `#${point.i}`, `#${point.j}`);
     if (halves) return halves;
   }
   return undefined;

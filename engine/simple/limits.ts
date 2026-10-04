@@ -16,7 +16,7 @@ export interface Limits {
   steps: boolean;
   /** Whether a step is checked on its window rather than on the whole function. */
   windows: boolean;
-  /** Whether a refused window is tried again with what the analyses know. */
+  /** Whether refused windows and new cuts get what the analyses know as preconditions. */
   facts: boolean;
 }
 

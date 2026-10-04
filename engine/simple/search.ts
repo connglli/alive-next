@@ -68,6 +68,8 @@ async function solve(
   peelable: boolean,
 ): Promise<string[]> {
   if (Date.now() > budget.until) return [gid];
+  // Strengthening a cut checks its goals again, which may have proved this one.
+  if ((await session.show(gid)).status === "proved") return [];
   const left = limits.steps
     ? await stepWindows(session, llops, gid, limits)
     : regions(...(await bodies(session, llops, gid)));
@@ -81,11 +83,11 @@ async function solve(
       open.push(...(await solve(session, llops, goal, limits, budget, goal !== held)));
     return open;
   };
-  const loop = await cutLoop(session, llops, gid);
+  const loop = await cutLoop(session, llops, gid, limits);
   if (loop) return spend([loop.outer, loop.callee]);
   const region = left[0];
-  const peeled = region && peelable ? await peel(session, llops, gid, region) : undefined;
+  const peeled = region && peelable ? await peel(session, llops, gid, limits, region) : undefined;
   if (peeled && peeled.goals.length > 1) return spend(peeled.goals, peeled.region);
-  const halves = await cutBalanced(session, llops, gid);
+  const halves = await cutBalanced(session, llops, gid, limits);
   return halves ? spend([halves.outer, halves.callee]) : [gid];
 }
