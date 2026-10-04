@@ -12,6 +12,7 @@ import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { timeoutsFrom } from "../core/state/steps.ts";
 import { loop } from "../examples/loop.ts";
+import { strchr } from "../examples/strchr.ts";
 import { cut, cutBalanced, cutLoop } from "../simple/cuts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { peel } from "../simple/peel.ts";
@@ -186,5 +187,14 @@ entry:
     const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
     if (!halves) throw new Error("expected a cut");
     expect(statuses(session, [halves.callee])).toEqual(["proved"]);
+  }, 120_000);
+
+  test("a loop cut keeps a comparison with zero that each iteration keeps", async () => {
+    // The tgt tests for the key before the end, which is right only for a key
+    // that is not zero, as the guard before the loop makes sure.
+    const session = await solved("strchr", strchr.src, strchr.tgt);
+    const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    if (!halves) throw new Error("expected a cut");
+    expect(statuses(session, [halves.outer, halves.callee])).toEqual(["proved", "proved"]);
   }, 120_000);
 });
