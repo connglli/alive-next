@@ -65,7 +65,9 @@ export async function cut(
     { module: view.src.text, point: pointOf(src, srcCut), values: lives, loop: srcLoop },
     { module: view.tgt.text, point: pointOf(tgt, tgtCut), values: images, loop: tgtLoop },
   ];
-  if (split.detach?.hypothesis) await unfoldToMatch(session, llops, split, sides);
+  if (split.detach?.hypothesis) {
+    await unfoldToMatch(session, llops, split, sides, limits.unfolds);
+  }
   if (limits.facts) await strengthenSplit(session, llops, gid, split, sides);
   return split.children;
 }

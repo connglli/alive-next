@@ -366,6 +366,26 @@ exit:
     for (const gid of halves) expect((await session.check(gid)).outcome).toBe("proved");
   }, 120_000);
 
+  test("a peel is unfolded within the budget, whatever the outers' sizes", async () => {
+    // The src builds the start of s in steps the tgt does not take, so its outer is larger.
+    const peeled = scenario("peel");
+    const steps = [1, 2, 3, 4, 5, 6, 7, 8].map((k) => `  %a${k} = add i32 %a${k - 1}, 0\n`);
+    const src = peeled.src
+      .replace("entry:\n", `entry:\n  %a0 = add i32 %a, 0\n${steps.join("")}`)
+      .replace("[ %a, %entry ]", "[ %a8, %entry ]");
+    for (const [unfolds, outcome] of [
+      [4, "proved"],
+      [0, "refuted"],
+    ] as const) {
+      const session = await solved(`budget${unfolds}`, src, peeled.tgt);
+      const limits = { ...DEFAULT_LIMITS, unfolds };
+      const exit = await cutLoop(session, llops, "g1", limits);
+      const header = exit && (await cutLoop(session, llops, exit.outer, limits));
+      if (!header) throw new Error("expected cuts at the exits and the headers");
+      expect((await session.check(header.outer)).outcome).toBe(outcome);
+    }
+  }, 240_000);
+
   test("a rotated loop is cut at its exit, then at its header", async () => {
     const session = await solved("rotated", rotated.src, rotated.tgt);
     const exit = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);

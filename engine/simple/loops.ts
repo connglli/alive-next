@@ -12,7 +12,6 @@ import type { StrengthenContract } from "../core/state/strengthen.ts";
 import { noundefLost, size } from "./facts.ts";
 import { diff, headers, successors } from "./regions.ts";
 import { expressionsAt, type Side } from "./relations.ts";
-import { bodies } from "./windows.ts";
 
 /** The orders a candidate compares two parameters by, each asked both ways round. */
 const ORDERS = ["ule", "ult", "sle", "slt"] as const;
@@ -34,29 +33,28 @@ export function loopCut(src: Instruction[], tgt: Instruction[]) {
   return mine ? ([mine, first] as const) : undefined;
 }
 
-/** Unfolds loop cut `split` where its counters say one side runs behind the other. */
+/** Unfolds loop cut `split` up to `budget` times where its counters say one side lags. */
 export async function unfoldToMatch(
   session: Session,
   llops: Llops,
   split: Extract<SplitResult, { kind: "split" }>,
   sides: Side[],
+  budget: number,
 ) {
   const counters = await Promise.all(sides.map((side) => countersAt(llops, side)));
   const [mine = [], theirs = []] = counters;
   const { outer, callee } = split.children;
   // Each unfold of an iteration doubles what it runs, so only a power of two matches.
   const [r = 0, ...ratios] = agreeing(mine, theirs, (a, b) => ratio(a.step, b.step));
-  const doublings = Math.log2(Math.abs(r));
-  if (ratios.length === 0 && Number.isInteger(doublings))
-    for (let n = 0; n < doublings; n++)
-      if (!(await unfolded(session, callee, r > 0 ? "src" : "tgt"))) return;
+  const doublings = ratios.length === 0 ? Math.log2(Math.abs(r)) : NaN;
+  const unrolls = Number.isInteger(doublings) && doublings <= budget ? doublings : 0;
+  for (let n = 0; n < unrolls; n++)
+    if (!(await unfolded(session, callee, r > 0 ? "src" : "tgt"))) return;
   // Each unfold of an outer runs one more iteration before the loop, as peeling does.
   const [d = 0, ...gaps] = agreeing(mine, theirs, behind);
-  const side = d > 0 ? "src" : "tgt";
-  for (let n = 0; gaps.length === 0 && n < Math.abs(d); n++) {
-    if (!(await smaller(session, llops, outer, side))) return;
-    if (!(await unfolded(session, outer, side))) return;
-  }
+  const peels = gaps.length === 0 && Math.abs(d) <= budget - unrolls ? Math.abs(d) : 0;
+  for (let n = 0; n < peels; n++)
+    if (!(await unfolded(session, outer, d > 0 ? "src" : "tgt"))) return;
 }
 
 /** Strengthens loop cut `gid` with the inductive part of `candidates`. */
@@ -151,12 +149,6 @@ function behind(src: Counter, tgt: Counter): number | undefined {
   if (!starts || src.step !== tgt.step) return undefined;
   const gap = (tgt.start ?? 0n) - (src.start ?? 0n);
   return gap % src.step === 0n ? Number(gap / src.step) : undefined;
-}
-
-/** Whether `side` of goal `gid` holds fewer instructions than the other side. */
-async function smaller(session: Session, llops: Llops, gid: string, side: "src" | "tgt") {
-  const [src, tgt] = await bodies(session, llops, gid);
-  return side === "src" ? src.length < tgt.length : tgt.length < src.length;
 }
 
 /** Whether an unfold of `side` of goal `gid` landed. */
