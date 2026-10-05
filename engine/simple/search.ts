@@ -10,7 +10,7 @@ import { cutBalanced, cutBefore, cutLoop } from "./cuts.ts";
 import type { Limits } from "./limits.ts";
 import { peel } from "./peel.ts";
 import { regions } from "./regions.ts";
-import { stepRules } from "./rewrite.ts";
+import { stagesToward, stepRules } from "./rewrite.ts";
 import { bodies, bodyOf, stepWindows } from "./windows.ts";
 
 /** What a search may still spend. */
@@ -29,14 +29,12 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   return session.verdict;
 }
 
-/** Steps the root's src through each stage the optimizer makes of it. */
+/** Steps the root's src through the stages the optimizer makes of it, toward its tgt. */
 async function followStages(session: Session, llops: Llops, root: string, limits: Limits) {
-  const run = await llops.pipelineStages((await session.show(root)).src.text);
-  for (const stage of run.ok ? run.stages : []) {
-    const canon = await llops.canon(stage.module);
-    if (!canon.ok) continue;
-    const left = await stepWindows(session, llops, root, limits, canon.module);
-    if (left.length > 0) await jump(session, root, canon.module);
+  const { src, tgt } = await session.show(root);
+  for (const stage of await stagesToward(llops, src.text, tgt.text)) {
+    const left = await stepWindows(session, llops, root, limits, stage);
+    if (left.length > 0) await jump(session, root, stage);
   }
 }
 

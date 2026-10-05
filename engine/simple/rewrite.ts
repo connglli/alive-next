@@ -22,6 +22,24 @@ export async function stepRules(session: Session, llops: Llops, gid: string) {
   return (await session.rewrite(gid, "src", rules)).kind === "certified";
 }
 
+/**
+ * The stages the optimizer makes of `src`, canonical, up to the last one
+ * closest to `tgt`; none when every stage is farther than `src` itself.
+ */
+export async function stagesToward(llops: Llops, src: string, tgt: string) {
+  const run = await llops.pipelineStages(src);
+  const stages: string[] = [];
+  let [best, end] = [await measured(llops, src, tgt), 0];
+  for (const stage of run.ok ? run.stages : []) {
+    const canon = await llops.canon(stage.module);
+    if (!canon.ok) continue;
+    stages.push(canon.module);
+    const far = await measured(llops, canon.module, tgt);
+    if (far <= best) [best, end] = [far, stages.length];
+  }
+  return stages.slice(0, end);
+}
+
 /** The distance between two programs' bodies, or Infinity when either cannot be read. */
 async function measured(llops: Llops, src: string, tgt: string): Promise<number> {
   const [a, b] = await Promise.all([llops.number(src), llops.number(tgt)]);

@@ -16,7 +16,7 @@ The searcher first checks the root's original pair on a short budget, and a proo
 
 ## Rewrite paths
 
-An unoptimized src and its optimized tgt share few instructions, while consecutive stages of the optimizer share most of theirs. So the path runs through the optimizer's own stages: the searcher runs `default<O3>` on the src through `llops opt pipeline`, which keeps the program after each pass that changed it, and steps the src toward each stage before stepping it toward the tgt. A stage is only a hint: a step toward it that alive2 refuses is dropped, and the last stage need not equal the tgt.
+An unoptimized src and its optimized tgt share few instructions, while consecutive stages of the optimizer share most of theirs. So the path runs through the optimizer's own stages: the searcher runs `default<O3>` on the src through `llops opt pipeline`, which keeps the program after each pass that changed it, and steps the src toward each stage up to the last one closest to the tgt, before stepping it toward the tgt. A stage is only a hint: a step toward it that alive2 refuses is dropped, no stage is walked when every one is farther than the src, and the closest need not equal the tgt.
 
 A step toward a program goes region by region. The diff (`regions.ts`) matches the blocks of the two bodies by their contents and then the instructions inside each pair of matched blocks, each time as a longest common subsequence of `number`'s forms. Differences next to each other form a region. Regions are stepped from the last to the first, so that no step moves a region still to come.
 
