@@ -55,6 +55,25 @@ const limits = { ...DEFAULT_LIMITS, rootMs: 2_000, stages: false };
 /** An answer alive2 can give. */
 type Outcome = CheckResult["outcome"];
 
+/**
+ * A pair whose tgt's nuw needs m >= a, which the umax gives before a cut at the
+ * division and no analysis states; the callee's counterexample asks for it.
+ */
+const UMAX = `define i32 @f(i32 noundef %a, i32 noundef %c, i32 noundef %d) {
+entry:
+  %m = call i32 @llvm.umax.i32(i32 %a, i32 %c)
+  %q = udiv i32 %d, %m
+  br label %next
+
+next:
+  %s = sub i32 %m, %a
+  %r = add i32 %q, %s
+  ret i32 %r
+}
+
+declare i32 @llvm.umax.i32(i32, i32)
+`;
+
 /** A stand-in that answers each check with what `outcome` says of its src. */
 function answering(outcome: (src: string, asked: number) => Outcome): Checker {
   let asked = 0;
@@ -279,22 +298,6 @@ describe.skipIf(!solving)("search with alive-tv", () => {
   );
 
   test("strengthens the cut of a refuted callee against its counterexample", async () => {
-    // The tgt's nuw needs m >= a, which the umax gives before the cut and no
-    // analysis states; the callee's counterexample, with m < a, asks for it.
-    const src = `define i32 @f(i32 noundef %a, i32 noundef %c, i32 noundef %d) {
-entry:
-  %m = call i32 @llvm.umax.i32(i32 %a, i32 %c)
-  %q = udiv i32 %d, %m
-  br label %next
-
-next:
-  %s = sub i32 %m, %a
-  %r = add i32 %q, %s
-  ret i32 %r
-}
-
-declare i32 @llvm.umax.i32(i32, i32)
-`;
     // The whole function gets no answer, as a large one would.
     const silent = answering(() => "unknown");
     const large: Checker = {
@@ -303,9 +306,26 @@ declare i32 @llvm.umax.i32(i32, i32)
           ? silent.check(src, tgt, options)
           : aliveTv.check(src, tgt, options),
     };
-    const session = await start(src, src.replace("sub i32", "sub nuw i32"), large);
+    const session = await start(UMAX, UMAX.replace("sub i32", "sub nuw i32"), large);
     expect(await search(session, llops, limits)).toBe("verified");
     expect(moves(session)).not.toContain("unsplit");
+  }, 120_000);
+
+  test("searches again an outer that strengthening its cut reopened", async () => {
+    // An outer holding an assume gets no answer on the short budget, so the
+    // check a strengthen makes of it after it was proved does not prove it again.
+    const silent = answering(() => "unknown");
+    const slow: Checker = {
+      check: (src, tgt, options) => {
+        const whole = src.includes("define i32 @f(") && !src.includes("@outlined");
+        const short = src.includes("@llvm.assume") && (options?.timeoutMs ?? 0) <= 3_000;
+        return whole || (short && src.includes("define i32 @f("))
+          ? silent.check(src, tgt, options)
+          : aliveTv.check(src, tgt, options);
+      },
+    };
+    const session = await start(UMAX, UMAX.replace("sub i32", "sub nuw i32"), slow);
+    expect(await search(session, llops, limits)).toBe("verified");
   }, 120_000);
 
   test.skipIf(!running)(
