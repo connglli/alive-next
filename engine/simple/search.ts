@@ -87,12 +87,24 @@ async function repair(run: Run, agenda: Goal[], g: Goal, detail: string) {
   if (await refuteFrom(run.session, g.gid, detail)) return;
   let cex = detail;
   while (await strengthenAgainst(run.session, g.gid, cex)) {
+    await requeue(run, agenda, g);
     const { outcome, check } = await run.session.check(g.gid);
     if (outcome === "proved") agenda.pop();
     if (outcome !== "refuted") return;
     cex = check.detail;
   }
   await undo(run, agenda, g);
+}
+
+/** Puts the outer of `g`'s cut back below it, when strengthening the cut reopened it. */
+async function requeue(run: Run, agenda: Goal[], g: Goal) {
+  const { session } = run;
+  const { parent } = await session.show(g.gid);
+  for (const gid of parent ? (await session.show(parent)).children : []) {
+    const reopened = (await session.show(gid)).status === "open";
+    if (gid === g.gid || !reopened || agenda.some((queued) => queued.gid === gid)) continue;
+    agenda.splice(agenda.length - 1, 0, { ...goal(run, gid), parent: g.parent });
+  }
 }
 
 /** Undoes the cut that left `g`, since no cut proves a refuted goal; a root stays open. */
