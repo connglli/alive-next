@@ -16,6 +16,8 @@ export interface Limits {
   stages: boolean;
   /** Whether to rewrite the src at all, rather than only cut and check. */
   steps: boolean;
+  /** Whether to step the src by the verified rules where they bring it closer. */
+  rules: boolean;
   /** Whether a step is checked on its window rather than on the whole function. */
   windows: boolean;
   /** Whether refused windows and new cuts get preconditions, and loop cuts invariants. */
@@ -30,6 +32,7 @@ export const DEFAULT_LIMITS: Limits = {
   unfolds: 4,
   stages: true,
   steps: true,
+  rules: true,
   windows: true,
   facts: true,
 };

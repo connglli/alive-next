@@ -16,6 +16,7 @@ const USAGE = `usage: bun run simple [options] <src.ll> <tgt.ll> [<directory>]
       --unfolds <n>       allow n unfolds per loop cut, 4 by default
       --no-stages         do not step through the optimizer's stages
       --no-steps          do not rewrite the src, only cut and check
+      --no-rules          do not step the src by the verified rules
       --no-windows        check each step on the whole function
       --no-preconditions  give windows and cuts no preconditions
       --no-cuts           do not cut
@@ -71,6 +72,7 @@ function parseArgs(args: string[]): Flags {
     else if (arg === "--unfolds") flags.limits.unfolds = readCount(arg, value());
     else if (arg === "--no-stages") flags.limits.stages = false;
     else if (arg === "--no-steps") flags.limits.steps = false;
+    else if (arg === "--no-rules") flags.limits.rules = false;
     else if (arg === "--no-windows") flags.limits.windows = false;
     else if (arg === "--no-preconditions") flags.limits.facts = false;
     else if (arg === "--no-cuts") flags.limits.cuts = 0;

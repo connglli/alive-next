@@ -10,6 +10,7 @@ import { cutBalanced, cutBefore, cutLoop } from "./cuts.ts";
 import type { Limits } from "./limits.ts";
 import { peel } from "./peel.ts";
 import { regions } from "./regions.ts";
+import { stepRules } from "./rewrite.ts";
 import { bodies, bodyOf, stepWindows } from "./windows.ts";
 
 /** What a search may still spend. */
@@ -63,9 +64,12 @@ async function solve(
 ): Promise<string[]> {
   // Strengthening a cut checks its goals again, which may have proved this one.
   if ((await session.show(gid)).status === "proved") return [];
-  const left = limits.steps
+  let left = limits.steps
     ? await stepWindows(session, llops, gid, limits)
     : regions(...(await bodies(session, llops, gid)));
+  const rules = limits.steps && limits.rules && left.length > 0;
+  if (rules && (await stepRules(session, llops, gid)))
+    left = await stepWindows(session, llops, gid, limits);
   if ((await session.check(gid)).outcome === "proved") return [];
   if (budget.cuts <= 0) return [gid];
   // Solves the goals a cut left, except that the one holding a peeled region is not peeled again.

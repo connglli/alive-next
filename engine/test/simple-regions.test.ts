@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { Llops } from "../core/drivers/llops.ts";
 import { countdown } from "../examples/countdown.ts";
 import { peel } from "../examples/peel.ts";
-import { dominates, diff as match, regions } from "../simple/regions.ts";
+import { distance, dominates, diff as match, regions } from "../simple/regions.ts";
 import { pairs } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
@@ -61,6 +61,14 @@ entry:
       "  %n = xor i32 %a, 1\n  %b = mul i32 %a, %x\n",
     );
     expect(shown(await diff(src, tgt))).toEqual(["/1"]);
+  });
+
+  test("the distance counts both sides of every region", async () => {
+    // e2's regions are 1/1, 3,4/3,4 and 5/5.
+    const e2 = pairs.e2;
+    if (!e2) throw new Error("no pair e2");
+    expect(distance(await body(e2.src), await body(e2.tgt))).toBe(8);
+    expect(distance(await body(e2.src), await body(e2.src))).toBe(0);
   });
 
   test("an added block changes only what branches to it", async () => {
