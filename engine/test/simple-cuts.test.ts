@@ -14,6 +14,7 @@ import { timeoutsFrom } from "../core/state/steps.ts";
 import { countdown } from "../examples/countdown.ts";
 import { loop } from "../examples/loop.ts";
 import { rotated } from "../examples/rotated.ts";
+import { scenario } from "../examples/scenarios.ts";
 import { strchr } from "../examples/strchr.ts";
 import { unfold } from "../examples/unfold.ts";
 import { cut, cutBalanced, cutLoop } from "../simple/cuts.ts";
@@ -351,6 +352,16 @@ exit:
     const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
     if (!halves) throw new Error("expected a cut");
     expect(statuses(session, [halves.callee])).toEqual(["proved"]);
+  }, 120_000);
+
+  test("a loop whose tgt exit is entered early is cut at its exits first", async () => {
+    // The tgt peeled the first iteration, behind a guard that also enters the exit.
+    const peeled = scenario("peel");
+    const session = await solved("peeled", peeled.src, peeled.tgt);
+    const exit = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    if (!exit) throw new Error("expected a cut at the exits");
+    expect((await session.check(exit.callee)).outcome).toBe("proved");
+    expect(await cutLoop(session, llops, exit.outer, DEFAULT_LIMITS)).toBeDefined();
   }, 120_000);
 
   test("a rotated loop is cut at its exit, then at its header", async () => {

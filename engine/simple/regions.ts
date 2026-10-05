@@ -165,22 +165,112 @@ function pairing(
     set(block(src, a, move.src), block(tgt, b, move.tgt));
     for (const pair of inside ?? []) set(value(src, pair.src), value(tgt, pair.tgt));
   };
-  const matched = steps.filter((step) => step.inside);
-  matched.forEach(add);
   const [at, bt] = [indexOf(src, a), indexOf(tgt, b)];
+  const stepOf = (s: string, t: string): Step[] => {
+    const [i, j] = [at.get(s), bt.get(t)];
+    if (i === undefined || j === undefined) return [];
+    return [{ move: { src: i, tgt: j }, inside: within(src, tgt, a[i], b[j]) }];
+  };
+  // Loops go first, since blocks that look the same, such as the calls a cut
+  // leaves, can be matched by their contents the wrong way round.
+  const loops = loopsPaired(src, tgt).flatMap(([s, t]) => stepOf(s, t));
+  const [mine, theirs] = [
+    new Set(loops.map(({ move }) => move.src)),
+    new Set(loops.map(({ move }) => move.tgt)),
+  ];
+  const agree = ({ move }: Step) => !mine.has(move.src) && !theirs.has(move.tgt);
+  const matched = [...loops, ...steps.filter((step) => step.inside && agree(step))];
+  matched.forEach(add);
   // Blocks paired through what matched instructions read are matched inside too.
-  for (let more = matched; more.length > 0; ) {
+  for (;;) {
     throughOperands(src, tgt, matched, pairs);
     const done = new Set(matched.map((step) => step.move.src));
-    more = [...pairs].flatMap(([s, t]) => {
-      const [i, j] = [at.get(s), bt.get(t)];
-      if (i === undefined || j === undefined || done.has(i)) return [];
-      return [{ move: { src: i, tgt: j }, inside: within(src, tgt, a[i], b[j]) }];
-    });
+    const more = [...pairs].flatMap(([s, t]) => (done.has(at.get(s)) ? [] : stepOf(s, t)));
+    if (more.length === 0) return pairs;
     more.forEach(add);
     matched.push(...more);
   }
-  return pairs;
+}
+
+/** Loops of two bodies with as many, in order: header with header, lone exit with exit. */
+function loopsPaired(src: Instruction[], tgt: Instruction[]): [string, string][] {
+  const [mine, theirs] = [loopsOf(src), loopsOf(tgt)];
+  if (mine.length !== theirs.length) return [];
+  return mine.flatMap(({ header, exits }, k) => {
+    const other = theirs[k];
+    if (!other) return [];
+    const [exit, otherExit] = [
+      exits.length === 1 && exits[0],
+      other.exits.length === 1 && other.exits[0],
+    ];
+    return exit && otherExit
+      ? [
+          [header, other.header],
+          [exit, otherExit],
+        ]
+      : [[header, other.header]];
+  });
+}
+
+/** Each loop of `body`, outermost first: its header and the blocks it leaves to. */
+function loopsOf(body: Instruction[]) {
+  const next = successors(body);
+  const before = new Map<string, string[]>();
+  for (const [from, tos] of next)
+    for (const to of tos) before.set(to, [...(before.get(to) ?? []), from]);
+  return headers(body).map((header) => {
+    // The loop is what reaches a branch back to its header without passing the header.
+    const inside = new Set([header]);
+    const work = (before.get(header) ?? []).filter((from) => reaches(next, header, from));
+    for (const block of work) {
+      if (inside.has(block)) continue;
+      inside.add(block);
+      work.push(...(before.get(block) ?? []));
+    }
+    const leaves = [...inside].flatMap((block) => next.get(block) ?? []);
+    return { header, exits: [...new Set(leaves.filter((to) => !inside.has(to)))] };
+  });
+}
+
+/** Whether every path from the entry of `body` to `block` passes `over`. */
+export function dominates(body: Instruction[], over: string, block: string): boolean {
+  const next = successors(body);
+  const entry = body[0]?.block;
+  if (entry === over || over === block) return true;
+  const seen = new Set(entry ? [entry] : []);
+  for (const from of seen) {
+    for (const to of next.get(from) ?? []) if (to !== over) seen.add(to);
+  }
+  return !seen.has(block);
+}
+
+/** Whether `to` can be reached from `from`. */
+function reaches(next: Map<string, string[]>, from: string, to: string): boolean {
+  const seen = new Set([from]);
+  for (const block of seen) for (const after of next.get(block) ?? []) seen.add(after);
+  return seen.has(to);
+}
+
+/**
+ * The blocks a branch goes back to, outermost first. Blocks are listed in
+ * reverse postorder, so a branch to a block listed no later than its own is
+ * a loop's back edge.
+ */
+export function headers(body: Instruction[]): string[] {
+  const order = [...new Set(body.map((i) => i.block))];
+  const position = new Map(order.map((block, k) => [block, k]));
+  const found = new Set<string>();
+  for (const i of body)
+    for (const to of i.operands)
+      if ((position.get(to) ?? Infinity) <= (position.get(i.block) ?? -1)) found.add(to);
+  return order.filter((block) => found.has(block));
+}
+
+/** Each block's successors: the blocks its instructions name. */
+export function successors(body: Instruction[]): Map<string, string[]> {
+  const next = new Map(body.map((i) => [i.block, [] as string[]]));
+  for (const i of body) next.get(i.block)?.push(...i.operands.filter((to) => next.has(to)));
+  return next;
 }
 
 /** Each block's position among the blocks of `body`, by name. */
