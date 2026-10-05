@@ -12,6 +12,7 @@ import type { StrengthenContract } from "../core/state/strengthen.ts";
 import { noundefLost, size } from "./facts.ts";
 import { diff, headers, successors } from "./regions.ts";
 import { expressionsAt, type Side } from "./relations.ts";
+import { bodies } from "./windows.ts";
 
 /** The orders a candidate compares two parameters by, each asked both ways round. */
 const ORDERS = ["ule", "ult", "sle", "slt"] as const;
@@ -33,25 +34,29 @@ export function loopCut(src: Instruction[], tgt: Instruction[]) {
   return mine ? ([mine, first] as const) : undefined;
 }
 
-/** Unfolds loop cut `split`'s iteration on the side its counters say runs fewer. */
-export async function unfoldIterations(
+/** Unfolds loop cut `split` where its counters say one side runs behind the other. */
+export async function unfoldToMatch(
   session: Session,
   llops: Llops,
   split: Extract<SplitResult, { kind: "split" }>,
   sides: Side[],
 ) {
-  const [mine = [], theirs = []] = await Promise.all(sides.map((s) => stepsAt(llops, s)));
-  const ratios = mine.flatMap((step, k) => {
-    const other = theirs[k];
-    return step && other ? [ratio(step, other)] : [];
-  });
-  const [r = 0, ...rest] = new Set(ratios);
-  // Each unfold doubles the iterations an iteration runs, so only a power of two matches.
-  const times = rest.length > 0 ? 0 : Math.log2(Math.abs(r));
-  if (!Number.isInteger(times)) return;
-  const side = r > 0 ? "src" : "tgt";
-  for (let n = 0; n < times; n++)
-    if ((await session.unfold(split.children.callee, side)).kind !== "certified") return;
+  const counters = await Promise.all(sides.map((side) => countersAt(llops, side)));
+  const [mine = [], theirs = []] = counters;
+  const { outer, callee } = split.children;
+  // Each unfold of an iteration doubles what it runs, so only a power of two matches.
+  const [r = 0, ...ratios] = agreeing(mine, theirs, (a, b) => ratio(a.step, b.step));
+  const doublings = Math.log2(Math.abs(r));
+  if (ratios.length === 0 && Number.isInteger(doublings))
+    for (let n = 0; n < doublings; n++)
+      if (!(await unfolded(session, callee, r > 0 ? "src" : "tgt"))) return;
+  // Each unfold of an outer runs one more iteration before the loop, as peeling does.
+  const [d = 0, ...gaps] = agreeing(mine, theirs, behind);
+  const side = d > 0 ? "src" : "tgt";
+  for (let n = 0; gaps.length === 0 && n < Math.abs(d); n++) {
+    if (!(await smaller(session, llops, outer, side))) return;
+    if (!(await unfolded(session, outer, side))) return;
+  }
 }
 
 /** Strengthens loop cut `gid` with the inductive part of `candidates`. */
@@ -108,14 +113,55 @@ function entryFirst(body: Instruction[], block: string, seen = new Set<string>()
   return entryFirst(body, entry, seen.add(block));
 }
 
-/** Each parameter's step per iteration of `side`'s loop, where it counts them. */
-async function stepsAt(llops: Llops, side: Side): Promise<(bigint | undefined)[]> {
+/** A counter of a loop: its step per iteration, and its start where that is a constant. */
+interface Counter {
+  start?: bigint;
+  step: bigint;
+}
+
+/** Each parameter on `side` as a counter of its loop, where it is one. */
+async function countersAt(llops: Llops, side: Side): Promise<(Counter | undefined)[]> {
   return (await expressionsAt(llops, side)).map((tree) => {
     const ofLoop = tree?.op === "addrec" && tree.loop === side.loop;
-    const [, step, ...more] = ofLoop ? (tree?.operands ?? []) : [];
-    const constant = step?.op === "const" && more.length === 0;
-    return constant && step?.value ? BigInt(step.value) : undefined;
+    const [start, step, ...more] = ofLoop ? (tree?.operands ?? []) : [];
+    const counts = step?.op === "const" && step.value && step.value !== "0" && !more.length;
+    if (!counts || !step?.value) return undefined;
+    const fixed = start?.op === "const" && start.value ? BigInt(start.value) : undefined;
+    return { start: fixed, step: BigInt(step.value) };
   });
+}
+
+/** The distinct values `of` gives the parameters that count on both sides. */
+function agreeing(
+  mine: (Counter | undefined)[],
+  theirs: (Counter | undefined)[],
+  of: (src: Counter, tgt: Counter) => number | undefined,
+): number[] {
+  const values = mine.flatMap((a, k) => {
+    const b = theirs[k];
+    const value = a && b ? of(a, b) : undefined;
+    return value === undefined ? [] : [value];
+  });
+  return [...new Set(values)];
+}
+
+/** How many steps ahead the tgt's counter starts, when its step equals the src's. */
+function behind(src: Counter, tgt: Counter): number | undefined {
+  const starts = src.start !== undefined && tgt.start !== undefined;
+  if (!starts || src.step !== tgt.step) return undefined;
+  const gap = (tgt.start ?? 0n) - (src.start ?? 0n);
+  return gap % src.step === 0n ? Number(gap / src.step) : undefined;
+}
+
+/** Whether `side` of goal `gid` holds fewer instructions than the other side. */
+async function smaller(session: Session, llops: Llops, gid: string, side: "src" | "tgt") {
+  const [src, tgt] = await bodies(session, llops, gid);
+  return side === "src" ? src.length < tgt.length : tgt.length < src.length;
+}
+
+/** Whether an unfold of `side` of goal `gid` landed. */
+async function unfolded(session: Session, gid: string, side: "src" | "tgt") {
+  return (await session.unfold(gid, side)).kind === "certified";
 }
 
 /** How many src iterations one tgt iteration runs, as k or as -k when the reverse, or 0. */
