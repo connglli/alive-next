@@ -17,7 +17,7 @@ import { rotated } from "../examples/rotated.ts";
 import { scenario } from "../examples/scenarios.ts";
 import { strchr } from "../examples/strchr.ts";
 import { unfold } from "../examples/unfold.ts";
-import { cut, cutBalanced, cutLoop } from "../simple/cuts.ts";
+import { cut, cutBalanced, cutBefore, cutLoop } from "../simple/cuts.ts";
 import { strengthenCut } from "../simple/facts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { strengthenLoop } from "../simple/loops.ts";
@@ -384,6 +384,17 @@ exit:
       if (!header) throw new Error("expected cuts at the exits and the headers");
       expect((await session.check(header.outer)).outcome).toBe(outcome);
     }
+  }, 240_000);
+
+  test("a cut before a load gives it one address on both sides", async () => {
+    // The tgt loads from a + off where the src loads from a + 4 * i.
+    const pair = scenario("offset");
+    const session = await solved("load", pair.src, pair.tgt);
+    const loop = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    const halves = loop && (await cutBefore(session, llops, loop.callee, DEFAULT_LIMITS));
+    if (!halves) throw new Error("expected a cut before the load");
+    for (const gid of [halves.outer, halves.callee])
+      expect((await session.check(gid)).outcome).toBe("proved");
   }, 240_000);
 
   test("a rotated loop is cut at its exit, then at its header", async () => {

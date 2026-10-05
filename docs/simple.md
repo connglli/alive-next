@@ -9,7 +9,7 @@ A proof has three parts, and the searcher searches for each: a rewrite path, the
 | Part | The framework allows | The searcher tries | It does not try |
 | --- | --- | --- | --- |
 | Rewrite path | steps on either side, by transactions or rules, and reverts | src steps through the optimizer's stages to the tgt, region by region | tgt steps, rules, reverts |
-| Cuts and preconditions | cuts wherever both sides agree, with facts or predicates on the new parameters | a loop header, a region's boundaries, balanced points; the analyses' facts on the inputs of a window or a cut | relations that are not linear, undoing a cut |
+| Cuts and preconditions | cuts wherever both sides agree, with facts or predicates on the new parameters | a loop header, an expensive operation, a region's boundaries, balanced points; the analyses' facts on the inputs of a window or a cut | relations that are not linear, undoing a cut |
 | Loops and invariants | cuts at a header or an exit, unfolding, invariants | the first header, where the diff matched one; invariants by Houdini | invariants of other forms |
 
 The searcher first checks the root's original pair on a short budget, and a proof or a refutation there ends the run. Otherwise it steps the root's src along a rewrite path and checks each goal: identical sides are proved at once, other sides are asked of alive2 on the default budget, and a pair that loops is never proved by a check. A goal that does not close is cut while cuts remain, and the goals a cut leaves are searched in the same way. A search that ends with open goals gives up and names them.
@@ -31,8 +31,9 @@ Every step is on the src side, since putting the tgt's region into the src asks 
 A goal that does not close is cut at the first of these that the framework accepts:
 
 * Its first loop header, as the next section says.
+* Just before the last expensive operation both sides apply, so that it reads the same operands on both: a multiplication of two variables, a division, a remainder, a load, or a store. Calls do not count, since every cut adds one.
 * Around the first region its steps left, whether no window could hold the region or alive2 refused its windows. The goal is cut after the region and then at its head, or at its block when it starts with a phi, so that the region stands in a goal of its own. That goal is not cut around a region again.
-* Where both sides agree and its multiplications, divisions, remainders, loads, and stores split most evenly between the two halves, trying the three most even points. Calls do not count, since every cut adds one.
+* Where both sides agree and its expensive operations split most evenly between the two halves, trying the three most even points.
 
 A cut passes each crossing value as its tgt partner, and a tgt value the src lacks rebuilt from partners; one it cannot pass makes the cut fail. The searcher never undoes a cut: a goal that a check refutes is cut further, like a goal the check does not decide.
 

@@ -4,8 +4,9 @@
 // hold. A cut at the header of a loop leaves one iteration, whose back edge
 // calls the hypothesis, so the goals it leaves prove by induction, and it is
 // strengthened with the invariants Houdini finds among those facts and some
-// guesses. A balanced cut splits a goal's expensive operations between its
-// halves, so each half asks alive2 a smaller question.
+// guesses. A cut before an expensive operation hands it the same operands on
+// both sides, and a balanced cut splits a goal's expensive operations between
+// its halves.
 import type { Instruction, Llops, OutlineParam } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { SplitResult } from "../core/state/splits.ts";
@@ -36,6 +37,12 @@ const EXPENSIVE = new Set([
 
 /** How many candidate points a balanced cut tries before it gives up. */
 const TRIES = 3;
+
+/** Whether `i` is one of those operations, a multiplication only when both factors vary. */
+function expensive(i?: Instruction): boolean {
+  if (!i || !EXPENSIVE.has(i.opcode)) return false;
+  return i.opcode !== "mul" || i.operands.every((operand) => operand.startsWith("%"));
+}
 
 /** One cut of goal `gid`, or nothing when the framework refuses it or a value has no match. */
 export async function cut(
@@ -142,13 +149,37 @@ export async function cutLoop(session: Session, llops: Llops, gid: string, limit
 }
 
 /**
+ * Cuts goal `gid` just before the last expensive operation both sides apply,
+ * so that it reads the same operands, parameters of the callee, on both.
+ */
+export async function cutBefore(session: Session, llops: Llops, gid: string, limits: Limits) {
+  const [src, tgt] = await bodies(session, llops, gid);
+  const { regions, pairs } = diff(src, tgt);
+  // Instructions both sides apply: partners outside the regions, or values the diff pairs.
+  const shared = new Map(partners(src, tgt, regions));
+  const at = new Map(tgt.flatMap((i, j) => (i.value ? [[i.value, j] as const] : [])));
+  src.forEach((i, k) => {
+    const j = at.get(pairs.get(i.value ?? "") ?? "");
+    if (j !== undefined) shared.set(k, j);
+  });
+  const points = [...shared]
+    .filter(([i, j]) => i > 0 && expensive(src[i]) && src[i]?.opcode === tgt[j]?.opcode)
+    .sort(([a], [b]) => b - a);
+  for (const [i, j] of points.slice(0, TRIES)) {
+    const halves = await cut(session, llops, gid, limits, `#${i}`, `#${j}`);
+    if (halves) return halves;
+  }
+  return undefined;
+}
+
+/**
  * Cuts goal `gid` where both sides agree and its expensive operations split
  * most evenly, leaving at least one in each half.
  */
 export async function cutBalanced(session: Session, llops: Llops, gid: string, limits: Limits) {
   const [src, tgt] = await bodies(session, llops, gid);
   const { regions } = diff(src, tgt);
-  const before = (k: number) => src.slice(0, k).filter((i) => EXPENSIVE.has(i.opcode)).length;
+  const before = (k: number) => src.slice(0, k).filter((i) => expensive(i)).length;
   const total = before(src.length);
   const points = [...partners(src, tgt, regions)]
     .filter(([i, j]) => i > 0 && j >= 0 && !src[i]?.phi && !tgt[j]?.phi)

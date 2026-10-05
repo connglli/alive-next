@@ -101,7 +101,8 @@ describe.skipIf(!built)("search", () => {
       stub(() => false),
     );
     expect(await search(session, llops, limits)).toBe("unknown");
-    expect(moves(session).filter((move) => move === "split")).toHaveLength(2);
+    // A cut before the multiplication, then the peel's two in what precedes it.
+    expect(moves(session).filter((move) => move === "split")).toHaveLength(3);
     expect(moves(session).at(-1)).toBe("give_up");
   });
 
