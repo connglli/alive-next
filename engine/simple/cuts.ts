@@ -35,7 +35,7 @@ const EXPENSIVE = new Set([
   "store",
 ]);
 
-/** How many candidate points a balanced cut tries before it gives up. */
+/** How many points a cut before an expensive operation or a balanced cut tries. */
 const TRIES = 3;
 
 /** Whether `i` is one of those operations, a multiplication only when both factors vary. */
@@ -149,11 +149,10 @@ export async function cutLoop(session: Session, llops: Llops, gid: string, limit
 }
 
 /**
- * Cuts goal `gid` just before the last expensive operation both sides apply,
- * so that it reads the same operands, parameters of the callee, on both.
+ * Where to cut just before the last expensive operations both sides apply,
+ * latest first, so that each reads the same operands, parameters of the callee.
  */
-export async function cutBefore(session: Session, llops: Llops, gid: string, limits: Limits) {
-  const [src, tgt] = await bodies(session, llops, gid);
+export function beforePoints(src: Instruction[], tgt: Instruction[]): [string, string][] {
   const { regions, pairs } = diff(src, tgt);
   // Instructions both sides apply: partners outside the regions, or values the diff pairs.
   const shared = new Map(partners(src, tgt, regions));
@@ -162,33 +161,26 @@ export async function cutBefore(session: Session, llops: Llops, gid: string, lim
     const j = at.get(pairs.get(i.value ?? "") ?? "");
     if (j !== undefined) shared.set(k, j);
   });
-  const points = [...shared]
+  return [...shared]
     .filter(([i, j]) => i > 0 && expensive(src[i]) && src[i]?.opcode === tgt[j]?.opcode)
-    .sort(([a], [b]) => b - a);
-  for (const [i, j] of points.slice(0, TRIES)) {
-    const halves = await cut(session, llops, gid, limits, `#${i}`, `#${j}`);
-    if (halves) return halves;
-  }
-  return undefined;
+    .sort(([a], [b]) => b - a)
+    .slice(0, TRIES)
+    .map(([i, j]) => [`#${i}`, `#${j}`]);
 }
 
 /**
- * Cuts goal `gid` where both sides agree and its expensive operations split
- * most evenly, leaving at least one in each half.
+ * Where both sides agree and their expensive operations split most evenly,
+ * most even first, leaving at least one in each half.
  */
-export async function cutBalanced(session: Session, llops: Llops, gid: string, limits: Limits) {
-  const [src, tgt] = await bodies(session, llops, gid);
+export function balancedPoints(src: Instruction[], tgt: Instruction[]): [string, string][] {
   const { regions } = diff(src, tgt);
   const before = (k: number) => src.slice(0, k).filter((i) => expensive(i)).length;
   const total = before(src.length);
-  const points = [...partners(src, tgt, regions)]
+  return [...partners(src, tgt, regions)]
     .filter(([i, j]) => i > 0 && j >= 0 && !src[i]?.phi && !tgt[j]?.phi)
     .map(([i, j]) => ({ i, j, gap: Math.abs(total - 2 * before(i)), split: before(i) }))
     .filter((point) => point.split > 0 && point.split < total)
-    .sort((a, b) => a.gap - b.gap);
-  for (const point of points.slice(0, TRIES)) {
-    const halves = await cut(session, llops, gid, limits, `#${point.i}`, `#${point.j}`);
-    if (halves) return halves;
-  }
-  return undefined;
+    .sort((a, b) => a.gap - b.gap)
+    .slice(0, TRIES)
+    .map(({ i, j }) => [`#${i}`, `#${j}`]);
 }

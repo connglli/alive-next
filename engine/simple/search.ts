@@ -6,7 +6,7 @@
 // next. Every move is a session move, so whatever it proves, the kernel replays.
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
-import { cutBalanced, cutBefore, cutLoop } from "./cuts.ts";
+import { balancedPoints, beforePoints, cut, cutLoop } from "./cuts.ts";
 import type { Limits } from "./limits.ts";
 import { peel } from "./peel.ts";
 import { regions } from "./regions.ts";
@@ -26,15 +26,22 @@ interface Goal {
   gid: string;
   moves: AsyncGenerator<Move>;
   cut?: boolean;
+  /** The goal whose cut left this one. */
+  parent?: Goal;
 }
 
 /** One move on a goal, made when the search picks it. */
 type Move = () => Promise<Answer>;
 
-/** What a move came to: a proof, a cut into goals to search, or neither. */
-type Answer = { kind: "proved" } | { kind: "cut"; goals: Goal[] } | { kind: "none" };
+/** What a move came to: a proof, a refutation, a cut into goals to search, or none. */
+type Answer =
+  | { kind: "proved" }
+  | { kind: "refuted" }
+  | { kind: "cut"; goals: Goal[] }
+  | { kind: "none" };
 
 const PROVED: Answer = { kind: "proved" };
+const REFUTED: Answer = { kind: "refuted" };
 const NONE: Answer = { kind: "none" };
 
 /** Searches for a proof of the root goal, giving up with the goals left open if it finds none. */
@@ -43,30 +50,46 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   if ((await session.check(root, limits.rootMs)).outcome !== "unknown") return session.verdict;
   const run: Run = { session, llops, limits, cuts: limits.cuts };
   const agenda = [goal(run, root, { stages: true })];
-  const open: string[] = [];
-  while (agenda.length > 0) {
+  // A check of the root's original pair may decide the run on the way.
+  while (agenda.length > 0 && session.verdict === "unknown") {
     const top = agenda[agenda.length - 1] as Goal;
     // A goal a cut landed on is done once the goals it left, above it, are.
     const next = top.cut ? undefined : await top.moves.next();
-    if (next && !next.done) {
-      learn(run, agenda, await next.value());
-      continue;
-    }
-    agenda.pop();
-    if (!top.cut) open.push(top.gid);
+    if (next && !next.done) await learn(run, agenda, await next.value());
+    else agenda.pop();
   }
-  if (open.length > 0) await session.giveUp(`no move closed ${open.join(", ")}`);
+  if (session.verdict === "unknown") {
+    const open = (await session.status()).goals.filter((g) => g.status === "open");
+    await session.giveUp(`no move closed ${open.map((g) => g.gid).join(", ")}`);
+  }
   return session.verdict;
 }
 
-/** Acts on the top goal's answer: a proof closes it, and a cut stacks the goals it left. */
-function learn(run: Run, agenda: Goal[], answer: Answer) {
+/** Acts on the top goal's answer: a proof closes it, a refutation undoes, a cut stacks. */
+async function learn(run: Run, agenda: Goal[], answer: Answer) {
   const top = agenda[agenda.length - 1] as Goal;
   if (answer.kind === "proved") agenda.pop();
+  if (answer.kind === "refuted") await undo(run, agenda, top);
   if (answer.kind !== "cut") return;
   top.cut = true;
   run.cuts -= 1;
+  for (const left of answer.goals) left.parent = top;
   agenda.push(...[...answer.goals].reverse());
+}
+
+/**
+ * Undoes the cut that left refuted goal `g`, since cutting a refuted goal
+ * further can never prove it, and its parent goes on to its next move. A goal
+ * no cut left stays open.
+ */
+async function undo(run: Run, agenda: Goal[], g: Goal) {
+  const parent = g.parent;
+  if (!parent || (await run.session.unsplit(parent.gid)).kind !== "unsplit") {
+    agenda.pop();
+    return;
+  }
+  agenda.length = agenda.indexOf(parent) + 1;
+  parent.cut = false;
 }
 
 /** Goal `gid` with its moves: stages for the root only, and no peel of a peeled region. */
@@ -83,12 +106,17 @@ async function* moves(run: Run, gid: string, stages: boolean, peelable: boolean)
   yield async () => ((await session.show(gid)).status === "proved" ? PROVED : NONE);
   if (limits.steps) yield stepping(() => stepWindows(session, llops, gid, limits));
   if (limits.steps && limits.rules) yield stepping(() => stepByRules(run, gid));
-  yield async () => ((await session.check(gid)).outcome === "proved" ? PROVED : NONE);
-  if (run.cuts <= 0) return;
+  yield async () => {
+    const { outcome } = await session.check(gid);
+    return outcome === "proved" ? PROVED : outcome === "refuted" ? REFUTED : NONE;
+  };
+  const [src, tgt] = await bodies(session, llops, gid);
+  const at = (point: [string, string]) =>
+    halves(run, () => cut(session, llops, gid, limits, ...point));
   yield halves(run, () => cutLoop(session, llops, gid, limits));
-  yield halves(run, () => cutBefore(session, llops, gid, limits));
+  for (const point of beforePoints(src, tgt)) yield at(point);
   if (peelable) yield peeled(run, gid);
-  yield halves(run, () => cutBalanced(session, llops, gid, limits));
+  for (const point of balancedPoints(src, tgt)) yield at(point);
 }
 
 /** A move that steps a goal, which leaves it to the moves after. */
@@ -99,10 +127,10 @@ function stepping(step: () => Promise<unknown>): Move {
   };
 }
 
-/** A move that cuts a goal in two, answering with the halves. */
-function halves(run: Run, cut: () => ReturnType<typeof cutLoop>): Move {
+/** A move that cuts a goal in two while cuts remain, answering with the halves. */
+function halves(run: Run, cutting: () => ReturnType<typeof cutLoop>): Move {
   return async () => {
-    const made = await cut();
+    const made = run.cuts > 0 && (await cutting());
     if (!made) return NONE;
     return { kind: "cut", goals: [goal(run, made.outer), goal(run, made.callee)] };
   };
@@ -112,6 +140,7 @@ function halves(run: Run, cut: () => ReturnType<typeof cutLoop>): Move {
 function peeled(run: Run, gid: string): Move {
   return async () => {
     const { session, llops, limits } = run;
+    if (run.cuts <= 0) return NONE;
     const [region] = regions(...(await bodies(session, llops, gid)));
     const made = region && (await peel(session, llops, gid, limits, region));
     if (!made || made.goals.length < 2) return NONE;

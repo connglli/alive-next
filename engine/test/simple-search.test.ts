@@ -44,14 +44,16 @@ const rewriting =
 
 const limits = { ...DEFAULT_LIMITS, rootMs: 2_000, stages: false };
 
-/** A stand-in that answers `correct` where `proves` says so, and settles nothing else. */
-function stub(proves: (src: string, asked: number) => boolean): Checker {
+/** An answer alive2 can give. */
+type Outcome = CheckResult["outcome"];
+
+/** A stand-in that answers each check with what `outcome` says of its src. */
+function answering(outcome: (src: string, asked: number) => Outcome): Checker {
   let asked = 0;
   return {
     async check(src): Promise<CheckResult> {
-      const outcome = proves(src, asked++) ? "correct" : "unknown";
       return {
-        outcome,
+        outcome: outcome(src, asked++),
         detail: "",
         invocation: { binary: "stub", flags: [], timeoutMs: 0 },
         stdout: "",
@@ -59,6 +61,11 @@ function stub(proves: (src: string, asked: number) => boolean): Checker {
       };
     },
   };
+}
+
+/** A stand-in that answers `correct` where `proves` says so, and settles nothing else. */
+function stub(proves: (src: string, asked: number) => boolean): Checker {
+  return answering((src, asked) => (proves(src, asked) ? "correct" : "unknown"));
 }
 
 let dir: string;
@@ -135,6 +142,30 @@ describe.skipIf(!built)("search", () => {
     // A cut before the multiplication, then the peel's two in what precedes it.
     expect(moves(session).filter((move) => move === "split")).toHaveLength(3);
     expect(moves(session).at(-1)).toBe("give_up");
+  });
+
+  test("undoes the cut that left a refuted goal and cuts at the next point", async () => {
+    const src = `define i32 @f(i32 %a, i32 %b, i32 %c) {
+entry:
+  %a1 = add i32 %a, 1
+  %x = udiv i32 %a1, %b
+  %y = udiv i32 %x, %c
+  %r = add nuw i32 %y, 1
+  ret i32 %r
+}
+`;
+    // A callee that divides once, cut before the second division, is refuted,
+    // and one that divides twice is proved; so is every outer, which calls it.
+    const checker = answering((text) => {
+      if (text.includes("@outlined_window")) return "unknown";
+      const calls = text.includes("call");
+      if (text.includes("define i32 @f(")) return calls ? "correct" : "unknown";
+      return text.split("udiv").length === 2 ? "incorrect" : "correct";
+    });
+    const session = await start(src, src.replace("add nuw", "add"), checker);
+    expect(await search(session, llops, limits)).toBe("verified");
+    expect(moves(session).filter((move) => move === "split")).toHaveLength(2);
+    expect(moves(session)).toContain("unsplit");
   });
 
   test("walks the src through the optimizer's stages", async () => {
