@@ -93,7 +93,12 @@ export interface OutlineParam {
   param: Ref;
   type: string;
   live: Ref;
+  /** The tgt value this parameter passes, when only the tgt has it and `live` is poison. */
+  tgt?: Ref;
 }
+
+/** An entry of the `params` outline and detach take: the value passed and its type. */
+export type ParamSpec = Pick<OutlineParam, "live" | "type">;
 
 export interface OutlineResult {
   outer: Module;
@@ -253,7 +258,7 @@ export class Llops {
     module: Module,
     cut: Ref,
     callee: string,
-    params?: OutlineParam[],
+    params?: ParamSpec[],
   ): Promise<LlopsResult<OutlineResult>> {
     return this.run("outline", { module, side: "src", cut, callee, ...(params ? { params } : {}) });
   }
@@ -263,7 +268,7 @@ export class Llops {
     module: Module,
     cut: Ref,
     callee: string,
-    params: OutlineParam[],
+    params: ParamSpec[],
     valueMap: Record<Ref, Ref>,
   ): Promise<LlopsResult<OutlineResult>> {
     return this.run("outline", {
@@ -281,7 +286,7 @@ export class Llops {
     module: Module,
     block: Ref,
     callee: string,
-    params?: OutlineParam[],
+    params?: ParamSpec[],
   ): Promise<LlopsResult<DetachResult>> {
     return this.run("detach", {
       module,
@@ -297,7 +302,7 @@ export class Llops {
     module: Module,
     block: Ref,
     callee: string,
-    params: OutlineParam[],
+    params: ParamSpec[],
     valueMap: Record<Ref, Ref>,
   ): Promise<LlopsResult<DetachResult>> {
     return this.run("detach", { module, side: "tgt", block, callee, params, value_map: valueMap });

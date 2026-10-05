@@ -159,7 +159,7 @@ The tgt side is cut against that same signature, with a value map naming the tgt
   "value_map": { "%3": "%prod" } }
 ```
 
-Both sides answer with the same `params`, so a caller can compare them. A tgt value with no src counterpart goes in the map under a key that is not a src value; the signature gains an entry for it with `"live": "poison"`, and the src, cut again with that signature as `params`, passes `poison` there. The outer alive2 check settles whether the map is right. outline checks only structure: every live value is covered, and every mapped value is in scope at the cut and has the signature's type.
+Both sides answer with the same `params`, so a caller can compare them. A tgt value with no src counterpart goes in the map under a key that is not a src value; the signature gains an entry for it with `"live": "poison"` and the tgt value as `"tgt"`, and the src, cut again with that signature as `params`, passes `poison` there. The outer alive2 check settles whether the map is right. outline checks only structure: every live value is covered, and every mapped value is in scope at the cut and has the signature's type.
 
 The callee is declared with no attributes. An attribute is an assumption the call site has to honour, so adding one is a proof obligation that belongs to the strengthen flow rather than to the cut.
 

@@ -1694,6 +1694,7 @@ class TestDetach(Case):
     live = {p["live"]: p["live"] for p in s["params"]}
     t = self.good(self.detach(tgt, "%loop", "k", params=s["params"], value_map={**live, "k": "%k"}))
     self.assertEqual([p["live"] for p in t["params"]], ["%i", "%acc", "%n", "poison"])
+    self.assertEqual(t["params"][3]["tgt"], "%k")
     self.assertEqual(t["phis"], [0, 1, 3])
     request = {"module": src, "side": "src", "block": "%loop", "callee": "k", "params": t["params"]}
     again = self.good(run("detach", request))

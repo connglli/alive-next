@@ -181,7 +181,9 @@ bool tgtParams(llvm::json::Object &args, llvm::Function &F, ValueRefs &refs, con
   for (llvm::Value *v : want)
     if (llvm::is_contained(only, v)) {
       params.push_back(v);
-      info.push_back(llvm::json::Object{{"type", typeText(*v)}, {"live", "poison"}});
+      llvm::json::Object entry{{"type", typeText(*v)}, {"live", "poison"}};
+      entry["tgt"] = refs.print(*v);
+      info.push_back(std::move(entry));
     }
   for (llvm::Value *v : want)
     if (!llvm::is_contained(params, v)) {
