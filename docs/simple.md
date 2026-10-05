@@ -22,7 +22,7 @@ A step toward a program goes region by region. The diff (`regions.ts`) matches t
 
 A region becomes a step through the `splice` edit: a copy of the tgt's code replaces the region in the src. The copy reads the src partners of the values it reads, and the src's later uses read the partners of the values they used, both as the diff pairs them. The commit names the region as its window and does not ask the whole function. A region with one empty side, such as a deleted instruction, takes the shared instruction next to it, so that both windows hold something. A region with a phi or a terminator fits no window and is left to a cut.
 
-When alive2 refuses a window, the searcher grows it backward over the instructions that define the values either side reads, and then tries it with preconditions. For a stage that its windows leave unfinished, it tries one step of the whole function to that stage, which the framework refuses for a program that loops.
+When alive2 refuses a window, the searcher grows it backward over the instructions that define the values either side reads, and then tries it with preconditions. For a stage that its windows leave unfinished, it tries one step of the whole function to that stage, until alive2 cannot decide one.
 
 Every step is on the src side, since putting the tgt's region into the src asks alive2 about the same two windows as putting the src's region into the tgt. A verified rule rewrites wherever it matches rather than toward a program, so the searcher applies all the rules to a goal its windows left open only when that leaves fewer instructions in the regions, and then steps the windows again. It keeps every step alive2 certifies and reverts none.
 

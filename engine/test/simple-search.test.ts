@@ -88,14 +88,28 @@ function start(
   });
 }
 
-/** The tools the run called, in order. */
-function moves(session: Session): string[] {
+/** The tools the run called, in order, with what each was asked. */
+function calls(session: Session): { tool: string; args: Record<string, unknown> }[] {
   const lines = readFileSync(join(session.dir, "trajectory.jsonl"), "utf8").split("\n");
   return lines.filter(Boolean).flatMap((line) => {
     const entry = JSON.parse(line);
-    return entry.kind === "tool_call" ? [entry.tool] : [];
+    return entry.kind === "tool_call" ? [entry] : [];
   });
 }
+
+/** The tools the run called, in order. */
+const moves = (session: Session) => calls(session).map((call) => call.tool);
+
+/** A src the optimizer first takes out of memory, and then rewrites. */
+const SPILLED = `define i32 @f(i32 noundef %x) {
+entry:
+  %x.addr = alloca i32, align 4
+  store i32 %x, ptr %x.addr, align 4
+  %0 = load i32, ptr %x.addr, align 4
+  %mul = mul nsw i32 %0, 8
+  ret i32 %mul
+}
+`;
 
 describe.skipIf(!built)("search", () => {
   test("proves a pair through its windows", async () => {
@@ -124,26 +138,31 @@ describe.skipIf(!built)("search", () => {
   });
 
   test("walks the src through the optimizer's stages", async () => {
-    const src = `define i32 @f(i32 noundef %x) {
-entry:
-  %x.addr = alloca i32, align 4
-  store i32 %x, ptr %x.addr, align 4
-  %0 = load i32, ptr %x.addr, align 4
-  %mul = mul nsw i32 %0, 8
-  ret i32 %mul
-}
-`;
-    const stages = await llops.pipelineStages(src);
+    const stages = await llops.pipelineStages(SPILLED);
     if (!stages.ok) throw new Error(stages.message);
-    const tgt = stages.stages.at(-1)?.module ?? src;
+    const tgt = stages.stages.at(-1)?.module ?? SPILLED;
     // Everything but the first question, the root's, is proved.
     const session = await start(
-      src,
+      SPILLED,
       tgt,
       stub((_, asked) => asked > 0),
     );
     expect(await search(session, llops, { ...limits, stages: true })).toBe("verified");
     expect(moves(session).filter((move) => move === "tx_commit").length).toBeGreaterThan(0);
+  });
+
+  test("stops jumping to the stages once alive2 cannot decide a jump", async () => {
+    const stages = await llops.pipelineStages(SPILLED);
+    if (!stages.ok) throw new Error(stages.message);
+    const tgt = stages.stages.at(-1)?.module ?? SPILLED;
+    const session = await start(
+      SPILLED,
+      tgt,
+      stub(() => false),
+    );
+    await search(session, llops, { ...limits, stages: true, cuts: 0 });
+    const jumps = calls(session).filter((call) => call.args.op === "set_body");
+    expect(jumps).toHaveLength(1);
   });
 });
 
