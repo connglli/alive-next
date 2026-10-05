@@ -32,18 +32,24 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
 /** Steps the root's src through the stages the optimizer makes of it, toward its tgt. */
 async function followStages(session: Session, llops: Llops, root: string, limits: Limits) {
   const { src, tgt } = await session.show(root);
+  // A later stage holds this one's changes, so a jump alive2 cannot decide ends the jumps.
+  let jumping = true;
   for (const stage of await stagesToward(llops, src.text, tgt.text)) {
     const left = await stepWindows(session, llops, root, limits, stage);
-    if (left.length > 0) await jump(session, root, stage);
+    if (!jumping || left.length === 0) continue;
+    jumping = (await jump(session, root, stage)) !== "unknown";
   }
 }
 
-/** One step of the whole function to `stage`, for what its windows left. */
+/** One step of the whole function to `stage`, for what its windows left; alive2's answer. */
 async function jump(session: Session, gid: string, stage: string) {
   await session.begin(gid, "src");
   const edited = await session.edit({ op: "set_body", body: bodyOf(stage) });
-  if (edited.kind === "refused") return session.abort();
-  return session.commit({ narrow: false, eager: false });
+  if (edited.kind === "refused") {
+    await session.abort();
+    return undefined;
+  }
+  return (await session.commit({ narrow: false, eager: false })).check.outcome;
 }
 
 /**
