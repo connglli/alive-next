@@ -10,7 +10,7 @@ import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
-import { factsAt, union } from "../simple/facts.ts";
+import { factsAt, union, violated } from "../simple/facts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { stepWindows } from "../simple/windows.ts";
 import { toolchain } from "./toolchain-under-test.ts";
@@ -92,6 +92,27 @@ describe("candidates", () => {
       param_attrs: { 0: { noundef: true, nonnull: true } },
       predicates: [EQ],
     });
+  });
+});
+
+describe("violated", () => {
+  test("names the guessed comparisons a counterexample breaks, past a poison input", () => {
+    const detail = `ERROR: Value mismatch
+
+Example:
+i8 noundef %#0 = #xff (255, -1)
+i8 %#1 = #x01 (1)
+i8 %#2 = poison
+
+Source:
+i8 %#3 = #x00 (0)
+`;
+    const broken = violated(detail).map(({ op, lhs, rhs }) => `${lhs} ${op} ${rhs}`);
+    // 255 is -1 signed, and above 1 unsigned.
+    expect(broken).toContain("!0 sge 0");
+    expect(broken).toContain("!0 ule !1");
+    expect(broken).not.toContain("!1 ule !0");
+    expect(broken.filter((comparison) => comparison.includes("!2"))).toEqual([]);
   });
 });
 

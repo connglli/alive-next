@@ -5,19 +5,13 @@
 // strengthen and keeps what holds where the loop is entered and what one
 // iteration keeps with the rest assumed. When a round drops nothing, what is
 // left is inductive, and the strengthen proves it.
-import type { Instruction, Llops, OutlineParam, Predicate } from "../core/drivers/llops.ts";
+import type { Instruction, Llops, OutlineParam } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { SplitResult } from "../core/state/splits.ts";
 import type { StrengthenContract } from "../core/state/strengthen.ts";
-import { noundefLost, size } from "./facts.ts";
+import { comparisons, noundefLost, size } from "./facts.ts";
 import { diff, headers, successors } from "./regions.ts";
 import { expressionsAt, type Side } from "./relations.ts";
-
-/** The orders a candidate compares two parameters by, each asked both ways round. */
-const ORDERS = ["ule", "ult", "sle", "slt"] as const;
-
-/** The comparisons a candidate makes of one parameter with zero. */
-const WITH_ZERO = ["ne", "sge"] as const;
 
 /** Where to cut a goal that loops, as a src block and its tgt partner. */
 export function loopCut(src: Instruction[], tgt: Instruction[]) {
@@ -76,28 +70,11 @@ export async function strengthenLoop(
 
 /** Guesses invariants about `params` from Houdini's templates. */
 export function guessInvariants(params: OutlineParam[]): StrengthenContract {
-  const predicates: Predicate[] = [];
-  params.forEach((a, i) => {
-    if (!integer(a)) return;
-    // Template: An integer compared with zero, such as `key != 0`.
-    for (const op of WITH_ZERO) predicates.push({ op, lhs: `!${i}`, rhs: 0 });
-    params.forEach((b, j) => {
-      if (i === j || a.type !== b.type) return;
-      const [lhs, rhs] = [`!${i}`, `!${j}`];
-      // Template: Two integers of one type in order, such as `j <= i`.
-      for (const op of ORDERS) predicates.push({ op, lhs, rhs });
-      // Template: Two integers of one type equal or not, each pair once.
-      if (i < j) predicates.push({ op: "eq", lhs, rhs }, { op: "ne", lhs, rhs });
-    });
-  });
+  // Templates: Parameter x parameter comparisons, and parameter x itself comparisons.
+  const predicates = comparisons(params.map((param) => param.type));
   // Template: Each parameter neither undef nor poison.
   const noundef = Object.fromEntries(params.map((_, i) => [i, { noundef: true }]));
   return { param_attrs: noundef, predicates };
-}
-
-/** Whether a parameter is an integer, which is what a comparison takes. */
-function integer(param: OutlineParam): boolean {
-  return /^i\d+$/.test(param.type);
 }
 
 /** Where to cut to detach `block`: itself, or first where outside code enters its reach. */

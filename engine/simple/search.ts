@@ -7,6 +7,7 @@
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { balancedPoints, beforePoints, cut, cutLoop } from "./cuts.ts";
+import { strengthenAgainst } from "./facts.ts";
 import type { Limits } from "./limits.ts";
 import { peel } from "./peel.ts";
 import { regions } from "./regions.ts";
@@ -36,12 +37,11 @@ type Move = () => Promise<Answer>;
 /** What a move came to: a proof, a refutation, a cut into goals to search, or none. */
 type Answer =
   | { kind: "proved" }
-  | { kind: "refuted" }
+  | { kind: "refuted"; detail: string }
   | { kind: "cut"; goals: Goal[] }
   | { kind: "none" };
 
 const PROVED: Answer = { kind: "proved" };
-const REFUTED: Answer = { kind: "refuted" };
 const NONE: Answer = { kind: "none" };
 
 /** Searches for a proof of the root goal, giving up with the goals left open if it finds none. */
@@ -65,11 +65,11 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   return session.verdict;
 }
 
-/** Acts on the top goal's answer: a proof closes it, a refutation undoes, a cut stacks. */
+/** Acts on the top goal's answer: a proof closes it, a refutation repairs, a cut stacks. */
 async function learn(run: Run, agenda: Goal[], answer: Answer) {
   const top = agenda[agenda.length - 1] as Goal;
   if (answer.kind === "proved") agenda.pop();
-  if (answer.kind === "refuted") await undo(run, agenda, top);
+  if (answer.kind === "refuted") await repair(run, agenda, top, answer.detail);
   if (answer.kind !== "cut") return;
   top.cut = true;
   run.cuts -= 1;
@@ -77,11 +77,19 @@ async function learn(run: Run, agenda: Goal[], answer: Answer) {
   agenda.push(...[...answer.goals].reverse());
 }
 
-/**
- * Undoes the cut that left refuted goal `g`, since cutting a refuted goal
- * further can never prove it, and its parent goes on to its next move. A goal
- * no cut left stays open.
- */
+/** Strengthens the cut that left refuted `g` against its counterexamples, or undoes it. */
+async function repair(run: Run, agenda: Goal[], g: Goal, detail: string) {
+  let cex = detail;
+  while (await strengthenAgainst(run.session, g.gid, cex)) {
+    const { outcome, check } = await run.session.check(g.gid);
+    if (outcome === "proved") agenda.pop();
+    if (outcome !== "refuted") return;
+    cex = check.detail;
+  }
+  await undo(run, agenda, g);
+}
+
+/** Undoes the cut that left `g`, since no cut proves a refuted goal; a root stays open. */
 async function undo(run: Run, agenda: Goal[], g: Goal) {
   const parent = g.parent;
   if (!parent || (await run.session.unsplit(parent.gid)).kind !== "unsplit") {
@@ -106,9 +114,10 @@ async function* moves(run: Run, gid: string, stages: boolean, peelable: boolean)
   yield async () => ((await session.show(gid)).status === "proved" ? PROVED : NONE);
   if (limits.steps) yield stepping(() => stepWindows(session, llops, gid, limits));
   if (limits.steps && limits.rules) yield stepping(() => stepByRules(run, gid));
-  yield async () => {
-    const { outcome } = await session.check(gid);
-    return outcome === "proved" ? PROVED : outcome === "refuted" ? REFUTED : NONE;
+  yield async (): Promise<Answer> => {
+    const { outcome, check } = await session.check(gid);
+    if (outcome === "refuted") return { kind: "refuted", detail: check.detail };
+    return outcome === "proved" ? PROVED : NONE;
   };
   const [src, tgt] = await bodies(session, llops, gid);
   const at = (point: [string, string]) =>
