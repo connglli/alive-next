@@ -59,10 +59,7 @@ export async function cut(
   }
   const view = await session.show(gid);
   const lives = split.params.map((param) => param.live);
-  const tgtOnly = Object.entries(map).flatMap(([key, live]) =>
-    key === `tgt${live}` ? [live] : [],
-  );
-  const images = lives.map((live) => (live === "poison" ? tgtOnly.shift() : map[live]));
+  const images = split.params.map(({ live, tgt }) => (live === "poison" ? tgt : map[live]));
   const [srcLoop, tgtLoop] = split.detach?.hypothesis ? [srcCut, tgtCut] : [];
   const sides: [Side, Side] = [
     { module: view.src.text, point: pointOf(src, srcCut), values: lives, loop: srcLoop },
