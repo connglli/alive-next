@@ -218,17 +218,19 @@ function loopsOf(body: Instruction[]) {
   const before = new Map<string, string[]>();
   for (const [from, tos] of next)
     for (const to of tos) before.set(to, [...(before.get(to) ?? []), from]);
-  return headers(body).map((header) => {
-    // The loop is what reaches a branch back to its header without passing the header.
+  return headers(body).flatMap((header) => {
+    // The loop is what reaches a branch back to its header without passing the header,
+    // which holds only when the header dominates those branches, as in LLVM's loops.
     const inside = new Set([header]);
     const work = (before.get(header) ?? []).filter((from) => reaches(next, header, from));
+    if (work.some((latch) => !dominates(body, header, latch))) return [];
     for (const block of work) {
       if (inside.has(block)) continue;
       inside.add(block);
       work.push(...(before.get(block) ?? []));
     }
     const leaves = [...inside].flatMap((block) => next.get(block) ?? []);
-    return { header, exits: [...new Set(leaves.filter((to) => !inside.has(to)))] };
+    return [{ header, exits: [...new Set(leaves.filter((to) => !inside.has(to)))] }];
   });
 }
 

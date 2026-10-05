@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { Llops } from "../core/drivers/llops.ts";
 import { countdown } from "../examples/countdown.ts";
 import { peel } from "../examples/peel.ts";
-import { diff as match, regions } from "../simple/regions.ts";
+import { dominates, diff as match, regions } from "../simple/regions.ts";
 import { pairs } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
@@ -147,6 +147,65 @@ entry:
     const { pairs } = match(await body(peel.src), await body(peel.tgt));
     expect([pairs.get("%bb1"), pairs.get("%bb2")]).toEqual(["%bb2", "%bb3"]);
     expect([pairs.get("%2"), pairs.get("%3")]).toEqual(["%4", "%5"]);
+  });
+
+  test("a cycle entered at two points is not paired as a loop", async () => {
+    // The src enters its cycle at %a or at %b, so %a heads no loop.
+    const src = `define i32 @f(i1 %c, i32 %x) {
+entry:
+  br i1 %c, label %a, label %b
+
+a:
+  %p = phi i32 [ %x, %entry ], [ %q, %b ]
+  %y = add i32 %p, 1
+  br label %b
+
+b:
+  %q = phi i32 [ %x, %entry ], [ %y, %a ]
+  %d = icmp ult i32 %q, 100
+  br i1 %d, label %a, label %exit
+
+exit:
+  ret i32 %q
+}
+`;
+    const tgt = `define i32 @f(i1 %c, i32 %x) {
+entry:
+  %s = select i1 %c, i32 1, i32 0
+  %z = add i32 %x, %s
+  br label %h
+
+h:
+  %q = phi i32 [ %z, %entry ], [ %y, %h ]
+  %y = add i32 %q, 1
+  %d = icmp ult i32 %q, 100
+  br i1 %d, label %h, label %exit
+
+exit:
+  ret i32 %q
+}
+`;
+    const { pairs } = match(await body(src), await body(tgt));
+    expect([pairs.get("%bb1"), pairs.get("%4")]).toEqual([undefined, "%4"]);
+  });
+
+  test("a block dominates what every path from the entry reaches through it", async () => {
+    const diamond = await body(`define i32 @f(i1 %c) {
+entry:
+  br i1 %c, label %a, label %b
+
+a:
+  br label %join
+
+b:
+  br label %join
+
+join:
+  ret i32 0
+}
+`);
+    const over = (block: string) => dominates(diamond, block, "%bb3");
+    expect([over("%entry"), over("%bb1"), over("%bb3")]).toEqual([true, false, true]);
   });
 
   test("a region that holds a terminator is no window", async () => {
