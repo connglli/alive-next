@@ -354,14 +354,16 @@ exit:
     expect(statuses(session, [halves.callee])).toEqual(["proved"]);
   }, 120_000);
 
-  test("a loop whose tgt exit is entered early is cut at its exits first", async () => {
-    // The tgt peeled the first iteration, behind a guard that also enters the exit.
+  test("a loop the tgt peeled proves once the src's outer is unfolded", async () => {
+    // The tgt runs the first iteration behind a guard that also enters the exit.
     const peeled = scenario("peel");
     const session = await solved("peeled", peeled.src, peeled.tgt);
     const exit = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
     if (!exit) throw new Error("expected a cut at the exits");
-    expect((await session.check(exit.callee)).outcome).toBe("proved");
-    expect(await cutLoop(session, llops, exit.outer, DEFAULT_LIMITS)).toBeDefined();
+    const header = await cutLoop(session, llops, exit.outer, DEFAULT_LIMITS);
+    if (!header) throw new Error("expected a cut at the headers");
+    const halves = [exit.callee, header.outer, header.callee];
+    for (const gid of halves) expect((await session.check(gid)).outcome).toBe("proved");
   }, 120_000);
 
   test("a rotated loop is cut at its exit, then at its header", async () => {

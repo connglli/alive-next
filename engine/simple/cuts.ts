@@ -12,7 +12,7 @@ import type { SplitResult } from "../core/state/splits.ts";
 import { cutFacts, predicatesAt, strengthenCut, union } from "./facts.ts";
 import { fillCut } from "./fill.ts";
 import type { Limits } from "./limits.ts";
-import { guessInvariants, loopCut, strengthenLoop, unfoldIterations } from "./loops.ts";
+import { guessInvariants, loopCut, strengthenLoop, unfoldToMatch } from "./loops.ts";
 import { diff, dominates } from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
 import { bodies, partners } from "./windows.ts";
@@ -68,7 +68,7 @@ export async function cut(
     { module: view.src.text, point: pointOf(src, srcCut), values: lives, loop: srcLoop },
     { module: view.tgt.text, point: pointOf(tgt, tgtCut), values: images, loop: tgtLoop },
   ];
-  if (split.detach?.hypothesis) await unfoldIterations(session, llops, split, sides);
+  if (split.detach?.hypothesis) await unfoldToMatch(session, llops, split, sides);
   if (limits.facts) await strengthenSplit(session, llops, gid, split, sides);
   return split.children;
 }
