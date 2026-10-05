@@ -9,10 +9,10 @@
 import type { Instruction, Llops, OutlineParam } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { SplitResult } from "../core/state/splits.ts";
-import { cutFacts, strengthenCut, union } from "./facts.ts";
+import { cutFacts, predicatesAt, strengthenCut, union } from "./facts.ts";
 import { fillCut } from "./fill.ts";
 import type { Limits } from "./limits.ts";
-import { guessInvariants, loopCut, strengthenLoop } from "./loops.ts";
+import { guessInvariants, loopCut, strengthenLoop, unfoldIterations } from "./loops.ts";
 import { diff } from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
 import { bodies, partners } from "./windows.ts";
@@ -57,7 +57,6 @@ export async function cut(
     await session.unsplit(gid);
     return undefined;
   }
-  if (!limits.facts) return split.children;
   const view = await session.show(gid);
   const lives = split.params.map((param) => param.live);
   const tgtOnly = Object.entries(map).flatMap(([key, live]) =>
@@ -65,10 +64,12 @@ export async function cut(
   );
   const images = lives.map((live) => (live === "poison" ? tgtOnly.shift() : map[live]));
   const [srcLoop, tgtLoop] = split.detach?.hypothesis ? [srcCut, tgtCut] : [];
-  await strengthenSplit(session, llops, gid, split, [
+  const sides: [Side, Side] = [
     { module: view.src.text, point: pointOf(src, srcCut), values: lives, loop: srcLoop },
     { module: view.tgt.text, point: pointOf(tgt, tgtCut), values: images, loop: tgtLoop },
-  ]);
+  ];
+  if (split.detach?.hypothesis) await unfoldIterations(session, llops, split, sides);
+  if (limits.facts) await strengthenSplit(session, llops, gid, split, sides);
   return split.children;
 }
 
@@ -108,7 +109,10 @@ async function strengthenSplit(
   const types = split.params.map((param) => param.type);
   const relations = { predicates: await relationsAt(llops, [mine, theirs], types) };
   const loop = split.detach?.hypothesis !== undefined;
-  const candidates = union(loop ? guessInvariants(split.params) : {}, facts, relations);
+  // At a loop's header, what the tgt knows is a guess the src's iteration may keep too.
+  const known = loop ? await predicatesAt(llops, theirs) : [];
+  const guesses = loop ? union(guessInvariants(split.params), { predicates: known }) : {};
+  const candidates = union(guesses, facts, relations);
   if (loop) await strengthenLoop(session, gid, candidates);
   else await strengthenCut(session, gid, candidates);
 }

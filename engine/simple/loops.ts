@@ -5,11 +5,13 @@
 // strengthen and keeps what holds where the loop is entered and what one
 // iteration keeps with the rest assumed. When a round drops nothing, what is
 // left is inductive, and the strengthen proves it.
-import type { Instruction, OutlineParam, Predicate } from "../core/drivers/llops.ts";
+import type { Instruction, Llops, OutlineParam, Predicate } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
+import type { SplitResult } from "../core/state/splits.ts";
 import type { StrengthenContract } from "../core/state/strengthen.ts";
 import { noundefLost, size } from "./facts.ts";
 import { diff } from "./regions.ts";
+import { expressionsAt, type Side } from "./relations.ts";
 
 /** The orders a candidate compares two parameters by, each asked both ways round. */
 const ORDERS = ["ule", "ult", "sle", "slt"] as const;
@@ -23,6 +25,27 @@ export function loopCut(src: Instruction[], tgt: Instruction[]) {
   const at = header ? entryFirst(src, header) : undefined;
   const partner = at ? diff(src, tgt).pairs.get(at) : undefined;
   return at && partner ? ([at, partner] as const) : undefined;
+}
+
+/** Unfolds loop cut `split`'s iteration on the side its counters say runs fewer. */
+export async function unfoldIterations(
+  session: Session,
+  llops: Llops,
+  split: Extract<SplitResult, { kind: "split" }>,
+  sides: Side[],
+) {
+  const [mine = [], theirs = []] = await Promise.all(sides.map((s) => stepsAt(llops, s)));
+  const ratios = mine.flatMap((step, k) => {
+    const other = theirs[k];
+    return step && other ? [ratio(step, other)] : [];
+  });
+  const [r = 0, ...rest] = new Set(ratios);
+  // Each unfold doubles the iterations an iteration runs, so only a power of two matches.
+  const times = rest.length > 0 ? 0 : Math.log2(Math.abs(r));
+  if (!Number.isInteger(times)) return;
+  const side = r > 0 ? "src" : "tgt";
+  for (let n = 0; n < times; n++)
+    if ((await session.unfold(split.children.callee, side)).kind !== "certified") return;
 }
 
 /** Strengthens loop cut `gid` with the inductive part of `candidates`. */
@@ -99,4 +122,21 @@ function successors(body: Instruction[]): Map<string, string[]> {
   const next = new Map(body.map((i) => [i.block, [] as string[]]));
   for (const i of body) next.get(i.block)?.push(...i.operands.filter((to) => next.has(to)));
   return next;
+}
+
+/** Each parameter's step per iteration of `side`'s loop, where it counts them. */
+async function stepsAt(llops: Llops, side: Side): Promise<(bigint | undefined)[]> {
+  return (await expressionsAt(llops, side)).map((tree) => {
+    const ofLoop = tree?.op === "addrec" && tree.loop === side.loop;
+    const [, step, ...more] = ofLoop ? (tree?.operands ?? []) : [];
+    const constant = step?.op === "const" && more.length === 0;
+    return constant && step?.value ? BigInt(step.value) : undefined;
+  });
+}
+
+/** How many src iterations one tgt iteration runs, as k or as -k when the reverse, or 0. */
+function ratio(src: bigint, tgt: bigint): number {
+  if (tgt % src === 0n && tgt / src > 0n) return Number(tgt / src);
+  if (src % tgt === 0n && src / tgt > 0n) return -Number(src / tgt);
+  return 0;
 }

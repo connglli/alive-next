@@ -12,6 +12,7 @@ import type {
 } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { StrengthenContract } from "../core/state/strengthen.ts";
+import type { Side } from "./relations.ts";
 
 /** Facts by the value they are about, as `commit` takes them. */
 export type Preconditions = Record<string, Record<string, unknown>>;
@@ -54,6 +55,15 @@ export async function cutFacts(
     predicates.push(...boundsOf(k, about("ranges", live)), ...knownOf(k, about("knownbits", live)));
   });
   return { param_attrs, predicates };
+}
+
+/** Each value's range bounds and known bits on `side`, as predicates, poison or not. */
+export async function predicatesAt(llops: Llops, side: Side) {
+  const about = await analyses(llops, side.module, side.point, ["ranges", "knownbits"]);
+  return side.values.flatMap((value = "", k) => [
+    ...boundsOf(k, about("ranges", value)),
+    ...knownOf(k, about("knownbits", value)),
+  ]);
 }
 
 /**
