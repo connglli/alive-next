@@ -8,14 +8,19 @@
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/Analysis/VectorUtils.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/Support/KnownBits.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <functional>
+#include <vector>
 
 namespace llops {
 
@@ -64,16 +69,120 @@ void rangeFact(llvm::Value &V, llvm::AssumptionCache &AC, const llvm::DominatorT
   fact["unsigned_max"] = apToString(U.getUnsignedMax(), 10, false);
 }
 
+// A value, and the instruction where it is asked whether the value is defined.
+using Asked = std::pair<const llvm::Value *, const llvm::Instruction *>;
+
+// LLVM's rule for whether a value is defined at an instruction, without its
+// depth limit: LLVM's check `says` so, or the value cannot create undef or
+// poison from defined operands, asked at the same instruction or, for a phi,
+// where each edge leaves. A value is assumed defined while its operands are
+// asked: a cycle passes a phi, which reads an earlier value, so the assumption
+// holds by induction. Answers found under an assumption that fails are dropped.
+class Definedness {
+public:
+  using Check = std::function<bool(const llvm::Value *, const llvm::Instruction *)>;
+
+  Definedness(Check says, bool (*creates)(const llvm::Operator *, bool))
+      : says(std::move(says)), creates(creates) {}
+
+  bool at(const llvm::Value *V, const llvm::Instruction *I) {
+    Asked key{V, I};
+    if (auto it = seen.find(key); it != seen.end())
+      return it->second;
+    size_t mark = trail.size();
+    seen[key] = true;
+    trail.push_back(key);
+    bool defined = says(V, I) || follows(V, I);
+    if (!defined)
+      drop(mark + 1);
+    seen[key] = defined;
+    return defined;
+  }
+
+private:
+  // Whether `V` is defined at `I` because what it reads is.
+  bool follows(const llvm::Value *V, const llvm::Instruction *I) {
+    auto *Op = llvm::dyn_cast<llvm::Operator>(V);
+    if (!Op || creates(Op, true))
+      return false;
+    if (auto *PN = llvm::dyn_cast<llvm::PHINode>(V)) {
+      for (unsigned k = 0; k < PN->getNumIncomingValues(); ++k) {
+        const llvm::Value *In = PN->getIncomingValue(k);
+        if (In != PN && !at(In, PN->getIncomingBlock(k)->getTerminator()))
+          return false;
+      }
+      return true;
+    }
+    if (llvm::isa<llvm::ShuffleVectorInst>(V))
+      if (const llvm::Value *Splat = llvm::getSplatValue(V))
+        return at(Splat, I);
+    return llvm::all_of(Op->operands(), [&](const llvm::Use &U) { return at(U.get(), I); });
+  }
+
+  // Forgets the answers that held from `from` on, since they may rest on a failed one.
+  void drop(size_t from) {
+    for (size_t k = from; k < trail.size(); ++k)
+      if (seen.lookup(trail[k]))
+        seen.erase(trail[k]);
+    trail.resize(from);
+  }
+
+  Check says;
+  bool (*creates)(const llvm::Operator *, bool);
+  llvm::DenseMap<Asked, bool> seen;
+  std::vector<Asked> trail;
+};
+
+// Whether `Op` can create undef from operands that are not, which LLVM's own
+// check keeps internal: the cases only poison reaches (flags, shift amounts,
+// vector indices, shuffle masks) taken out of its undef-or-poison check.
+bool canCreateUndef(const llvm::Operator *Op, bool) {
+  switch (Op->getOpcode()) {
+  case llvm::Instruction::Shl:
+  case llvm::Instruction::AShr:
+  case llvm::Instruction::LShr:
+  case llvm::Instruction::InsertElement:
+  case llvm::Instruction::ExtractElement:
+  case llvm::Instruction::ShuffleVector:
+    return false;
+  }
+  if (auto *II = llvm::dyn_cast<llvm::IntrinsicInst>(Op))
+    if (II->getIntrinsicID() == llvm::Intrinsic::sshl_sat ||
+        II->getIntrinsicID() == llvm::Intrinsic::ushl_sat)
+      return false;
+  return llvm::canCreateUndefOrPoison(Op, /*ConsiderFlagsAndMetadata=*/false);
+}
+
+// The three questions a `defined` fact answers, over one query's analyses.
+struct Defined {
+  Definedness noundef, notUndef, notPoison;
+};
+
+Defined definedWalks(llvm::AssumptionCache &AC, const llvm::DominatorTree &DT) {
+  auto noundef = [&AC, &DT](const llvm::Value *V, const llvm::Instruction *I) {
+    return llvm::isGuaranteedNotToBeUndefOrPoison(V, &AC, I, &DT);
+  };
+  auto notUndef = [&AC, &DT](const llvm::Value *V, const llvm::Instruction *I) {
+    return llvm::isGuaranteedNotToBeUndef(V, &AC, I, &DT);
+  };
+  auto notPoison = [&AC, &DT](const llvm::Value *V, const llvm::Instruction *I) {
+    return llvm::isGuaranteedNotToBePoison(V, &AC, I, &DT);
+  };
+  return {{noundef, llvm::canCreateUndefOrPoison},
+          {notUndef, canCreateUndef},
+          {notPoison, llvm::canCreatePoison}};
+}
+
 // Whether a value is defined where it is asked about: `noundef` in the sense
 // the attribute has, neither undef nor poison, and the two halves separately
 // because they call for different fixes. A value that cannot be poison but
 // may be undef is one a freeze settles; a value that may be poison usually got
 // that way from a flag, which the src side can drop.
-void definedFact(llvm::Value &V, llvm::AssumptionCache &AC, const llvm::DominatorTree &DT,
-                 const llvm::Instruction *point, llvm::json::Object &fact) {
-  fact["noundef"] = llvm::isGuaranteedNotToBeUndefOrPoison(&V, &AC, point, &DT);
-  fact["not_undef"] = llvm::isGuaranteedNotToBeUndef(&V, &AC, point, &DT);
-  fact["not_poison"] = llvm::isGuaranteedNotToBePoison(&V, &AC, point, &DT);
+void definedFact(llvm::Value &V, const llvm::Instruction *point, Defined &defined,
+                 llvm::json::Object &fact) {
+  fact["noundef"] = defined.noundef.at(&V, point);
+  fact["not_undef"] = defined.notUndef.at(&V, point);
+  fact["not_poison"] = defined.notPoison.at(&V, point);
 }
 
 // What a pointer is known to guarantee, in the shape of the attributes the
@@ -210,6 +319,7 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
   llvm::ScalarEvolution SE(*F, TLI, AC, DT, LI);
 
   llvm::json::Array facts;
+  Defined defined = definedWalks(AC, DT);
   auto addFact = [&](llvm::Value &V) {
     // Definedness is about a value rather than about arithmetic, so it is the
     // one kind that has something to say about every type.
@@ -232,7 +342,7 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
     else if (*kind == "ranges")
       rangeFact(V, AC, DT, point, fact);
     else if (*kind == "defined")
-      definedFact(V, AC, DT, point, fact);
+      definedFact(V, point, defined, fact);
     else
       pointerFact(V, DL, fact);
     facts.emplace_back(std::move(fact));

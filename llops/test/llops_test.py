@@ -3494,6 +3494,99 @@ entry:
     self.assertTrue(facts["%b"]["not_undef"])
     self.assertFalse(facts["%b"]["not_poison"])
 
+  def test_defined_sees_past_llvms_depth(self):
+    # LLVM gives up six instructions back from %h, short of %n.
+    module = """define i32 @f(i32 noundef %n) {
+entry:
+  %a = add i32 %n, 1
+  %b = add i32 %a, 1
+  %c = add i32 %b, 1
+  %d = add i32 %c, 1
+  %e = add i32 %d, 1
+  %f = add i32 %e, 1
+  %g = add i32 %f, 1
+  %h = add i32 %g, 1
+  ret i32 %h
+}
+"""
+    facts, _ = self.facts(module, "defined")
+    self.assertTrue(facts["%h"]["noundef"])
+    # A flag or a shift amount makes poison but not undef, even past LLVM's depth.
+    for g in ["%g = add nsw i32 %f, 1", "%g = shl i32 %f, %n"]:
+      flagged, _ = self.facts(module.replace("%g = add i32 %f, 1", g), "defined")
+      self.assertFalse(flagged["%h"]["noundef"])
+      self.assertTrue(flagged["%h"]["not_undef"])
+
+  def test_defined_sees_around_a_loop(self):
+    module = """define i32 @f(i32 noundef %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %next, %loop ]
+  %next = add i32 %i, 1
+  %done = icmp eq i32 %next, %n
+  br i1 %done, label %exit, label %loop
+
+exit:
+  %r = add i32 %i, 0
+  ret i32 %r
+}
+"""
+    # Each iteration's counter comes from the last one's, so it holds by induction.
+    facts, _ = self.facts(module, "defined", point="r")
+    self.assertTrue(facts["%i"]["noundef"])
+    nuw = module.replace("add i32 %i, 1", "add nuw i32 %i, 1")
+    flagged, _ = self.facts(nuw, "defined", point="r")
+    self.assertFalse(flagged["%i"]["noundef"])
+
+  def test_defined_asks_a_phi_where_its_edge_leaves(self):
+    module = """declare void @llvm.assume(i1)
+
+define i32 @f(ptr %q, i1 %c) {
+entry:
+  br label %loop
+
+loop:
+  %p = phi i32 [ 0, %entry ], [ %w, %loop ]
+  %w = load i32, ptr %q, align 4
+  br i1 %c, label %loop, label %exit
+
+exit:
+  call void @llvm.assume(i1 true) ["noundef"(i32 %w)]
+  %r = add i32 %p, 0
+  ret i32 %r
+}
+"""
+    # The exit's %w is noundef, but %p holds the %w of the iteration before.
+    facts, _ = self.facts(module, "defined", point="r")
+    self.assertTrue(facts["%w"]["noundef"])
+    self.assertFalse(facts["%p"]["noundef"])
+
+  def test_defined_forgets_what_a_failed_assumption_gave(self):
+    module = """define i32 @f(ptr %q, i1 %c) {
+entry:
+  br label %loop
+
+loop:
+  %p = phi i32 [ 0, %entry ], [ %w, %loop ]
+  %p2 = phi i32 [ 0, %entry ], [ %v, %loop ]
+  %v = add i32 %p, 1
+  %x = load i32, ptr %q, align 4
+  %w = add i32 %v, %x
+  br i1 %c, label %loop, label %exit
+
+exit:
+  %r = add i32 %v, 0
+  ret i32 %r
+}
+"""
+    # Asking %p finds %v defined while %p is assumed so, until the load undoes
+    # it; %p2, asked next, must not read that answer.
+    facts, _ = self.facts(module, "defined", point="r")
+    self.assertFalse(facts["%p"]["noundef"])
+    self.assertFalse(facts["%p2"]["noundef"])
+
   def test_defined_reads_a_load_as_undef(self):
     # Uninitialized memory is where undef comes from inside a function,
     # which is why a flag that only speaks about arguments is not enough.
