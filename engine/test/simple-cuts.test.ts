@@ -15,6 +15,7 @@ import { countdown } from "../examples/countdown.ts";
 import { loop } from "../examples/loop.ts";
 import { rotated } from "../examples/rotated.ts";
 import { strchr } from "../examples/strchr.ts";
+import { unfold } from "../examples/unfold.ts";
 import { cut, cutBalanced, cutLoop } from "../simple/cuts.ts";
 import { strengthenCut } from "../simple/facts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
@@ -342,6 +343,14 @@ exit:
     const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
     if (!halves) throw new Error("expected a cut");
     expect(statuses(session, [halves.outer, halves.callee])).toEqual(["proved", "proved"]);
+  }, 120_000);
+
+  test("a loop the tgt unrolled is cut with the src's iteration unfolded", async () => {
+    // The tgt's counter steps by 2 where the src's steps by 1.
+    const session = await solved("unrolled", unfold.src, unfold.tgt);
+    const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    if (!halves) throw new Error("expected a cut");
+    expect(statuses(session, [halves.callee])).toEqual(["proved"]);
   }, 120_000);
 
   test("a rotated loop is cut at its exit, then at its header", async () => {

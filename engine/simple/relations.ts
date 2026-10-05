@@ -32,18 +32,24 @@ type Weighted = { row: Row; c: bigint };
 /** The term a loop's iterations so far stand for. */
 const ITERATIONS = "iterations";
 
+/** What ScalarEvolution gives each parameter's value on `side`, beyond the value itself. */
+export async function expressionsAt(llops: Llops, side: Side) {
+  const facts = await llops.analyze(side.module, "scev", side.point);
+  const scev = (value?: string) =>
+    facts.ok ? facts.facts.find((fact) => fact.value === value)?.scev : undefined;
+  return side.values.map((value) => (value === "poison" ? undefined : scev(value)));
+}
+
 /** The relations ScalarEvolution shows among the parameters of `types` on each side. */
 export async function relationsAt(llops: Llops, sides: Side[], types: string[]) {
   const found = new Map<string, Predicate>();
   for (const side of sides) {
-    const facts = await llops.analyze(side.module, "scev", side.point);
-    const scev = (value: string) =>
-      facts.ok ? facts.facts.find((fact) => fact.value === value)?.scev : undefined;
+    const trees = await expressionsAt(llops, side);
     const rows = side.values.flatMap((value, param) => {
       const type = types[param] ?? "";
       if (!value || value === "poison" || !/^i\d+$/.test(type)) return [];
       const named = (name: string): Scev => ({ op: "value", type, value: name });
-      const form = linear(scev(value) ?? named(value), side.loop);
+      const form = linear(trees[param] ?? named(value), side.loop);
       return [{ ...form, param, read: named(`!${param}`) }];
     });
     const predicates = [...widths(rows)].flatMap(([type, of]) => related(of, type));
