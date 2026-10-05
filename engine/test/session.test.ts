@@ -113,7 +113,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function session(): Promise<Session> {
+async function session(rewriter = unrewriting): Promise<Session> {
   return Session.start({
     dir: join(dir, "session"),
     src: cut.src,
@@ -121,7 +121,7 @@ async function session(): Promise<Session> {
     llops,
     checker: new YesMan(),
     interp: noRun,
-    rewriter: unrewriting,
+    rewriter,
   });
 }
 
@@ -366,6 +366,21 @@ describe.skipIf(!built)("reading a session", () => {
     expect(kept.kind).toBe("preview");
     expect(kept.callee).toBe(preview.callee);
     expect(kept.programs).toBeUndefined();
+  });
+
+  test("a rewrite preview logs that it answered, not the program", async () => {
+    const answering = { apply: async () => ({ ok: true as const, module: cut.tgt }) };
+    const run = await session(answering as unknown as Llrwt);
+    const before = await run.show("g1");
+    expect(await run.rewritePreview("g1", "src", ["x"])).toMatchObject({
+      kind: "preview",
+      program: cut.tgt,
+    });
+
+    const results = log(run).filter((entry) => entry.kind === "tool_result");
+    const kept = results.find((entry) => entry.tool === "rewrite_preview");
+    expect(kept?.result).toEqual({ kind: "preview" });
+    expect((await run.show("g1")).src.hash).toBe(before.src.hash);
   });
 
   test("a refused edit answers with the program it refused", async () => {

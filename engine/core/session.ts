@@ -46,6 +46,7 @@ import {
   type CheckGoalResult,
   type CheckStepResult,
   DEFAULT_TIMEOUTS,
+  type RewritePreview,
   type RewriteStepResult,
   Steps,
   type Timeouts,
@@ -404,6 +405,19 @@ export class Session {
       }
       return this.editingRefusal(gid, side) ?? this.steps.rewrite(tree, gid, side, rules);
     });
+  }
+
+  /**
+   * What rewriting one side of a goal with the verified rules would make,
+   * landing nothing; either side can be asked, since nothing is certified.
+   */
+  rewritePreview(gid: string, side: Side, rules: string[]): Promise<RewritePreview> {
+    return this.act(
+      "rewrite_preview",
+      { gid, side, rules },
+      (tree) => this.steps.rewritePreview(tree, gid, side, rules),
+      (result) => (result.kind === "preview" ? { kind: "preview" } : result),
+    );
   }
 
   /** Unfold one side of a half of a loop cut at its header, before any strengthening. */

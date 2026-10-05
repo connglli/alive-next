@@ -312,6 +312,19 @@ describe("rewriting", () => {
     const refused = await steps.rewrite(await tree(), "g1", "tgt", ["addi-zero-to-x"]);
     expect(refused).toMatchObject({ kind: "refused", code: "side_unsupported" });
   });
+
+  test("a preview answers the rewritten program and asks nothing", async () => {
+    const { steps, checker } = rewriting(NEW);
+    const preview = await steps.rewritePreview(await tree(), "g1", "tgt", ["x"]);
+    expect(preview).toMatchObject({ kind: "preview", program: NEW });
+    expect(checker.calls).toHaveLength(0);
+  });
+
+  test("a preview passes on what the rewriter refuses", async () => {
+    const { steps } = rewriting({ code: "bridge_error", message: "mlir-translate failed" });
+    const preview = await steps.rewritePreview(await tree(), "g1", "src", ["x"]);
+    expect(preview).toMatchObject({ kind: "refused", code: "bridge_error" });
+  });
 });
 
 describe("unfolding", () => {

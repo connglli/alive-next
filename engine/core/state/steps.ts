@@ -180,6 +180,11 @@ export interface RewriteStepOptions {
   eager?: boolean;
 }
 
+/** What rewriting one side would make, as `rewritePreview` answers it. */
+export type RewritePreview =
+  | { kind: "preview"; program: string; invocation: LlrwtInvocation }
+  | { kind: "refused"; code: string; message: string };
+
 /** A rewrite that landed, or the reason it did not. */
 export type RewriteStepResult =
   | {
@@ -462,6 +467,25 @@ export class Steps {
     return this.rewriter.listRules();
   }
 
+  /** What the verified rewriter makes of one side of a goal, landing nothing. */
+  async rewritePreview(
+    tree: Tree,
+    gid: string,
+    side: Side,
+    rules: string[],
+  ): Promise<RewritePreview> {
+    if (rules.length === 0) {
+      return { kind: "refused", code: "no_rules", message: "no rules were named" };
+    }
+    const before = this.store.get(head(workable(tree, gid), side));
+    const timeoutMs = this.timeouts.llrwtMs;
+    const applied = await this.rewriter.apply(before, rules, { timeoutMs });
+    if (!applied.ok) {
+      return { kind: "refused", code: applied.code, message: applied.message };
+    }
+    return { kind: "preview", program: applied.module, invocation: applied.invocation };
+  }
+
   /**
    * Replace one side of a goal with what the verified rewriter makes of it.
    * The rules' external proofs are what certify the move, so no alive2 run of
@@ -484,18 +508,13 @@ export class Steps {
         message: "only the src can be rewritten, since the rules only optimize",
       };
     }
-    if (rules.length === 0) {
-      return { kind: "refused", code: "no_rules", message: "no rules were named" };
-    }
+    const preview = await this.rewritePreview(tree, gid, side, rules);
+    if (preview.kind === "refused") return preview;
+    const { invocation } = preview;
     const goal = workable(tree, gid);
-    const beforeHash = head(goal, side);
-    const applied = await this.rewriter.apply(this.store.get(beforeHash), rules, {
-      timeoutMs: this.timeouts.llrwtMs,
-    });
-    if (!applied.ok) return { kind: "refused", code: applied.code, message: applied.message };
-    const after = await this.store.put(applied.module);
-    if (after === beforeHash) {
-      return { kind: "unchanged", hash: after, effects: [], invocation: applied.invocation };
+    const after = await this.store.put(preview.program);
+    if (after === head(goal, side)) {
+      return { kind: "unchanged", hash: after, effects: [], invocation };
     }
 
     const step: Effect = {
@@ -505,17 +524,17 @@ export class Steps {
       to: after,
       how: "rewrite",
       rules: [...rules],
-      invocation: applied.invocation,
+      invocation,
     };
     const effects: Effect[] = [step];
     if (options.eager === false) {
-      return { kind: "certified", hash: after, effects, invocation: applied.invocation };
+      return { kind: "certified", hash: after, effects, invocation };
     }
 
     // The pair has changed, so ask cheaply whether the goal is now discharged.
     const eager = await this.eagerCheck(goal, gid, side, after, effects);
 
-    return { kind: "certified", hash: after, effects, invocation: applied.invocation, eager };
+    return { kind: "certified", hash: after, effects, invocation, eager };
   }
 
   /**
