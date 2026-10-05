@@ -13,6 +13,7 @@ const USAGE = `usage: bun run simple [options] <src.ll> <tgt.ll> [<directory>]
 
       --seconds <n>       end the whole run after n seconds, an hour by default
       --cuts <n>          allow n cuts (a region counts once), 16 by default
+      --unfolds <n>       allow n unfolds per loop cut, 4 by default
       --no-stages         do not step through the optimizer's stages
       --no-steps          do not rewrite the src, only cut and check
       --no-windows        check each step on the whole function
@@ -67,6 +68,7 @@ function parseArgs(args: string[]): Flags {
   flags.rest = readArgs(args, (arg, value) => {
     if (arg === "--seconds") flags.limits.ms = readCount(arg, value()) * 1000;
     else if (arg === "--cuts") flags.limits.cuts = readCount(arg, value());
+    else if (arg === "--unfolds") flags.limits.unfolds = readCount(arg, value());
     else if (arg === "--no-stages") flags.limits.stages = false;
     else if (arg === "--no-steps") flags.limits.steps = false;
     else if (arg === "--no-windows") flags.limits.windows = false;

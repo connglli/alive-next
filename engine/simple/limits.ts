@@ -10,6 +10,8 @@ export interface Limits {
   growth: number;
   /** How many times the search may cut a goal, counting a peel's two cuts as one. */
   cuts: number;
+  /** How many unfolds a loop cut may make to match an unrolled or peeled loop. */
+  unfolds: number;
   /** Whether to step through the optimizer's own stages before the tgt. */
   stages: boolean;
   /** Whether to rewrite the src at all, rather than only cut and check. */
@@ -25,6 +27,7 @@ export const DEFAULT_LIMITS: Limits = {
   rootMs: 10_000,
   growth: 1,
   cuts: 16,
+  unfolds: 4,
   stages: true,
   steps: true,
   windows: true,
