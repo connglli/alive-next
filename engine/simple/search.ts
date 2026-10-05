@@ -1,11 +1,12 @@
 // The simple searcher. It rewrites the root's src into its tgt region by region,
 // first through the stages the optimizer makes of the src, and closes each goal
-// by a check. A goal that does not close is cut at a loop header, around a
-// region its steps left, or where its expensive operations split evenly. Every
-// move is a session move, so whatever it proves, the kernel replays.
+// by a check. A goal that does not close is cut at a loop header, before an
+// expensive operation, around a region its steps left, or where its expensive
+// operations split evenly. Every move is a session move, so whatever it
+// proves, the kernel replays.
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
-import { cutBalanced, cutLoop } from "./cuts.ts";
+import { cutBalanced, cutBefore, cutLoop } from "./cuts.ts";
 import type { Limits } from "./limits.ts";
 import { peel } from "./peel.ts";
 import { regions } from "./regions.ts";
@@ -48,8 +49,9 @@ async function jump(session: Session, gid: string, stage: string) {
 
 /**
  * Closes a goal by windows and a check, or else cuts it, at a loop header,
- * around a region, or where its expensive operations split evenly, and solves
- * what the cut leaves. Returns the goals left open.
+ * before an expensive operation, around a region, or where its expensive
+ * operations split evenly, and solves what the cut leaves. Returns the goals
+ * left open.
  */
 async function solve(
   session: Session,
@@ -76,6 +78,8 @@ async function solve(
   };
   const loop = await cutLoop(session, llops, gid, limits);
   if (loop) return spend([loop.outer, loop.callee]);
+  const before = await cutBefore(session, llops, gid, limits);
+  if (before) return spend([before.outer, before.callee]);
   const region = left[0];
   const peeled = region && peelable ? await peel(session, llops, gid, limits, region) : undefined;
   if (peeled && peeled.goals.length > 1) return spend(peeled.goals, peeled.region);
