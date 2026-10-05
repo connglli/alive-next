@@ -28,6 +28,12 @@ export function regions(src: Instruction[], tgt: Instruction[]): Region[] {
   return diff(src, tgt).regions;
 }
 
+/** How far two bodies are apart: the instructions in the regions where they differ. */
+export function distance(src: Instruction[], tgt: Instruction[]): number {
+  const size = (region: Region) => region.src.length + region.tgt.length;
+  return regions(src, tgt).reduce((sum, region) => sum + size(region), 0);
+}
+
 /** The regions, and for each src block and value, the tgt one it is matched with. */
 export function diff(src: Instruction[], tgt: Instruction[]) {
   const [a, b] = [blocksOf(src), blocksOf(tgt)];

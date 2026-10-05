@@ -7,10 +7,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AliveTv, type CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
-import type { Llrwt } from "../core/drivers/llrwt.ts";
+import { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
+import { digits } from "../examples/digits.ts";
 import { induction } from "../examples/induction.ts";
 import { nested } from "../examples/nested.ts";
 import { DEFAULT_LIMITS, type Limits } from "../simple/limits.ts";
@@ -27,6 +28,16 @@ const aliveTv = new AliveTv(toolchain.path("alive-tv"));
 const solving =
   built &&
   (await aliveTv
+    .version()
+    .then(() => true)
+    .catch(() => false));
+const llrwt = new Llrwt(toolchain.path("llrwt"), 30_000, {
+  mlirTranslate: toolchain.mlir("mlir-translate"),
+  mlirOpt: toolchain.mlir("mlir-opt"),
+});
+const rewriting =
+  solving &&
+  (await llrwt
     .version()
     .then(() => true)
     .catch(() => false));
@@ -58,7 +69,13 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function start(src: string, tgt: string, checker: Checker, alive2Ms = 5_000) {
+function start(
+  src: string,
+  tgt: string,
+  checker: Checker,
+  alive2Ms = 5_000,
+  rewriter = {} as Llrwt,
+) {
   return Session.start({
     dir: join(dir, "run"),
     src,
@@ -66,7 +83,7 @@ function start(src: string, tgt: string, checker: Checker, alive2Ms = 5_000) {
     llops,
     checker,
     interp: {} as Interpreter,
-    rewriter: {} as Llrwt,
+    rewriter,
     timeouts: timeoutsFrom({ alive2Ms, checkDefaultMs: 5_000 }),
   });
 }
@@ -186,6 +203,16 @@ describe.skipIf(!solving)("search with alive-tv", () => {
       expect(moves(session)).toContain("split");
     },
     60_000,
+  );
+
+  test.skipIf(!rewriting)(
+    "verifies digits, whose iteration only a rule closes",
+    async () => {
+      const session = await start(digits.src, digits.tgt, aliveTv, undefined, llrwt);
+      expect(await search(session, llops, limits)).toBe("verified");
+      expect(moves(session)).toContain("rewrite");
+    },
+    120_000,
   );
 
   test("refutes a pair at the root", async () => {

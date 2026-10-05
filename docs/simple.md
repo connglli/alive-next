@@ -1,6 +1,6 @@
 # The simple searcher
 
-The simple searcher is a proof writer without a model. Like the agent, it is untrusted: it makes only the public moves of a session, so every step it takes is certified by alive2, every cut is rebuilt by llops, and its certificate is replayed by the kernel like any other. `bun run simple a.ll b.ll` runs it and writes the same session directory as the agent and the examples. `bun run simple --help` lists its options, and `engine/simple/limits.ts` holds their defaults.
+The simple searcher is a proof writer without a model. Like the agent, it is untrusted: it makes only the public moves of a session, so every step it takes is certified by alive2 or a verified rule, every cut is rebuilt by llops, and its certificate is replayed by the kernel like any other. `bun run simple a.ll b.ll` runs it and writes the same session directory as the agent and the examples. `bun run simple --help` lists its options, and `engine/simple/limits.ts` holds their defaults.
 
 ## What it searches for
 
@@ -8,7 +8,7 @@ A proof has three parts, and the searcher searches for each: a rewrite path, the
 
 | Part | The framework allows | The searcher tries | It does not try |
 | --- | --- | --- | --- |
-| Rewrite path | steps on either side, by transactions or rules, and reverts | src steps through the optimizer's stages to the tgt, region by region | tgt steps, rules, reverts |
+| Rewrite path | steps on either side, by transactions or rules, and reverts | src steps through the optimizer's stages to the tgt, region by region, and by the rules | tgt steps, reverts |
 | Cuts and preconditions | cuts wherever both sides agree, with facts or predicates on the new parameters | a loop header, an expensive operation, a region's boundaries, balanced points; the analyses' facts on the inputs of a window or a cut | relations that are not linear, undoing a cut |
 | Loops and invariants | cuts at a header or an exit, unfolding, invariants | the first header, where the diff matched one; invariants by Houdini | invariants of other forms |
 
@@ -24,7 +24,7 @@ A region becomes a step through the `splice` edit: a copy of the tgt's code repl
 
 When alive2 refuses a window, the searcher grows it backward over the instructions that define the values either side reads, and then tries it with preconditions. For a stage that its windows leave unfinished, it tries one step of the whole function to that stage, which the framework refuses for a program that loops.
 
-Every step is on the src side, since putting the tgt's region into the src asks alive2 about the same two windows as putting the src's region into the tgt. The searcher applies none of the verified rewriter's rules, because a rule rewrites wherever it matches rather than toward the program a step aims at. It keeps every step alive2 certifies and reverts none.
+Every step is on the src side, since putting the tgt's region into the src asks alive2 about the same two windows as putting the src's region into the tgt. A verified rule rewrites wherever it matches rather than toward a program, so the searcher applies all the rules to a goal its windows left open only when that leaves fewer instructions in the regions, and then steps the windows again. It keeps every step alive2 certifies and reverts none.
 
 ## Cuts and preconditions
 
