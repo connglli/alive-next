@@ -17,7 +17,7 @@ import { rotated } from "../examples/rotated.ts";
 import { scenario } from "../examples/scenarios.ts";
 import { strchr } from "../examples/strchr.ts";
 import { unfold } from "../examples/unfold.ts";
-import { cut, cutBalanced, cutBefore, cutLoop } from "../simple/cuts.ts";
+import { balancedPoints, beforePoints, cut, cutLoop } from "../simple/cuts.ts";
 import { strengthenCut } from "../simple/facts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { strengthenLoop } from "../simple/loops.ts";
@@ -135,7 +135,8 @@ entry:
 }
 `;
     const session = await start(src, src.replace("add i32 %d, 1", "add i32 %d, 2"));
-    const halves = await cutBalanced(session, llops, "g1", DEFAULT_LIMITS);
+    const [at] = balancedPoints(...(await bodies(session, llops, "g1")));
+    const halves = at && (await cut(session, llops, "g1", DEFAULT_LIMITS, ...at));
     if (!halves) throw new Error("expected a cut");
     const muls = async (gid: string) =>
       (await bodies(session, llops, gid))[0].filter((i) => i.opcode === "mul").length;
@@ -391,7 +392,9 @@ exit:
     const pair = scenario("offset");
     const session = await solved("load", pair.src, pair.tgt);
     const loop = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
-    const halves = loop && (await cutBefore(session, llops, loop.callee, DEFAULT_LIMITS));
+    const callee = loop?.callee ?? "";
+    const [at] = loop ? beforePoints(...(await bodies(session, llops, callee))) : [];
+    const halves = at && (await cut(session, llops, callee, DEFAULT_LIMITS, ...at));
     if (!halves) throw new Error("expected a cut before the load");
     for (const gid of [halves.outer, halves.callee])
       expect((await session.check(gid)).outcome).toBe("proved");
