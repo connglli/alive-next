@@ -88,10 +88,10 @@ function valueMap(
   const own = new Set(src.flatMap((i) => (i.value ? [i.value] : [])));
   const blockOf = new Map<string, string>();
   for (const i of tgt) if (i.value) blockOf.set(i.value, i.block);
-  // A partner that does not reach the tgt's cut on every path arrives through a phi there.
+  // At a cut block, a partner that does not reach it on every path arrives through a phi.
   const at = (value: string) => {
     const block = blockOf.get(value);
-    if (!block || dominates(tgt, block, tgtCut)) return value;
+    if (!block || tgtCut.startsWith("#") || dominates(tgt, block, tgtCut)) return value;
     const phi = tgt.find((i) => i.block === tgtCut && i.phi && i.operands.includes(value));
     return phi?.value;
   };
