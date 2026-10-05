@@ -6,6 +6,8 @@ export interface Limits {
   ms: number;
   /** The budget of the first check of the root's original pair. */
   rootMs: number;
+  /** Time to look for a counterexample to a root that loops, which turns up quickly. */
+  counterexampleMs: number;
   /** How many times a refused window may grow. */
   growth: number;
   /** How many times the search may cut a goal, counting a peel's two cuts as one. */
@@ -27,6 +29,7 @@ export interface Limits {
 export const DEFAULT_LIMITS: Limits = {
   ms: 3_600_000,
   rootMs: 10_000,
+  counterexampleMs: 500,
   growth: 1,
   cuts: 16,
   unfolds: 4,

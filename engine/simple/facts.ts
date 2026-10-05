@@ -12,6 +12,7 @@ import type {
 } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { StrengthenContract } from "../core/state/strengthen.ts";
+import { type Input, inputsOf } from "./refute.ts";
 import type { Side } from "./relations.ts";
 
 /** Facts by the value they are about, as `commit` takes them. */
@@ -112,25 +113,10 @@ export function comparisons(types: string[]): Comparison[] {
   return out;
 }
 
-/** An integer input in alive2's example: its width, its parameter, and its bits. */
-const INPUT = /^i(\d+) (?:\w+ )*%#(\d+) = (?:#x([0-9a-f]+)|poison)/;
-
-/** An integer input of a counterexample: its width, and its bits unless it is poison. */
-interface Input {
-  bits: number;
-  value?: bigint;
-}
-
 /** The guessed comparisons that alive2's counterexample `detail` breaks. */
 export function violated(detail: string): Comparison[] {
-  const inputs: Input[] = [];
-  const example = detail.match(/Example:\n([\s\S]*?)\n\n/)?.[1] ?? "";
-  for (const line of example.split("\n")) {
-    const [, bits, k, hex] = line.match(INPUT) ?? [];
-    const value = hex ? BigInt(`0x${hex}`) : undefined;
-    if (bits && k) inputs[Number(k)] = { bits: Number(bits), value };
-  }
-  const types = [...inputs].map((input) => `i${input?.bits ?? "?"}`);
+  const inputs = inputsOf(detail);
+  const types = [...inputs].map((input) => input?.type ?? "");
   return comparisons(types).filter((comparison) => holdsOn(comparison, inputs) === false);
 }
 
@@ -138,7 +124,8 @@ export function violated(detail: string): Comparison[] {
 function holdsOn({ op, lhs, rhs }: Comparison, inputs: Input[]): boolean | undefined {
   const read = (x: string | number) =>
     typeof x === "number" ? BigInt(x) : inputs[Number(x.slice(1))]?.value;
-  const [a, b, bits] = [read(lhs), read(rhs), inputs[Number(String(lhs).slice(1))]?.bits];
+  const type = inputs[Number(String(lhs).slice(1))]?.type ?? "";
+  const [a, b, bits] = [read(lhs), read(rhs), Number(type.match(/^i(\d+)$/)?.[1])];
   if (a === undefined || b === undefined || !bits) return undefined;
   const fit = op.startsWith("s") ? BigInt.asIntN : BigInt.asUintN;
   const [x, y] = [fit(bits, a), fit(bits, b)];

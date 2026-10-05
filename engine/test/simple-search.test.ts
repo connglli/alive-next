@@ -8,12 +8,13 @@ import { join } from "node:path";
 import { AliveTv, type CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
 import { Llrwt } from "../core/drivers/llrwt.ts";
+import { Llubi } from "../core/drivers/llubi.ts";
 import { Session } from "../core/session.ts";
-import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
 import { digits } from "../examples/digits.ts";
 import { induction } from "../examples/induction.ts";
 import { nested } from "../examples/nested.ts";
+import { unroll } from "../examples/unroll.ts";
 import { DEFAULT_LIMITS, type Limits } from "../simple/limits.ts";
 import { search } from "../simple/search.ts";
 import { PAPER, pairs } from "./simple-pairs.ts";
@@ -28,6 +29,13 @@ const aliveTv = new AliveTv(toolchain.path("alive-tv"));
 const solving =
   built &&
   (await aliveTv
+    .version()
+    .then(() => true)
+    .catch(() => false));
+const llubi = new Llubi(toolchain.path("llubi"));
+const running =
+  solving &&
+  (await llubi
     .version()
     .then(() => true)
     .catch(() => false));
@@ -89,7 +97,7 @@ function start(
     tgt,
     llops,
     checker,
-    interp: {} as Interpreter,
+    interp: llubi,
     rewriter,
     timeouts: timeoutsFrom({ alive2Ms, checkDefaultMs: 5_000 }),
   });
@@ -299,6 +307,16 @@ declare i32 @llvm.umax.i32(i32, i32)
     expect(await search(session, llops, limits)).toBe("verified");
     expect(moves(session)).not.toContain("unsplit");
   }, 120_000);
+
+  test.skipIf(!running)(
+    "refutes a loop by an input an unrolled check finds",
+    async () => {
+      const session = await start(unroll.src, unroll.tgt, aliveTv);
+      expect(await search(session, llops, limits)).toBe("counterexample");
+      expect(moves(session)).toContain("report_cex");
+    },
+    60_000,
+  );
 
   test("refutes a pair at the root", async () => {
     const src = "define i32 @f(i32 %x) {\nentry:\n  %r = add i32 %x, 1\n  ret i32 %r\n}\n";
