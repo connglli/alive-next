@@ -270,6 +270,36 @@ describe.skipIf(!solving)("search with alive-tv", () => {
     120_000,
   );
 
+  test("strengthens the cut of a refuted callee against its counterexample", async () => {
+    // The tgt's nuw needs m >= a, which the umax gives before the cut and no
+    // analysis states; the callee's counterexample, with m < a, asks for it.
+    const src = `define i32 @f(i32 noundef %a, i32 noundef %c, i32 noundef %d) {
+entry:
+  %m = call i32 @llvm.umax.i32(i32 %a, i32 %c)
+  %q = udiv i32 %d, %m
+  br label %next
+
+next:
+  %s = sub i32 %m, %a
+  %r = add i32 %q, %s
+  ret i32 %r
+}
+
+declare i32 @llvm.umax.i32(i32, i32)
+`;
+    // The whole function gets no answer, as a large one would.
+    const silent = answering(() => "unknown");
+    const large: Checker = {
+      check: (src, tgt, options) =>
+        src.includes("define i32 @f(") && !src.includes("@outlined")
+          ? silent.check(src, tgt, options)
+          : aliveTv.check(src, tgt, options),
+    };
+    const session = await start(src, src.replace("sub i32", "sub nuw i32"), large);
+    expect(await search(session, llops, limits)).toBe("verified");
+    expect(moves(session)).not.toContain("unsplit");
+  }, 120_000);
+
   test("refutes a pair at the root", async () => {
     const src = "define i32 @f(i32 %x) {\nentry:\n  %r = add i32 %x, 1\n  ret i32 %r\n}\n";
     const session = await start(src, src.replace("add i32 %x, 1", "add i32 %x, 2"), aliveTv);

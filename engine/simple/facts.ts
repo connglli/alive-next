@@ -77,6 +77,77 @@ export async function strengthenCut(session: Session, gid: string, candidates: S
   if (size(holds) > 0 && size(holds) < size(candidates)) await session.strengthen(gid, holds);
 }
 
+/** Strengthens the cut that left `gid` with the comparisons `detail` breaks that hold. */
+export async function strengthenAgainst(session: Session, gid: string, detail: string) {
+  const { role, parent } = await session.show(gid);
+  const predicates = violated(detail);
+  if (role !== "callee" || !parent || predicates.length === 0) return false;
+  const preview = await session.strengthenPreview(parent, { predicates });
+  if (preview.kind !== "preview" || size(preview.holds) === 0) return false;
+  return (await session.strengthen(parent, preview.holds)).kind === "strengthened";
+}
+
+/** The orders a candidate compares two parameters by, each asked both ways round. */
+const ORDERS = ["ule", "ult", "sle", "slt"] as const;
+
+/** The comparisons a candidate makes of one parameter with zero. */
+const WITH_ZERO = ["ne", "sge"] as const;
+
+/** Guesses comparisons among parameters of `types` from Houdini's templates. */
+export function comparisons(types: string[]): Comparison[] {
+  const out: Comparison[] = [];
+  types.forEach((a, i) => {
+    if (!/^i\d+$/.test(a)) return;
+    // Template: An integer compared with zero, such as `key != 0`.
+    for (const op of WITH_ZERO) out.push({ op, lhs: `!${i}`, rhs: 0 });
+    types.forEach((b, j) => {
+      if (i === j || a !== b) return;
+      const [lhs, rhs] = [`!${i}`, `!${j}`];
+      // Template: Two integers of one type in order, such as `j <= i`.
+      for (const op of ORDERS) out.push({ op, lhs, rhs });
+      // Template: Two integers of one type equal or not, each pair once.
+      if (i < j) out.push({ op: "eq", lhs, rhs }, { op: "ne", lhs, rhs });
+    });
+  });
+  return out;
+}
+
+/** An integer input in alive2's example: its width, its parameter, and its bits. */
+const INPUT = /^i(\d+) (?:\w+ )*%#(\d+) = (?:#x([0-9a-f]+)|poison)/;
+
+/** An integer input of a counterexample: its width, and its bits unless it is poison. */
+interface Input {
+  bits: number;
+  value?: bigint;
+}
+
+/** The guessed comparisons that alive2's counterexample `detail` breaks. */
+export function violated(detail: string): Comparison[] {
+  const inputs: Input[] = [];
+  const example = detail.match(/Example:\n([\s\S]*?)\n\n/)?.[1] ?? "";
+  for (const line of example.split("\n")) {
+    const [, bits, k, hex] = line.match(INPUT) ?? [];
+    const value = hex ? BigInt(`0x${hex}`) : undefined;
+    if (bits && k) inputs[Number(k)] = { bits: Number(bits), value };
+  }
+  const types = [...inputs].map((input) => `i${input?.bits ?? "?"}`);
+  return comparisons(types).filter((comparison) => holdsOn(comparison, inputs) === false);
+}
+
+/** Whether `comparison` holds of `inputs`, or nothing when it reads a poison one. */
+function holdsOn({ op, lhs, rhs }: Comparison, inputs: Input[]): boolean | undefined {
+  const read = (x: string | number) =>
+    typeof x === "number" ? BigInt(x) : inputs[Number(x.slice(1))]?.value;
+  const [a, b, bits] = [read(lhs), read(rhs), inputs[Number(String(lhs).slice(1))]?.bits];
+  if (a === undefined || b === undefined || !bits) return undefined;
+  const fit = op.startsWith("s") ? BigInt.asIntN : BigInt.asUintN;
+  const [x, y] = [fit(bits, a), fit(bits, b)];
+  if (op === "eq" || op === "ne") return (x === y) === (op === "eq");
+  if (op.endsWith("lt")) return x < y;
+  if (op.endsWith("le")) return x <= y;
+  return op.endsWith("gt") ? x > y : x >= y;
+}
+
 /** The part of `candidates` a preview finds holds, with noundef alone where attributes fail. */
 async function holding(
   session: Session,
