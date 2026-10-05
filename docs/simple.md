@@ -12,7 +12,7 @@ A proof has three parts, and the searcher searches for each: a rewrite path, the
 | Cuts and preconditions | cuts wherever both sides agree, with facts or predicates on the new parameters | a loop header, an expensive operation, a region's boundaries, balanced points; the analyses' facts on the inputs of a window or a cut | relations that are not linear |
 | Loops and invariants | cuts at a header or an exit, unfolding, invariants | the first header, where the diff matched one; invariants by Houdini | invariants of other forms |
 
-The searcher first checks the root's original pair on a short budget, unrolled when it loops, and a proof, a refutation, or an input llubi confirms ends the run. Otherwise it steps the root's src along a rewrite path and checks each goal: identical sides are proved at once, other sides are asked of alive2 on the default budget, and a pair that loops is never proved by a check. A goal that does not close is cut while cuts remain, and the goals a cut leaves are searched in the same way. A search that ends with open goals gives up and names them.
+The searcher first checks the root's original pair on a short budget, unrolled when it loops, and a proof, a refutation, or an input llubi confirms ends the run. Otherwise it steps the root's src along a rewrite path and checks each goal: identical sides are proved at once, other sides are asked of alive2 briefly before a cut and on the default budget when none lands, and a pair that loops is never proved by a check. A goal that does not close is cut while cuts remain, and the goals a cut leaves are searched in the same way. A search that ends with open goals gives up and names them.
 
 ## Rewrite paths
 
