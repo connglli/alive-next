@@ -203,3 +203,42 @@ entry:
 `,
   },
 };
+
+/** The paper's straight-line pair, which alive2 alone does not decide in ten minutes. */
+export const PAPER: Pair = {
+  about: "a total reassociated around a division, and the and dropped",
+  refines: true,
+  src: `define i64 @f(i64 noundef %p0, i64 noundef %p1, i64 noundef %p2) {
+entry:
+  %a = mul i64 %p0, 4
+  %v1 = sub i64 %p1, %a
+  %e = sdiv i64 %v1, 2
+  %v3 = mul i64 %e, 2
+  %v4 = add i64 %a, %v3
+  %v5 = mul i64 %p2, 2
+  %t = add i64 %v4, %v5
+  %v7 = sub i64 %p1, %t
+  %v8 = sdiv i64 %v7, 2
+  %v9 = mul i64 %v8, 2
+  %r = add i64 %t, %v9
+  %h = and i64 %r, -2
+  ret i64 %h
+}
+`,
+  tgt: `define i64 @f(i64 noundef %p0, i64 noundef %p1, i64 noundef %p2) {
+entry:
+  %a = shl i64 %p0, 2
+  %v1 = sub i64 %p1, %a
+  %e = sdiv i64 %v1, 2
+  %s = add i64 %e, %p2
+  %s2 = shl i64 %s, 1
+  %q = add i64 %a, %s2
+  %v7 = sub i64 %p1, %q
+  %v8 = sdiv i64 %v7, 2
+  %k = add i64 %v8, %s
+  %k2 = shl i64 %k, 1
+  %r = add i64 %k2, %a
+  ret i64 %r
+}
+`,
+};

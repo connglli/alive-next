@@ -16,7 +16,7 @@ import { induction } from "../examples/induction.ts";
 import { nested } from "../examples/nested.ts";
 import { DEFAULT_LIMITS, type Limits } from "../simple/limits.ts";
 import { search } from "../simple/search.ts";
-import { pairs } from "./simple-pairs.ts";
+import { PAPER, pairs } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 const llops = new Llops(toolchain.path("llops"));
@@ -223,6 +223,11 @@ describe.skipIf(!solving)("search with alive-tv", () => {
     },
     60_000,
   );
+
+  test("verifies the paper's straight-line pair by a cut and its facts", async () => {
+    const session = await start(PAPER.src, PAPER.tgt, aliveTv);
+    expect(await search(session, llops, limits)).toBe("verified");
+  }, 300_000);
 
   test.skipIf(!rewriting)(
     "verifies digits, whose iteration only a rule closes",
