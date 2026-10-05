@@ -10,7 +10,7 @@ import type { Session } from "../core/session.ts";
 import type { SplitResult } from "../core/state/splits.ts";
 import type { StrengthenContract } from "../core/state/strengthen.ts";
 import { noundefLost, size } from "./facts.ts";
-import { diff } from "./regions.ts";
+import { diff, headers, successors } from "./regions.ts";
 import { expressionsAt, type Side } from "./relations.ts";
 
 /** The orders a candidate compares two parameters by, each asked both ways round. */
@@ -22,9 +22,15 @@ const WITH_ZERO = ["ne", "sge"] as const;
 /** Where to cut a goal that loops, as a src block and its tgt partner. */
 export function loopCut(src: Instruction[], tgt: Instruction[]) {
   const header = headers(src)[0];
-  const at = header ? entryFirst(src, header) : undefined;
-  const partner = at ? diff(src, tgt).pairs.get(at) : undefined;
-  return at && partner ? ([at, partner] as const) : undefined;
+  const { pairs } = diff(src, tgt);
+  const at = header && entryFirst(src, header);
+  const partner = at && pairs.get(at);
+  if (!at || !partner) return undefined;
+  // The tgt may have to be cut first where the src need not, as at a peeled loop's exit.
+  const first = entryFirst(tgt, partner);
+  if (first === partner) return [at, partner] as const;
+  const mine = [...pairs].find(([, theirs]) => theirs === first)?.[0];
+  return mine ? ([mine, first] as const) : undefined;
 }
 
 /** Unfolds loop cut `split`'s iteration on the side its counters say runs fewer. */
@@ -91,21 +97,6 @@ function integer(param: OutlineParam): boolean {
   return /^i\d+$/.test(param.type);
 }
 
-/**
- * The blocks a branch goes back to, outermost first. Blocks are listed in
- * reverse postorder, so a branch to a block listed no later than its own is
- * a loop's back edge.
- */
-function headers(body: Instruction[]): string[] {
-  const order = [...new Set(body.map((i) => i.block))];
-  const position = new Map(order.map((block, k) => [block, k]));
-  const found = new Set<string>();
-  for (const i of body)
-    for (const to of i.operands)
-      if ((position.get(to) ?? Infinity) <= (position.get(i.block) ?? -1)) found.add(to);
-  return order.filter((block) => found.has(block));
-}
-
 /** Where to cut to detach `block`: itself, or first where outside code enters its reach. */
 function entryFirst(body: Instruction[], block: string, seen = new Set<string>()): string {
   const next = successors(body);
@@ -115,13 +106,6 @@ function entryFirst(body: Instruction[], block: string, seen = new Set<string>()
   const entry = outside.find((to) => to !== block && reached.has(to));
   if (!entry || seen.has(entry)) return block;
   return entryFirst(body, entry, seen.add(block));
-}
-
-/** Each block's successors: the blocks its instructions name. */
-function successors(body: Instruction[]): Map<string, string[]> {
-  const next = new Map(body.map((i) => [i.block, [] as string[]]));
-  for (const i of body) next.get(i.block)?.push(...i.operands.filter((to) => next.has(to)));
-  return next;
 }
 
 /** Each parameter's step per iteration of `side`'s loop, where it counts them. */

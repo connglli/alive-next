@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { Llops } from "../core/drivers/llops.ts";
 import { countdown } from "../examples/countdown.ts";
+import { peel } from "../examples/peel.ts";
 import { diff as match, regions } from "../simple/regions.ts";
 import { pairs } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
@@ -134,11 +135,18 @@ entry:
     expect(await diff(src, tgt)).toEqual([{ src: [0], tgt: [], window: true }]);
   });
 
-  test("a loop the tgt reshaped pairs its header's phis but not its exits", async () => {
+  test("a reshaped loop pairs its phis and exits, not its body with an exit", async () => {
     // The tgt if-converts the body and branches to the exit on another test.
     const { pairs } = match(await body(countdown.src), await body(countdown.tgt));
     expect([pairs.get("%1"), pairs.get("%2")]).toEqual(["%1", "%2"]);
-    expect(pairs.has("%bb2")).toBe(false);
+    expect([pairs.get("%bb2"), pairs.get("%bb3")]).toEqual(["%bb3", undefined]);
+  });
+
+  test("loops that look different pair header with header and exit with exit", async () => {
+    // The tgt peels the first iteration, so no block matches by its contents.
+    const { pairs } = match(await body(peel.src), await body(peel.tgt));
+    expect([pairs.get("%bb1"), pairs.get("%bb2")]).toEqual(["%bb2", "%bb3"]);
+    expect([pairs.get("%2"), pairs.get("%3")]).toEqual(["%4", "%5"]);
   });
 
   test("a region that holds a terminator is no window", async () => {

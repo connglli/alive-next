@@ -13,7 +13,7 @@ import { cutFacts, predicatesAt, strengthenCut, union } from "./facts.ts";
 import { fillCut } from "./fill.ts";
 import type { Limits } from "./limits.ts";
 import { guessInvariants, loopCut, strengthenLoop, unfoldIterations } from "./loops.ts";
-import { diff } from "./regions.ts";
+import { diff, dominates } from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
 import { bodies, partners } from "./windows.ts";
 
@@ -49,7 +49,7 @@ export async function cut(
   const preview = await session.splitPreview(gid, srcCut, tgtCut);
   if (preview.kind !== "preview") return undefined;
   const [src, tgt] = await bodies(session, llops, gid);
-  const map = valueMap(preview.params, preview.tgtParams ?? [], src, tgt);
+  const map = valueMap(preview.params, preview.tgtParams ?? [], src, tgt, tgtCut);
   if (!map) return undefined;
   const split = await session.split(gid, srcCut, tgtCut, map);
   if (split.kind !== "split") return undefined;
@@ -82,14 +82,24 @@ function valueMap(
   tgtParams: OutlineParam[],
   src: Instruction[],
   tgt: Instruction[],
+  tgtCut: string,
 ) {
   const { pairs } = diff(src, tgt);
   const own = new Set(src.flatMap((i) => (i.value ? [i.value] : [])));
+  const blockOf = new Map<string, string>();
+  for (const i of tgt) if (i.value) blockOf.set(i.value, i.block);
+  // A partner that does not reach the tgt's cut on every path arrives through a phi there.
+  const at = (value: string) => {
+    const block = blockOf.get(value);
+    if (!block || dominates(tgt, block, tgtCut)) return value;
+    const phi = tgt.find((i) => i.block === tgtCut && i.phi && i.operands.includes(value));
+    return phi?.value;
+  };
   const map: Record<string, string> = {};
   for (const { live } of params) {
     const partner = own.has(live) ? pairs.get(live) : live;
     if (!partner) return undefined;
-    map[live] = partner;
+    map[live] = at(partner) ?? partner;
   }
   const passed = new Set(Object.values(map));
   for (const { live } of tgtParams) if (!passed.has(live)) map[`tgt${live}`] = live;
