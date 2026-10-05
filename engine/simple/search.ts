@@ -10,6 +10,7 @@ import { balancedPoints, beforePoints, cut, cutLoop } from "./cuts.ts";
 import { strengthenAgainst } from "./facts.ts";
 import type { Limits } from "./limits.ts";
 import { peel } from "./peel.ts";
+import { refuteFrom, unrolling } from "./refute.ts";
 import { regions } from "./regions.ts";
 import { stagesToward, stepRules } from "./rewrite.ts";
 import { bodies, bodyOf, stepWindows } from "./windows.ts";
@@ -49,6 +50,7 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   const { root } = await session.status();
   if ((await session.check(root, limits.rootMs)).outcome !== "unknown") return session.verdict;
   const run: Run = { session, llops, limits, cuts: limits.cuts };
+  await unrolling(session, llops, root, limits.counterexampleMs);
   const agenda = [goal(run, root, { stages: true })];
   // A check of the root's original pair may decide the run on the way.
   while (agenda.length > 0 && session.verdict === "unknown") {
@@ -77,8 +79,9 @@ async function learn(run: Run, agenda: Goal[], answer: Answer) {
   agenda.push(...[...answer.goals].reverse());
 }
 
-/** Strengthens the cut that left refuted `g` against its counterexamples, or undoes it. */
+/** Refutes the run with `g`'s counterexample, else strengthens or undoes its cut. */
 async function repair(run: Run, agenda: Goal[], g: Goal, detail: string) {
+  if (await refuteFrom(run.session, g.gid, detail)) return;
   let cex = detail;
   while (await strengthenAgainst(run.session, g.gid, cex)) {
     const { outcome, check } = await run.session.check(g.gid);
