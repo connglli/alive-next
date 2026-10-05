@@ -2127,6 +2127,19 @@ entry:
     m = {"%a": "%a", "%c": "%c"}
     self.bad(self.splice(self.READS, "d", "d", self.READS_OTHER, "d", "d", m), "invalid")
 
+  def test_a_read_whose_partner_is_replaced_is_refused(self):
+    # The copy reads %c from outside its window, and the src's %c, used only
+    # inside the replaced window, would be erased with it.
+    module = """define i32 @f(i32 %a) {
+entry:
+  %c = add i32 %a, 1
+  %d = mul i32 %c, 2
+  ret i32 %d
+}
+"""
+    m = {"%a": "%a", "%c": "%c", "%d": "%d"}
+    self.bad(self.splice(module, "c", "d", module, "d", "d", m), "invalid")
+
   def test_a_value_with_two_partners_is_refused(self):
     m = {"%a": "%c", "%c": "%c", "%d": "%d"}
     self.bad(self.splice(self.READS, "d", "d", self.READS_OTHER, "d", "d", m), "invalid")

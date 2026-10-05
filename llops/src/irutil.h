@@ -214,7 +214,7 @@ llvm::SmallPtrSet<llvm::Instruction *, 16> setOf(llvm::ArrayRef<llvm::Instructio
 std::vector<llvm::Value *> liveInto(llvm::Function &F,
                                     const llvm::SmallPtrSetImpl<llvm::Instruction *> &inside);
 
-// The instructions from `cut` to `to`, or nothing when `to` does not come at
+// The instructions from `from` to `to`, or nothing when `to` does not come at
 // or after `from`.
 std::vector<llvm::Instruction *> windowOf(llvm::BasicBlock &BB, llvm::Instruction *from,
                                           llvm::Instruction *to);
