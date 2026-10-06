@@ -33,6 +33,7 @@ A wrong proposal wastes time; it never produces a wrong certificate. Since refin
 Induction proves a pair of loops only when both reach the header with the same state, and a fact over the callee's parameters relates them there. That leaves out of reach:
 
 * A variable the tgt dropped, such as `%i` after linear function test replacement: the tgt would have to pass the shared hypothesis a value refining the src's.
+* Loop state the src keeps in stack slots and the tgt in values, as at `-O0` against an optimized tgt: the src passes a slot's address where the tgt passes a value, and no step promotes the slots, since that changes the loop as a whole. Such a src is paired after `mem2reg`.
 * Unrolling with a remainder loop, a loop replaced by a call such as `memset`, and a deleted loop: the tgt makes no call to pair with the src's call of its hypothesis, and alive2 refuses a call on one side only, since it may not return.
 * Reordering transformations (interchange, fusion, fission, tiling, reversal): the two sides agree on memory only at the end, which takes a quantified invariant.
 * An irreducible loop, whose second entry breaks the single entry a split at a block needs.
