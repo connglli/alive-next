@@ -171,6 +171,29 @@ declare void @llvm.assume(i1 noundef)
     expect(beforePoints(...(await bodies(session, llops, "g1")))).toEqual([["#3", "#3"]]);
   });
 
+  test("a balanced cut counts what its point reaches", async () => {
+    const src = `define i32 @f(i1 %c, i32 %x, i32 %y) {
+entry:
+  %a = mul i32 %x, %y
+  %b = mul i32 %a, %x
+  br i1 %c, label %more, label %done
+
+done:
+  ret i32 %b
+
+more:
+  %d = mul i32 %b, %y
+  %e = mul nuw i32 %d, %x
+  ret i32 %e
+}
+`;
+    const session = await start(src, src.replace("mul nuw", "mul"));
+    // The exit's return sits halfway down the list, but a cut there moves no multiply.
+    const points = balancedPoints(...(await bodies(session, llops, "g1")));
+    expect(points.map(([at]) => at)).not.toContain("#3");
+    expect(points.length).toBeGreaterThan(0);
+  });
+
   test("a balanced cut splits the multiplies evenly", async () => {
     const src = `define i32 @f(i32 %x, i32 %y) {
 entry:

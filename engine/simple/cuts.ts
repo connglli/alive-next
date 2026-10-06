@@ -14,7 +14,7 @@ import { cutFacts, passedOn, predicatesAt, strengthenCut, union } from "./facts.
 import { fillCut } from "./fill.ts";
 import type { Limits } from "./limits.ts";
 import { guessInvariants, loopCut, strengthenLoop, unfoldToMatch } from "./loops.ts";
-import { diff, dominates, headers } from "./regions.ts";
+import { diff, dominates, headers, successors } from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
 import { bodies, partners } from "./windows.ts";
 
@@ -210,17 +210,28 @@ export function beforePoints(src: Instruction[], tgt: Instruction[]): [string, s
     .map(([i, j]) => [`#${i}`, `#${j}`]);
 }
 
+/** How many expensive operations a cut before `body[k]` moves: all that it reaches. */
+function moved(body: Instruction[], k: number): number {
+  const next = successors(body);
+  const block = body[k]?.block ?? "";
+  const reached = new Set(next.get(block));
+  for (const from of reached) for (const to of next.get(from) ?? []) reached.add(to);
+  // On a branch, what a point reaches is no suffix of the listed instructions.
+  const after = (m: number) => m >= k && body[m]?.block === block;
+  return body.filter((i, m) => expensive(i) && (after(m) || reached.has(i.block))).length;
+}
+
 /**
  * Where both sides agree and their expensive operations split most evenly,
  * most even first, leaving at least one in each half.
  */
 export function balancedPoints(src: Instruction[], tgt: Instruction[]): [string, string][] {
   const { regions } = diff(src, tgt);
-  const before = (k: number) => src.slice(0, k).filter((i) => expensive(i)).length;
-  const total = before(src.length);
+  const total = src.filter((i) => expensive(i)).length;
+  const kept = (k: number) => total - moved(src, k);
   return [...partners(src, tgt, regions)]
     .filter(([i, j]) => i > 0 && j >= 0 && !src[i]?.phi && !tgt[j]?.phi)
-    .map(([i, j]) => ({ i, j, gap: Math.abs(total - 2 * before(i)), split: before(i) }))
+    .map(([i, j]) => ({ i, j, gap: Math.abs(total - 2 * kept(i)), split: kept(i) }))
     .filter((point) => point.split > 0 && point.split < total)
     .sort((a, b) => a.gap - b.gap)
     .slice(0, TRIES)
