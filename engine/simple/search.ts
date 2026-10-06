@@ -23,6 +23,8 @@ interface Run {
   cuts: number;
   /** The budget of a check before a cut. */
   eagerMs: number;
+  /** The budget of a goal's last check, after its cuts: the largest a check may have. */
+  capMs: number;
 }
 
 /** A goal on the agenda: the moves it has left, and whether a cut landed on it. */
@@ -51,8 +53,8 @@ const NONE: Answer = { kind: "none" };
 export async function search(session: Session, llops: Llops, limits: Limits) {
   const { root, budgets } = await session.status();
   if ((await session.check(root, limits.rootMs)).outcome !== "unknown") return session.verdict;
-  const eagerMs = budgets.eagerCheckMs;
-  const run: Run = { session, llops, limits, cuts: limits.cuts, eagerMs };
+  const [eagerMs, capMs] = [budgets.eagerCheckMs, budgets.checkCapMs];
+  const run: Run = { session, llops, limits, cuts: limits.cuts, eagerMs, capMs };
   await unrolling(session, llops, root, limits.counterexampleMs);
   const agenda = [goal(run, root, { stages: true })];
   // A check of the root's original pair may decide the run on the way.
@@ -142,7 +144,7 @@ async function* moves(run: Run, gid: string, stages: boolean, peelable: boolean)
   yield async () => ((await session.show(gid)).status === "proved" ? PROVED : NONE);
   if (limits.steps) yield stepping(() => stepWindows(session, llops, gid, limits));
   if (limits.steps && limits.rules) yield stepping(() => stepByRules(run, gid));
-  // A goal gets a short check before it is cut, and the default one when nothing cuts it.
+  // A goal gets a short check before it is cut, and the largest one when nothing cuts it.
   yield checking(run, gid, run.eagerMs);
   const [src, tgt] = await bodies(session, llops, gid);
   const at = (point: [string, string]) =>
@@ -151,11 +153,11 @@ async function* moves(run: Run, gid: string, stages: boolean, peelable: boolean)
   for (const point of beforePoints(src, tgt)) yield at(point);
   if (peelable) yield peeled(run, gid);
   for (const point of balancedPoints(src, tgt)) yield at(point);
-  yield checking(run, gid);
+  yield checking(run, gid, run.capMs);
 }
 
-/** A move that checks a goal, on budget `ms` or else the default. */
-function checking(run: Run, gid: string, ms?: number): Move {
+/** A move that checks a goal on budget `ms`. */
+function checking(run: Run, gid: string, ms: number): Move {
   return async () => {
     const { outcome, check } = await run.session.check(gid, ms);
     if (outcome === "refuted") return { kind: "refuted", detail: check.detail };
