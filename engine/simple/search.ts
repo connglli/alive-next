@@ -58,10 +58,13 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   // A check of the root's original pair may decide the run on the way.
   while (agenda.length > 0 && session.verdict === "unknown") {
     const top = agenda[agenda.length - 1] as Goal;
-    // A goal a cut landed on is done once the goals it left, above it, are.
-    const next = top.cut ? undefined : await top.moves.next();
-    if (next && !next.done) await learn(run, agenda, await next.value());
-    else agenda.pop();
+    // A goal a cut landed on comes back once the goals it left, above it, are done.
+    if (top.cut) await settle(run, agenda, top);
+    else {
+      const next = await top.moves.next();
+      if (next.done) agenda.pop();
+      else await learn(run, agenda, await next.value());
+    }
   }
   if (session.verdict === "unknown") {
     const open = (await session.status()).goals.filter((g) => g.status === "open");
@@ -105,6 +108,13 @@ async function requeue(run: Run, agenda: Goal[], g: Goal) {
     if (gid === g.gid || !reopened || agenda.some((queued) => queued.gid === gid)) continue;
     agenda.splice(agenda.length - 1, 0, { ...goal(run, gid), parent: g.parent });
   }
+}
+
+/** Pops cut goal `g` if proved, and else undoes its cut so that it tries its next move. */
+async function settle(run: Run, agenda: Goal[], g: Goal) {
+  const proved = (await run.session.show(g.gid)).status === "proved";
+  if (proved || (await run.session.unsplit(g.gid)).kind !== "unsplit") agenda.pop();
+  else g.cut = false;
 }
 
 /** Undoes the cut that left `g`, since no cut proves a refuted goal; a root stays open. */
