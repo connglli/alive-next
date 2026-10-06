@@ -12,7 +12,7 @@ import { search } from "./search.ts";
 const USAGE = `usage: bun run simple [options] <src.ll> <tgt.ll> [<directory>]
 
       --seconds <n>       end the whole run after n seconds, an hour by default
-      --cuts <n>          allow n cuts (a region counts once), 16 by default
+      --cuts <n>          at least n cuts (a region counts once), 16 by default
       --unfolds <n>       allow n unfolds per loop cut, 4 by default
       --no-stages         do not step through the optimizer's stages
       --no-steps          do not rewrite the src, only cut and check

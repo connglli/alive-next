@@ -238,6 +238,22 @@ describe.skipIf(!built)("search", () => {
     expect(await search(session, llops, { ...limits, cuts: 0 })).toBe("verified");
   });
 
+  test("cuts before each expensive operation when they outnumber the cuts", async () => {
+    const src = `define i32 @f(i32 %a, i32 %b, i32 %c) {
+entry:
+  %x = udiv exact i32 %a, %b
+  %y = udiv exact i32 %x, %c
+  %z = udiv exact i32 %y, %a
+  ret i32 %z
+}
+`;
+    // A window, or a question that divides more than once, gets no answer.
+    const once = (text: string) => text.split("udiv").length <= 2;
+    const checker = stub((text) => !text.includes("@outlined_window") && once(text));
+    const session = await start(src, src.replaceAll("udiv exact", "udiv"), checker);
+    expect(await search(session, llops, { ...limits, cuts: 1 })).toBe("verified");
+  });
+
   test("walks the src through the optimizer's stages", async () => {
     const stages = await llops.pipelineStages(SPILLED);
     if (!stages.ok) throw new Error(stages.message);

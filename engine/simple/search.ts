@@ -6,7 +6,7 @@
 // next. Every move is a session move, so whatever it proves, the kernel replays.
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
-import { type Assumed, balancedPoints, beforePoints, cut, cutLoop } from "./cuts.ts";
+import { type Assumed, balancedPoints, beforePoints, cut, cutLoop, quota } from "./cuts.ts";
 import { strengthenAgainst } from "./facts.ts";
 import type { Limits } from "./limits.ts";
 import { peel } from "./peel.ts";
@@ -56,11 +56,13 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   const { root, budgets } = await session.status();
   if ((await session.check(root, limits.rootMs)).outcome !== "unknown") return session.verdict;
   const [eagerMs, capMs] = [budgets.eagerCheckMs, budgets.checkCapMs];
+  // A larger function gets more cuts than `limits.cuts`, unless cuts are off.
+  const needed = quota(...(await bodies(session, llops, root)));
   const run: Run = {
     session,
     llops,
     limits,
-    cuts: limits.cuts,
+    cuts: limits.cuts && Math.max(limits.cuts, needed),
     eagerMs,
     capMs,
     assumed: new Map(),
