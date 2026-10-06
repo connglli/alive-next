@@ -31,7 +31,7 @@ Every step is on the src side, since putting the tgt's region into the src asks 
 A goal that does not close is cut at the first of these that the framework accepts:
 
 * Its first loop header, as the next section says.
-* Just before the last expensive operation both sides apply, so that it reads the same operands on both: a multiplication of two variables, a division, a remainder, a load, or a store. Calls do not count, since every cut adds one.
+* Just before the last expensive operation both sides apply, so that it reads the same operands on both: a multiplication of two variables, a division, a remainder, floating-point arithmetic, a load, or a store. Calls do not count, since every cut adds one.
 * Around the first region its steps left, whether no window could hold the region or alive2 refused its windows. The goal is cut after the region and then at its head, or at its block when it starts with a phi, so that the region stands in a goal of its own. That goal is not cut around a region again.
 * Where both sides agree and its expensive operations split most evenly between the two halves, trying the three most even points.
 
