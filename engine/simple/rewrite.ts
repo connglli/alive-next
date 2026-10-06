@@ -5,6 +5,7 @@
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { distance } from "./regions.ts";
+import { bodyOf } from "./windows.ts";
 
 /** Steps the src of goal `gid` by the verified rules, if together they bring it closer. */
 export async function stepRules(session: Session, llops: Llops, gid: string) {
@@ -23,8 +24,8 @@ export async function stepRules(session: Session, llops: Llops, gid: string) {
 }
 
 /**
- * The stages the optimizer makes of `src`, canonical, up to the last one
- * closest to `tgt`; none when every stage is farther than `src` itself.
+ * The stages the optimizer makes of `src` that change its body, canonical, up
+ * to the last one closest to `tgt`; none when every stage is farther than `src`.
  */
 export async function stagesToward(llops: Llops, src: string, tgt: string) {
   const run = await llops.pipelineStages(src);
@@ -32,7 +33,7 @@ export async function stagesToward(llops: Llops, src: string, tgt: string) {
   let [best, end] = [await measured(llops, src, tgt), 0];
   for (const stage of run.ok ? run.stages : []) {
     const canon = await llops.canon(stage.module);
-    if (!canon.ok) continue;
+    if (!canon.ok || bodyOf(canon.module) === bodyOf(stages.at(-1) ?? src)) continue;
     stages.push(canon.module);
     const far = await measured(llops, canon.module, tgt);
     if (far <= best) [best, end] = [far, stages.length];

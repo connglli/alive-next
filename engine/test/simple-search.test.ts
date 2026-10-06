@@ -252,6 +252,21 @@ describe.skipIf(!built)("search", () => {
     expect(moves(session).filter((move) => move === "tx_commit").length).toBeGreaterThan(0);
   });
 
+  test("asks no window again toward a tgt the stages end at", async () => {
+    const src = "define i32 @f(i32 %x) {\nentry:\n  %m = mul i32 %x, 8\n  ret i32 %m\n}\n";
+    const stages = await llops.pipelineStages(src);
+    if (!stages.ok) throw new Error(stages.message);
+    const tgt = stages.stages.at(-1)?.module ?? src;
+    const asked: string[] = [];
+    const session = await start(
+      src,
+      tgt,
+      stub((src, _, ms) => asked.push(`${ms} ${src}`) < 0),
+    );
+    await search(session, llops, { ...limits, stages: true, cuts: 0 });
+    expect(new Set(asked).size).toBe(asked.length);
+  });
+
   test("stops jumping to the stages once alive2 cannot decide a jump", async () => {
     const stages = await llops.pipelineStages(SPILLED);
     if (!stages.ok) throw new Error(stages.message);

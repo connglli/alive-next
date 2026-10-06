@@ -151,11 +151,16 @@ function goal(run: Run, gid: string, { stages = false, peelable = true } = {}): 
 /** The moves of goal `gid`, in the order they are made. */
 async function* moves(run: Run, gid: string, stages: boolean, peelable: boolean) {
   const { session, llops, limits } = run;
+  // Stages that end at the tgt's body have asked the root's windows toward it already.
+  let walked = false;
   if (stages && limits.stages && limits.steps)
-    yield stepping(() => followStages(session, llops, gid, limits));
+    yield stepping(async () => {
+      walked = await followStages(session, llops, gid, limits);
+    });
   // Strengthening a cut checks its goals again, which may have proved this one.
   yield async () => ((await session.show(gid)).status === "proved" ? PROVED : NONE);
-  if (limits.steps) yield stepping(() => stepWindows(session, llops, gid, limits));
+  const walk = () => stepWindows(session, llops, gid, limits);
+  if (limits.steps && !walked) yield stepping(walk);
   if (limits.steps && limits.rules) yield stepping(() => stepByRules(run, gid));
   // A goal gets a short check before it is cut, and the largest one when nothing cuts it.
   yield checking(run, gid, run.eagerMs);
@@ -215,16 +220,19 @@ async function stepByRules(run: Run, gid: string) {
   if (await stepRules(session, llops, gid)) await stepWindows(session, llops, gid, limits);
 }
 
-/** Steps the root's src through the stages the optimizer makes of it, toward its tgt. */
+/** Steps the root's src through the stages; whether the last one has its tgt's body. */
 async function followStages(session: Session, llops: Llops, root: string, limits: Limits) {
   const { src, tgt } = await session.show(root);
+  const stages = await stagesToward(llops, src.text, tgt.text);
   // A later stage holds this one's changes, so a jump alive2 cannot decide ends the jumps.
   let jumping = true;
-  for (const stage of await stagesToward(llops, src.text, tgt.text)) {
+  for (const stage of stages) {
     const left = await stepWindows(session, llops, root, limits, stage);
     if (!jumping || left.length === 0) continue;
     jumping = (await jump(session, root, stage)) !== "unknown";
   }
+  const last = stages.at(-1);
+  return last !== undefined && bodyOf(last) === bodyOf(tgt.text);
 }
 
 /** One step of the whole function to `stage`, for what its windows left; alive2's answer. */
