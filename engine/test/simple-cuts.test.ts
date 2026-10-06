@@ -123,6 +123,18 @@ j:
     expect(await left(session, peeled.goals)).toEqual([1, 0, 0]);
   });
 
+  test("a cut goes before a floating-point add both sides apply", async () => {
+    const src = `define float @f(float %x, float %y, float %z) {
+entry:
+  %a = fadd float %x, %y
+  %b = fadd float %a, %z
+  ret float %b
+}
+`;
+    const session = await start(src, src.replace("fadd float %a", "fadd nnan float %a"));
+    expect(beforePoints(...(await bodies(session, llops, "g1")))).toEqual([["#1", "#1"]]);
+  });
+
   test("a balanced cut splits the multiplies evenly", async () => {
     const src = `define i32 @f(i32 %x, i32 %y) {
 entry:

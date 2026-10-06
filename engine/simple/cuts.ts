@@ -28,6 +28,8 @@ const EXPENSIVE = new Set([
   "sdiv",
   "urem",
   "srem",
+  "fadd",
+  "fsub",
   "fmul",
   "fdiv",
   "frem",
