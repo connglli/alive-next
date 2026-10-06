@@ -3,7 +3,7 @@
 // block. A cut the framework refuses ends the peel.
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
-import { type Assumed, cut } from "./cuts.ts";
+import { type Assumed, cut, firstOwn } from "./cuts.ts";
 import type { Limits } from "./limits.ts";
 import type { Region } from "./regions.ts";
 import { bodies } from "./windows.ts";
@@ -29,7 +29,8 @@ export async function peel(
     after.push(split.callee);
     at = split.outer;
   }
-  if (a === 0 && c === 0) return { goals: [at, ...after], region: at };
+  const first = a <= firstOwn(src) && c <= firstOwn(tgt);
+  if (first) return { goals: [at, ...after], region: at };
   const head = src[a]?.phi ? [src[a]?.block, tgt[c]?.block] : [`#${a}`, `#${c}`];
   const [srcHead = "", tgtHead = ""] = head;
   const split = await cut(session, llops, at, limits, srcHead, tgtHead, assumed);

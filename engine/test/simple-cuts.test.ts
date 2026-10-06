@@ -95,6 +95,26 @@ entry:
     expect(peeled.goals.indexOf(peeled.region)).toBe(1);
   });
 
+  test("a region that starts the goal's own code is not cut at its head", async () => {
+    const src = `define i32 @f(i32 %x, i32 %y) {
+entry:
+  %le = icmp ule i32 %x, %y
+  call void @llvm.assume(i1 %le)
+  %a = add i32 %x, 1
+  %b = mul i32 %a, %y
+  ret i32 %b
+}
+
+declare void @llvm.assume(i1 noundef)
+`;
+    const session = await start(src, src.replace("add i32 %x, 1", "add i32 %x, 2"));
+    const [region] = regions(...(await bodies(session, llops, "g1")));
+    if (!region) throw new Error("expected a region");
+    const peeled = await peel(session, llops, "g1", DEFAULT_LIMITS, region);
+    expect(peeled.goals).toHaveLength(2);
+    expect(peeled.goals[0]).toBe(peeled.region);
+  });
+
   test("a phi with code after it is cut after it, then at its block", async () => {
     const src = `define i32 @f(i1 %c, i32 %x) {
 entry:
@@ -133,6 +153,22 @@ entry:
 `;
     const session = await start(src, src.replace("fadd float %a", "fadd nnan float %a"));
     expect(beforePoints(...(await bodies(session, llops, "g1")))).toEqual([["#1", "#1"]]);
+  });
+
+  test("no cut goes before an operation only the goal's assumptions precede", async () => {
+    const src = `define i32 @f(i32 %x, i32 %y) {
+entry:
+  %le = icmp ule i32 %x, %y
+  call void @llvm.assume(i1 %le)
+  %a = mul i32 %x, %y
+  %b = mul i32 %a, %x
+  ret i32 %b
+}
+
+declare void @llvm.assume(i1 noundef)
+`;
+    const session = await start(src, src.replace("mul i32 %a", "mul nsw i32 %a"));
+    expect(beforePoints(...(await bodies(session, llops, "g1")))).toEqual([["#3", "#3"]]);
   });
 
   test("a balanced cut splits the multiplies evenly", async () => {
