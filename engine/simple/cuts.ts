@@ -46,6 +46,20 @@ function expensive(i?: Instruction): boolean {
   return i.opcode !== "mul" || i.operands.every((operand) => operand.startsWith("%"));
 }
 
+/** Where `body`'s own instructions begin, past the ones stating what its goal assumes. */
+export function firstOwn(body: Instruction[]): number {
+  const users = new Map(body.map((i) => [i.value, [] as Instruction[]]));
+  for (const i of body) for (const operand of i.operands) users.get(operand)?.push(i);
+  const stating = new Set<Instruction>();
+  for (const i of [...body].reverse()) {
+    const uses = users.get(i.value) ?? [];
+    const states = uses.length > 0 && uses.every((user) => stating.has(user));
+    if (i.calls === "@llvm.assume" || states) stating.add(i);
+  }
+  const own = body.findIndex((i) => !stating.has(i));
+  return own < 0 ? body.length : own;
+}
+
 /** The predicates each goal assumes at its entry, by goal. */
 export type Assumed = Map<string, Predicate[]>;
 
@@ -181,8 +195,10 @@ export function beforePoints(src: Instruction[], tgt: Instruction[]): [string, s
     const j = at.get(pairs.get(i.value ?? "") ?? "");
     if (j !== undefined) shared.set(k, j);
   });
+  // With only the goal's assumptions before it, a cut leaves the goal as its callee.
+  const own = firstOwn(src);
   return [...shared]
-    .filter(([i, j]) => i > 0 && expensive(src[i]) && src[i]?.opcode === tgt[j]?.opcode)
+    .filter(([i, j]) => i > own && expensive(src[i]) && src[i]?.opcode === tgt[j]?.opcode)
     .sort(([a], [b]) => b - a)
     .slice(0, TRIES)
     .map(([i, j]) => [`#${i}`, `#${j}`]);
