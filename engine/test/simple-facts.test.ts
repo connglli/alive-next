@@ -10,7 +10,7 @@ import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
-import { factsAt, union, violated } from "../simple/facts.ts";
+import { factsAt, passedOn, union, violated } from "../simple/facts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { stepWindows } from "../simple/windows.ts";
 import { toolchain } from "./toolchain-under-test.ts";
@@ -113,6 +113,18 @@ i8 %#3 = #x00 (0)
     expect(broken).toContain("!0 ule !1");
     expect(broken).not.toContain("!1 ule !0");
     expect(broken.filter((comparison) => comparison.includes("!2"))).toEqual([]);
+  });
+});
+
+describe("passedOn", () => {
+  test("renames facts for a cut and drops those about values it does not pass", () => {
+    const relation = { insts: ["%d = sub i32 !2, !0", "%ok = icmp ne i32 %d, 0"] };
+    const facts = [{ op: "ule" as const, lhs: "!0", rhs: "!2" }, relation, EQ];
+    // The cut passes a value of its own first, then %2 and %0, but not %1.
+    expect(passedOn(facts, ["%5", "%2", "%0"])).toEqual([
+      { op: "ule", lhs: "!2", rhs: "!1" },
+      { insts: ["%d = sub i32 !1, !2", "%ok = icmp ne i32 %d, 0"] },
+    ]);
   });
 });
 

@@ -6,7 +6,7 @@
 // next. Every move is a session move, so whatever it proves, the kernel replays.
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
-import { balancedPoints, beforePoints, cut, cutLoop } from "./cuts.ts";
+import { type Assumed, balancedPoints, beforePoints, cut, cutLoop } from "./cuts.ts";
 import { strengthenAgainst } from "./facts.ts";
 import type { Limits } from "./limits.ts";
 import { peel } from "./peel.ts";
@@ -25,6 +25,8 @@ interface Run {
   eagerMs: number;
   /** The budget of a goal's last check, after its cuts: the largest a check may have. */
   capMs: number;
+  /** The predicates each goal assumes at its entry. */
+  assumed: Assumed;
 }
 
 /** A goal on the agenda: the moves it has left, and whether a cut landed on it. */
@@ -54,7 +56,15 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   const { root, budgets } = await session.status();
   if ((await session.check(root, limits.rootMs)).outcome !== "unknown") return session.verdict;
   const [eagerMs, capMs] = [budgets.eagerCheckMs, budgets.checkCapMs];
-  const run: Run = { session, llops, limits, cuts: limits.cuts, eagerMs, capMs };
+  const run: Run = {
+    session,
+    llops,
+    limits,
+    cuts: limits.cuts,
+    eagerMs,
+    capMs,
+    assumed: new Map(),
+  };
   await unrolling(session, llops, root, limits.counterexampleMs);
   const agenda = [goal(run, root, { stages: true })];
   // A check of the root's original pair may decide the run on the way.
@@ -91,7 +101,10 @@ async function learn(run: Run, agenda: Goal[], answer: Answer) {
 async function repair(run: Run, agenda: Goal[], g: Goal, detail: string) {
   if (await refuteFrom(run.session, g.gid, detail)) return;
   let cex = detail;
-  while (await strengthenAgainst(run.session, g.gid, cex)) {
+  for (;;) {
+    const landed = await strengthenAgainst(run.session, g.gid, cex);
+    if (landed.length === 0) break;
+    run.assumed.set(g.gid, [...(run.assumed.get(g.gid) ?? []), ...landed]);
     await requeue(run, agenda, g);
     const { outcome, check } = await run.session.check(g.gid, run.eagerMs);
     if (outcome === "proved") agenda.pop();
@@ -148,8 +161,8 @@ async function* moves(run: Run, gid: string, stages: boolean, peelable: boolean)
   yield checking(run, gid, run.eagerMs);
   const [src, tgt] = await bodies(session, llops, gid);
   const at = (point: [string, string]) =>
-    halves(run, () => cut(session, llops, gid, limits, ...point));
-  yield halves(run, () => cutLoop(session, llops, gid, limits));
+    halves(run, () => cut(session, llops, gid, limits, ...point, run.assumed));
+  yield halves(run, () => cutLoop(session, llops, gid, limits, run.assumed));
   for (const point of beforePoints(src, tgt)) yield at(point);
   if (peelable) yield peeled(run, gid);
   for (const point of balancedPoints(src, tgt)) yield at(point);
@@ -188,7 +201,7 @@ function peeled(run: Run, gid: string): Move {
     const { session, llops, limits } = run;
     if (run.cuts <= 0) return NONE;
     const [region] = regions(...(await bodies(session, llops, gid)));
-    const made = region && (await peel(session, llops, gid, limits, region));
+    const made = region && (await peel(session, llops, gid, limits, region, run.assumed));
     if (!made || made.goals.length < 2) return NONE;
     const goals = made.goals.map((g) => goal(run, g, { peelable: g !== made.region }));
     return { kind: "cut", goals };

@@ -60,12 +60,14 @@ export async function strengthenLoop(
   let kept = candidates;
   while (size(kept) > 0) {
     const preview = await session.strengthenPreview(gid, kept);
-    if (preview.kind !== "preview") return;
+    if (preview.kind !== "preview") return [];
     if (size(preview.holds) === size(kept)) break;
     const lost = noundefLost(kept, preview.holds);
     kept = { ...preview.holds, param_attrs: { ...preview.holds.param_attrs, ...lost } };
   }
-  if (size(kept) > 0) await session.strengthen(gid, kept);
+  if (size(kept) === 0) return [];
+  const landed = (await session.strengthen(gid, kept)).kind === "strengthened";
+  return landed ? (kept.predicates ?? []) : [];
 }
 
 /** Guesses invariants about `params` from Houdini's templates. */

@@ -72,20 +72,41 @@ export async function predicatesAt(llops: Llops, side: Side) {
  * and when that is refused, the ones a preview finds hold.
  */
 export async function strengthenCut(session: Session, gid: string, candidates: StrengthenContract) {
-  if (size(candidates) === 0) return;
-  if ((await session.strengthen(gid, candidates)).kind === "strengthened") return;
+  if (size(candidates) === 0) return [];
+  if ((await session.strengthen(gid, candidates)).kind === "strengthened")
+    return candidates.predicates ?? [];
   const holds = await holding(session, gid, candidates);
-  if (size(holds) > 0 && size(holds) < size(candidates)) await session.strengthen(gid, holds);
+  if (size(holds) === 0 || size(holds) === size(candidates)) return [];
+  const landed = (await session.strengthen(gid, holds)).kind === "strengthened";
+  return landed ? (holds.predicates ?? []) : [];
+}
+
+/** `facts` about a goal's parameters, renamed for a cut inside it that passes them on. */
+export function passedOn(facts: Predicate[], lives: string[]): Predicate[] {
+  const at = new Map(lives.map((live, k) => [live, k]));
+  // A goal's !i is its value %i; a fact about one the cut does not pass is dropped.
+  const renamed = (i: string) => `!${at.get(`%${i}`) ?? "?"}`;
+  const rename = (ref: string) => ref.replace(/!(\d+)/g, (_, i) => renamed(i));
+  const operand = (x: string | number) => (typeof x === "number" ? x : rename(x));
+  return facts
+    .map(
+      (fact): Predicate =>
+        "insts" in fact
+          ? { insts: fact.insts.map(rename) }
+          : { ...fact, lhs: operand(fact.lhs), rhs: operand(fact.rhs) },
+    )
+    .filter((fact) => !JSON.stringify(fact).includes("!?"));
 }
 
 /** Strengthens the cut that left `gid` with the comparisons `detail` breaks that hold. */
 export async function strengthenAgainst(session: Session, gid: string, detail: string) {
   const { role, parent } = await session.show(gid);
   const predicates = violated(detail);
-  if (role !== "callee" || !parent || predicates.length === 0) return false;
+  if (role !== "callee" || !parent || predicates.length === 0) return [];
   const preview = await session.strengthenPreview(parent, { predicates });
-  if (preview.kind !== "preview" || size(preview.holds) === 0) return false;
-  return (await session.strengthen(parent, preview.holds)).kind === "strengthened";
+  if (preview.kind !== "preview" || size(preview.holds) === 0) return [];
+  const landed = (await session.strengthen(parent, preview.holds)).kind === "strengthened";
+  return landed ? (preview.holds.predicates ?? []) : [];
 }
 
 /** The orders a candidate compares two parameters by, each asked both ways round. */
