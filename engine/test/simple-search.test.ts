@@ -85,6 +85,30 @@ next:
 declare i32 @llvm.umax.i32(i32, i32)
 `;
 
+/**
+ * A loop whose tgt counts down to its exit, so that past a cut inside the
+ * iteration, its nuw holds only by the relation the loop's cut assumes.
+ */
+const SQUARES = `define i32 @f(i32 noundef %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %p = mul i32 %i, %i
+  %q = mul i32 %p, %n
+  %c = icmp ult i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %i.next = add i32 %i, 1
+  br label %head
+
+exit:
+  ret i32 %q
+}
+`;
+
 /** A stand-in that answers each check with what `outcome` says of its src and budget. */
 function answering(outcome: (src: string, asked: number, ms: number) => Outcome): Checker {
   let asked = 0;
@@ -344,6 +368,24 @@ describe.skipIf(!solving)("search with alive-tv", () => {
       },
     };
     const session = await start(UMAX, UMAX.replace("sub i32", "sub nuw i32"), slow);
+    expect(await search(session, llops, limits)).toBe("verified");
+  }, 120_000);
+
+  test("offers a goal's assumed facts at the cuts inside it", async () => {
+    // Both products asked against the tgt get no answer, as a large iteration would.
+    const silent = answering(() => "unknown");
+    const products = (src: string) => (src.match(/ = mul i32 %\d+, %\d+/g) ?? []).length;
+    const large: Checker = {
+      check: (src, tgt, options) =>
+        products(src) >= 2 && !src.includes("add nuw") && tgt.includes("add nuw")
+          ? silent.check(src, tgt, options)
+          : aliveTv.check(src, tgt, options),
+    };
+    const left = "  %left = phi i32 [ %n, %entry ], [ %left.next, %body ]\n";
+    const tgt = SQUARES.replace("%body ]\n", `%body ]\n${left}`)
+      .replace("icmp ult i32 %i, %n", "icmp ne i32 %left, 0")
+      .replace("add i32 %i, 1", "add nuw i32 %i, 1\n  %left.next = add i32 %left, -1");
+    const session = await start(SQUARES, tgt, large);
     expect(await search(session, llops, limits)).toBe("verified");
   }, 120_000);
 
