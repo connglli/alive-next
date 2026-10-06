@@ -91,7 +91,7 @@ async function repair(run: Run, agenda: Goal[], g: Goal, detail: string) {
   let cex = detail;
   while (await strengthenAgainst(run.session, g.gid, cex)) {
     await requeue(run, agenda, g);
-    const { outcome, check } = await run.session.check(g.gid);
+    const { outcome, check } = await run.session.check(g.gid, run.eagerMs);
     if (outcome === "proved") agenda.pop();
     if (outcome !== "refuted") return;
     cex = check.detail;
