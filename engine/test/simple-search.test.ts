@@ -55,6 +55,17 @@ const limits = { ...DEFAULT_LIMITS, rootMs: 2_000, stages: false };
 /** An answer alive2 can give. */
 type Outcome = CheckResult["outcome"];
 
+/** A pair to cut before either of its divisions, whose tgt drops a flag. */
+const DIVIDES = `define i32 @f(i32 %a, i32 %b, i32 %c) {
+entry:
+  %a1 = add i32 %a, 1
+  %x = udiv i32 %a1, %b
+  %y = udiv i32 %x, %c
+  %r = add nuw i32 %y, 1
+  ret i32 %r
+}
+`;
+
 /**
  * A pair whose tgt's nuw needs m >= a, which the umax gives before a cut at the
  * division and no analysis states; the callee's counterexample asks for it.
@@ -74,13 +85,13 @@ next:
 declare i32 @llvm.umax.i32(i32, i32)
 `;
 
-/** A stand-in that answers each check with what `outcome` says of its src. */
-function answering(outcome: (src: string, asked: number) => Outcome): Checker {
+/** A stand-in that answers each check with what `outcome` says of its src and budget. */
+function answering(outcome: (src: string, asked: number, ms: number) => Outcome): Checker {
   let asked = 0;
   return {
-    async check(src): Promise<CheckResult> {
+    async check(src, _, options): Promise<CheckResult> {
       return {
-        outcome: outcome(src, asked++),
+        outcome: outcome(src, asked++, options?.timeoutMs ?? 0),
         detail: "",
         invocation: { binary: "stub", flags: [], timeoutMs: 0 },
         stdout: "",
@@ -165,22 +176,13 @@ describe.skipIf(!built)("search", () => {
       pair.tgt,
       stub(() => false),
     );
-    expect(await search(session, llops, limits)).toBe("unknown");
-    // A cut before the multiplication, then the peel's two in what precedes it.
+    // A cut before the multiplication, then two in what precedes it, each undone in turn.
+    expect(await search(session, llops, { ...limits, cuts: 3 })).toBe("unknown");
     expect(moves(session).filter((move) => move === "split")).toHaveLength(3);
     expect(moves(session).at(-1)).toBe("give_up");
   });
 
   test("undoes the cut that left a refuted goal and cuts at the next point", async () => {
-    const src = `define i32 @f(i32 %a, i32 %b, i32 %c) {
-entry:
-  %a1 = add i32 %a, 1
-  %x = udiv i32 %a1, %b
-  %y = udiv i32 %x, %c
-  %r = add nuw i32 %y, 1
-  ret i32 %r
-}
-`;
     // A callee that divides once, cut before the second division, is refuted,
     // and one that divides twice is proved; so is every outer, which calls it.
     const checker = answering((text) => {
@@ -189,9 +191,20 @@ entry:
       if (text.includes("define i32 @f(")) return calls ? "correct" : "unknown";
       return text.split("udiv").length === 2 ? "incorrect" : "correct";
     });
-    const session = await start(src, src.replace("add nuw", "add"), checker);
+    const session = await start(DIVIDES, DIVIDES.replace("add nuw", "add"), checker);
     expect(await search(session, llops, limits)).toBe("verified");
     expect(moves(session).filter((move) => move === "split")).toHaveLength(2);
+    expect(moves(session)).toContain("unsplit");
+  });
+
+  test("undoes a cut whose goals stay open, so that the default check comes", async () => {
+    // Only the whole function, on the default budget, gets an answer.
+    const whole = (t: string) => t.includes("define i32 @f(") && !t.includes("call");
+    const checker = answering((text, _, ms) =>
+      whole(text) && ms >= 5_000 ? "correct" : "unknown",
+    );
+    const session = await start(DIVIDES, DIVIDES.replace("add nuw", "add"), checker);
+    expect(await search(session, llops, { ...limits, cuts: 2 })).toBe("verified");
     expect(moves(session)).toContain("unsplit");
   });
 
