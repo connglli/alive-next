@@ -12,6 +12,7 @@
 #include "number.h"
 #include "opt.h"
 #include "outline.h"
+#include "reshaped.h"
 #include "validate.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/InitLLVM.h"
@@ -34,6 +35,7 @@ const char *kUsage = "usage: llops <subcommand> < request.json > response.json\n
                      "  detach     move a block and all it reaches into a function\n"
                      "  reattach   turn the calls detach made back into branches\n"
                      "  unfold     put a loop's body at calls of the loop or its hypothesis\n"
+                     "  reshaped   whether every run of one function is a run of another\n"
                      "  analyze    known bits, ranges or pointer facts at a program point\n"
                      "  harness    wrap a function in a main that llubi can run\n"
                      "  assume     state a fact about a value before an instruction\n"
@@ -99,6 +101,8 @@ int main(int argc, char **argv) {
     return respond(llops::reattachCmd(*args));
   if (cmd == "unfold")
     return respond(llops::unfoldCmd(*args));
+  if (cmd == "reshaped")
+    return respond(llops::reshapedCmd(*args));
   if (cmd == "analyze")
     return respond(llops::analyzeCmd(*args));
   if (cmd == "harness")

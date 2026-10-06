@@ -36,6 +36,7 @@ set(LLOPS_SOURCES
   src/snippet.cpp
   src/opt.cpp
   src/outline.cpp
+  src/reshaped.cpp
   src/detach.cpp
   src/harness.cpp
   src/assume.cpp

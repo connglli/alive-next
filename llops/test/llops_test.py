@@ -2761,6 +2761,323 @@ entry:
 """
 
 
+LOOP_PROPERTY = """
+!0 = distinct !{!0, !1}
+!1 = !{!"llvm.loop.mustprogress"}
+"""
+
+# A loop that tests at its top, and the same loop rotated, as `-O3` leaves it.
+TOP_TEST = (
+  """define i32 @f(i32 %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %s = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  %c = icmp slt i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %s.next = add i32 %s, %i
+  %i.next = add i32 %i, 1
+  br label %head, !llvm.loop !0
+
+exit:
+  ret i32 %s
+}
+"""
+  + LOOP_PROPERTY
+)
+
+BOTTOM_TEST = (
+  """define i32 @f(i32 %n) {
+entry:
+  %c0 = icmp slt i32 0, %n
+  br i1 %c0, label %body, label %exit
+
+body:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %s = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  %s.next = add i32 %s, %i
+  %i.next = add i32 %i, 1
+  %c = icmp slt i32 %i.next, %n
+  br i1 %c, label %body, label %exit, !llvm.loop !0
+
+exit:
+  %r = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  ret i32 %r
+}
+"""
+  + LOOP_PROPERTY
+)
+
+
+class TestReshaped(Case):
+  def reshaped(self, before, after):
+    return self.good(run("reshaped", {"before": before, "after": after}))["reshaped"]
+
+  def test_a_function_is_a_reshaping_of_itself(self):
+    self.assertTrue(self.reshaped(TOP_TEST, TOP_TEST))
+
+  def test_a_rotated_loop_is_a_reshaping(self):
+    self.assertTrue(self.reshaped(TOP_TEST, BOTTOM_TEST))
+
+  def test_merged_blocks_are_a_reshaping(self):
+    split = "define i32 @f(i32 %x) {\nentry:\n  %a = add i32 %x, 1\n  br label %next\n\n"
+    split += "next:\n  %b = mul i32 %a, 3\n  ret i32 %b\n}\n"
+    merged = "define i32 @f(i32 %x) {\nentry:\n  %a = add i32 %x, 1\n  %b = mul i32 %a, 3\n"
+    merged += "  ret i32 %b\n}\n"
+    self.assertTrue(self.reshaped(split, merged))
+    self.assertTrue(self.reshaped(merged, split))
+
+  def test_an_empty_block_dropped_is_a_reshaping(self):
+    hop = """define i32 @f(i1 %c, i32 %x) {
+entry:
+  br i1 %c, label %hop, label %other
+
+hop:
+  br label %done
+
+other:
+  %y = add i32 %x, 1
+  br label %done
+
+done:
+  %r = phi i32 [ %x, %hop ], [ %y, %other ]
+  ret i32 %r
+}
+"""
+    direct = hop.replace("label %hop, label %other", "label %done, label %other")
+    direct = direct.replace("hop:\n  br label %done\n\n", "")
+    direct = direct.replace("[ %x, %hop ]", "[ %x, %entry ]")
+    self.assertTrue(self.reshaped(hop, direct))
+
+  def test_an_lcssa_phi_is_a_reshaping(self):
+    out = "exit:\n  %s.out = phi i32 [ %s, %head ]\n  ret i32 %s.out"
+    lcssa = TOP_TEST.replace("exit:\n  ret i32 %s", out)
+    self.assertTrue(self.reshaped(TOP_TEST, lcssa))
+
+  def test_an_inverted_branch_is_a_reshaping(self):
+    inverted = TOP_TEST.replace("icmp slt i32 %i, %n", "icmp sge i32 %i, %n")
+    inverted = inverted.replace("label %body, label %exit", "label %exit, label %body")
+    self.assertTrue(self.reshaped(TOP_TEST, inverted))
+
+  def test_a_switch_with_its_cases_reordered_is_a_reshaping(self):
+    switch = """define i32 @f(i32 %x) {
+entry:
+  switch i32 %x, label %d [
+    i32 1, label %a
+    i32 2, label %b
+  ]
+
+a:
+  ret i32 10
+
+b:
+  ret i32 20
+
+d:
+  ret i32 0
+}
+"""
+    cases = "    i32 1, label %a\n    i32 2, label %b\n"
+    reordered = switch.replace(cases, "    i32 2, label %b\n    i32 1, label %a\n")
+    self.assertTrue(self.reshaped(switch, reordered))
+
+  def test_swapped_successors_are_no_reshaping(self):
+    swapped = TOP_TEST.replace("label %body, label %exit", "label %exit, label %body")
+    self.assertFalse(self.reshaped(TOP_TEST, swapped))
+
+  def test_a_changed_constant_is_no_reshaping(self):
+    changed = BOTTOM_TEST.replace("add i32 %i, 1", "add i32 %i, 2")
+    self.assertFalse(self.reshaped(TOP_TEST, changed))
+
+  def test_a_dropped_instruction_is_no_reshaping(self):
+    stores = "define i32 @f(ptr %p, i32 %x) {\nentry:\n  store i32 %x, ptr %p, align 4\n"
+    stores += "  ret i32 %x\n}\n"
+    dropped = stores.replace("  store i32 %x, ptr %p, align 4\n", "")
+    self.assertFalse(self.reshaped(stores, dropped))
+
+  def test_a_wrong_phi_value_is_no_reshaping(self):
+    exit = "%r = phi i32 [ 0, %entry ]"
+    wrong = BOTTOM_TEST.replace(exit, "%r = phi i32 [ 1, %entry ]")
+    self.assertFalse(self.reshaped(TOP_TEST, wrong))
+
+  def test_a_changed_flag_is_no_reshaping(self):
+    flagged = BOTTOM_TEST.replace("add i32 %i, 1", "add nsw i32 %i, 1")
+    self.assertFalse(self.reshaped(TOP_TEST, flagged))
+
+  def test_a_changed_attribute_is_no_reshaping(self):
+    marked = BOTTOM_TEST.replace("define i32 @f", "define noundef i32 @f")
+    self.assertFalse(self.reshaped(TOP_TEST, marked))
+
+  def test_loop_properties_count_for_nothing_as_in_alive2(self):
+    bare = TOP_TEST.replace(", !llvm.loop !0", "").replace(LOOP_PROPERTY, "")
+    self.assertTrue(self.reshaped(bare, TOP_TEST))
+
+  def test_changed_metadata_alive2_reads_is_no_reshaping(self):
+    ranged = """define i32 @f(ptr %p) {
+entry:
+  %v = load i32, ptr %p, align 4, !range !0
+  ret i32 %v
+}
+
+!0 = !{i32 0, i32 10}
+"""
+    self.assertTrue(self.reshaped(ranged, ranged))
+    self.assertFalse(self.reshaped(ranged, ranged.replace("i32 0, i32 10", "i32 0, i32 5")))
+
+  def test_an_inverted_comparison_used_elsewhere_is_no_reshaping(self):
+    used = """define i32 @f(i32 %x) {
+entry:
+  %c = icmp slt i32 %x, 0
+  br i1 %c, label %a, label %b
+
+a:
+  %z = zext i1 %c to i32
+  ret i32 %z
+
+b:
+  ret i32 7
+}
+"""
+    inverted = used.replace("icmp slt", "icmp sge")
+    inverted = inverted.replace("label %a, label %b", "label %b, label %a")
+    self.assertFalse(self.reshaped(used, inverted))
+
+  def test_a_phi_with_flags_is_not_followed(self):
+    joined = """define float @f(i1 %c, float %x) {
+entry:
+  br i1 %c, label %a, label %b
+
+a:
+  br label %b
+
+b:
+  %p = phi float [ %x, %entry ], [ 1.0, %a ]
+  ret float %p
+}
+"""
+    self.assertFalse(self.reshaped(joined, joined.replace("phi float", "phi nnan float")))
+
+  def test_what_goes_with_the_body_is_compared(self):
+    plain = "define i32 @f(i32 %x) {\nentry:\n  ret i32 %x\n}\n"
+    for header in ("prefix i32 1", "prologue i32 1", "!kcfi_type !0"):
+      with self.subTest(header=header):
+        marked = plain.replace("@f(i32 %x)", f"@f(i32 %x) {header}")
+        marked += "\n!0 = !{i32 12345}\n" if "!0" in header else ""
+        self.assertTrue(self.reshaped(marked, marked))
+        self.assertFalse(self.reshaped(plain, marked))
+    # Branch weights mean nothing to alive2, on a function as on a branch.
+    counted = plain.replace("@f(i32 %x)", "@f(i32 %x) !prof !0")
+    counted += '\n!0 = !{!"function_entry_count", i64 1}\n'
+    self.assertTrue(self.reshaped(plain, counted))
+
+  def test_a_changed_linkage_is_no_reshaping(self):
+    internal = TOP_TEST.replace("define i32 @f", "define internal i32 @f")
+    self.assertFalse(self.reshaped(TOP_TEST, internal))
+
+  def test_a_taken_block_address_is_not_followed(self):
+    taken = """define ptr @f() {
+entry:
+  br label %next
+
+next:
+  ret ptr blockaddress(@f, %next)
+}
+"""
+    self.assertFalse(self.reshaped(taken, taken))
+
+  def test_metadata_with_the_same_number_is_no_reshaping(self):
+    read = """define i64 @f() {
+entry:
+  %r = call i64 @llvm.read_register.i64(metadata !0)
+  ret i64 %r
+}
+
+declare i64 @llvm.read_register.i64(metadata)
+
+!0 = !{!"sp"}
+"""
+    self.assertTrue(self.reshaped(read, read))
+    self.assertFalse(self.reshaped(read, read.replace('!{!"sp"}', '!{!"fp"}')))
+
+  def test_a_loop_over_named_structs_is_a_reshaping(self):
+    point = "%struct.pt = type { i32, i32 }\n\n"
+    load = "%q = getelementptr inbounds %struct.pt, ptr %p, i32 %i, i32 0"
+    top = point + TOP_TEST.replace("i32 %n)", "i32 %n, ptr %p)").replace(
+      "  %s.next = add i32 %s, %i\n",
+      f"  {load}\n  %v = load i32, ptr %q, align 4\n  %s.next = add i32 %s, %v\n",
+    )
+    bottom = point + BOTTOM_TEST.replace("i32 %n)", "i32 %n, ptr %p)").replace(
+      "  %s.next = add i32 %s, %i\n",
+      f"  {load}\n  %v = load i32, ptr %q, align 4\n  %s.next = add i32 %s, %v\n",
+    )
+    self.assertTrue(self.reshaped(top, top))
+    self.assertTrue(self.reshaped(top, bottom))
+    wide = bottom.replace("type { i32, i32 }", "type { i32, i64 }")
+    self.assertFalse(self.reshaped(top, wide))
+
+  def test_a_struct_without_a_name_is_not_followed(self):
+    unnamed = """%0 = type { i32, i32 }
+
+define i32 @f(ptr %p) {
+entry:
+  %q = getelementptr inbounds %0, ptr %p, i32 0, i32 1
+  %v = load i32, ptr %q, align 4
+  ret i32 %v
+}
+"""
+    self.assertFalse(self.reshaped(unnamed, unnamed))
+
+  def test_distinct_metadata_matches_nothing(self):
+    scoped = """define i32 @f(ptr %p) {
+entry:
+  %v = load i32, ptr %p, align 4, !alias.scope !0
+  ret i32 %v
+}
+
+!0 = !{!1}
+!1 = distinct !{!1, !2}
+!2 = distinct !{!2}
+"""
+    self.assertFalse(self.reshaped(scoped, scoped))
+
+  def test_inline_asm_compares_by_its_text(self):
+    asm = """define i32 @f(i32 %x) {
+entry:
+  %r = call i32 asm "rol $0", "=r,0"(i32 %x)
+  ret i32 %r
+}
+"""
+    self.assertTrue(self.reshaped(asm, asm))
+    self.assertFalse(self.reshaped(asm, asm.replace("rol $0", "ror $0")))
+
+  def test_an_ill_formed_module_is_refused(self):
+    # The use of %a in %next is not dominated by its definition.
+    ill = """define i32 @f(i1 %c) {
+entry:
+  br i1 %c, label %def, label %next
+
+def:
+  %a = add i32 1, 2
+  br label %next
+
+next:
+  ret i32 %a
+}
+"""
+    self.bad(run("reshaped", {"before": TOP_TEST, "after": ill}), "invalid_ir")
+
+  def test_undef_is_refused(self):
+    undef = TOP_TEST.replace("[ 0, %entry ], [ %i", "[ undef, %entry ], [ %i")
+    self.bad(run("reshaped", {"before": TOP_TEST, "after": undef}), "undef")
+
+  def test_both_modules_are_needed(self):
+    self.bad(run("reshaped", {"before": TOP_TEST}), "bad_request")
+
+
 class TestFrameDependent(Case):
   def holding(self, module, label, hazard):
     """`module` with the hazard's code first in block `label`."""
