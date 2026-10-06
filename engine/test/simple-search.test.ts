@@ -102,8 +102,8 @@ function answering(outcome: (src: string, asked: number, ms: number) => Outcome)
 }
 
 /** A stand-in that answers `correct` where `proves` says so, and settles nothing else. */
-function stub(proves: (src: string, asked: number) => boolean): Checker {
-  return answering((src, asked) => (proves(src, asked) ? "correct" : "unknown"));
+function stub(proves: (src: string, asked: number, ms: number) => boolean): Checker {
+  return answering((src, asked, ms) => (proves(src, asked, ms) ? "correct" : "unknown"));
 }
 
 let dir: string;
@@ -200,12 +200,18 @@ describe.skipIf(!built)("search", () => {
   test("undoes a cut whose goals stay open, so that the default check comes", async () => {
     // Only the whole function, on the default budget, gets an answer.
     const whole = (t: string) => t.includes("define i32 @f(") && !t.includes("call");
-    const checker = answering((text, _, ms) =>
-      whole(text) && ms >= 5_000 ? "correct" : "unknown",
-    );
+    const checker = stub((text, _, ms) => whole(text) && ms >= 5_000);
     const session = await start(DIVIDES, DIVIDES.replace("add nuw", "add"), checker);
     expect(await search(session, llops, { ...limits, cuts: 2 })).toBe("verified");
     expect(moves(session)).toContain("unsplit");
+  });
+
+  test("gives a goal's last check the largest budget", async () => {
+    // The whole function proves only past the default budget, which is 5 s here.
+    const whole = (t: string) => t.includes("define i32 @f(") && !t.includes("call");
+    const checker = stub((text, _, ms) => whole(text) && ms > 5_000);
+    const session = await start(DIVIDES, DIVIDES.replace("add nuw", "add"), checker);
+    expect(await search(session, llops, { ...limits, cuts: 0 })).toBe("verified");
   });
 
   test("walks the src through the optimizer's stages", async () => {
