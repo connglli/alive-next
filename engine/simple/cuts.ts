@@ -14,7 +14,7 @@ import { cutFacts, passedOn, predicatesAt, strengthenCut, union } from "./facts.
 import { fillCut } from "./fill.ts";
 import type { Limits } from "./limits.ts";
 import { guessInvariants, loopCut, strengthenLoop, unfoldToMatch } from "./loops.ts";
-import { diff, dominates } from "./regions.ts";
+import { diff, dominates, headers } from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
 import { bodies, partners } from "./windows.ts";
 
@@ -44,6 +44,12 @@ const TRIES = 3;
 function expensive(i?: Instruction): boolean {
   if (!i || !EXPENSIVE.has(i.opcode)) return false;
   return i.opcode !== "mul" || i.operands.every((operand) => operand.startsWith("%"));
+}
+
+/** A pair's quota of cuts: one per expensive operation and loop both sides hold. */
+export function quota(src: Instruction[], tgt: Instruction[]): number {
+  const count = (body: Instruction[]) => body.filter((i) => expensive(i)).length;
+  return Math.min(count(src) + headers(src).length, count(tgt) + headers(tgt).length);
 }
 
 /** Where `body`'s own instructions begin, past the ones stating what its goal assumes. */

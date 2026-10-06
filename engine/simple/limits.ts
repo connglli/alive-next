@@ -10,7 +10,7 @@ export interface Limits {
   counterexampleMs: number;
   /** How many times a refused window may grow. */
   growth: number;
-  /** How many times the search may cut a goal, counting a peel's two cuts as one. */
+  /** How many cuts the search may make at least, counting a peel's two as one. */
   cuts: number;
   /** How many unfolds a loop cut may make to match an unrolled or peeled loop. */
   unfolds: number;
