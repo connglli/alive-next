@@ -369,7 +369,9 @@ exit:
     const stages = await llops.pipelineStages(src);
     if (!stages.ok) throw new Error(stages.message);
     const session = await start(src, stages.stages.at(-1)?.module ?? src, aliveTv);
-    expect(await search(session, llops, { ...limits, stages: true })).toBe("verified");
+    // Two cuts each, one per division and loop: the step needs one and the rest two,
+    // so the step's cuts are its own.
+    expect(await search(session, llops, { ...limits, stages: true, cuts: 1 })).toBe("verified");
     expect([...session.tree.goals.values()].some((goal) => goal.role === "lhs")).toBe(true);
   }, 180_000);
 

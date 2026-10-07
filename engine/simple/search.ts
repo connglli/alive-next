@@ -6,7 +6,7 @@
 // evenly) until one proves it or splits it, and the goals a split leaves are
 // searched before the next. Every move is a session move, so whatever it
 // proves, the kernel replays.
-import type { Llops } from "../core/drivers/llops.ts";
+import type { Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { type Assumed, balancedPoints, beforePoints, cut, cutLoop, quota } from "./cuts.ts";
 import { strengthenAgainst } from "./facts.ts";
@@ -17,12 +17,11 @@ import { regions } from "./regions.ts";
 import { stagesToward, stepRules } from "./rewrite.ts";
 import { bodies, bodyOf, stepWindows } from "./windows.ts";
 
-/** What a search works with, and how many cuts it may still make. */
+/** What a search works with. */
 interface Run {
   session: Session;
   llops: Llops;
   limits: Limits;
-  cuts: number;
   /** The budget of a check before a cut. */
   eagerMs: number;
   /** The budget of a goal's last check, after its cuts: the largest a check may have. */
@@ -31,10 +30,16 @@ interface Run {
   assumed: Assumed;
 }
 
+/** How many cuts a goal, and the goals its cuts leave, may still make. */
+interface Cuts {
+  left: number;
+}
+
 /** A goal on the agenda: the moves it has left, and how to undo what split it. */
 interface Goal {
   gid: string;
   moves: AsyncGenerator<Move>;
+  cuts: Cuts;
   undo?: "unsplit" | "uninterpose";
   /** The goal whose split left this one. */
   parent?: Goal;
@@ -59,22 +64,13 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   const { root, budgets } = await session.status();
   if ((await session.check(root, limits.rootMs)).outcome !== "unknown") return session.verdict;
   const [eagerMs, capMs] = [budgets.eagerCheckMs, budgets.checkCapMs];
-  // A larger function gets more cuts than `limits.cuts`, unless cuts are off.
-  const needed = quota(...(await bodies(session, llops, root)));
-  const run: Run = {
-    session,
-    llops,
-    limits,
-    cuts: limits.cuts && Math.max(limits.cuts, needed),
-    eagerMs,
-    capMs,
-    assumed: new Map(),
-  };
+  const run: Run = { session, llops, limits, eagerMs, capMs, assumed: new Map() };
   await unrolling(session, llops, root, limits.counterexampleMs);
   const { src, tgt } = await session.show(root);
   const walking = limits.stages && limits.steps;
   const stages = walking ? await stagesToward(llops, src.text, tgt.text) : [];
-  const agenda = [goal(run, root, { stages })];
+  const cuts = quotaOf(limits, await bodies(session, llops, root));
+  const agenda = [goal(run, root, { stages, cuts })];
   // A check of the root's original pair may decide the run on the way.
   while (agenda.length > 0 && session.verdict === "unknown") {
     const top = agenda[agenda.length - 1] as Goal;
@@ -101,7 +97,7 @@ async function learn(run: Run, agenda: Goal[], answer: Answer) {
   if (answer.kind !== "cut" && answer.kind !== "interposed") return;
   top.undo = answer.kind === "cut" ? "unsplit" : "uninterpose";
   // An interpose rewrites rather than decomposes, and the stages bound how many there are.
-  if (answer.kind === "cut") run.cuts -= 1;
+  if (answer.kind === "cut") top.cuts.left -= 1;
   for (const left of answer.goals) left.parent = top;
   agenda.push(...[...answer.goals].reverse());
 }
@@ -130,7 +126,8 @@ async function requeue(run: Run, agenda: Goal[], g: Goal) {
   for (const gid of parent ? (await session.show(parent)).children : []) {
     const reopened = (await session.show(gid)).status === "open";
     if (gid === g.gid || !reopened || agenda.some((queued) => queued.gid === gid)) continue;
-    agenda.splice(agenda.length - 1, 0, { ...goal(run, gid), parent: g.parent });
+    const back = { ...goal(run, gid, { cuts: g.cuts }), parent: g.parent };
+    agenda.splice(agenda.length - 1, 0, back);
   }
 }
 
@@ -159,8 +156,9 @@ async function undone(run: Run, g: Goal): Promise<boolean> {
   return (await run.session.unsplit(g.gid)).kind === "unsplit";
 }
 
-/** What a goal starts its moves with: the stages left to walk, and what it skips. */
+/** What a goal starts with: its cuts, the stages left to walk, and what it skips. */
 interface Start {
+  cuts: Cuts;
   stages?: string[];
   /** False for a peeled region, which is not peeled again. */
   peelable?: boolean;
@@ -169,18 +167,23 @@ interface Start {
 }
 
 /** Goal `gid` with its moves: stages for the root and what follows a stage interposed. */
-function goal(run: Run, gid: string, start: Start = {}): Goal {
-  return { gid, moves: moves(run, gid, start) };
+function goal(run: Run, gid: string, start: Start): Goal {
+  return { gid, cuts: start.cuts, moves: moves(run, gid, start) };
+}
+
+/** A goal's cuts: one per expensive operation and loop, and `limits.cuts` at least. */
+function quotaOf(limits: Limits, [src, tgt]: [Instruction[], Instruction[]]): Cuts {
+  return { left: limits.cuts && Math.max(limits.cuts, quota(src, tgt)) };
 }
 
 /** The moves of goal `gid`, in the order they are made. */
 async function* moves(
   run: Run,
   gid: string,
-  { stages = [], peelable = true, steps = true }: Start,
+  { cuts, stages = [], peelable = true, steps = true }: Start,
 ) {
   const { session, llops, limits } = run;
-  yield* walk(run, gid, stages);
+  yield* walk(run, gid, stages, cuts);
   // Stages that end at the tgt's body have asked the goal's windows toward it already.
   const last = stages.at(-1);
   const view = await session.show(gid);
@@ -194,10 +197,10 @@ async function* moves(
   yield checking(run, gid, run.eagerMs);
   const [src, tgt] = await bodies(session, llops, gid);
   const at = (point: [string, string]) =>
-    halves(run, () => cut(session, llops, gid, limits, ...point, run.assumed));
-  yield halves(run, () => cutLoop(session, llops, gid, limits, run.assumed));
+    halves(run, cuts, () => cut(session, llops, gid, limits, ...point, run.assumed));
+  yield halves(run, cuts, () => cutLoop(session, llops, gid, limits, run.assumed));
   for (const point of beforePoints(src, tgt)) yield at(point);
-  if (peelable) yield peeled(run, gid);
+  if (peelable) yield peeled(run, gid, cuts);
   for (const point of balancedPoints(src, tgt)) yield at(point);
   yield checking(run, gid, run.capMs);
 }
@@ -219,24 +222,28 @@ function stepping(step: () => Promise<unknown>): Move {
   };
 }
 
-/** A move that cuts a goal in two while cuts remain, answering with the halves. */
-function halves(run: Run, cutting: () => ReturnType<typeof cutLoop>): Move {
+/** A move that cuts a goal in two while its cuts remain, answering with the halves. */
+function halves(run: Run, cuts: Cuts, cutting: () => ReturnType<typeof cutLoop>): Move {
   return async () => {
-    const made = run.cuts > 0 && (await cutting());
+    const made = cuts.left > 0 && (await cutting());
     if (!made) return NONE;
-    return { kind: "cut", goals: [goal(run, made.outer), goal(run, made.callee)] };
+    return {
+      kind: "cut",
+      goals: [goal(run, made.outer, { cuts }), goal(run, made.callee, { cuts })],
+    };
   };
 }
 
 /** A move that peels the first region left out of goal `gid`. */
-function peeled(run: Run, gid: string): Move {
+function peeled(run: Run, gid: string, cuts: Cuts): Move {
   return async () => {
     const { session, llops, limits } = run;
-    if (run.cuts <= 0) return NONE;
+    if (cuts.left <= 0) return NONE;
     const [region] = regions(...(await bodies(session, llops, gid)));
     const made = region && (await peel(session, llops, gid, limits, region, run.assumed));
     if (!made || made.goals.length < 2) return NONE;
-    const goals = made.goals.map((g) => goal(run, g, { peelable: g !== made.region }));
+    const peelable = (id: string) => id !== made.region;
+    const goals = made.goals.map((id) => goal(run, id, { cuts, peelable: peelable(id) }));
     return { kind: "cut", goals };
   };
 }
@@ -254,7 +261,7 @@ async function stepByRules(run: Run, gid: string) {
  * stage neither reaches interposed, so that the step to it is a goal of its own
  * and the rest walks on.
  */
-async function* walk(run: Run, gid: string, stages: string[]) {
+async function* walk(run: Run, gid: string, stages: string[], cuts: Cuts) {
   const { session, llops, limits } = run;
   // A later stage holds this one's changes, so a jump alive2 cannot decide ends
   // the jumps, and a step goal left open ends the interposes.
@@ -274,27 +281,31 @@ async function* walk(run: Run, gid: string, stages: string[]) {
     if (outcome === "unknown") jumping = false;
     // alive2 refuses a step on a program that loops, which only the cuts of a step goal
     // can prove; a step goal on one that does not would repeat what the goal's cuts do.
-    const provable = interposable && limits.interpose && run.cuts > 0;
+    const provable = interposable && limits.interpose && limits.cuts > 0;
     if (!provable || outcome !== "error") continue;
-    yield interposing(run, gid, stage, stages.slice(k + 1));
+    yield interposing(run, gid, stages.slice(k), cuts);
     interposable = false;
   }
 }
 
-/** A move that interposes `stage` in goal `gid`: the step to it, and the rest from it. */
-function interposing(run: Run, gid: string, stage: string, rest: string[]): Move {
+/**
+ * A move that interposes the first of `stages` in goal `gid`: the step to it,
+ * and the rest from it, which walks the other stages.
+ */
+function interposing(run: Run, gid: string, stages: string[], cuts: Cuts): Move {
   return async () => {
     const { session, llops } = run;
+    const [stage = "", ...rest] = stages;
     const { src } = await session.show(gid);
     const middle = await llops.edit(src.text, { op: "set_body", body: bodyOf(stage) });
     if (!middle.ok) return NONE;
     const made = await session.interpose(gid, middle.module);
     if (made.kind !== "interposed") return NONE;
     const { lhs, rhs } = made.children;
-    return {
-      kind: "interposed",
-      goals: [goal(run, lhs, { steps: false }), goal(run, rhs, { stages: rest })],
-    };
+    // The step gets cuts of its own, so that a chain of steps spends none of the rest's.
+    const own = quotaOf(run.limits, await bodies(session, llops, lhs));
+    const step = goal(run, lhs, { cuts: own, steps: false });
+    return { kind: "interposed", goals: [step, goal(run, rhs, { stages: rest, cuts })] };
   };
 }
 
