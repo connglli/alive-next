@@ -36,8 +36,8 @@ export async function unrolling(session: Session, llops: Llops, root: string, ms
     const started = Date.now();
     const { outcome, check } = await session.check(root, left, factor);
     left -= Date.now() - started;
-    if (outcome === "refuted") await refuteWith(session, check.detail);
-    if (check.outcome !== "correct") return;
+    if (outcome === "refuted" && check) await refuteWith(session, check.detail);
+    if (check?.outcome !== "correct") return;
   }
 }
 

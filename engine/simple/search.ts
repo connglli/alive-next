@@ -110,7 +110,7 @@ async function repair(run: Run, agenda: Goal[], g: Goal, detail: string) {
     await requeue(run, agenda, g);
     const { outcome, check } = await run.session.check(g.gid, run.eagerMs);
     if (outcome === "proved") agenda.pop();
-    if (outcome !== "refuted") return;
+    if (outcome !== "refuted" || !check) return;
     cex = check.detail;
   }
   await undo(run, agenda, g);
@@ -180,7 +180,7 @@ async function* moves(run: Run, gid: string, stages: boolean, peelable: boolean)
 function checking(run: Run, gid: string, ms: number): Move {
   return async () => {
     const { outcome, check } = await run.session.check(gid, ms);
-    if (outcome === "refuted") return { kind: "refuted", detail: check.detail };
+    if (outcome === "refuted" && check) return { kind: "refuted", detail: check.detail };
     return outcome === "proved" ? PROVED : NONE;
   };
 }
