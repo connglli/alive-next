@@ -237,7 +237,7 @@ async function followStages(session: Session, llops: Llops, root: string, limits
   return last !== undefined && bodyOf(last) === bodyOf(tgt.text);
 }
 
-/** One step of the whole function to `stage`, for what its windows left; alive2's answer. */
+/** One step of the whole function to `stage`, for what its windows left; how it went. */
 async function jump(session: Session, gid: string, stage: string) {
   await session.begin(gid, "src");
   const edited = await session.edit({ op: "set_body", body: bodyOf(stage) });
@@ -245,5 +245,6 @@ async function jump(session: Session, gid: string, stage: string) {
     await session.abort();
     return undefined;
   }
-  return (await session.commit({ narrow: false, eager: false })).check.outcome;
+  const step = await session.commit({ narrow: false, eager: false });
+  return step.kind === "certified" ? "correct" : step.check.outcome;
 }
