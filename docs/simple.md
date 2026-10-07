@@ -1,6 +1,6 @@
 # The simple searcher
 
-The simple searcher is a proof writer without a model. Like the agent, it is untrusted: it makes only the public moves of a session, so every step it takes is certified by alive2 or a verified rule, every cut is rebuilt by llops, and its certificate is replayed by the kernel like any other. `bun run simple a.ll b.ll` runs it and writes the same session directory as the agent and the examples. `bun run simple --help` lists its options, and `engine/simple/limits.ts` holds their defaults.
+The simple searcher is a proof writer without a model. Like the agent, it is untrusted: it makes only the public moves of a session, so every step it takes is certified by alive2, `llops reshaped` or a verified rule, every cut is rebuilt by llops, and its certificate is replayed by the kernel like any other. `bun run simple a.ll b.ll` runs it and writes the same session directory as the agent and the examples. `bun run simple --help` lists its options, and `engine/simple/limits.ts` holds their defaults.
 
 ## What it searches for
 
@@ -12,7 +12,7 @@ A proof has three parts, and the searcher searches for each: a rewrite path, the
 | Cuts and preconditions | cuts wherever both sides agree, with facts or predicates on the new parameters | a loop header, an expensive operation, a region's boundaries, balanced points; the analyses' facts on the inputs of a window or a cut | relations that are not linear |
 | Loops and invariants | cuts at a header or an exit, unfolding, invariants | the first header, where the diff matched one; invariants by Houdini | invariants of other forms |
 
-The searcher first checks the root's original pair on a short budget, unrolled when it loops, and a proof, a refutation, or an input llubi confirms ends the run. Otherwise it steps the root's src along a rewrite path and checks each goal: identical sides are proved at once, other sides are asked of alive2 briefly before a cut and on the largest budget when none lands, and a pair that loops is never proved by a check. A goal that does not close is cut while cuts remain, and the goals a cut leaves are searched in the same way, the cut undone when they do not all close. A search that ends with open goals gives up and names them.
+The searcher first checks the root's original pair on a short budget, unrolled when it loops, and a proof, a refutation, or an input llubi confirms ends the run. Otherwise it steps the root's src along a rewrite path and checks each goal: identical sides, or a tgt that only reshapes the src's control flow, are proved at once, other sides are asked of alive2 briefly before a cut and on the largest budget when none lands, and alive2 proves no pair that loops. A goal that does not close is cut while cuts remain, and the goals a cut leaves are searched in the same way, the cut undone when they do not all close. A search that ends with open goals gives up and names them.
 
 ## Rewrite paths
 
@@ -24,14 +24,14 @@ A region becomes a step through the `splice` edit: a copy of the tgt's code repl
 
 When alive2 refuses a window, the searcher grows it backward over the instructions that define the values either side reads, and then tries it with preconditions. For a stage that its windows leave unfinished, it tries one step of the whole function to that stage, until alive2 cannot decide one.
 
-Every step is on the src side, since putting the tgt's region into the src asks alive2 about the same two windows as putting the src's region into the tgt. A verified rule rewrites wherever it matches rather than toward a program, so the searcher applies all the rules to a goal its windows left open only when that leaves fewer instructions in the regions, and then steps the windows again. It keeps every step alive2 certifies and reverts none.
+Every step is on the src side, since putting the tgt's region into the src asks alive2 about the same two windows as putting the src's region into the tgt. A verified rule rewrites wherever it matches rather than toward a program, so the searcher applies all the rules to a goal its windows left open only when that leaves fewer instructions in the regions, and then steps the windows again. It keeps every step that is certified and reverts none.
 
 ## Cuts and preconditions
 
 A goal that does not close is cut at the first of these that the framework accepts:
 
 * Its first loop header, as the next section says.
-* Just before the last expensive operation both sides apply, so that it reads the same operands on both: a multiplication of two variables, a division, a remainder, floating-point arithmetic, a load, or a store. Calls do not count, since every cut adds one.
+* Just before one of the last three expensive operations both sides apply, latest first, so that it reads the same operands on both: a multiplication of two variables, a division, a remainder, floating-point arithmetic, a load, or a store. Calls do not count, since every cut adds one.
 * Around the first region its steps left, whether no window could hold the region or alive2 refused its windows. The goal is cut after the region and then at its head, or at its block when it starts with a phi, so that the region stands in a goal of its own. That goal is not cut around a region again.
 * Where both sides agree and its expensive operations split most evenly between the two halves, trying the three most even points.
 
