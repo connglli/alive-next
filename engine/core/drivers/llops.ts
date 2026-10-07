@@ -20,6 +20,12 @@ export interface Diagnostic {
 /** Every llops answer: the payload, or the code and message it refused with. */
 export type LlopsResult<T> = ({ ok: true } & T) | { ok: false; code: string; message: string };
 
+/** What `reshaped` answers: whether one function only reshapes another's control flow. */
+export interface ReshapedResult {
+  reshaped: boolean;
+  why?: string;
+}
+
 export interface FunctionParamMeta {
   index: number;
   type: string;
@@ -345,6 +351,14 @@ export class Llops {
    */
   unfold(module: Module, hypothesis: string, callee?: Module): Promise<LlopsResult<ModuleResult>> {
     return this.run("unfold", callee ? { module, hypothesis, callee } : { module, hypothesis });
+  }
+
+  /**
+   * Whether the function `after` defines is the one `before` defines with its
+   * control flow reshaped and nothing else, so that `after` refines `before`.
+   */
+  reshaped(before: Module, after: Module): Promise<LlopsResult<ReshapedResult>> {
+    return this.run("reshaped", { before, after });
   }
 
   analyze(module: Module, kind: AnalyzeKind, point?: Ref): Promise<LlopsResult<AnalyzeResult>> {

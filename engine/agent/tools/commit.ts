@@ -17,7 +17,7 @@ export function createCommitTool(session: Session) {
     name: "tx_commit",
     label: "Commit",
     description:
-      "Check the open transaction as one step with alive2, in the direction tx_begin stated. If the step holds, the side becomes the edited program. alive2 first checks only the instructions the edits changed, or the window you give, and then the whole function if needed. If the commit is refused, the side does not change and the transaction stays open, so you can edit further or discard it with tx_abort. A counterexample is only a hint. After a step, the goal's new pair is checked once on a small budget, so the last step of a proof proves the goal here.",
+      "Check the open transaction as one step, in the direction tx_begin stated. If the step holds, the side becomes the edited program. alive2 first checks only the instructions the edits changed, or the window you give, and then the whole function if needed. If the commit is refused, the side does not change and the transaction stays open, so you can edit further or discard it with tx_abort. A counterexample is only a hint. After a step, the goal's new pair is checked once on a small budget, so the last step of a proof proves the goal here.",
     parameters: Type.Object({
       window: Type.Optional(
         Type.Object(

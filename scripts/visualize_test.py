@@ -216,6 +216,16 @@ class TestFold(Case):
     self.assertEqual(nodes["n1"]["note"], "muli-pow2-to-shl")
     self.assertEqual(nodes["n2"]["note"], "+noundef %0")
 
+  def test_a_step_llops_checked_is_noted_as_reshaped(self):
+    step = {"effect": "step", "gid": "g1", "side": "src", "how": "check"}
+    reshaped = self.session.program(SRC.replace("mul i32 %0, 2", "add i32 %0, %0"))
+    self.session.result("commit", {**step, "to": reshaped, "by": "reshaped"})
+    checked = self.session.program(SRC.replace("mul i32 %0, 2", "shl i32 %0, 1"))
+    self.session.result("commit", {**step, "to": checked, "by": "alive2"})
+    nodes = {node["id"]: node for node in self.data()["nodes"]}
+    self.assertEqual(nodes["n1"]["note"], "reshaped")
+    self.assertIsNone(nodes["n2"]["note"])
+
   def test_a_split_birth_has_no_before_to_diff_against(self):
     self.session.result(
       "split",

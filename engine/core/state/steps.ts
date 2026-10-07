@@ -148,9 +148,15 @@ export type CheckStepResult =
       hash: Hash;
       /** In order: the step, then the discharge when the eager check proved it. */
       effects: Effect[];
-      check: CheckResult;
-      /** Which question settled it: the window the edit touched, or the whole. */
-      by: "window" | "whole";
+      /**
+       * Who checked it: alive2, or `llops reshaped` when the step only
+       * reshapes control flow, which needs no solver.
+       */
+      by: "alive2" | "reshaped";
+      /** What was asked: the window the edit touched, or the whole. */
+      on: "window" | "whole";
+      /** alive2's answer, absent when `by` is "reshaped". */
+      check?: CheckResult;
       /**
        * Why the step holds without a preconditioned window: the whole was
        * asked instead, or the preconditions were refused and the plain
@@ -168,6 +174,8 @@ export type CheckStepResult =
       /** Why whole-function validation was used instead of a local window. */
       fallback?: Fallback;
     };
+
+type Certified = Extract<CheckStepResult, { kind: "certified" }>;
 
 /** Whether a rewrite looks at where it lands. */
 export interface RewriteStepOptions {
@@ -311,9 +319,11 @@ export class Steps {
   }
 
   /**
-   * Replace one side of a goal with a new program, if alive2 agrees that the
-   * goal's claim survives. On refusal the head does not move and the reason
-   * comes back for the agent to work with.
+   * Replace one side of a goal with a new program, if a checker agrees that
+   * the goal's claim survives: `llops reshaped` when the step only reshapes
+   * control flow, and alive2 otherwise, on the window the edit touched and
+   * then on the whole. On refusal the head does not move and the reason comes
+   * back for the agent to work with.
    */
   async checkStep(
     tree: Tree,
@@ -330,6 +340,18 @@ export class Steps {
     if (afterText === beforeText) {
       // Nothing moved, so there is nothing to certify and nothing to record.
       return { kind: "refused", check: unasked("the edits leave the program as it was") };
+    }
+    // A step that only reshapes control flow needs no solver, loops or not.
+    if (await this.reshaped(side, beforeText, afterText)) {
+      const step: Effect = { effect: "step", gid, side, to: after, how: "check", by: "reshaped" };
+      const certified: Certified = {
+        kind: "certified",
+        hash: after,
+        effects: [step],
+        by: "reshaped",
+        on: "whole",
+      };
+      return this.landed(goal, side, certified, options);
     }
 
     const narrowed = options.narrowed && "why" in options.narrowed ? undefined : options.narrowed;
@@ -408,17 +430,17 @@ export class Steps {
       }
       check = whole;
     }
-    const by = check === local ? "window" : "whole";
+    const on = check === local ? "window" : "whole";
     // A refused preconditioned attempt and a step the plain window certified
     // mean the facts the caller asked for were dropped, and the whole-function
     // fallback that would have said so never ran. The refusal is its own
     // fallback, so the caller can say what the step holds without.
-    if (conditioned?.kind === "refused" && by === "window") {
+    if (conditioned?.kind === "refused" && on === "window") {
       fallback = { reason: "preconditions_refused", conditioning: conditioned.reason };
     }
 
-    const step: Effect = { effect: "step", gid, side, to: after, how: "check" };
-    if (by === "window" && narrowed) {
+    const step: Effect = { effect: "step", gid, side, to: after, how: "check", by: "alive2" };
+    if (on === "window" && narrowed) {
       const [outer, from, to] = await Promise.all([
         this.store.put(narrowed.outer),
         this.store.put(narrowed.before),
@@ -434,30 +456,40 @@ export class Steps {
           : {}),
       };
     }
-    const effects: Effect[] = [step];
-    if (options.eager === false) {
-      return {
-        kind: "certified",
-        hash: after,
-        effects,
-        check,
-        by,
-        fallback,
-      };
-    }
-
-    // The pair has changed, so ask cheaply whether the goal is now discharged.
-    const eager = await this.eagerCheck(goal, gid, side, after, effects);
-
-    return {
+    const certified: Certified = {
       kind: "certified",
       hash: after,
-      effects,
+      effects: [step],
+      by: "alive2",
+      on,
       check,
-      by,
       fallback,
-      eager,
     };
+    return this.landed(goal, side, certified, options);
+  }
+
+  /**
+   * Whether a step only reshapes control flow, as `llops reshaped` says, so
+   * that every run of the program that has to refine is a run of the other.
+   */
+  private async reshaped(side: Side, before: string, after: string): Promise<boolean> {
+    const { src, tgt } = orient(side, before, after);
+    const answer = await this.llops.reshaped(src, tgt);
+    return answer.ok && answer.reshaped;
+  }
+
+  /** A certified step, then the cheap check of the new pair unless that is turned off. */
+  private async landed(
+    goal: Goal,
+    side: Side,
+    certified: Certified,
+    options: CheckStepOptions,
+  ): Promise<Certified> {
+    if (options.eager === false) return certified;
+    // The pair has changed, so ask cheaply whether the goal is now discharged.
+    const { hash, effects } = certified;
+    const eager = await this.eagerCheck(goal, goal.id, side, hash, effects);
+    return { ...certified, eager };
   }
 
   /**

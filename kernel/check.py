@@ -521,6 +521,35 @@ class Check:
       ms=ms,
     )
 
+  def checked(
+    self, gid: str, side: str, check: str, by: str, src: str, tgt: str, notes: str
+  ) -> None:
+    """Ask the checker `by` names whether `tgt` refines `src`.
+
+    alive-tv answers with a solver. A step that only reshaped control flow
+    is asked of llops instead, which answers without one.
+    """
+    if by == "alive2":
+      self.asked(gid, side, check, src, tgt, notes)
+      return
+    if by != "reshaped":
+      self.fail(gid, side, "Checker", f"{by}, which this does not know")
+      return
+    started = time.monotonic()
+    program = self.package.program
+    answer = self.package.run_llops("reshaped", {"before": program(src), "after": program(tgt)})
+    if not answer["reshaped"]:
+      notes = f"{notes}; llops: {answer.get('why')}"
+    self.report(
+      result="OK" if answer["reshaped"] else "FAIL",
+      gid=gid,
+      side=side,
+      tool="llops",
+      check=check,
+      notes=notes,
+      ms=elapsed_ms(started),
+    )
+
   def compared(
     self,
     gid: str,
@@ -614,7 +643,7 @@ class Check:
         pair = (before, after) if side == "src" else (after, before)
         which = "forward" if side == "src" else "backward"
         notes = f"{before[:12]} -> {after[:12]}; {which}"
-        self.asked(gid, side, "Chain step", *pair, notes)
+        self.checked(gid, side, "Chain step", step.get("by", "alive2"), *pair, notes)
         head[side] = after
       elif step["kind"] == "window":
         head[step["side"]] = self.window(gid, step, head)

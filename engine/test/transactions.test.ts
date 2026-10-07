@@ -96,6 +96,46 @@ done:
 }
 `;
 
+/** A loop that tests at its top. */
+const LOOP = `define i32 @f(i32 %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %s = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  %c = icmp slt i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %s.next = add i32 %s, %i
+  %i.next = add i32 %i, 1
+  br label %head
+
+exit:
+  ret i32 %s
+}
+`;
+
+/**
+ * The body of the same loop rotated, which only reshapes its control flow,
+ * with the argument named as the store names it.
+ */
+const ROTATED = `  %c0 = icmp slt i32 0, %0
+  br i1 %c0, label %body, label %exit
+
+body:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %s = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  %s.next = add i32 %s, %i
+  %i.next = add i32 %i, 1
+  %c = icmp slt i32 %i.next, %0
+  br i1 %c, label %body, label %exit
+
+exit:
+  %r = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  ret i32 %r`;
+
 async function tree(program = PROGRAM) {
   const src = await store.put(program);
   const tgt = await store.put(program.replace("%m, %x", "%x, %m"));
@@ -208,8 +248,42 @@ describe.skipIf(!built)("transactions", () => {
     const result = await transactions.commit(goals, steps, { narrow: false });
 
     if (result.kind !== "certified") throw new Error("expected the commit to land");
-    expect(result.by).toBe("whole");
+    expect(result.on).toBe("whole");
     expect(checker.calls[0]?.tgt).not.toContain("@outlined_window");
+  });
+
+  test("a step that only reshapes a loop lands with no solver", async () => {
+    for (const side of ["src", "tgt"] as const) {
+      const checker = new FakeChecker([]);
+      const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+      const transactions = new Transactions(store, llops);
+      const goals = await tree(LOOP);
+
+      transactions.begin(goals, "g1", side);
+      await transactions.edit({ op: "set_body", body: ROTATED });
+      const result = await transactions.commit(goals, steps);
+
+      if (result.kind !== "certified") throw new Error(`expected the ${side} step to land`);
+      expect(result).toMatchObject({ by: "reshaped", on: "whole" });
+      expect(result.check).toBeUndefined();
+      expect(result.effects[0]).toMatchObject({ side, how: "check", by: "reshaped" });
+      expect(checker.calls).toHaveLength(0);
+    }
+  });
+
+  test("a step that changes a value in a loop is not taken for a reshaping", async () => {
+    const checker = new FakeChecker([]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const transactions = new Transactions(store, llops);
+    const goals = await tree(LOOP);
+
+    transactions.begin(goals, "g1", "src");
+    const changed = ROTATED.replace("add i32 %i, 1", "add i32 %i, 2");
+    await transactions.edit({ op: "set_body", body: changed });
+    const result = await transactions.commit(goals, steps);
+
+    // alive2 is asked about no loop, so only a reshaping could have landed it.
+    expect(result.kind).toBe("refused");
   });
 
   test("a step that is not eager leaves the new pair unchecked", async () => {

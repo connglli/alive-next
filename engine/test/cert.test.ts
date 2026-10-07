@@ -117,6 +117,46 @@ entry:
 /** Counts the runs the stand-in interpreter was asked for, src then tgt. */
 let diverging = 0;
 
+/** A loop that tests at its top, and the same loop rotated. */
+const LOOP_TOP = `define i32 @f(i32 %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %s = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  %c = icmp slt i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %s.next = add i32 %s, %i
+  %i.next = add i32 %i, 1
+  br label %head
+
+exit:
+  ret i32 %s
+}
+`;
+
+const LOOP_ROTATED = `define i32 @f(i32 %n) {
+entry:
+  %c0 = icmp slt i32 0, %n
+  br i1 %c0, label %body, label %exit
+
+body:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %s = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  %s.next = add i32 %s, %i
+  %i.next = add i32 %i, 1
+  %c = icmp slt i32 %i.next, %n
+  br i1 %c, label %body, label %exit
+
+exit:
+  %r = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  ret i32 %r
+}
+`;
+
 /** A stand-in for llrwt that refuses any use, for tests that never rewrite. */
 const unrewriting = {
   apply: async () => ({
@@ -222,7 +262,7 @@ describe.skipIf(!built)("the manifest", () => {
     await session.edit({ op: "replace", v: "%4", insts: ["%s = shl i32 %3, 1"] });
     const step = await session.commit();
     if (step.kind !== "certified") throw new Error("expected the commit to land");
-    expect(step.by).toBe("window");
+    expect(step.on).toBe("window");
     expect(session.finish()).toBe("verified");
 
     const out = certify(session.dir, join(dir, "certificate"));
@@ -277,6 +317,29 @@ describe.skipIf(!built)("the manifest", () => {
 
     const [only] = manifestFrom(session.dir).goals.g3?.steps ?? [];
     expect(only).toMatchObject({ kind: "unfold", side: "src", to: unfolded.hash });
+  });
+
+  test("records who checked a step that only reshaped control flow", async () => {
+    const body = (module: string) =>
+      module.slice(module.indexOf("entry:\n") + 7, module.lastIndexOf("}"));
+    const session = await Session.start({
+      dir: join(dir, "reshaped"),
+      src: LOOP_TOP,
+      tgt: LOOP_ROTATED,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    await session.begin("g1", "src");
+    // The store names the argument %0.
+    await session.edit({ op: "set_body", body: body(LOOP_ROTATED).replaceAll("%n", "%0") });
+    const step = await session.commit();
+    if (step.kind !== "certified") throw new Error("expected the step to land");
+    expect(session.finish()).toBe("verified");
+
+    const [only] = manifestFrom(session.dir).goals.g1?.steps ?? [];
+    expect(only).toMatchObject({ kind: "check", side: "src", to: step.hash, by: "reshaped" });
   });
 
   test("copies every program the proof names", async () => {

@@ -215,7 +215,7 @@ export class Strengthen {
         };
       }
       this.land(tree, landed, proof.effects);
-      checks.push(proof.check);
+      if (proof.check) checks.push(proof.check);
       by = { gid: outer.id, hash: proof.hash };
     }
 
@@ -279,7 +279,7 @@ export class Strengthen {
           };
         }
         this.land(tree, landed, step.effects);
-        checks.push(step.check);
+        if (step.check) checks.push(step.check);
       }
     }
 
@@ -312,7 +312,7 @@ export class Strengthen {
     // hypothesis is declared with the parameter facts.
     if (kept) {
       this.land(tree, landed, [
-        { effect: "step", gid: callee.id, side: "src", to: kept.hash, how: "check" },
+        { effect: "step", gid: callee.id, side: "src", to: kept.hash, how: "check", by: "alive2" },
       ]);
     }
     if (hypothesis && hasParamAttrs) {
@@ -337,7 +337,7 @@ export class Strengthen {
           };
         }
         this.land(tree, landed, step.effects);
-        checks.push(step.check);
+        if (step.check) checks.push(step.check);
       }
     }
 

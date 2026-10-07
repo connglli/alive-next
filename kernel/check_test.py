@@ -337,6 +337,48 @@ def named(package: Path) -> subprocess.CompletedProcess:
   return run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS)
 
 
+# A loop that tests at its top, and the same loop rotated, which only
+# reshapes its control flow.
+LOOP_TOP = """define i32 @f(i32 %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %s = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  %c = icmp slt i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %s.next = add i32 %s, %i
+  %i.next = add i32 %i, 1
+  br label %head
+
+exit:
+  ret i32 %s
+}
+"""
+
+LOOP_ROTATED = """define i32 @f(i32 %n) {
+entry:
+  %c0 = icmp slt i32 0, %n
+  br i1 %c0, label %body, label %exit
+
+body:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %s = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  %s.next = add i32 %s, %i
+  %i.next = add i32 %i, 1
+  %c = icmp slt i32 %i.next, %n
+  br i1 %c, label %body, label %exit
+
+exit:
+  %r = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  ret i32 %r
+}
+"""
+
+
 @unittest.skipUnless(HAVE, "needs alive-tv and llops")
 class Case(unittest.TestCase):
   def setUp(self) -> None:
@@ -526,6 +568,19 @@ class TestGolden(Case):
 
   def test_a_loop_invariant_proved_on_entry_and_kept_verifies(self):
     self.verified(self.invariant())
+
+  def test_a_step_that_only_reshapes_control_flow_verifies_on_either_side(self):
+    top = self.built.program(canonical(LOOP_TOP))
+    rotated = self.built.program(canonical(LOOP_ROTATED))
+    for side in ("src", "tgt"):
+      with self.subTest(side=side):
+        start = {"src": top, "tgt": rotated}
+        if side == "tgt":
+          start = {"src": rotated, "tgt": top}
+        step = {"kind": "check", "side": side, "from": top, "to": rotated, "by": "reshaped"}
+        end = {"src": rotated, "tgt": rotated}
+        self.built.goal("g1", start, end, [step], {"kind": "check"})
+        self.verified(self.built.write())
 
   def test_a_loop_unfolded_on_both_sides_verifies(self):
     inner = self.detached(PARITY, PARITY_NUW)["inner"]
@@ -1075,6 +1130,21 @@ declare i32 @k.ih(i32)
     end = {"src": inner["tgt"], "tgt": inner["tgt"]}
     self.built.goal("g3", inner, end, [step], {"kind": "check"})
     self.refused(self.built.write(), "Unfold replay")
+
+  def test_a_step_checked_as_reshaped_that_changes_a_value(self):
+    top = self.built.program(canonical(LOOP_TOP))
+    changed = LOOP_ROTATED.replace("add i32 %i, 1", "add i32 %i, 2")
+    changed = self.built.program(canonical(changed))
+    step = {"kind": "check", "side": "src", "from": top, "to": changed, "by": "reshaped"}
+    pair = {"src": changed, "tgt": changed}
+    self.built.goal("g1", {"src": top, "tgt": changed}, pair, [step], {"kind": "check"})
+    self.refused(self.built.write(), "Chain step")
+
+  def test_a_step_checked_by_an_unknown_checker(self):
+    step = {"kind": "check", "side": "src", "from": self.src, "to": self.tgt, "by": "z3"}
+    pair = {"src": self.tgt, "tgt": self.tgt}
+    self.built.goal("g1", {"src": self.src, "tgt": self.tgt}, pair, [step], {"kind": "check"})
+    self.refused(self.built.write(), "Checker")
 
   def test_an_unfold_on_a_goal_that_is_not_a_half_of_a_loop_cut(self):
     step = {"kind": "unfold", "side": "src", "from": self.src, "to": self.tgt}

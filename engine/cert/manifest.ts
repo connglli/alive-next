@@ -30,12 +30,17 @@ export const VERSION = 1;
 
 /** One move along a goal's chain. */
 export type Step =
-  /** A step the checker certified, in the direction the side implies. */
+  /**
+   * A step a checker certified, in the direction the side implies: alive2, or
+   * `llops reshaped`, which asks no solver, when the step only reshaped
+   * control flow.
+   */
   | {
       kind: "check";
       side: "src" | "tgt";
       from: Hash;
       to: Hash;
+      by: "alive2" | "reshaped";
     }
   /**
    * A step the verified rewriter certified: the rules it ran and exactly what
@@ -367,6 +372,7 @@ function chainOf(goal: Goal, effects: Effect[]): Step[] {
                 side: effect.side,
                 from,
                 to: effect.to,
+                by: effect.by ?? "alive2",
               },
         );
       }

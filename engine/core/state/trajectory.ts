@@ -66,13 +66,19 @@ export interface MessageEvent {
  * result, so there is one record of what happened rather than two.
  */
 export type Effect =
-  /** A side advanced to a new program, by the rewriter's rules, by alive2's check, or by unfolding. */
+  /** A side advanced to a new program, by the rewriter's rules, by a check, or by unfolding. */
   | {
       effect: "step";
       gid: string;
       side: "src" | "tgt";
       to: Hash;
       how: "rewrite" | "check" | "unfold";
+      /**
+       * Who checked the step when `how` is "check": alive2, which is also what
+       * an absent `by` means, or `llops reshaped` when the step only reshapes
+       * control flow.
+       */
+      by?: "alive2" | "reshaped";
       /**
        * The rules llrwt ran, present when `how` is "rewrite". A rewrite step is
        * certified by the rules' external proofs rather than by an alive2 run

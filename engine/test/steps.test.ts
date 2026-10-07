@@ -391,6 +391,7 @@ describe("stepping", () => {
       side: "src",
       to: result.hash,
       how: "check",
+      by: "alive2",
     });
   });
 
@@ -452,7 +453,7 @@ describe("stepping", () => {
     const result = await steps.checkStep(await tree(), "g1", "src", NEW, { narrowed: WINDOW });
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
-    expect(result.by).toBe("window");
+    expect(result.on).toBe("window");
     // The small pair, on the budget a cheap question gets, and asked under no
     // assumption: a window's parameters are values the program computed.
     expect(checker.calls[0]).toMatchObject({ src: WAS, tgt: NOW });
@@ -474,7 +475,7 @@ describe("stepping", () => {
     const result = await steps.checkStep(await tree(), "g1", "src", NEW, { narrowed: WINDOW });
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
-    expect(result.by).toBe("whole");
+    expect(result.on).toBe("whole");
     // The whole pair, on the step budget, under what the goal is asked under.
     expect(checker.calls[1]).toMatchObject({ src: SRC, tgt: NEW });
     expect(checker.calls[1]?.timeoutMs).toBe(DEFAULT_TIMEOUTS.alive2Ms);
@@ -493,7 +494,7 @@ describe("stepping", () => {
     const result = await steps.checkStep(await tree(), "g1", "src", NEW, { narrowed: WINDOW });
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
-    expect(result.by).toBe("whole");
+    expect(result.on).toBe("whole");
   });
 
   test("a refusal says whether the window was any easier", async () => {
@@ -515,7 +516,7 @@ describe("stepping", () => {
     });
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
-    expect(result.by).toBe("window");
+    expect(result.on).toBe("window");
     const step = result.effects[0];
     if (step?.effect !== "step") throw new Error("expected a step effect");
     expect(step.window?.preconditions).toEqual({ 0: { noundef: true } });
@@ -531,7 +532,7 @@ describe("stepping", () => {
     });
 
     if (result.kind !== "certified") throw new Error("expected the whole step to land");
-    expect(result.by).toBe("whole");
+    expect(result.on).toBe("whole");
     expect(result.fallback?.narrowed?.outcome).toBe("incorrect");
     expect(result.fallback?.preconditions).toEqual({ 0: { noundef: true } });
     // The third query is the whole step; the plain window is known to fail.
@@ -613,7 +614,7 @@ describe("stepping", () => {
     });
 
     if (result.kind !== "certified") throw new Error("expected the step to be certified");
-    expect(result.by).toBe("window");
+    expect(result.on).toBe("window");
     expect(result.fallback).toMatchObject({
       reason: "preconditions_refused",
       conditioning: "some preconditions do not name a value of the window",
