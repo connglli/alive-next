@@ -1,9 +1,11 @@
 // The simple searcher, as one loop over an agenda of goals. A goal's moves are
-// made in a fixed order (the optimizer's stages on the root, windows and rules
-// toward the tgt, a check, then a cut at a loop, before an expensive operation,
-// around a region left, or where the expensive operations split evenly) until
-// one proves it or cuts it, and the goals a cut leaves are searched before the
-// next. Every move is a session move, so whatever it proves, the kernel replays.
+// made in a fixed order (the optimizer's stages on the root, a stage of a looping
+// program that its windows leave interposed as a goal of its own, windows and
+// rules toward the tgt, a check, then a cut at a loop, before an expensive
+// operation, around a region left, or where the expensive operations split
+// evenly) until one proves it or splits it, and the goals a split leaves are
+// searched before the next. Every move is a session move, so whatever it
+// proves, the kernel replays.
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { type Assumed, balancedPoints, beforePoints, cut, cutLoop, quota } from "./cuts.ts";
@@ -29,23 +31,24 @@ interface Run {
   assumed: Assumed;
 }
 
-/** A goal on the agenda: the moves it has left, and whether a cut landed on it. */
+/** A goal on the agenda: the moves it has left, and how to undo what split it. */
 interface Goal {
   gid: string;
   moves: AsyncGenerator<Move>;
-  cut?: boolean;
-  /** The goal whose cut left this one. */
+  undo?: "unsplit" | "uninterpose";
+  /** The goal whose split left this one. */
   parent?: Goal;
 }
 
 /** One move on a goal, made when the search picks it. */
 type Move = () => Promise<Answer>;
 
-/** What a move came to: a proof, a refutation, a cut into goals to search, or none. */
+/** What a move came to: a proof, a refutation, the goals a split left, or none. */
 type Answer =
   | { kind: "proved" }
   | { kind: "refuted"; detail: string }
   | { kind: "cut"; goals: Goal[] }
+  | { kind: "interposed"; goals: Goal[] }
   | { kind: "none" };
 
 const PROVED: Answer = { kind: "proved" };
@@ -68,12 +71,15 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
     assumed: new Map(),
   };
   await unrolling(session, llops, root, limits.counterexampleMs);
-  const agenda = [goal(run, root, { stages: true })];
+  const { src, tgt } = await session.show(root);
+  const walking = limits.stages && limits.steps;
+  const stages = walking ? await stagesToward(llops, src.text, tgt.text) : [];
+  const agenda = [goal(run, root, { stages })];
   // A check of the root's original pair may decide the run on the way.
   while (agenda.length > 0 && session.verdict === "unknown") {
     const top = agenda[agenda.length - 1] as Goal;
-    // A goal a cut landed on comes back once the goals it left, above it, are done.
-    if (top.cut) await settle(run, agenda, top);
+    // A goal a split landed on comes back once the goals it left, above it, are done.
+    if (top.undo) await settle(run, agenda, top);
     else {
       const next = await top.moves.next();
       if (next.done) agenda.pop();
@@ -87,14 +93,15 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   return session.verdict;
 }
 
-/** Acts on the top goal's answer: a proof closes it, a refutation repairs, a cut stacks. */
+/** Acts on the top goal's answer: a proof closes it, a refutation repairs, goals stack. */
 async function learn(run: Run, agenda: Goal[], answer: Answer) {
   const top = agenda[agenda.length - 1] as Goal;
   if (answer.kind === "proved") agenda.pop();
   if (answer.kind === "refuted") await repair(run, agenda, top, answer.detail);
-  if (answer.kind !== "cut") return;
-  top.cut = true;
-  run.cuts -= 1;
+  if (answer.kind !== "cut" && answer.kind !== "interposed") return;
+  top.undo = answer.kind === "cut" ? "unsplit" : "uninterpose";
+  // An interpose rewrites rather than decomposes, and the stages bound how many there are.
+  if (answer.kind === "cut") run.cuts -= 1;
   for (const left of answer.goals) left.parent = top;
   agenda.push(...[...answer.goals].reverse());
 }
@@ -127,43 +134,62 @@ async function requeue(run: Run, agenda: Goal[], g: Goal) {
   }
 }
 
-/** Pops cut goal `g` if proved, and else undoes its cut so that it tries its next move. */
+/** Pops goal `g` if proved, and else undoes its split so that it tries its next move. */
 async function settle(run: Run, agenda: Goal[], g: Goal) {
   const proved = (await run.session.show(g.gid)).status === "proved";
-  if (proved || (await run.session.unsplit(g.gid)).kind !== "unsplit") agenda.pop();
-  else g.cut = false;
+  if (proved || !(await undone(run, g))) agenda.pop();
+  else g.undo = undefined;
 }
 
-/** Undoes the cut that left `g`, since no cut proves a refuted goal; a root stays open. */
+/** Undoes the split that left `g`, which proves no refuted goal; a root stays open. */
 async function undo(run: Run, agenda: Goal[], g: Goal) {
   const parent = g.parent;
-  if (!parent || (await run.session.unsplit(parent.gid)).kind !== "unsplit") {
+  if (!parent || !(await undone(run, parent))) {
     agenda.pop();
     return;
   }
   agenda.length = agenda.indexOf(parent) + 1;
-  parent.cut = false;
+  parent.undo = undefined;
 }
 
-/** Goal `gid` with its moves: stages for the root only, and no peel of a peeled region. */
-function goal(run: Run, gid: string, { stages = false, peelable = true } = {}): Goal {
-  return { gid, moves: moves(run, gid, stages, peelable) };
+/** Whether the cut or the interpose that split `g` was undone. */
+async function undone(run: Run, g: Goal): Promise<boolean> {
+  if (g.undo === "uninterpose")
+    return (await run.session.uninterpose(g.gid)).kind === "uninterposed";
+  return (await run.session.unsplit(g.gid)).kind === "unsplit";
+}
+
+/** What a goal starts its moves with: the stages left to walk, and what it skips. */
+interface Start {
+  stages?: string[];
+  /** False for a peeled region, which is not peeled again. */
+  peelable?: boolean;
+  /** False for a step goal, whose windows the walk has just asked. */
+  steps?: boolean;
+}
+
+/** Goal `gid` with its moves: stages for the root and what follows a stage interposed. */
+function goal(run: Run, gid: string, start: Start = {}): Goal {
+  return { gid, moves: moves(run, gid, start) };
 }
 
 /** The moves of goal `gid`, in the order they are made. */
-async function* moves(run: Run, gid: string, stages: boolean, peelable: boolean) {
+async function* moves(
+  run: Run,
+  gid: string,
+  { stages = [], peelable = true, steps = true }: Start,
+) {
   const { session, llops, limits } = run;
-  // Stages that end at the tgt's body have asked the root's windows toward it already.
-  let walked = false;
-  if (stages && limits.stages && limits.steps)
-    yield stepping(async () => {
-      walked = await followStages(session, llops, gid, limits);
-    });
+  yield* walk(run, gid, stages);
+  // Stages that end at the tgt's body have asked the goal's windows toward it already.
+  const last = stages.at(-1);
+  const view = await session.show(gid);
+  const walked = last !== undefined && bodyOf(last) === bodyOf(view.tgt.text);
   // Strengthening a cut checks its goals again, which may have proved this one.
   yield async () => ((await session.show(gid)).status === "proved" ? PROVED : NONE);
-  const walk = () => stepWindows(session, llops, gid, limits);
-  if (limits.steps && !walked) yield stepping(walk);
-  if (limits.steps && limits.rules) yield stepping(() => stepByRules(run, gid));
+  const toward = () => stepWindows(session, llops, gid, limits);
+  if (limits.steps && steps && !walked) yield stepping(toward);
+  if (limits.steps && steps && limits.rules) yield stepping(() => stepByRules(run, gid));
   // A goal gets a short check before it is cut, and the largest one when nothing cuts it.
   yield checking(run, gid, run.eagerMs);
   const [src, tgt] = await bodies(session, llops, gid);
@@ -222,19 +248,54 @@ async function stepByRules(run: Run, gid: string) {
   if (await stepRules(session, llops, gid)) await stepWindows(session, llops, gid, limits);
 }
 
-/** Steps the root's src through the stages; whether the last one has its tgt's body. */
-async function followStages(session: Session, llops: Llops, root: string, limits: Limits) {
-  const { src, tgt } = await session.show(root);
-  const stages = await stagesToward(llops, src.text, tgt.text);
-  // A later stage holds this one's changes, so a jump alive2 cannot decide ends the jumps.
-  let jumping = true;
-  for (const stage of stages) {
-    const left = await stepWindows(session, llops, root, limits, stage);
-    if (!jumping || left.length === 0) continue;
-    jumping = (await jump(session, root, stage)) !== "unknown";
+/**
+ * The moves that step goal `gid`'s src through `stages`: each stage's windows,
+ * then one step of the whole function to it, and on a program that loops, a
+ * stage neither reaches interposed, so that the step to it is a goal of its own
+ * and the rest walks on.
+ */
+async function* walk(run: Run, gid: string, stages: string[]) {
+  const { session, llops, limits } = run;
+  // A later stage holds this one's changes, so a jump alive2 cannot decide ends
+  // the jumps, and a step goal left open ends the interposes.
+  let [jumping, interposable] = [true, true];
+  for (const [k, stage] of stages.entries()) {
+    let left = 0;
+    yield stepping(async () => {
+      left = (await stepWindows(session, llops, gid, limits, stage)).length;
+    });
+    if (left === 0) continue;
+    let outcome: string | undefined;
+    if (jumping)
+      yield stepping(async () => {
+        outcome = await jump(session, gid, stage);
+      });
+    if (outcome === "correct") continue;
+    if (outcome === "unknown") jumping = false;
+    // alive2 refuses a step on a program that loops, which only the cuts of a step goal
+    // can prove; a step goal on one that does not would repeat what the goal's cuts do.
+    const provable = interposable && limits.interpose && run.cuts > 0;
+    if (!provable || outcome !== "error") continue;
+    yield interposing(run, gid, stage, stages.slice(k + 1));
+    interposable = false;
   }
-  const last = stages.at(-1);
-  return last !== undefined && bodyOf(last) === bodyOf(tgt.text);
+}
+
+/** A move that interposes `stage` in goal `gid`: the step to it, and the rest from it. */
+function interposing(run: Run, gid: string, stage: string, rest: string[]): Move {
+  return async () => {
+    const { session, llops } = run;
+    const { src } = await session.show(gid);
+    const middle = await llops.edit(src.text, { op: "set_body", body: bodyOf(stage) });
+    if (!middle.ok) return NONE;
+    const made = await session.interpose(gid, middle.module);
+    if (made.kind !== "interposed") return NONE;
+    const { lhs, rhs } = made.children;
+    return {
+      kind: "interposed",
+      goals: [goal(run, lhs, { steps: false }), goal(run, rhs, { stages: rest })],
+    };
+  };
 }
 
 /** One step of the whole function to `stage`, for what its windows left; how it went. */

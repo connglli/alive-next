@@ -16,6 +16,8 @@ export interface Limits {
   unfolds: number;
   /** Whether to step through the optimizer's own stages before the tgt. */
   stages: boolean;
+  /** Whether a stage of a looping program no step reaches becomes a goal of its own. */
+  interpose: boolean;
   /** Whether to rewrite the src at all, rather than only cut and check. */
   steps: boolean;
   /** Whether to step the src by the verified rules where they bring it closer. */
@@ -34,6 +36,7 @@ export const DEFAULT_LIMITS: Limits = {
   cuts: 16,
   unfolds: 4,
   stages: true,
+  interpose: true,
   steps: true,
   rules: true,
   windows: true,
