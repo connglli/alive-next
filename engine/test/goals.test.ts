@@ -153,6 +153,54 @@ describe("derive", () => {
     expect([...tree.goals.keys()]).toEqual(["g1"]);
   });
 
+  test("an interpose opens two halves that meet the goal's pair", () => {
+    const tree = derive(log(run(), did(interposeG1())));
+    expect(goal(tree, "g1").status).toBe("split");
+    expect(goal(tree, "g1").children).toEqual(["g2", "g3"]);
+    expect([goal(tree, "g2").role, goal(tree, "g3").role]).toEqual(["lhs", "rhs"]);
+    expect([head(goal(tree, "g2"), "src"), head(goal(tree, "g2"), "tgt")]).toEqual([
+      "hash-src",
+      "hash-mid",
+    ]);
+    expect([head(goal(tree, "g3"), "src"), head(goal(tree, "g3"), "tgt")]).toEqual([
+      "hash-mid",
+      "hash-tgt",
+    ]);
+  });
+
+  test("proving both halves of an interpose proves the goal", () => {
+    const tree = derive(
+      log(
+        run(),
+        did(interposeG1()),
+        did({ effect: "proved", gid: "g2" }),
+        did({ effect: "proved", gid: "g3" }),
+      ),
+    );
+    expect(verdict(tree)).toBe("verified");
+  });
+
+  test("uninterposing discards the halves and reopens the goal", () => {
+    const undone: Effect = { effect: "uninterpose", gid: "g1" };
+    const tree = derive(log(run(), did(interposeG1()), did(undone)));
+    expect(goal(tree, "g1").status).toBe("open");
+    expect([...tree.goals.keys()]).toEqual(["g1"]);
+  });
+
+  test("each undo undoes its own move alone", () => {
+    const unsplit = did({ effect: "unsplit", gid: "g1" });
+    const uninterpose = did({ effect: "uninterpose", gid: "g1" });
+    expect(() => derive(log(run(), did(interposeG1()), unsplit))).toThrow(/not split/);
+    expect(() => derive(log(run(), did(splitG1()), uninterpose))).toThrow(/not interposed/);
+  });
+
+  test("refuses an interpose whose halves do not meet the goal's pair", () => {
+    const apart = interposeG1();
+    if (apart.effect !== "interpose") throw new Error("expected an interpose");
+    apart.rhs.src = "hash-other";
+    expect(() => derive(log(run(), did(apart)))).toThrow(/do not meet its pair/);
+  });
+
   test("a split says what it outlined, on both children", () => {
     const tree = derive(log(run(), did(splitG1())));
     expect(goal(tree, "g2").callee).toBe("outlined_g3");
@@ -250,6 +298,15 @@ describe("derive", () => {
     expect(() => derive(log(run(), did({ effect: "proved", gid: "g9" })))).toThrow(/no goal g9/);
   });
 });
+
+function interposeG1(): Effect {
+  return {
+    effect: "interpose",
+    gid: "g1",
+    lhs: { gid: "g2", src: "hash-src", tgt: "hash-mid" },
+    rhs: { gid: "g3", src: "hash-mid", tgt: "hash-tgt" },
+  };
+}
 
 function splitG1(): Effect {
   return {

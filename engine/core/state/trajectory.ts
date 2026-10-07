@@ -101,6 +101,17 @@ export type Effect =
         preconditions?: Record<string, Record<string, unknown>>;
       };
     }
+  /**
+   * A program was put between a goal's two sides: child `lhs` holds the src
+   * and the program, child `rhs` the program and the tgt, and both proved
+   * prove the goal, since refinement is transitive.
+   */
+  | {
+      effect: "interpose";
+      gid: string;
+      lhs: { gid: string; src: Hash; tgt: Hash };
+      rhs: { gid: string; src: Hash; tgt: Hash };
+    }
   /** A goal was cut in two; the children arrive with their initial pairs. */
   | {
       effect: "split";
@@ -133,6 +144,8 @@ export type Effect =
     }
   /** A split was undone, discarding both children and their subtrees. */
   | { effect: "unsplit"; gid: string }
+  /** An interpose was undone, discarding both children and their subtrees. */
+  | { effect: "uninterpose"; gid: string }
   /** A side went back to an earlier program of its own history. */
   | { effect: "revert"; gid: string; side: "src" | "tgt"; to: Hash }
   /** A goal was discharged by checking its pair; `by` says who checked it, as on a step. */

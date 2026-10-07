@@ -64,6 +64,8 @@ The framework state has two parts: an immutable **program store** and a **goal t
 
 **Steps.** A step is a certified transition on one side of one goal. A step is certified in one of two ways: by applying a pre-proved rewrite rule (no alive2 run needed), or by a check in the side-appropriate direction: by `llops reshaped` when the step only reshapes control flow (see "Steps that only reshape control flow"), and otherwise by alive2, of either the before/after pair or the window it differs in, which never loops (see "Narrowing a step to what it changed"). The head of a side is the latest program in its history; all tools operate on heads.
 
+**Intermediate programs.** A goal can be split at a program M between its two sides into (src, M) and (M, tgt): M refining the src and the tgt refining M prove the goal by transitivity, as two steps along a chain do. This rewrites rather than decomposes, since no program is taken apart, and it lets a step that one query cannot certify be proved as a goal of its own.
+
 **Transactions.** A transaction is an editing session on one side of one goal. Between `begin` and `commit` the agent makes arbitrary edits and gets cheap feedback (parse errors, shape check, analyses); the intermediate programs are scratch and never enter any certificate. At `commit`, the transaction is certified as a single step, by `llops reshaped` when it only reshapes control flow and otherwise by alive2, asking about the window the edits touched before falling back to the whole pair. On failure the head is unchanged and the local counterexample is returned as a hint. There is no separate "checked rewrite" concept: a checked rewrite is a transaction with one edit. Likewise, inserting `llvm.assume(c)` on the src side and committing *is* a proof that `c` always holds; annotation is not special machinery. (An assume inserted on the tgt side commits trivially, but the obligation resurfaces in the remaining goal, so it defers work rather than avoiding it.)
 
 **Certificate.** The deliverable of a successful run: a standalone package (IR files, a manifest, a checker script) that replays the whole proof through alive2 with no framework and no agent involved (see "Certificate package"). It contains only the pruned proof, the goals and steps that actually discharged the root; reverted or abandoned search never appears in it. A refuted root has the symmetric package: the input, when llubi ran one, or nothing, when alive2 refuted the pair itself.
@@ -154,7 +156,7 @@ A certified step shows the step is valid; it says nothing about whether the path
 
 - Proved: the goal discharges early. In particular, the last step of a successful chain discharges the goal without an explicit `check` call, since identical sides are proved without a solver.
 - Timeout: no information, continue.
-- Refuted with a concrete counterexample: the current pair can never be proved, so the framework marks the path dead, forcing a revert or an unsplit, and returns the counterexample as a hint.
+- Refuted with a concrete counterexample: the current pair can never be proved, so the framework marks the path dead, forcing a revert, an unsplit or an uninterpose, and returns the counterexample as a hint.
 
 Interpreting a refutation depends on where it happens. On a goal whose sides have been rewritten, it may blame only the path: a valid step can overshoot. Example: S returns `poison`, a valid step refines it to S' returning `0`, and T returns `1`. T refines S, and S' refines S, but T does not refine S'; the translation is fine and only the path is dead. On a callee goal, it may instead mean the interface is too weak (strengthen it) or the cut is misplaced (unsplit and cut elsewhere), since the callee's entry is conservative. None of these refute the translation by themselves.
 
@@ -205,6 +207,8 @@ Every tool call is logged. Tools that create certified steps record enough to re
 - `commit()`: certify the transaction's before/after pair, by `llops reshaped` when it only reshapes control flow and otherwise with alive2, in the side-appropriate direction. Success: one certified step, head advances. Failure: head unchanged, local counterexample returned as a hint.
 - `abort()`: discard the transaction.
 - `revert(gid, side, pid)`: move the head of an open goal's side back to an earlier program in its history. Later steps are abandoned (kept in the log, unused).
+- `interpose(gid, program)`: puts a program that defines the same function between an open goal's two sides, splitting the goal into two child goals, `lhs` holding the src and the program, `rhs` the program and the tgt. The parent's status becomes `split`, and it is proved when both children are. Fails if the program is outside the program shape, defines another function, or is one of the goal's sides.
+- `uninterpose(gid)`: discards an interposed goal's two children (and their subtrees) and reopens the parent. The way to undo an interpose.
 
 A step may move a goal that has already been proved. The goal reopens, and every discharge that proof carried upwards comes undone with it. The old discharge stays in the log, unused, as abandoned steps do after a revert.
 
@@ -243,8 +247,9 @@ The script verifies:
 2. Checked steps and leaf discharges: rerun alive-tv on the recorded pair in the recorded direction, or `llops reshaped` for a step or leaf it checked; alive-tv must answer "correct", and `llops reshaped` yes. Replay timeouts should be more generous than the originals, since solver timing varies across machines.
 3. Rule and unfold steps: re-apply the recorded rule at the recorded location, or unfold again, and check that the output matches the after-hash.
 4. Split faithfulness: inline the callee back into the outer program at the call site, or reattach a detached one, and check alpha-equivalence against the parent's program, per side. Mechanical.
-5. Identical discharges: a leaf whose two sides are the same program needs no solver.
-6. Composition: the root is verified iff every leaf discharge and every faithfulness check passed and every parent's children are accounted for.
+5. Interposed programs: the `lhs` half of an interposed goal starts at the goal's src and the program, the `rhs` half at the program and the goal's tgt. Mechanical.
+6. Identical discharges: a leaf whose two sides are the same program needs no solver.
+7. Composition: the root is verified iff every leaf discharge and every faithfulness check passed and every parent's children are accounted for.
 
 The consequence for trust is significant: the framework is now just a search assistant and drops out of the trust base entirely. Anything it gets wrong (bookkeeping, direction, outlining) surfaces as a failed replay. The composition rule and the faithfulness check live in `kernel/check.py`, which is small, standalone, and auditable.
 

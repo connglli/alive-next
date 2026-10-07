@@ -231,7 +231,25 @@ class Tree:
         parent["children"].append(child["gid"])
       self.calls[effect["callee"]["gid"]] = (effect["name"], hypothesis)
       parent["status"] = "split"
-    elif kind == "unsplit":
+    elif kind == "interpose":
+      parent = self.editable(effect["gid"])
+      for role in ("lhs", "rhs"):
+        half = effect[role]
+        self.open_goal(
+          half["gid"],
+          parent["id"],
+          role,
+          parent["node"],
+          half["src"],
+          half["tgt"],
+          at,
+          f"interpose {role}",
+          None,
+          None,
+        )
+        parent["children"].append(half["gid"])
+      parent["status"] = "split"
+    elif kind in ("unsplit", "uninterpose"):
       parent = self.get(effect["gid"])
       if parent["status"] != "split":
         raise Broken(f"{parent['id']} is not split")

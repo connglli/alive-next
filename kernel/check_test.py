@@ -396,6 +396,19 @@ class Case(unittest.TestCase):
     self.built.goal("g1", pair, pair, [], {"kind": "check"})
     return self.built.write()
 
+  def interposed(self, rhs_src: str = "") -> Path:
+    """A root proved through a program between its two: a multiply by two
+    becomes a sum with itself, which becomes the shift."""
+    middle = self.built.program(SRC.replace("mul i32 %0, 2", "add i32 %0, %0"))
+    pair = {"src": self.src, "tgt": self.tgt}
+    discharge = {"kind": "interpose", "program": middle, "lhs": "g2", "rhs": "g3"}
+    self.built.goal("g1", pair, pair, [], discharge)
+    lhs = {"src": self.src, "tgt": middle}
+    self.built.goal("g2", lhs, lhs, [], {"kind": "check"})
+    rhs = {"src": rhs_src or middle, "tgt": self.tgt}
+    self.built.goal("g3", rhs, rhs, [], {"kind": "check"})
+    return self.built.write()
+
   def windowed(self, was: str = "", now: str = "", at: str = "#0", to: str = "") -> dict:
     """A goal whose one step was narrowed to the window it changed.
 
@@ -581,6 +594,9 @@ class TestGolden(Case):
         end = {"src": rotated, "tgt": rotated}
         self.built.goal("g1", start, end, [step], {"kind": "check"})
         self.verified(self.built.write())
+
+  def test_a_goal_proved_through_an_interposed_program_verifies(self):
+    self.verified(self.interposed())
 
   def test_a_goal_whose_tgt_only_reshapes_its_src_verifies(self):
     pair = {
@@ -1156,6 +1172,10 @@ declare i32 @k.ih(i32)
     }
     self.built.goal("g1", pair, pair, [], {"kind": "check", "by": "reshaped"})
     self.refused(self.built.write(), "Final refinement")
+
+  def test_an_interposed_half_that_starts_elsewhere(self):
+    # The rhs half proves the root's own pair, which says nothing about the program.
+    self.refused(self.interposed(rhs_src=self.src), "Interposed program")
 
   def test_a_step_checked_by_an_unknown_checker(self):
     step = {"kind": "check", "side": "src", "from": self.src, "to": self.tgt, "by": "z3"}

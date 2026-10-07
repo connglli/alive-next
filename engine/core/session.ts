@@ -17,14 +17,15 @@
 // end-to-end scenarios run with nothing in front of them.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type {
-  AnalyzeKind,
-  AnalyzeResult,
-  EditOp,
-  HarnessArg,
-  Llops,
-  LlopsResult,
-  OptOp,
+import {
+  type AnalyzeKind,
+  type AnalyzeResult,
+  definedIn,
+  type EditOp,
+  type HarnessArg,
+  type Llops,
+  type LlopsResult,
+  type OptOp,
 } from "./drivers/llops.ts";
 import type { Llrwt, RuleInfo } from "./drivers/llrwt.ts";
 import type { Ref } from "./refs.ts";
@@ -34,12 +35,14 @@ import {
   type Goal,
   head,
   type ProgramId,
+  type Role,
   type Side,
   type Status,
   type Tree,
   verdict,
   workable,
 } from "./state/goals.ts";
+import { type InterposeResult, interpose, uninterpose } from "./state/interpose.ts";
 import { type SplitPreviewResult, type SplitResult, Splits } from "./state/splits.ts";
 import {
   type Checker,
@@ -94,7 +97,11 @@ export type RevertResult =
 /** The cut was restored, or preserved because an open transaction needs a child. */
 export type UnsplitResult = { kind: "unsplit"; effects: Effect[] } | EditingRefusal;
 
+export type UninterposeResult = { kind: "uninterposed"; effects: Effect[] } | EditingRefusal;
+
 export type SessionSplitResult = SplitResult | EditingRefusal;
+
+export type SessionInterposeResult = InterposeResult | EditingRefusal;
 
 export type SessionStrengthenResult = StrengthenResult | EditingRefusal;
 
@@ -103,7 +110,7 @@ export interface GoalView {
   gid: string;
   status: Status;
   /** Which half of its parent's cut this is. */
-  role?: "outer" | "callee";
+  role?: Role;
   /** The outlined function the cut that made it named. */
   callee?: string;
   parent?: string;
@@ -116,7 +123,7 @@ export interface GoalView {
 export interface GoalStanding {
   gid: string;
   status: Status;
-  role?: "outer" | "callee";
+  role?: Role;
   parent?: string;
   children: string[];
   src: Hash;
@@ -231,14 +238,9 @@ export class Session {
    * Answers the name of the one function it defines.
    */
   private async refuseOutsideShape(side: Side, text: string): Promise<string> {
-    const result = await this.llops.validate(text);
-    if (!result.ok) throw new Error(`the ${side} program: llops validate: ${result.message}`);
-    if (!result.conforms) {
-      const why = result.diagnostics.map((d) => `${d.code}, ${d.message}`).join("; ");
-      throw new Error(`the ${side} program is outside the program shape: ${why}`);
-    }
-    const [name] = Object.entries(result.functions ?? {}).find(([, fn]) => fn.defined) ?? [];
-    return name ?? "";
+    const found = await definedIn(this.llops, text, `the ${side} program`);
+    if ("why" in found) throw new Error(found.why);
+    return found.name;
   }
 
   /** Pick a run back up from its directory, which replays what it did. */
@@ -528,6 +530,31 @@ export class Session {
         return this.splits.split(tree, gid, srcCut, tgtCut, valueMap);
       },
     );
+  }
+
+  /**
+   * Put a program between a goal's two sides, which splits the goal into two:
+   * the program refines the src, and the tgt refines the program.
+   */
+  interpose(gid: string, program: string): Promise<SessionInterposeResult> {
+    return this.act("interpose", { gid }, async (tree): Promise<SessionInterposeResult> => {
+      const editing = this.editing.open();
+      if (editing && this.editing.isEditing(gid)) {
+        return { kind: "editing", message: openMessage(editing) };
+      }
+      return interpose(this.store, this.llops, tree, gid, program);
+    });
+  }
+
+  /** Undo an interpose, which discards the two children and their subtrees. */
+  uninterpose(gid: string): Promise<UninterposeResult> {
+    return this.act("uninterpose", { gid }, async (tree) => {
+      const editing = this.editing.open();
+      if (editing && this.editing.isEditingBelow(tree, gid)) {
+        return { kind: "editing", message: openMessage(editing) };
+      }
+      return { kind: "uninterposed", effects: uninterpose(tree, gid) };
+    });
   }
 
   /** Undo a split, which discards the two children and their subtrees. */

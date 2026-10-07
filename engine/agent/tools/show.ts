@@ -29,7 +29,8 @@ export function createShowTool(session: Session) {
         return toolResult(true, formatProgram(view.id, await session.number(view.text)), view);
       }
       const view = await session.show(ref);
-      const what = view.role ? `${view.role} of ${view.parent}, cut into @${view.callee}` : "root";
+      const cut = view.callee ? `, cut into @${view.callee}` : "";
+      const what = view.role ? `${view.role} of ${view.parent}${cut}` : "root";
       return toolResult(
         true,
         [

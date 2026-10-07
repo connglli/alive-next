@@ -442,6 +442,23 @@ export class Llops {
   }
 }
 
+/** The one function a program defines, or why a goal cannot hold it. */
+export async function definedIn(
+  llops: Llops,
+  module: Module,
+  what: string,
+): Promise<{ name: string } | { why: string }> {
+  const result = await llops.validate(module);
+  if (!result.ok) return { why: `${what}: llops validate: ${result.message}` };
+  if (!result.conforms) {
+    const why = result.diagnostics.map((d) => `${d.code}, ${d.message}`).join("; ");
+    return { why: `${what} is outside the program shape: ${why}` };
+  }
+  const functions = Object.entries(result.functions ?? {});
+  const [name = ""] = functions.find(([, fn]) => fn.defined) ?? [];
+  return { name };
+}
+
 /** A body's instructions, block by block, in index order. */
 export function blocksOf(body: Instruction[]): Instruction[][] {
   const blocks: Instruction[][] = [];

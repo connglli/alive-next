@@ -617,6 +617,8 @@ class Check:
       )
     elif discharge["kind"] == "split":
       self.split(gid, goal, discharge)
+    elif discharge["kind"] == "interpose":
+      self.interpose(goal, discharge)
     else:
       self.fail(
         gid,
@@ -1047,6 +1049,33 @@ class Check:
       elapsed_ms(started),
     )
     return step["to"]
+
+  def interpose(self, goal: dict, discharge: dict) -> None:
+    """A goal holds through a program put between its two sides.
+
+    The lhs half claims the program refines the goal's src, the rhs half that
+    the goal's tgt refines the program, and refinement is transitive, as along
+    a chain. Each half is a goal of its own with no role and no loop, since
+    every callee stays uninterpreted in all three programs.
+    """
+    program = discharge["program"]
+    halves = (
+      (discharge["lhs"], {"src": goal["end"]["src"], "tgt": program}),
+      (discharge["rhs"], {"src": program, "tgt": goal["end"]["tgt"]}),
+    )
+    for half, pair in halves:
+      start = self.package.goal(half)["start"]
+      self.report(
+        result="OK" if start == pair else "FAIL",
+        gid=half,
+        side="pair",
+        tool="kernel",
+        check="Interposed program",
+        notes=f"starts at {start['src'][:12]}, {start['tgt'][:12]}"
+        + ("" if start == pair else f"; not {pair['src'][:12]}, {pair['tgt'][:12]}"),
+      )
+    for half, _ in halves:
+      self.goal(half)
 
   def split(self, gid: str, goal: dict, discharge: dict) -> None:
     """A cut holds when it inlines, or reattaches, back to the pair it was made on."""

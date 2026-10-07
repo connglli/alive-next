@@ -14,6 +14,7 @@ import type { Detach, Effect, Entry, Hash } from "./trajectory.ts";
 export type GoalId = string;
 export type ProgramId = string;
 export type Side = "src" | "tgt";
+export type Role = "outer" | "callee" | "lhs" | "rhs";
 
 /** open until it is discharged, split once it has children, or settled. */
 export type Status = "open" | "proved" | "split" | "refuted";
@@ -26,8 +27,11 @@ export interface SideHistory {
 export interface Goal {
   id: GoalId;
   parent?: GoalId;
-  /** Which half of its parent's cut this is. */
-  role?: "outer" | "callee";
+  /**
+   * Which child of its parent this is: a split's outer or callee, or an
+   * interpose's lhs or rhs.
+   */
+  role?: Role;
   /** The outlined function this cut made, on both of its children. */
   callee?: string;
   /** Present on both children when the cut detached a block. */
@@ -100,8 +104,13 @@ export function workable(tree: Tree, id: GoalId): Goal {
   return goal;
 }
 
+/** Whether `goal` has the two children an interpose leaves, rather than a split's. */
+export function interposed(tree: Tree, goal: Goal): boolean {
+  return goal.children.some((id) => tree.goals.get(id)?.role === "lhs");
+}
+
 /** The half of `parent`'s cut that plays `role`. */
-export function child(tree: Tree, parent: Goal, role: "outer" | "callee"): Goal {
+export function child(tree: Tree, parent: Goal, role: Role): Goal {
   for (const id of parent.children) {
     const goal = tree.goals.get(id);
     if (goal?.role === role) return goal;
@@ -173,28 +182,23 @@ function apply(tree: Tree, effect: Effect): void {
     }
     case "split": {
       const parent = editable(tree, effect.gid);
-      for (const [role, child] of [
-        ["outer", effect.outer],
-        ["callee", effect.callee],
-      ] as const) {
-        if (tree.goals.has(child.gid)) throw new DerivationError(`${child.gid} already exists`);
-        tree.goals.set(child.gid, {
-          id: child.gid,
-          parent: parent.id,
-          role,
-          callee: effect.name,
-          ...(effect.detach ? { detach: effect.detach } : {}),
-          src: { history: [child.src] },
-          tgt: { history: [child.tgt] },
-          status: "open",
-          children: [],
-        });
-        parent.children.push(child.gid);
-        tree.nextGoal = Math.max(tree.nextGoal, number(child.gid) + 1);
-        name(tree, child.src);
-        name(tree, child.tgt);
-      }
+      const { name: callee, detach } = effect;
+      const made = { callee, ...(detach ? { detach } : {}) };
+      opened(tree, parent, effect.outer, "outer", made);
+      opened(tree, parent, effect.callee, "callee", made);
       // The parent's heads freeze here: it is proved through its children now.
+      parent.status = "split";
+      return;
+    }
+    case "interpose": {
+      const parent = editable(tree, effect.gid);
+      const { lhs, rhs } = effect;
+      // The halves are about the parent's own pair, so they meet it and each other exactly.
+      const [src, tgt] = [head(parent, "src"), head(parent, "tgt")];
+      const meets = lhs.src === src && lhs.tgt === rhs.src && rhs.tgt === tgt;
+      if (!meets) throw new DerivationError(`${effect.gid}'s halves do not meet its pair`);
+      opened(tree, parent, lhs, "lhs");
+      opened(tree, parent, rhs, "rhs");
       parent.status = "split";
       return;
     }
@@ -210,10 +214,16 @@ function apply(tree: Tree, effect: Effect): void {
     }
     case "unsplit": {
       const parent = get(tree, effect.gid);
-      if (parent.status !== "split") throw new DerivationError(`${parent.id} is not split`);
-      for (const child of parent.children) discard(tree, child);
-      parent.children = [];
-      parent.status = "open";
+      if (parent.status !== "split" || interposed(tree, parent))
+        throw new DerivationError(`${parent.id} is not split`);
+      reopen(tree, parent);
+      return;
+    }
+    case "uninterpose": {
+      const parent = get(tree, effect.gid);
+      if (parent.status !== "split" || !interposed(tree, parent))
+        throw new DerivationError(`${parent.id} is not interposed`);
+      reopen(tree, parent);
       return;
     }
     case "proved": {
@@ -231,6 +241,31 @@ function apply(tree: Tree, effect: Effect): void {
   }
 }
 
+/** Open a child of `parent`, starting at the pair it was given. */
+function opened(
+  tree: Tree,
+  parent: Goal,
+  half: { gid: GoalId; src: Hash; tgt: Hash },
+  role: Role,
+  made: Pick<Goal, "callee" | "detach"> = {},
+): void {
+  if (tree.goals.has(half.gid)) throw new DerivationError(`${half.gid} already exists`);
+  tree.goals.set(half.gid, {
+    id: half.gid,
+    parent: parent.id,
+    role,
+    ...made,
+    src: { history: [half.src] },
+    tgt: { history: [half.tgt] },
+    status: "open",
+    children: [],
+  });
+  parent.children.push(half.gid);
+  tree.nextGoal = Math.max(tree.nextGoal, number(half.gid) + 1);
+  name(tree, half.src);
+  name(tree, half.tgt);
+}
+
 function settle(tree: Tree, id: GoalId | undefined): void {
   if (id === undefined) return;
   const goal = get(tree, id);
@@ -239,6 +274,13 @@ function settle(tree: Tree, id: GoalId | undefined): void {
   if (!children.every((child) => child.status === "proved")) return;
   goal.status = "proved";
   settle(tree, goal.parent);
+}
+
+/** Discard `parent`'s children and their subtrees, and reopen it. */
+function reopen(tree: Tree, parent: Goal): void {
+  for (const child of parent.children) discard(tree, child);
+  parent.children = [];
+  parent.status = "open";
 }
 
 function discard(tree: Tree, id: GoalId): void {
@@ -288,9 +330,9 @@ function number(id: GoalId): number {
   return found ? Number(found[1]) : 0;
 }
 
-/** The ids the next cut will give its two children. */
-export function nextGoalIds(tree: Tree): { outer: GoalId; callee: GoalId } {
-  return { outer: `g${tree.nextGoal}`, callee: `g${tree.nextGoal + 1}` };
+/** The ids the next cut will give its two children, in order. */
+export function nextGoalIds(tree: Tree): [GoalId, GoalId] {
+  return [`g${tree.nextGoal}`, `g${tree.nextGoal + 1}`];
 }
 
 function name(tree: Tree, hash: Hash): void {

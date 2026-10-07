@@ -342,6 +342,34 @@ describe.skipIf(!built)("the manifest", () => {
     expect(only).toMatchObject({ kind: "check", side: "src", to: step.hash, by: "reshaped" });
   });
 
+  test("records a goal proved through an interposed program, and both halves", async () => {
+    const session = await Session.start({
+      dir: join(dir, "interposed"),
+      src: ADD_ZERO,
+      tgt: FOLDED,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    const middle = ADD_ZERO.replace("add i32 %x, 0", "or i32 %x, 0");
+    const cut = await session.interpose("g1", middle);
+    if (cut.kind !== "interposed") throw new Error("expected the interpose to land");
+    await session.check("g2");
+    await session.check("g3");
+    expect(session.finish()).toBe("verified");
+
+    const { goals } = manifestFrom(session.dir);
+    expect(goals.g1?.discharge).toEqual({
+      kind: "interpose",
+      program: cut.program,
+      lhs: "g2",
+      rhs: "g3",
+    });
+    expect(goals.g2?.start.tgt).toBe(cut.program);
+    expect(goals.g3?.start.src).toBe(cut.program);
+  });
+
   test("records who proved a goal whose tgt only reshapes its src", async () => {
     const session = await Session.start({
       dir: join(dir, "reshaped-goal"),

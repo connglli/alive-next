@@ -26,7 +26,7 @@ import type {
   ParamSpec,
 } from "../drivers/llops.ts";
 import type { Ref } from "../refs.ts";
-import { type GoalId, head, nextGoalIds, type Tree, workable } from "./goals.ts";
+import { type GoalId, head, interposed, nextGoalIds, type Tree, workable } from "./goals.ts";
 import type { Store } from "./store.ts";
 import type { Detach, Effect } from "./trajectory.ts";
 
@@ -85,10 +85,10 @@ export class Splits {
   ): Promise<SplitPreviewResult> {
     const goal = workable(tree, gid);
 
-    const children = nextGoalIds(tree);
+    const [, calleeGoal] = nextGoalIds(tree);
     // The outlined function is named after the callee goal, so the name is
     // fresh by construction and a reader can tell which cut made it.
-    const callee = `outlined_${children.callee}`;
+    const callee = `outlined_${calleeGoal}`;
 
     const srcModule = this.store.get(head(goal, "src"));
     const tgtModule = this.store.get(head(goal, "tgt"));
@@ -172,7 +172,8 @@ export class Splits {
       };
     }
 
-    const children = nextGoalIds(tree);
+    const [outer, inner] = nextGoalIds(tree);
+    const children = { outer, callee: inner };
     const callee = preview.callee;
 
     const { outerSrc, outerTgt, calleeSrc, calleeTgt } = preview.programs;
@@ -223,6 +224,7 @@ export class Splits {
     const goal = tree.goals.get(gid);
     if (!goal) throw new Error(`no goal ${gid}`);
     if (goal.status !== "split") throw new Error(`${gid} is ${goal.status}, not split`);
+    if (interposed(tree, goal)) throw new Error(`${gid} was interposed, not split`);
     return [{ effect: "unsplit", gid }];
   }
 }

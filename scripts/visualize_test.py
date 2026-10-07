@@ -243,6 +243,19 @@ class TestFold(Case):
       for side in ("src", "tgt"):
         self.assertTrue(data["diffs"][nid][side]["birth"])
 
+  def test_an_interposed_program_opens_two_halves_that_prove_the_goal(self):
+    middle = self.session.program(SRC.replace("mul i32 %0, 2", "add i32 %0, %0"))
+    lhs = {"gid": "g2", "src": self.src, "tgt": middle}
+    rhs = {"gid": "g3", "src": middle, "tgt": self.tgt}
+    effect = {"effect": "interpose", "gid": "g1", "lhs": lhs, "rhs": rhs}
+    self.session.result("interpose", effect)
+    self.session.result("check", {"effect": "proved", "gid": "g2"})
+    self.session.result("check", {"effect": "proved", "gid": "g3"})
+    data = self.data()
+    halves = data["snapshots"][1]
+    self.assertEqual((halves["g2"]["parent"], halves["g3"]["parent"]), ("g1", "g1"))
+    self.assertEqual(data["snapshots"][-1]["g1"]["status"], "proved")
+
   def test_a_detached_loop_names_its_hypothesis_and_the_proofs_of_its_contract(self):
     self.session.result(
       "split",

@@ -14,7 +14,7 @@
 import type { Attrs, HarnessArg, Predicate } from "../core/drivers/llops.ts";
 import type { LlrwtInvocation } from "../core/drivers/llrwt.ts";
 import type { ReportResult } from "../core/state/counterexamples.ts";
-import { type Goal, head, type Tree } from "../core/state/goals.ts";
+import { type Goal, head, interposed, type Role, type Tree } from "../core/state/goals.ts";
 import type { CheckGoalResult } from "../core/state/steps.ts";
 import type {
   Detach,
@@ -108,6 +108,12 @@ export interface Pair {
 export type Discharge =
   /** The pair was checked, by alive2 or by `llops reshaped`, as a step is. */
   | { kind: "check"; by: "alive2" | "reshaped" }
+  /**
+   * A program was put between the pair: goal `lhs` holds the src and the
+   * program, goal `rhs` the program and the tgt, and a checker checks that
+   * both start there and verify, since refinement is transitive.
+   */
+  | { kind: "interpose"; program: Hash; lhs: string; rhs: string }
   | {
       kind: "split";
       callee: string;
@@ -302,6 +308,20 @@ function include(
     };
     return;
   }
+  if (interposed(tree, goal)) {
+    const lhs = childOf(tree, goal, "lhs");
+    const rhs = childOf(tree, goal, "rhs");
+    const program = first(lhs, "tgt");
+    goals[goal.id] = {
+      start,
+      steps,
+      end,
+      discharge: { kind: "interpose", program, lhs: lhs.id, rhs: rhs.id },
+    };
+    include(tree, lhs, effects, goals, programs);
+    include(tree, rhs, effects, goals, programs);
+    return;
+  }
   const outer = childOf(tree, goal, "outer");
   const inner = childOf(tree, goal, "callee");
   if (!goal.callee && !outer.callee) {
@@ -423,7 +443,7 @@ function first(goal: Goal, side: "src" | "tgt"): Hash {
   return start;
 }
 
-function childOf(tree: Tree, parent: Goal, role: "outer" | "callee"): Goal {
+function childOf(tree: Tree, parent: Goal, role: Role): Goal {
   for (const id of parent.children) {
     const child = tree.goals.get(id);
     if (child?.role === role) return child;
