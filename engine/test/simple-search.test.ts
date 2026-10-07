@@ -342,6 +342,37 @@ describe.skipIf(!solving)("search with alive-tv", () => {
     expect(await run("varA", { stages: true }, 30_000)).toBe("verified");
   }, 180_000);
 
+  test("proves a stage no step reaches as a goal of its own", async () => {
+    // The optimizer divides unsigned and adds nuw since the counter is never
+    // negative, which holds by induction, so no window or one query certifies it.
+    const src = `declare void @use(i32)
+
+define void @f(i32 noundef %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %c = icmp slt i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %q = sdiv i32 %i, 3
+  call void @use(i32 %q)
+  %i.next = add nsw i32 %i, 1
+  br label %head
+
+exit:
+  ret void
+}
+`;
+    const stages = await llops.pipelineStages(src);
+    if (!stages.ok) throw new Error(stages.message);
+    const session = await start(src, stages.stages.at(-1)?.module ?? src, aliveTv);
+    expect(await search(session, llops, { ...limits, stages: true })).toBe("verified");
+    expect([...session.tree.goals.values()].some((goal) => goal.role === "lhs")).toBe(true);
+  }, 180_000);
+
   test("leaves e4, which is no refinement, unknown", async () => {
     expect(await run("e4")).toBe("unknown");
   }, 120_000);
