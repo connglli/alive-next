@@ -346,7 +346,7 @@ export class Strengthen {
     // established interface discharges either goal, it is settled immediately.
     for (const goal of [callee, outer]) {
       const cross = await this.steps.eagerGoalCheck(tree, goal.id);
-      checks.push(cross.check);
+      if (cross.check) checks.push(cross.check);
       this.land(tree, landed, cross.effects);
     }
     return { kind: "strengthened", effects: landed, checks };

@@ -582,6 +582,14 @@ class TestGolden(Case):
         self.built.goal("g1", start, end, [step], {"kind": "check"})
         self.verified(self.built.write())
 
+  def test_a_goal_whose_tgt_only_reshapes_its_src_verifies(self):
+    pair = {
+      "src": self.built.program(canonical(LOOP_TOP)),
+      "tgt": self.built.program(canonical(LOOP_ROTATED)),
+    }
+    self.built.goal("g1", pair, pair, [], {"kind": "check", "by": "reshaped"})
+    self.verified(self.built.write())
+
   def test_a_loop_unfolded_on_both_sides_verifies(self):
     inner = self.detached(PARITY, PARITY_NUW)["inner"]
     end = {side: self.unfolded(inner[side]) for side in ("src", "tgt")}
@@ -1139,6 +1147,15 @@ declare i32 @k.ih(i32)
     pair = {"src": changed, "tgt": changed}
     self.built.goal("g1", {"src": top, "tgt": changed}, pair, [step], {"kind": "check"})
     self.refused(self.built.write(), "Chain step")
+
+  def test_a_goal_checked_as_reshaped_that_changes_a_value(self):
+    changed = LOOP_ROTATED.replace("add i32 %i, 1", "add i32 %i, 2")
+    pair = {
+      "src": self.built.program(canonical(LOOP_TOP)),
+      "tgt": self.built.program(canonical(changed)),
+    }
+    self.built.goal("g1", pair, pair, [], {"kind": "check", "by": "reshaped"})
+    self.refused(self.built.write(), "Final refinement")
 
   def test_a_step_checked_by_an_unknown_checker(self):
     step = {"kind": "check", "side": "src", "from": self.src, "to": self.tgt, "by": "z3"}

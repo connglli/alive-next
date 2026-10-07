@@ -106,7 +106,7 @@ Automatic narrowing tries two window candidates in the block where the canonical
 
 ## Steps that only reshape control flow
 
-Rotating a loop, merging or splitting blocks, dropping an empty one, adding an LCSSA phi or inverting a branch changes what a function looks like but not what any run of it does: every path runs the same instructions on the same values. `llops reshaped` shows that without a solver, so a commit asks it first, and where the program loops it is the only way such a step is certified, since alive2 is asked about no loop. It walks the two functions together and checks that each run of the program that has to refine is a run of the other, step for step, reading instructions as uninterpreted operations. `canon` decides equality up to names; `reshaped` decides equality up to names and the shape of control flow, which is a stuttering bisimulation (Browne, Clarke and Grumberg, 1988). Metadata counts as alive2 reads it, so the answer holds under alive2's semantics, which give loop properties and branch weights no meaning. A checker asks `reshaped` again rather than believing the step.
+Rotating a loop, merging or splitting blocks, dropping an empty one, adding an LCSSA phi or inverting a branch changes what a function looks like but not what any run of it does: every path runs the same instructions on the same values. `llops reshaped` shows that without a solver, so a commit and a goal check ask it first, and where the program loops it is the only way such a step is certified, or such a goal proved without a cut, since alive2 is asked about no loop. It walks the two functions together and checks that each run of the program that has to refine is a run of the other, step for step, reading instructions as uninterpreted operations. `canon` decides equality up to names; `reshaped` decides equality up to names and the shape of control flow, which is a stuttering bisimulation (Browne, Clarke and Grumberg, 1988). Metadata counts as alive2 reads it, so the answer holds under alive2's semantics, which give loop properties and branch weights no meaning. A checker asks `reshaped` again rather than believing the step.
 
 ## Interface facts are proved where the evidence lives
 
@@ -222,7 +222,7 @@ Both children are cross-checked once at the end, after phase 3, and not between 
 
 ### Discharge
 
-- `check(gid, timeout, unroll)`: identical sides are proved at once; otherwise a direct alive2 run on the goal's current pair. Pass: goal proved. Fail: a counterexample. On the root's original pair it refutes the run; anywhere else the goal stays open. Timeout: goal stays open. Any other pair that loops is never proved: alive2 searches its first `unroll` iterations, and a counterexample it finds is a hint for `report_cex`. The timeout is the agent's knob, because spending solver time is a search decision. The framework also runs a small-timeout `check` on its own after every certified step; see "Eager cross-checking".
+- `check(gid, timeout, unroll)`: identical sides are proved at once, and so is a tgt that only reshapes the src's control flow, by `llops reshaped`; otherwise a direct alive2 run on the goal's current pair. Pass: goal proved. Fail: a counterexample. On the root's original pair it refutes the run; anywhere else the goal stays open. Timeout: goal stays open. Any other pair that loops is never proved: alive2 searches its first `unroll` iterations, and a counterexample it finds is a hint for `report_cex`. The timeout is the agent's knob, because spending solver time is a search decision. The framework also runs a small-timeout `check` on its own after every certified step; see "Eager cross-checking".
 
 ### Counterexample search and computation
 
@@ -234,13 +234,13 @@ Both children are cross-checked once at the end, after phase 3, and not between 
 A "verified" verdict is delivered as a self-contained package that anyone can replay with only alive2, the rule applier, and a scripting runtime; the framework and the agent are not needed. Layout:
 
 - `programs/`: every IR version referenced by the proof, one file per program, named by content hash. Hash naming makes chain connectivity a trivial string comparison.
-- `manifest.json`: the pruned goal tree. Per goal: its initial (src, tgt) hashes, its chain of certified steps, and how it was discharged. Per step: kind (rule, checked, unfold, split, strengthen), side, before/after hashes, for checked steps the checker (alive2, or `llops reshaped`), and for alive2-backed steps the exact invocation (function pair, direction, options, timeout).
+- `manifest.json`: the pruned goal tree. Per goal: its initial (src, tgt) hashes, its chain of certified steps, and how it was discharged, with the checker for a checked leaf. Per step: kind (rule, checked, unfold, split, strengthen), side, before/after hashes, for checked steps the checker (alive2, or `llops reshaped`), and for alive2-backed steps the exact invocation (function pair, direction, options, timeout).
 - `check.py`: a small standalone script that replays the proof, one step at a time.
 
 The script verifies:
 
 1. Chain connectivity: each step's before-hash matches the current head, starting from the root's LHS and RHS hashes.
-2. Checked steps and leaf discharges: rerun alive-tv on the recorded pair in the recorded direction, or `llops reshaped` for a step it checked; alive-tv must answer "correct", and `llops reshaped` yes. Replay timeouts should be more generous than the originals, since solver timing varies across machines.
+2. Checked steps and leaf discharges: rerun alive-tv on the recorded pair in the recorded direction, or `llops reshaped` for a step or leaf it checked; alive-tv must answer "correct", and `llops reshaped` yes. Replay timeouts should be more generous than the originals, since solver timing varies across machines.
 3. Rule and unfold steps: re-apply the recorded rule at the recorded location, or unfold again, and check that the output matches the after-hash.
 4. Split faithfulness: inline the callee back into the outer program at the call site, or reattach a detached one, and check alpha-equivalence against the parent's program, per side. Mechanical.
 5. Identical discharges: a leaf whose two sides are the same program needs no solver.

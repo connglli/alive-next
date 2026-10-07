@@ -38,12 +38,16 @@ export function createCheckTool(session: Session) {
     }),
     execute: async (_id, { gid, timeout_ms, unroll }) => {
       const checked = await session.check(gid, timeout_ms, unroll);
+      const { check } = checked;
       // What it ran on, because a timeout means nothing without the budget it
       // ran out of, and asking for more than the cap is answered by the cap.
-      const budgetMs = checked.check.invocation.timeoutMs;
-      const budget = checked.cappedFromMs
-        ? `${budgetMs}ms budget, capped from the ${checked.cappedFromMs}ms asked for`
-        : `${budgetMs}ms budget`;
+      const budgetMs = check?.invocation.timeoutMs;
+      const budget =
+        budgetMs === undefined
+          ? "with no solver"
+          : checked.cappedFromMs
+            ? `${budgetMs}ms budget, capped from the ${checked.cappedFromMs}ms asked for`
+            : `${budgetMs}ms budget`;
       const prior = checked.prior
         ? `earlier check: ${said(checked.prior.outcome)} on a ${checked.prior.budgetMs}ms budget; `
         : "";
@@ -54,10 +58,12 @@ export function createCheckTool(session: Session) {
         checked.outcome === "proved",
         `${prior}${gid} ${said(checked.outcome)}, ${budget}`,
         checked,
-        [
-          formatDetail(checked.check),
-          timedOut(checked.check) ? formatSection("Suggestion", CUT_SUGGESTION) : "",
-        ],
+        check
+          ? [
+              formatDetail(check),
+              timedOut(check) ? formatSection("Suggestion", CUT_SUGGESTION) : "",
+            ]
+          : [],
       );
     },
   });

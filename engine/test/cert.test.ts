@@ -342,6 +342,24 @@ describe.skipIf(!built)("the manifest", () => {
     expect(only).toMatchObject({ kind: "check", side: "src", to: step.hash, by: "reshaped" });
   });
 
+  test("records who proved a goal whose tgt only reshapes its src", async () => {
+    const session = await Session.start({
+      dir: join(dir, "reshaped-goal"),
+      src: LOOP_TOP,
+      tgt: LOOP_ROTATED,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    // alive2 is asked about no loop, so only llops can have proved it.
+    expect((await session.check("g1")).by).toBe("reshaped");
+    expect(session.finish()).toBe("verified");
+
+    const discharge = manifestFrom(session.dir).goals.g1?.discharge;
+    expect(discharge).toEqual({ kind: "check", by: "reshaped" });
+  });
+
   test("copies every program the proof names", async () => {
     const session = await prove(cut);
     const out = certify(session, join(dir, "certificate"));
@@ -442,6 +460,24 @@ describe.skipIf(!built)("the manifest", () => {
     if (!goal) throw new Error("the proof has no goal");
     expect(goal.steps).toEqual([]);
     expect(goal.start).toEqual(goal.end);
+  });
+
+  test("records who proved a root the start check proved", async () => {
+    const session = await Session.start({
+      dir: join(dir, "auto-reshaped"),
+      src: LOOP_TOP,
+      tgt: LOOP_ROTATED,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+      eager: true,
+    });
+    expect(session.finish()).toBe("verified");
+
+    // alive2 is asked about no loop, so a replay must ask llops, as the run did.
+    const discharge = manifestFrom(session.dir).goals.g1?.discharge;
+    expect(discharge).toEqual({ kind: "check", by: "reshaped" });
   });
 
   test("a start check's counterexample ships the pair and no input", async () => {

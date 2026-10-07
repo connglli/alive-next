@@ -91,6 +91,8 @@ e:
 `;
 /** The same loop, returning one iteration late. */
 const LATE = LOOP.replace("ret i32 %i", "ret i32 %j");
+/** The same loop returning through an LCSSA phi, which only reshapes it. */
+const LCSSA = LOOP.replace("ret i32 %i", "%r = phi i32 [ %i, %l ]\n  ret i32 %r");
 
 async function tree(...events: Event[]) {
   return treeOf(SRC, TGT, ...events);
@@ -269,7 +271,7 @@ describe("rewriting", () => {
       how: "rewrite",
       rules: ["muli-pow2-to-shl"],
     });
-    expect(result.effects[1]).toEqual({ effect: "proved", gid: "g1" });
+    expect(result.effects[1]).toEqual({ effect: "proved", gid: "g1", by: "alive2" });
   });
 
   test("a rule that leaves a loop's two sides the same proves it", async () => {
@@ -277,7 +279,7 @@ describe("rewriting", () => {
     const result = await steps.rewrite(await treeOf(LATE, LOOP), "g1", "src", ["x"]);
 
     if (result.kind !== "certified") throw new Error("expected the rewrite to land");
-    expect(result.effects[1]).toEqual({ effect: "proved", gid: "g1" });
+    expect(result.effects[1]).toEqual({ effect: "proved", gid: "g1", by: "alive2" });
     expect(checker.calls).toHaveLength(0);
   });
 
@@ -434,7 +436,7 @@ describe("stepping", () => {
     // The cross-check is the goal's own claim: does tgt refine the new src?
     expect(checker.calls[1]).toMatchObject({ src: NEW, tgt: TGT });
     expect(checker.calls[1]?.timeoutMs).toBe(DEFAULT_TIMEOUTS.eagerCheckMs);
-    expect(result.effects[1]).toEqual({ effect: "proved", gid: "g1" });
+    expect(result.effects[1]).toEqual({ effect: "proved", gid: "g1", by: "alive2" });
   });
 
   test("leaves the goal open when the cross-check settles nothing", async () => {
@@ -678,7 +680,17 @@ describe("checking a goal", () => {
     );
     const result = await steps.checkGoal(await tree(), "g1");
     expect(result.outcome).toBe("proved");
-    expect(result.effects).toEqual([{ effect: "proved", gid: "g1" }]);
+    expect(result.effects).toEqual([{ effect: "proved", gid: "g1", by: "alive2" }]);
+  });
+
+  test("proves a pair whose tgt only reshapes its src, with no solver", async () => {
+    const checker = new FakeChecker([]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const result = await steps.checkGoal(await treeOf(LOOP, LCSSA), "g1");
+    expect(result).toMatchObject({ outcome: "proved", by: "reshaped" });
+    expect(result.check).toBeUndefined();
+    expect(result.effects).toEqual([{ effect: "proved", gid: "g1", by: "reshaped" }]);
+    expect(checker.calls).toHaveLength(0);
   });
 
   test("proves a pair whose sides are the same program, loop or not, with no solver", async () => {
@@ -686,7 +698,7 @@ describe("checking a goal", () => {
     const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.checkGoal(await treeOf(LOOP, LOOP), "g1");
     expect(result.outcome).toBe("proved");
-    expect(result.effects).toEqual([{ effect: "proved", gid: "g1" }]);
+    expect(result.effects).toEqual([{ effect: "proved", gid: "g1", by: "alive2" }]);
     expect(checker.calls).toHaveLength(0);
   });
 
@@ -695,8 +707,8 @@ describe("checking a goal", () => {
     const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.checkGoal(await treeOf(LOOP, LATE), "g1");
     expect(result.outcome).toBe("unknown");
-    expect(result.check.detail).toContain("proved by splitting it at its loop header");
-    expect(result.check.detail).toContain("only searches it for a counterexample");
+    expect(result.check?.detail).toContain("proved by splitting it at its loop header");
+    expect(result.check?.detail).toContain("only searches it for a counterexample");
     expect(checker.calls).toHaveLength(0);
   });
 

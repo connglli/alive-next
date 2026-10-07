@@ -106,7 +106,8 @@ export interface Pair {
 
 /** How a goal was discharged. */
 export type Discharge =
-  | { kind: "check" }
+  /** The pair was checked, by alive2 or by `llops reshaped`, as a step is. */
+  | { kind: "check"; by: "alive2" | "reshaped" }
   | {
       kind: "split";
       callee: string;
@@ -270,8 +271,8 @@ function report(
 
 /** What the checker printed on the pair it refuted, whatever entry holds the check. */
 function answerOf(entry: ToolResultEvent | FrameworkEvent): string | undefined {
-  if (entry.kind === "tool_result") return (entry.result as CheckGoalResult | null)?.check.detail;
-  return (entry.outcome as EagerOutcome | null)?.check.check.detail;
+  if (entry.kind === "tool_result") return (entry.result as CheckGoalResult | null)?.check?.detail;
+  return (entry.outcome as EagerOutcome | null)?.check.check?.detail;
 }
 
 /** Walk what discharged the root, and nothing else. */
@@ -293,7 +294,12 @@ function include(
       for (const hash of [step.window.outer, step.window.from, step.window.to]) programs.add(hash);
 
   if (goal.children.length === 0) {
-    goals[goal.id] = { start, steps, end, discharge: { kind: "check" } };
+    goals[goal.id] = {
+      start,
+      steps,
+      end,
+      discharge: { kind: "check", by: provedBy(goal, effects) },
+    };
     return;
   }
   const outer = childOf(tree, goal, "outer");
@@ -398,6 +404,14 @@ function chainOf(goal: Goal, effects: Effect[]): Step[] {
   return steps;
 }
 
+/** Who checked a leaf's pair: the last proof of it, since a later step reopens the goal. */
+function provedBy(goal: Goal, effects: Effect[]): "alive2" | "reshaped" {
+  let by: "alive2" | "reshaped" = "alive2";
+  for (const effect of effects)
+    if (effect.effect === "proved" && effect.gid === goal.id) by = effect.by ?? "alive2";
+  return by;
+}
+
 /** Which index a step is a candidate for, on the side it moves. */
 function side(effect: { side: "src" | "tgt" }, si: number, ti: number): number {
   return effect.side === "src" ? si : ti;
@@ -417,11 +431,11 @@ function childOf(tree: Tree, parent: Goal, role: "outer" | "callee"): Goal {
   throw new NotCertifiable(`${parent.id} has no ${role} child`);
 }
 
-/** Every effect the log recorded, in order. */
+/** Every effect the log recorded, in order, the framework's as well as the tools'. */
 function effectsOf(entries: Entry[]): Effect[] {
   const effects: Effect[] = [];
   for (const entry of entries) {
-    if (entry.kind !== "tool_result") continue;
+    if (entry.kind !== "tool_result" && entry.kind !== "framework") continue;
     for (const effect of entry.effects ?? []) {
       effects.push(effect);
     }

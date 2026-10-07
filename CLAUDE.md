@@ -16,7 +16,7 @@ Standard [alive2](https://github.com/AliveToolkit/alive2) validates whether a ta
 
 The agent/proof-writer is entirely untrusted. It explores search strategies: where to cut a function, which rewrites or simplifications to apply, which interface facts to assert, and which inputs to test for counterexamples. The framework strictly enforces the correctness of each decomposition step, subproof, and rewrite with respect to LLVM's operational semantics:
 
-* **Rewrite steps** are validated by `alive2` (or verified pre-proved rewrite rules).
+* **Rewrite steps** are validated by `alive2`, by `llops reshaped` when they only reshape control flow, or by verified pre-proved rewrite rules.
 * **Decomposition and interface facts** are validated by `alive2` through faithful outlining and certified call-site assertions.
 * **Counterexamples** are validated under the checker the certificate names: concrete execution replay under the UB-aware interpreter `llubi`, or `alive2` refuting the root's original pair.
 
@@ -36,7 +36,7 @@ A flawed proposal wastes search budget, but can never compromise soundness or yi
 ### System Architecture and Language Split
 
 * **Engine (`engine/`):** Written in TypeScript and executed with [Bun](https://bun.sh). Manages the stateful proof infrastructure: the goal tree, program store, transactions, toolchain drivers, session lifecycle, and certificate generation. Hosts the agent harness built on the [Pi framework](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`).
-* **Native Toolbox (`llops/`):** Stateless C++ binary linked against LLVM. Communicates via JSON over standard I/O to perform IR validation, canonical printing, analysis, outlining, inlining, concrete test harness synthesis, flags editing, and LLVM simplification.
+* **Native Toolbox (`llops/`):** Stateless C++ binary linked against LLVM. Communicates via JSON over standard I/O to perform IR validation, canonical printing, the check that a step only reshapes control flow, analysis, outlining, inlining, concrete test harness synthesis, flags editing, and LLVM simplification.
 * **External Checkers:** Pinned revisions of `alive-tv` (SMT refinement checker), `llubi` (UB-aware interpreter), and `llrwt` (verified rewriter built from VeIR), compiled from source against the toolchain's LLVM.
 * **Verification Kernel (`kernel/`):** The kernel independently replays and validates certificate packages.
 * **Visualization Scripts (`scripts/visualize.py`):** The script renders an interactive, self-contained HTML page of the execution trajectory.

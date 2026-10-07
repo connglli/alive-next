@@ -460,7 +460,7 @@ describe.skipIf(!built)("reading a session", () => {
     const checked = log(run).find((entry) => entry.kind === "framework");
     if (checked?.kind !== "framework") throw new Error("the start check was not logged");
     expect(checked.action).toBe("eager_check");
-    expect(checked.effects).toEqual([{ effect: "proved", gid: "g1" }]);
+    expect(checked.effects).toEqual([{ effect: "proved", gid: "g1", by: "alive2" }]);
     expect(checked.outcome).toMatchObject({ check: { outcome: "proved" } });
   });
 
@@ -557,7 +557,7 @@ exit:
     // Neither the start check nor a check without a factor asks alive-tv.
     const bare = await run.check("g1");
     expect(bare.outcome).toBe("unknown");
-    expect(bare.check.detail).toContain("unroll");
+    expect(bare.check?.detail).toContain("unroll");
     expect(asked).toHaveLength(0);
 
     const correct = await run.check("g1", undefined, 2);

@@ -135,7 +135,8 @@ export type Effect =
   | { effect: "unsplit"; gid: string }
   /** A side went back to an earlier program of its own history. */
   | { effect: "revert"; gid: string; side: "src" | "tgt"; to: Hash }
-  | { effect: "proved"; gid: string }
+  /** A goal was discharged by checking its pair; `by` says who checked it, as on a step. */
+  | { effect: "proved"; gid: string; by?: "alive2" | "reshaped" }
   | { effect: "refuted"; gid: string };
 
 /** One tool call: its id, its name, and its args. */

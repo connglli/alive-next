@@ -163,7 +163,10 @@ export type CheckStepResult =
        * window proved.
        */
       fallback?: Fallback;
-      /** The check of the new pair, absent when the goal has no work left. */
+      /**
+       * alive2's check of the new pair, absent when the goal has no work left
+       * or `llops reshaped` proved it.
+       */
       eager?: CheckResult;
     }
   | {
@@ -201,7 +204,10 @@ export type RewriteStepResult =
       /** In order: the step, then the discharge when the eager check proved it. */
       effects: Effect[];
       invocation: LlrwtInvocation;
-      /** The check of the new pair, absent when the goal has no work left. */
+      /**
+       * alive2's check of the new pair, absent when the goal has no work left
+       * or `llops reshaped` proved it.
+       */
       eager?: CheckResult;
     }
   | {
@@ -223,7 +229,11 @@ export type UnfoldStepResult =
       hash: Hash;
       /** In order: the step, then the discharge when the eager check proved it. */
       effects: Effect[];
-      eager: CheckResult;
+      /**
+       * alive2's check of the new pair, absent when the goal has no work left
+       * or `llops reshaped` proved it.
+       */
+      eager?: CheckResult;
     }
   | {
       kind: "refused";
@@ -234,7 +244,13 @@ export type UnfoldStepResult =
 /** What checking a goal's current pair came to. */
 export interface CheckGoalResult {
   outcome: "proved" | "refuted" | "unknown";
-  check: CheckResult;
+  /**
+   * Who answered: alive2, or `llops reshaped` when the tgt only reshapes the
+   * control flow of the src, which proves the goal with no solver.
+   */
+  by: "alive2" | "reshaped";
+  /** alive2's answer, absent when `by` is "reshaped". */
+  check?: CheckResult;
   effects: Effect[];
   /**
    * The most recent check recorded for this exact (src, tgt, flags) pair before
@@ -276,15 +292,22 @@ export class Steps {
     const goal = workable(tree, gid);
     const srcHash = head(goal, "src");
     const tgtHash = head(goal, "tgt");
+    const pair = { src: this.store.get(srcHash), tgt: this.store.get(tgtHash) };
+    if (srcHash !== tgtHash && (await this.reshaped(pair)))
+      return {
+        outcome: "proved",
+        by: "reshaped",
+        effects: [{ effect: "proved", gid, by: "reshaped" }],
+      };
     // alive-tv answers a loop only for the iterations it unrolls, so a pair
     // that loops is searched for a counterexample and never proved, unless
     // its two sides are the same program.
     const loops =
-      srcHash !== tgtHash &&
-      ((await this.loops(this.store.get(srcHash))) || (await this.loops(this.store.get(tgtHash))));
+      srcHash !== tgtHash && ((await this.loops(pair.src)) || (await this.loops(pair.tgt)));
     if (loops && unroll === undefined)
       return {
         outcome: "unknown",
+        by: "alive2",
         check: unasked(
           "a pair that loops is proved by splitting it at its loop header; an unroll factor only searches it for a counterexample",
         ),
@@ -295,20 +318,19 @@ export class Steps {
 
     const askedMs = timeoutMs ?? this.timeouts.checkDefaultMs;
     const budgetMs = this.capped(askedMs);
-    const check = await this.check(
-      { src: this.store.get(srcHash), tgt: this.store.get(tgtHash) },
-      { timeoutMs: budgetMs, ...(loops ? { unroll } : {}) },
-    );
+    const options = { timeoutMs: budgetMs, ...(loops ? { unroll } : {}) };
+    const check = await this.alive2(pair, options);
     const outcome = loops && check.outcome === "correct" ? "unknown" : goalOutcome(check.outcome);
     this.history.set(key, { outcome, budgetMs: check.invocation.timeoutMs, ms: check.ms });
 
     const result: CheckGoalResult = {
       outcome,
+      by: "alive2",
       check,
       effects: loops
         ? []
         : check.outcome === "correct"
-          ? [{ effect: "proved", gid }]
+          ? [{ effect: "proved", gid, by: "alive2" }]
           : check.outcome === "incorrect" && rootPair(tree, gid, goal)
             ? [{ effect: "refuted", gid }]
             : [],
@@ -342,7 +364,7 @@ export class Steps {
       return { kind: "refused", check: unasked("the edits leave the program as it was") };
     }
     // A step that only reshapes control flow needs no solver, loops or not.
-    if (await this.reshaped(side, beforeText, afterText)) {
+    if (await this.reshaped(orient(side, beforeText, afterText))) {
       const step: Effect = { effect: "step", gid, side, to: after, how: "check", by: "reshaped" };
       const certified: Certified = {
         kind: "certified",
@@ -381,7 +403,7 @@ export class Steps {
     }
 
     if (!local && narrowed) {
-      local = await this.check(orient(side, narrowed.before, narrowed.after), {
+      local = await this.alive2(orient(side, narrowed.before, narrowed.after), {
         timeoutMs: this.timeouts.eagerCheckMs,
       });
     }
@@ -417,7 +439,7 @@ export class Steps {
           narrowed: local,
           fallback,
         };
-      const whole = await this.check(orient(side, beforeText, afterText), {
+      const whole = await this.alive2(orient(side, beforeText, afterText), {
         timeoutMs: this.timeouts.alive2Ms,
       });
       if (whole.outcome !== "correct") {
@@ -469,12 +491,12 @@ export class Steps {
   }
 
   /**
-   * Whether a step only reshapes control flow, as `llops reshaped` says, so
-   * that every run of the program that has to refine is a run of the other.
+   * Whether the tgt only reshapes the control flow of the src, as `llops
+   * reshaped` says, so that every run of the tgt is a run of the src and no
+   * solver is needed, loops or not.
    */
-  private async reshaped(side: Side, before: string, after: string): Promise<boolean> {
-    const { src, tgt } = orient(side, before, after);
-    const answer = await this.llops.reshaped(src, tgt);
+  private async reshaped(pair: { src: string; tgt: string }): Promise<boolean> {
+    const answer = await this.llops.reshaped(pair.src, pair.tgt);
     return answer.ok && answer.reshaped;
   }
 
@@ -610,20 +632,22 @@ export class Steps {
     side: Side,
     after: Hash,
     effects: Effect[],
-  ): Promise<CheckResult> {
+  ): Promise<CheckResult | undefined> {
     const eagerSrcHash = side === "src" ? after : head(goal, "src");
     const eagerTgtHash = side === "tgt" ? after : head(goal, "tgt");
+    const pair = { src: this.store.get(eagerSrcHash), tgt: this.store.get(eagerTgtHash) };
+    if (eagerSrcHash !== eagerTgtHash && (await this.reshaped(pair))) {
+      effects.push({ effect: "proved", gid, by: "reshaped" });
+      return undefined;
+    }
     const eagerKey = historyKey(eagerSrcHash, eagerTgtHash);
-    const eager = await this.check(
-      { src: this.store.get(eagerSrcHash), tgt: this.store.get(eagerTgtHash) },
-      { timeoutMs: this.timeouts.eagerCheckMs },
-    );
+    const eager = await this.alive2(pair, { timeoutMs: this.timeouts.eagerCheckMs });
     this.history.set(eagerKey, {
       outcome: goalOutcome(eager.outcome),
       budgetMs: eager.invocation.timeoutMs,
       ms: eager.ms,
     });
-    if (eager.outcome === "correct") effects.push({ effect: "proved", gid });
+    if (eager.outcome === "correct") effects.push({ effect: "proved", gid, by: "alive2" });
     return eager;
   }
 
@@ -689,7 +713,7 @@ export class Steps {
     if (!inlined.ok)
       return { kind: "refused", reason: `the window cannot be put back: ${inlined.message}` };
 
-    const assumeCheck = await this.check(
+    const assumeCheck = await this.alive2(
       { src: whole, tgt: inlined.module },
       { timeoutMs: this.timeouts.alive2Ms },
     );
@@ -718,7 +742,7 @@ export class Steps {
       condAfter = resTo.module;
     }
 
-    const condCheck = await this.check(orient(side, condBefore, condAfter), {
+    const condCheck = await this.alive2(orient(side, condBefore, condAfter), {
       timeoutMs: this.timeouts.eagerCheckMs,
     });
 
@@ -726,11 +750,11 @@ export class Steps {
   }
 
   /**
-   * One question to the checker, in the direction the side settled. A program
+   * One question to alive2, in the direction the side settled. A program
    * that loops is asked about only with an unroll factor, which is a search:
    * no step or refinement is certified on one.
    */
-  private async check(
+  private async alive2(
     pair: { src: string; tgt: string },
     options: { timeoutMs: number; unroll?: number },
   ): Promise<CheckResult> {
@@ -772,7 +796,7 @@ export class Steps {
     tgt: string,
     timeoutMs: number = this.timeouts.alive2Ms,
   ): Promise<CheckResult> {
-    return this.check({ src, tgt }, { timeoutMs: this.capped(timeoutMs) });
+    return this.alive2({ src, tgt }, { timeoutMs: this.capped(timeoutMs) });
   }
 
   /**

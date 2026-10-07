@@ -267,6 +267,9 @@ describe.skipIf(!built)("transactions", () => {
       expect(result).toMatchObject({ by: "reshaped", on: "whole" });
       expect(result.check).toBeUndefined();
       expect(result.effects[0]).toMatchObject({ side, how: "check", by: "reshaped" });
+      // Either side's step leaves a pair that only reshapes a loop, which proves the goal.
+      expect(result.effects[1]).toEqual({ effect: "proved", gid: "g1", by: "reshaped" });
+      expect(result.eager).toBeUndefined();
       expect(checker.calls).toHaveLength(0);
     }
   });

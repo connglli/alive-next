@@ -526,8 +526,9 @@ class Check:
   ) -> None:
     """Ask the checker `by` names whether `tgt` refines `src`.
 
-    alive-tv answers with a solver. A step that only reshaped control flow
-    is asked of llops instead, which answers without one.
+    alive-tv answers with a solver. A pair whose tgt only reshapes the
+    control flow of its src is asked of llops instead, which answers without
+    one.
     """
     if by == "alive2":
       self.asked(gid, side, check, src, tgt, notes)
@@ -605,10 +606,11 @@ class Check:
         notes="the two sides are the same program",
       )
     elif discharge["kind"] == "check":
-      self.asked(
+      self.checked(
         gid,
         "pair",
         "Final refinement",
+        discharge.get("by", "alive2"),
         goal["end"]["src"],
         goal["end"]["tgt"],
         "tgt refines src",
