@@ -136,6 +136,14 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(facts).not.toContain("not_undef");
     expect(facts).not.toContain("not_poison");
 
+    // The preview proves nothing, and answers in the form tree_strengthen takes.
+    const preview = await call("tree_strengthen_preview", {
+      gid: "g1",
+      param_attrs: { "0": { noundef: true } },
+    });
+    expect(preview).toContain(
+      'these hold, as tree_strengthen takes them: {"param_attrs":{"0":{"noundef":true}}}',
+    );
     expect(
       await call("tree_strengthen", { gid: "g1", param_attrs: { "0": { noundef: true } } }),
     ).toContain("strengthened the interface of g1");

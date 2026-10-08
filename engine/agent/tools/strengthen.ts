@@ -6,6 +6,32 @@ import type { Session } from "../../core/session.ts";
 import type { StrengthenContract } from "../../core/state/strengthen.ts";
 import { formatDetail, toolResultFrom } from "./format.ts";
 
+/** The parameter attributes a strengthen proves, by parameter index. */
+export const ParamAttrs = Type.Optional(
+  Type.Record(Type.String(), Type.Record(Type.String(), Type.Unknown()), {
+    description:
+      'Parameter attributes by parameter index (0, 1, ...), e.g. {"0": {"noundef": true}, "1": {"range": {"min": 0, "max": 256}}}.',
+  }),
+);
+
+/** The preconditions a strengthen proves, over the callee's arguments. */
+export const Predicates = Type.Optional(
+  Type.Array(
+    Type.Union([
+      Type.Object({
+        op: Type.String(),
+        lhs: Type.Union([Type.String(), Type.Number()]),
+        rhs: Type.Union([Type.String(), Type.Number()]),
+      }),
+      Type.Object({ insts: Type.Array(Type.String()) }),
+    ]),
+    {
+      description:
+        'Preconditions over the callee\'s arguments, named !0, !1, ... by parameter index, as in param_attrs. Each is a comparison, e.g. {"op": "ule", "lhs": "!1", "rhs": "!0"}, or lines of IR whose last line defines an i1, e.g. {"insts": ["%rest = sub i32 !3, !0", "%ok = icmp eq i32 !2, %rest"]}.',
+    },
+  ),
+);
+
 export function createStrengthenTool(session: Session) {
   return defineTool({
     name: "tree_strengthen",
@@ -14,34 +40,14 @@ export function createStrengthenTool(session: Session) {
       "Add facts to the interface of the function a goal was cut into. Parameter attributes (param_attrs) and preconditions (predicates) are first proved where the outer program calls the function, and for a loop also where one iteration calls the hypothesis; only then may the callee assume them. Function attributes (fn_attrs) are first proved on the callee; only then may the outer program assume them.",
     parameters: Type.Object({
       gid: Type.String({ description: "The goal that was cut, not one of its children." }),
-      param_attrs: Type.Optional(
-        Type.Record(Type.String(), Type.Record(Type.String(), Type.Unknown()), {
-          description:
-            'Parameter attributes by parameter index (0, 1, ...), e.g. {"0": {"noundef": true}, "1": {"range": {"min": 0, "max": 256}}}.',
-        }),
-      ),
+      param_attrs: ParamAttrs,
       fn_attrs: Type.Optional(
         Type.Record(Type.String(), Type.Unknown(), {
           description:
             'Function-level semantic attributes, e.g. {"memory": "none", "nounwind": true, "willreturn": true}.',
         }),
       ),
-      predicates: Type.Optional(
-        Type.Array(
-          Type.Union([
-            Type.Object({
-              op: Type.String(),
-              lhs: Type.Union([Type.String(), Type.Number()]),
-              rhs: Type.Union([Type.String(), Type.Number()]),
-            }),
-            Type.Object({ insts: Type.Array(Type.String()) }),
-          ]),
-          {
-            description:
-              'Preconditions over the callee\'s arguments, named !0, !1, ... by parameter index, as in param_attrs. Each is a comparison, e.g. {"op": "ule", "lhs": "!1", "rhs": "!0"}, or lines of IR whose last line defines an i1, e.g. {"insts": ["%rest = sub i32 !3, !0", "%ok = icmp eq i32 !2, %rest"]}.',
-          },
-        ),
-      ),
+      predicates: Predicates,
     }),
     execute: async (_id, { gid, param_attrs, fn_attrs, predicates }) => {
       const contract: StrengthenContract = {

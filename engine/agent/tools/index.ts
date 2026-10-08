@@ -29,6 +29,7 @@ import { createSplitTool } from "./split.ts";
 import { createSplitPreviewTool } from "./split-preview.ts";
 import { createStatusTool } from "./status.ts";
 import { createStrengthenTool } from "./strengthen.ts";
+import { createStrengthenPreviewTool } from "./strengthen-preview.ts";
 import { createUnfoldTool } from "./unfold.ts";
 import { createUnsplitTool } from "./unsplit.ts";
 
@@ -64,6 +65,7 @@ export function createProofAssistantTools(
     createSplitPreviewTool(session),
     createSplitTool(session),
     createUnsplitTool(session),
+    createStrengthenPreviewTool(session),
     createStrengthenTool(session),
     createReportCexTool(session),
     createGiveUpTool(session, stop),
