@@ -110,7 +110,7 @@ Automatic narrowing tries two window candidates in the block where the canonical
 
 Rotating a loop, merging or splitting blocks, dropping an empty one, adding an LCSSA phi or inverting a branch changes what a function looks like but not what any run of it does: every path runs the same instructions on the same values. `llops reshaped` shows that without a solver, so a commit and a goal check ask it first, and where the program loops it is the only way such a step is certified, or such a goal proved without a cut, since alive2 is asked about no loop. It walks the two functions together and checks that each run of the program that has to refine is a run of the other, step for step, reading instructions as uninterpreted operations. `canon` decides equality up to names; `reshaped` decides equality up to names and the shape of control flow, which is a stuttering bisimulation (Browne, Clarke and Grumberg, 1988). Metadata counts as alive2 reads it, so the answer holds under alive2's semantics, which give loop properties and branch weights no meaning. A checker asks `reshaped` again rather than believing the step.
 
-Two programs that differ only in attributes such as `memory(argmem: read)` or `readonly`, which the function's own instructions cannot break, run the same, so the one with them refines the one without: a src step may add them, and a tgt step may drop them. `llops respected` shows that without a solver, loops included, and a commit asks it after `reshaped`.
+Two programs that differ only in attributes such as `memory(argmem: read)` or `readonly`, which the function's own instructions cannot break, run the same, so the one with them refines the one without: a src step may add them, and a tgt step may drop them. `llops respected` shows that without a solver, loops included, and a commit and a goal check ask it after `reshaped`.
 
 ## Interface facts are proved where the evidence lives
 
@@ -228,7 +228,7 @@ Both children are cross-checked once at the end, after phase 3, and not between 
 
 ### Discharge
 
-- `check(gid, timeout, unroll)`: identical sides are proved at once, and so is a tgt that only reshapes the src's control flow, by `llops reshaped`; otherwise a direct alive2 run on the goal's current pair. Pass: goal proved. Fail: a counterexample. On the root's original pair it refutes the run; anywhere else the goal stays open. Timeout: goal stays open. Any other pair that loops is never proved: alive2 searches its first `unroll` iterations, and a counterexample it finds is a hint for `report_cex`. The timeout is the agent's knob, because spending solver time is a search decision. The framework also runs a small-timeout `check` on its own after every certified step; see "Eager cross-checking".
+- `check(gid, timeout, unroll)`: identical sides are proved at once, and so is a tgt that only reshapes the src's control flow or only adds attributes its body keeps, by `llops reshaped` or `llops respected`; otherwise a direct alive2 run on the goal's current pair. Pass: goal proved. Fail: a counterexample. On the root's original pair it refutes the run; anywhere else the goal stays open. Timeout: goal stays open. Any other pair that loops is never proved: alive2 searches its first `unroll` iterations, and a counterexample it finds is a hint for `report_cex`. The timeout is the agent's knob, because spending solver time is a search decision. The framework also runs a small-timeout `check` on its own after every certified step; see "Eager cross-checking".
 
 ### Counterexample search and computation
 

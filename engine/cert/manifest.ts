@@ -106,8 +106,8 @@ export interface Pair {
 
 /** How a goal was discharged. */
 export type Discharge =
-  /** The pair was checked, by alive2 or by `llops reshaped`, as a step is. */
-  | { kind: "check"; by: "alive2" | "reshaped" }
+  /** The pair was checked, by alive2, `llops reshaped` or `llops respected`, as a step is. */
+  | { kind: "check"; by: "alive2" | "reshaped" | "respected" }
   /**
    * A program was put between the pair: goal `lhs` holds the src and the
    * program, goal `rhs` the program and the tgt, and a checker checks that
@@ -425,8 +425,8 @@ function chainOf(goal: Goal, effects: Effect[]): Step[] {
 }
 
 /** Who checked a leaf's pair: the last proof of it, since a later step reopens the goal. */
-function provedBy(goal: Goal, effects: Effect[]): "alive2" | "reshaped" {
-  let by: "alive2" | "reshaped" = "alive2";
+function provedBy(goal: Goal, effects: Effect[]): "alive2" | "reshaped" | "respected" {
+  let by: "alive2" | "reshaped" | "respected" = "alive2";
   for (const effect of effects)
     if (effect.effect === "proved" && effect.gid === goal.id) by = effect.by ?? "alive2";
   return by;

@@ -415,6 +415,24 @@ entry:
     expect(discharge).toEqual({ kind: "check", by: "reshaped" });
   });
 
+  test("records who proved a goal whose tgt only adds attributes its body keeps", async () => {
+    const session = await Session.start({
+      dir: join(dir, "respected-goal"),
+      src: LOOP_TOP,
+      tgt: LOOP_TOP.replace("@f(i32 %n) {", "@f(i32 %n) nofree memory(none) {"),
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    // alive2 is asked about no loop, so only llops can have proved it.
+    expect((await session.check("g1")).by).toBe("respected");
+    expect(session.finish()).toBe("verified");
+
+    const discharge = manifestFrom(session.dir).goals.g1?.discharge;
+    expect(discharge).toEqual({ kind: "check", by: "respected" });
+  });
+
   test("copies every program the proof names", async () => {
     const session = await prove(cut);
     const out = certify(session, join(dir, "certificate"));

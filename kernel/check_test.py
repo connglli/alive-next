@@ -615,6 +615,15 @@ class TestGolden(Case):
   def test_a_goal_proved_through_an_interposed_program_verifies(self):
     self.verified(self.interposed())
 
+  def test_a_goal_whose_tgt_only_adds_attributes_its_body_respects_verifies(self):
+    marked = READ.replace("(ptr %p) {", "(ptr readonly %p) memory(argmem: read) {")
+    pair = {
+      "src": self.built.program(canonical(READ)),
+      "tgt": self.built.program(canonical(marked)),
+    }
+    self.built.goal("g1", pair, pair, [], {"kind": "check", "by": "respected"})
+    self.verified(self.built.write())
+
   def test_a_goal_whose_tgt_only_reshapes_its_src_verifies(self):
     pair = {
       "src": self.built.program(canonical(LOOP_TOP)),
@@ -1183,6 +1192,14 @@ declare i32 @k.ih(i32)
     pair = {"src": changed, "tgt": changed}
     self.built.goal("g1", {"src": top, "tgt": changed}, pair, [step], {"kind": "check"})
     self.refused(self.built.write(), "Chain step")
+
+  def test_a_goal_checked_as_respected_whose_body_breaks_the_attributes(self):
+    pair = {
+      "src": self.built.program(canonical(READ)),
+      "tgt": self.built.program(canonical(READ.replace("(ptr %p) {", "(ptr %p) memory(none) {"))),
+    }
+    self.built.goal("g1", pair, pair, [], {"kind": "check", "by": "respected"})
+    self.refused(self.built.write(), "Final refinement")
 
   def test_a_goal_checked_as_reshaped_that_changes_a_value(self):
     changed = LOOP_ROTATED.replace("add i32 %i, 1", "add i32 %i, 2")

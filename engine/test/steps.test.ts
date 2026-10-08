@@ -93,6 +93,8 @@ e:
 const LATE = LOOP.replace("ret i32 %i", "ret i32 %j");
 /** The same loop returning through an LCSSA phi, which only reshapes it. */
 const LCSSA = LOOP.replace("ret i32 %i", "%r = phi i32 [ %i, %l ]\n  ret i32 %r");
+/** The same loop with attributes its body keeps, since it touches no memory. */
+const KEPT = LOOP.replace("@f(i32 %n) {", "@f(i32 %n) nofree memory(none) {");
 
 async function tree(...events: Event[]) {
   return treeOf(SRC, TGT, ...events);
@@ -709,6 +711,24 @@ describe("checking a goal", () => {
     expect(result.outcome).toBe("unknown");
     expect(result.check?.detail).toContain("proved by splitting it at its loop header");
     expect(result.check?.detail).toContain("only searches it for a counterexample");
+    expect(checker.calls).toHaveLength(0);
+  });
+
+  test("proves a pair whose tgt only adds attributes its body keeps, with no solver", async () => {
+    const checker = new FakeChecker([]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const result = await steps.checkGoal(await treeOf(LOOP, KEPT), "g1");
+    expect(result).toMatchObject({ outcome: "proved", by: "respected" });
+    expect(result.effects).toEqual([{ effect: "proved", gid: "g1", by: "respected" }]);
+    expect(checker.calls).toHaveLength(0);
+  });
+
+  test("proves the new pair after a step with no solver when its tgt only adds attributes", async () => {
+    const checker = new FakeChecker([]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const result = await steps.checkStep(await treeOf(LCSSA, KEPT), "g1", "src", LOOP);
+    if (result.kind !== "certified") throw new Error("expected the step to land");
+    expect(result.effects).toContainEqual({ effect: "proved", gid: "g1", by: "respected" });
     expect(checker.calls).toHaveLength(0);
   });
 

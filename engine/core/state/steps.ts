@@ -166,7 +166,7 @@ export type CheckStepResult =
       fallback?: Fallback;
       /**
        * alive2's check of the new pair, absent when the goal has no work left
-       * or `llops reshaped` proved it.
+       * or llops proved it with no solver.
        */
       eager?: CheckResult;
     }
@@ -207,7 +207,7 @@ export type RewriteStepResult =
       invocation: LlrwtInvocation;
       /**
        * alive2's check of the new pair, absent when the goal has no work left
-       * or `llops reshaped` proved it.
+       * or llops proved it with no solver.
        */
       eager?: CheckResult;
     }
@@ -232,7 +232,7 @@ export type UnfoldStepResult =
       effects: Effect[];
       /**
        * alive2's check of the new pair, absent when the goal has no work left
-       * or `llops reshaped` proved it.
+       * or llops proved it with no solver.
        */
       eager?: CheckResult;
     }
@@ -245,12 +245,9 @@ export type UnfoldStepResult =
 /** What checking a goal's current pair came to. */
 export interface CheckGoalResult {
   outcome: "proved" | "refuted" | "unknown";
-  /**
-   * Who answered: alive2, or `llops reshaped` when the tgt only reshapes the
-   * control flow of the src, which proves the goal with no solver.
-   */
-  by: "alive2" | "reshaped";
-  /** alive2's answer, absent when `by` is "reshaped". */
+  /** Who answered: alive2, or with no solver `llops reshaped` or `llops respected`. */
+  by: "alive2" | "reshaped" | "respected";
+  /** alive2's answer, absent when llops answered. */
   check?: CheckResult;
   effects: Effect[];
   /**
@@ -294,12 +291,8 @@ export class Steps {
     const srcHash = head(goal, "src");
     const tgtHash = head(goal, "tgt");
     const pair = { src: this.store.get(srcHash), tgt: this.store.get(tgtHash) };
-    if (srcHash !== tgtHash && (await this.reshaped(pair)))
-      return {
-        outcome: "proved",
-        by: "reshaped",
-        effects: [{ effect: "proved", gid, by: "reshaped" }],
-      };
+    const by = srcHash === tgtHash ? undefined : await this.withoutSolver(pair);
+    if (by) return { outcome: "proved", by, effects: [{ effect: "proved", gid, by }] };
     // alive-tv answers a loop only for the iterations it unrolls, so a pair
     // that loops is searched for a counterexample and never proved, unless
     // its two sides are the same program.
@@ -366,12 +359,7 @@ export class Steps {
     }
     // A step that only reshapes control flow, or only changes attributes the
     // instructions respect, needs no solver, loops or not.
-    const pair = orient(side, beforeText, afterText);
-    const by = (await this.reshaped(pair))
-      ? "reshaped"
-      : (await this.respected(pair))
-        ? "respected"
-        : undefined;
+    const by = await this.withoutSolver(orient(side, beforeText, afterText));
     if (by) {
       const step: Effect = { effect: "step", gid, side, to: after, how: "check", by };
       const certified: Certified = {
@@ -498,20 +486,16 @@ export class Steps {
     return this.landed(goal, side, certified, options);
   }
 
-  /**
-   * Whether the tgt only reshapes the control flow of the src, as `llops
-   * reshaped` says, so that every run of the tgt is a run of the src and no
-   * solver is needed, loops or not.
-   */
-  private async reshaped(pair: { src: string; tgt: string }): Promise<boolean> {
-    const answer = await this.llops.reshaped(pair.src, pair.tgt);
-    return answer.ok && answer.reshaped;
-  }
-
-  /** Whether the tgt only adds attributes to the src that its instructions respect. */
-  private async respected(pair: { src: string; tgt: string }): Promise<boolean> {
-    const answer = await this.llops.respected(pair.src, pair.tgt);
-    return answer.ok && answer.respected;
+  /** Which llops check proves with no solver that the tgt refines the src, if either does. */
+  private async withoutSolver(pair: {
+    src: string;
+    tgt: string;
+  }): Promise<"reshaped" | "respected" | undefined> {
+    const reshaped = await this.llops.reshaped(pair.src, pair.tgt);
+    if (reshaped.ok && reshaped.reshaped) return "reshaped";
+    const respected = await this.llops.respected(pair.src, pair.tgt);
+    if (respected.ok && respected.respected) return "respected";
+    return undefined;
   }
 
   /** A certified step, then the cheap check of the new pair unless that is turned off. */
@@ -650,8 +634,9 @@ export class Steps {
     const eagerSrcHash = side === "src" ? after : head(goal, "src");
     const eagerTgtHash = side === "tgt" ? after : head(goal, "tgt");
     const pair = { src: this.store.get(eagerSrcHash), tgt: this.store.get(eagerTgtHash) };
-    if (eagerSrcHash !== eagerTgtHash && (await this.reshaped(pair))) {
-      effects.push({ effect: "proved", gid, by: "reshaped" });
+    const by = eagerSrcHash === eagerTgtHash ? undefined : await this.withoutSolver(pair);
+    if (by) {
+      effects.push({ effect: "proved", gid, by });
       return undefined;
     }
     const eagerKey = historyKey(eagerSrcHash, eagerTgtHash);
