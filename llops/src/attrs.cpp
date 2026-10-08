@@ -59,8 +59,9 @@ const Attr::AttrKind kRetValue[] = {
     Attr::DereferenceableOrNull,
 };
 
-// The list without the function and return attributes alive2 ignores.
-llvm::AttributeList cleaned(llvm::LLVMContext &C, llvm::AttributeList list) {
+// The list without the attributes alive2 ignores, of a function or a call with
+// that many parameters.
+llvm::AttributeList cleaned(llvm::LLVMContext &C, llvm::AttributeList list, unsigned params) {
   llvm::AttributeSet fn = list.getFnAttrs(), ret = list.getRetAttrs();
   for (const Attr &A : fn)
     if (fnAttrMeaning(A) == AttrMeaning::Ignored)
@@ -70,6 +71,10 @@ llvm::AttributeList cleaned(llvm::LLVMContext &C, llvm::AttributeList list) {
     if (retAttrMeaning(A) == AttrMeaning::Ignored)
       list = A.isStringAttribute() ? list.removeRetAttribute(C, A.getKindAsString())
                                    : list.removeRetAttribute(C, A.getKindAsEnum());
+  for (unsigned k = 0; k < params; ++k)
+    for (const Attr &A : list.getParamAttrs(k))
+      if (paramAttrMeaning(A) == AttrMeaning::Ignored)
+        list = list.removeParamAttribute(C, k, A.getKindAsEnum());
   return list;
 }
 
@@ -86,9 +91,10 @@ AttrMeaning paramAttrMeaning(const llvm::Attribute &A) {
   if (A.isStringAttribute())
     return AttrMeaning::Refused;
   Attr::AttrKind kind = A.getKindAsEnum();
+  // alive2 reads captures(none), and drops any other captures with a warning.
   if (kind == Attr::Captures) {
     bool none = llvm::capturesNothing(A.getCaptureInfo());
-    return none ? AttrMeaning::Body : AttrMeaning::Refused;
+    return none ? AttrMeaning::Body : AttrMeaning::Ignored;
   }
   if (llvm::is_contained(kParamValue, kind))
     return AttrMeaning::Value;
@@ -102,10 +108,10 @@ AttrMeaning retAttrMeaning(const llvm::Attribute &A) {
 
 void dropIgnoredAttrs(llvm::Module &M) {
   for (llvm::Function &F : M) {
-    F.setAttributes(cleaned(M.getContext(), F.getAttributes()));
+    F.setAttributes(cleaned(M.getContext(), F.getAttributes(), F.arg_size()));
     for (llvm::Instruction &I : llvm::instructions(F))
       if (auto *call = llvm::dyn_cast<llvm::CallBase>(&I))
-        call->setAttributes(cleaned(M.getContext(), call->getAttributes()));
+        call->setAttributes(cleaned(M.getContext(), call->getAttributes(), call->arg_size()));
   }
   for (llvm::GlobalValue &G : M.global_values())
     G.setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::None);

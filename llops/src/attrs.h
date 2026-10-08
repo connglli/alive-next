@@ -1,10 +1,12 @@
 // Attributes: how alive2 treats each one by where it sits, and `attrs`, which
 // puts them on a function or a parameter as docs/llops.md sets out.
 //
-// alive2 gives some attributes a meaning, ignores the others on a function or
-// a return value, and refuses to check a function with a parameter attribute
-// it does not read. attrs.cpp lists every attribute alive2 reads, from its
-// llvm2alive.cpp at the pinned revision; recheck it when alive2 is updated.
+// alive2 gives some attributes a meaning and ignores the others on a function
+// or a return value. On a parameter it drops a captures attribute other than
+// captures(none), with a warning, and refuses to check a function with any
+// other attribute it does not read. attrs.cpp lists every attribute alive2
+// reads, from its llvm2alive.cpp at the pinned revision; recheck it when alive2
+// is updated.
 #pragma once
 
 #include "llvm/IR/Attributes.h"

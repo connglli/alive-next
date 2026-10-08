@@ -55,7 +55,7 @@ A response is ok when the module parses. `conforms` says whether it is a program
 | `inline_asm` | the body contains inline assembly |
 | `indirect_call` | the body calls through a pointer |
 | `recursive_call` | the body calls the defined function |
-| `unsupported_attr` | a parameter has an attribute alive2 does not read |
+| `unsupported_attr` | a parameter has an attribute that stops alive2 from checking the function |
 | `dominance` | a value is used before its definition |
 | `invalid_ir` | the LLVM verifier rejected the module |
 

@@ -233,10 +233,15 @@ attributes #0 = { nounwind "frame-pointer"="all" }
     self.assertEqual(self.good(run("validate", {"module": inputs}))["body_attrs"], [])
 
   def test_parameter_attributes_alive2_refuses(self):
-    for attr in ["noalias", "nest", "captures(address)", '"foo"']:
+    for attr in ["noalias", "nest", '"foo"']:
       module = f"define i32 @f(ptr {attr} %p) {{\nentry:\n  ret i32 0\n}}\n"
       r = self.good(run("validate", {"module": module}))
       self.assertEqual(r["diagnostics"][0]["code"], "unsupported_attr", attr)
+    # A captures attribute other than captures(none) alive2 drops, with a warning.
+    captured = "define i32 @f(ptr captures(address) %p) {\nentry:\n  ret i32 0\n}\n"
+    r = self.good(run("validate", {"module": captured}))
+    self.assertTrue(r["conforms"])
+    self.assertEqual(r["body_attrs"], [])
     # What alive2 does not read on a function or a return value, it ignores.
     head = 'define inreg i32 @f(ptr %p) local_unnamed_addr cold norecurse "foo"="bar" {'
     self.assertTrue(self.conforms(f"{head}\nentry:\n  ret i32 0\n}}\n"))
@@ -3110,6 +3115,9 @@ next:
     self.assertTrue(self.reshaped(TOP_TEST, TOP_TEST.replace("@f(i32 %n) {", head)))
     read = TOP_TEST.replace("@f(i32 %n) {", "@f(i32 %n) nofree {")
     self.assertFalse(self.reshaped(TOP_TEST, read))
+    loads = "define i32 @f(ptr %p) {\nentry:\n  %v = load i32, ptr %p, align 4\n  ret i32 %v\n}\n"
+    captured = loads.replace("ptr %p)", "ptr captures(address) %p)")
+    self.assertTrue(self.reshaped(loads, captured))
 
   def test_undef_is_refused(self):
     undef = TOP_TEST.replace("[ 0, %entry ], [ %i", "[ undef, %entry ], [ %i")

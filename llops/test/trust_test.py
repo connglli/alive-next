@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""The trusted llops subcommands against alive2.
+"""The llops subcommands the kernel trusts, checked against alive2.
 
-Each test asks a subcommand the kernel trusts and alive-tv the same question,
-and fails where the subcommand accepts what alive2 does not prove. alive-tv
-runs as the kernel runs it, and its answer is read by the kernel's own code.
-Run through `make test-trust`, or directly:
+Each test asks llops and alive-tv about the same programs, and fails where
+llops trusts what alive2 does not back: a pair `respected` accepts that alive2
+does not prove, or an attribute llops treats otherwise than alive2 does.
+alive-tv runs as the kernel runs it, and its answer is read by the kernel's
+own code. Run through `make test-trust`, or directly:
 
     python3 llops/test/trust_test.py
 """
 
+import functools
 import importlib.util
 import itertools
 import os
@@ -22,17 +24,23 @@ from dataclasses import dataclass
 from llops_test import ROOT, run
 
 
-def tool(variable: str, *where: str) -> str:
-  """A tool in the toolchain, unless the environment `variable` names one."""
-  if os.environ.get(variable):
-    return os.environ[variable]
+@functools.cache
+def toolchain() -> str:
   depman = os.path.join(ROOT, "scripts", "depman.sh")
   found = subprocess.run([depman, "toolchain"], capture_output=True, text=True, check=True)
-  return os.path.join(found.stdout.strip(), *where)
+  return found.stdout.strip()
+
+
+def tool(variable: str, *where: str) -> str:
+  """A file in the toolchain, unless the environment `variable` names one."""
+  return os.environ.get(variable) or os.path.join(toolchain(), *where)
 
 
 ALIVE_TV = tool("ALIVE_TV", "alive2", "build", "alive-tv")
-CLANG = tool("CLANG", "llvm-project", "build", "bin", "clang")
+LLVM = os.path.join("llvm-project", "build")
+CLANG = tool("CLANG", LLVM, "bin", "clang")
+LLVM_AS = tool("LLVM_AS", LLVM, "bin", "llvm-as")
+ATTRIBUTES = tool("ATTRIBUTES", LLVM, "include", "llvm", "IR", "Attributes.inc")
 
 # The kernel's reading of what alive-tv printed, so that a pair counts as
 # proved here exactly when the kernel would count it.
@@ -367,6 +375,10 @@ REAL = {
   "days": "int days_in_month(int m, int leap) {"
   " static const int d[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};"
   " return d[(unsigned)(m - 1) % 12] + (m == 2 && leap); }",
+  "before": "int before(const int *a, const int *b) { return a < b; }",
+  "advance": "const int *advance(const int *p, int n) { return p + n; }",
+  "list_sum": "struct node { int v; struct node *next; };"
+  " int list_sum(const struct node *p) { int s = 0; while (p) { s += p->v; p = p->next; } return s; }",
   "intersect": "struct rect { int x, y, w, h; };"
   " int intersect(const struct rect *a, const struct rect *b, struct rect *r) {"
   " int x0 = a->x > b->x ? a->x : b->x, y0 = a->y > b->y ? a->y : b->y;"
@@ -521,6 +533,173 @@ class TestRespected(unittest.TestCase):
         pair = (seed.program(), seed.program(fn=fn, params=params))
         self.assertEqual(alive2(*pair), "incorrect")
         self.assertFalse(respected(*pair))
+
+
+# Every attribute LLVM defines is listed in its build, with the places it may
+# take. One that takes an argument is written here with an example argument, or
+# two where the argument decides what alive2 makes of it.
+ARGUMENTS = {
+  "align": ["align 4"],
+  "allockind": ['allockind("alloc")'],
+  "allocsize": ["allocsize(0)"],
+  "captures": ["captures(none)", "captures(address)"],
+  "dereferenceable": ["dereferenceable(4)"],
+  "dereferenceable_or_null": ["dereferenceable_or_null(4)"],
+  "memory": ["memory(none)", "memory(argmem: read)"],
+  "nofpclass": ["nofpclass(nan)"],
+  "alignstack": ["alignstack(8)"],
+  "uwtable": ["uwtable(sync)"],
+  "vscale_range": ["vscale_range(1,2)"],
+  "range": ["range(i32 0, 10)"],
+  "initializes": ["initializes((0, 4))"],
+}
+# The string attributes alive2 reads, and two it does not.
+STRINGS = [
+  ('"denormal-fp-math"="preserve-sign,preserve-sign"', "fn"),
+  ('"denormal-fp-math-f32"="preserve-sign,preserve-sign"', "fn"),
+  ('"alloc-family"="malloc"', "fn"),
+  ('"target-cpu"="x86-64"', "fn"),
+  ('"trust"="true"', "param"),
+]
+PLACES = {"FnAttr": "fn", "ParamAttr": "param", "RetAttr": "ret"}
+
+
+def attributes() -> list[tuple[str, str]]:
+  """Each attribute LLVM defines, as IR writes it, with each place it may take."""
+  with open(ATTRIBUTES) as inc:
+    text = inc.read()
+  names = re.findall(
+    r"^ATTRIBUTE_ENUM\((\w+),(\w+)\)$", text.split("#ifdef GET_ATTR_ENUM")[0], re.M
+  )
+  value = dict(re.findall(r"^(\w+) = (\d+),$", text, re.M))
+  properties = re.findall(r"^0((?: \| AttributeProperty::\w+)*),$", text, re.M)
+  found = []
+  for (name, keyword), held in zip(names, properties, strict=True):
+    if int(value[name]) < int(value["FirstTypeAttr"]):
+      spellings = [keyword]
+    elif int(value[name]) < int(value["FirstIntAttr"]):
+      spellings = [f"{keyword}(i32)"]
+    else:
+      spellings = ARGUMENTS[keyword]
+    places = [PLACES[place] for place in re.findall(r"::(\w+Attr)\b", held) if place in PLACES]
+    found += [(spelled, place) for spelled in spellings for place in places]
+  strbool = re.findall(r"^ATTRIBUTE_STRBOOL\(\w+,([\w-]+)\)$", text, re.M)
+  return found + [(f'"{keyword}"="true"', "fn") for keyword in strbool] + STRINGS
+
+
+def placed(attr: str, place: str) -> list[tuple[str, str]]:
+  """Small functions without and with `attr` in `place`, one for each way of
+  writing them, in the order they are tried."""
+  pairs = []
+  for ty, value in (("ptr", "null"), ("i32", "0"), ("float", "0.0")):
+    if place == "fn":
+      # An integer parameter for allocsize, and the flags some attributes need beside them.
+      for beside in ("", "noinline ", "unnamed_addr "):
+        head = f"define {ty} @f(i64 %n) {beside}"
+        body = f"{{\nentry:\n  ret {ty} {value}\n}}\n"
+        pairs.append((head + body, head + f"{attr} " + body))
+    elif place == "param":
+      for ret, returned in ((ty, f"{ty} %x"), ("void", "void")):
+        body = f") {{\nentry:\n  ret {returned}\n}}\n"
+        pairs.append((f"define {ret} @f({ty} %x" + body, f"define {ret} @f({ty} {attr} %x" + body))
+    else:
+      body = f"@f({ty} %x) {{\nentry:\n  ret {ty} %x\n}}\n"
+      pairs.append((f"define {ty} " + body, f"define {attr} {ty} " + body))
+  return pairs
+
+
+def well_formed(module: str) -> bool:
+  """Whether LLVM's verifier accepts the module."""
+  done = subprocess.run(
+    [LLVM_AS, "-", "-o", os.devnull], input=module, capture_output=True, text=True
+  )
+  return done.returncode == 0
+
+
+def printed(module: str) -> str:
+  """What alive-tv prints when asked whether `module` refines itself."""
+  with tempfile.TemporaryDirectory() as scratch:
+    path = os.path.join(scratch, "f.ll")
+    with open(path, "w") as out:
+      out.write(module)
+    done = subprocess.run(
+      [ALIVE_TV, path, path, "--disable-undef-input"], capture_output=True, text=True, timeout=300
+    )
+  return done.stdout
+
+
+def translated(said: str) -> str:
+  """The function alive-tv checked, as it printed its own reading of it."""
+  return said.split("-" * 40 + "\n")[-1].split("=>")[0]
+
+
+# On an input that is not NaN, whose payload a multiplication may change, a
+# multiplication by one keeps the value, a denormal included, unless the
+# denormal mode flushes it. alive2 reads the mode into its floating-point
+# semantics without printing it, so this pair, which it proves under the
+# default mode, shows whether it reads the mode.
+DENORMAL = (
+  "define i32 @f(float nofpclass(nan) %x) {}{{\nentry:\n  %b = bitcast float %x to i32\n"
+  "  ret i32 %b\n}}\n",
+  "define i32 @f(float nofpclass(nan) %x) {}{{\nentry:\n  %y = fmul float %x, 1.0\n"
+  "  %b = bitcast float %y to i32\n  ret i32 %b\n}}\n",
+)
+
+
+def alive2_treats(bare: str, held: str, attr: str) -> str:
+  """How alive2 treats the attribute `held` has and `bare` lacks: it refuses
+  the function, drops the attribute with a warning, reads it, or ignores it."""
+  said = printed(held)
+  if check.summary(said) != "correct":
+    return "refuses"
+  if "ERROR: Unsupported attribute" in said:
+    return "drops"
+  if translated(said) != translated(printed(bare)):
+    return "reads"
+  if attr.startswith('"denormal-fp-math'):
+    pair = [program.format(f"{attr} ") for program in DENORMAL]
+    return "reads" if alive2(*pair) == "incorrect" else "ignores"
+  return "ignores"
+
+
+def llops_treats(bare: str, held: str, place: str) -> str:
+  """How llops treats the attribute: it refuses a program with it on a
+  parameter, or it reads it or ignores it when it compares two programs."""
+  if place == "param":
+    diagnostics = run("validate", {"module": held})["diagnostics"]
+    if any(diagnostic["code"] == "unsupported_attr" for diagnostic in diagnostics):
+      return "refuses"
+  return "ignores" if run("reshaped", {"before": bare, "after": held})["reshaped"] else "reads"
+
+
+def treatment(attr: str, place: str) -> tuple[str, str] | None:
+  """How llops and alive2 treat `attr` in `place`, or nothing when no function
+  can have it there."""
+  for bare, held in placed(attr, place):
+    if well_formed(held):
+      return llops_treats(bare, held, place), alive2_treats(bare, held, attr)
+  return None
+
+
+# Attributes that sit only on calls or intrinsics, never on a function checked.
+NOWHERE = {("builtin", "fn"), ("immarg", "param"), ("elementtype(i32)", "param")}
+# What llops does where alive2 does the same. An attribute alive2 drops with a
+# warning, it ignores.
+AGREED = {("refuses", "refuses"), ("reads", "reads"), ("ignores", "ignores"), ("ignores", "drops")}
+
+
+class TestAttributeTable(unittest.TestCase):
+  @unittest.skipUnless(os.path.exists(ATTRIBUTES), "needs the toolchain's LLVM build")
+  def test_llops_treats_each_attribute_as_alive2_does(self):
+    cases = attributes()
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+      answers = list(pool.map(lambda case: treatment(*case), cases))
+    nowhere = {case for case, answer in zip(cases, answers, strict=True) if answer is None}
+    self.assertEqual(nowhere, NOWHERE)
+    for case, answer in zip(cases, answers, strict=True):
+      if answer is not None:
+        with self.subTest(attr=case[0], place=case[1]):
+          self.assertIn(answer, AGREED)
 
 
 if __name__ == "__main__":
