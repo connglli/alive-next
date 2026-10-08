@@ -1,6 +1,7 @@
 #include "edit.h"
 
 #include "irutil.h"
+#include "respected.h"
 #include "snippet.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -695,6 +696,11 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       return errResponse("shape_error", "set_body: the new module must define exactly one "
                                         "function");
     return checkedResponse(*newMwc->mod);
+  }
+
+  if (*op == "drop_attrs") {
+    dropCheckedAttrs(*F);
+    return checkedResponse(*M);
   }
 
   if (*op == "attrs") {

@@ -91,6 +91,7 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 | `dedup` | `a`, `b` | erase `b`, its uses become `a` |
 | `set_body` | `body` | replace the whole body |
 | `attrs` | `fn`, optional `param`, `attrs` | put attributes on a function or parameter |
+| `drop_attrs` | | remove the attributes `respected` reads from the function |
 | `flags` | `v`, `flags` | put or remove the flags an instruction can carry |
 | `splice` | `from`, `to`, `with`, `value_map` | put another module's window in place of the one from `from` to `to` |
 
@@ -224,6 +225,14 @@ Request `{ "before": ..., "after": ... }`, response `{ "ok": true, "reshaped": t
 Whether the function `after` defines is the one `before` defines with its control flow reshaped and nothing else: a rotated loop, merged or split blocks, an empty block dropped, an LCSSA phi added, a branch inverted. Then every run of `after` is a run of `before`, step for step, so that `after` refines `before` under alive2's semantics without a solver. Both modules define one function of the same name and type, and are the same apart from its body, its personality, prefix and prologue data and its metadata included. Each module is read on its own, so that a named struct type keeps its name, and both must give each name the same body.
 
 The two functions are walked together one segment at a time. A segment runs from where a block is entered up to a conditional branch, a switch or a return, through every unconditional branch on the way, setting each phi it passes to the value of the edge it takes. Paired segments must apply instructions that print the same, apart from the values they use, to operands that hold the same values, with the same metadata on each, and end the same way: on returns of values that hold the same value, on switches over such a value with the same cases, or on branches on such a value. A branch on an integer comparison with the inverse predicate, which nothing but the branch uses, goes to the swapped successors. What holds the same value where a pair of edges enters is what does so on every path there, which settles loops. Metadata counts as alive2 reads it: debug info, loop properties, branch weights, `!unpredictable`, `!nosanitize` and `!irce.loop.clone` are ignored, and other metadata must say the same, as strings and constants that print the same or uniqued tuples of them, while a distinct node matches nothing. Flags or metadata on a phi, metadata alive2 reads on a terminator, terminators other than `br`, `switch`, `ret` and `unreachable`, a struct type without a name, and a block whose address is taken, since blocks are named by position, make the answer `false`. A module the verifier rejects is refused with `invalid_ir`, and one that holds `undef` with `undef`, since each use of it may take another value.
+
+## respected
+
+Request `{ "before": ..., "after": ... }`, response `{ "ok": true, "respected": true }`, or `{ "ok": true, "respected": false, "why": ... }`.
+
+Whether the function `after` defines is the one `before` defines with attributes added that its own instructions cannot break, so that `after` refines `before` under alive2's semantics without a solver. The attributes it reads are `memory(...)` and `nofree` on the function, and `readonly`, `writeonly`, `readnone` and `captures(none)` on its parameters. `before` must be `after` with these attributes removed, as `drop_attrs` removes them.
+
+alive2 checks these attributes only against the function's own instructions, so the check follows each pointer a load or store uses back through GEPs, phis and selects to the arguments, allocas or constant globals it may come from. Each access must be one the attributes allow: a stack slot always, a constant global for a load, an argument when the function may touch argument memory and the parameter allows it, and anything else only when both argument memory and other memory are allowed. A pointer from an argument may only be the address of a load or store, or flow into a GEP, a phi or a select, and every call must be to an intrinsic that does not touch memory, as LLVM's own table of intrinsics says. Volatile or atomic accesses, and other instructions that touch memory, make the answer `false`.
 
 ## analyze
 

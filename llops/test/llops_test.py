@@ -3099,6 +3099,117 @@ next:
     self.bad(run("reshaped", {"before": TOP_TEST}), "bad_request")
 
 
+# A loop that only reads through its pointer argument, as -O3 marks such a loop.
+READ_LOOP = """declare i32 @llvm.umin.i32(i32, i32)
+
+define i32 @f(ptr %p, i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %q = phi ptr [ %p, %entry ], [ %q.next, %loop ]
+  %s = phi i32 [ 0, %entry ], [ %s.next, %loop ]
+  %v = load i32, ptr %q, align 4
+  %s.next = add i32 %s, %v
+  %q.next = getelementptr inbounds i32, ptr %q, i64 1
+  %more = icmp slt i32 %s.next, %n
+  br i1 %more, label %loop, label %exit
+
+exit:
+  %m = call i32 @llvm.umin.i32(i32 %s.next, i32 %n)
+  ret i32 %m
+}
+"""
+
+
+class TestRespected(Case):
+  def answer(self, before, after):
+    return self.good(run("respected", {"before": before, "after": after}))
+
+  def marked(self, module, old, new):
+    """The module with `old`, which it must hold, replaced by `new`."""
+    self.assertIn(old, module)
+    return module.replace(old, new)
+
+  def test_a_loop_that_respects_its_attributes(self):
+    fn = "(ptr readonly captures(none) %p, i32 %n) nofree memory(argmem: read) {"
+    held = self.marked(READ_LOOP, "(ptr %p, i32 %n) {", fn)
+    self.assertTrue(self.answer(READ_LOOP, held)["respected"])
+    # The check only adds attributes, so it says nothing about removing them.
+    self.assertFalse(self.answer(held, READ_LOOP)["respected"])
+
+  def test_each_rule_refuses_its_case(self):
+    cases = [
+      ("", "memory(none)", "  store i32 1, ptr @G, align 4\n"),
+      ("", "memory(argmem: read)", "  %v = load i32, ptr @G, align 4\n"),
+      ("readonly ", "", "  store i32 1, ptr %p, align 4\n"),
+      ("writeonly ", "", "  %v = load i32, ptr %p, align 4\n"),
+      ("captures(none) ", "", "  %c = icmp eq ptr %p, null\n"),
+      ("", "nofree", "  call void @g()\n"),
+    ]
+    top = "@G = global i32 0\n\ndeclare void @g()\n\n"
+    for param, fn, line in cases:
+      tail = f"{{\nentry:\n{line}  ret void\n}}\n"
+      plain = f"{top}define void @f(ptr %p) {tail}"
+      held = f"{top}define void @f(ptr {param}%p) {fn} {tail}"
+      self.assertFalse(self.answer(plain, held)["respected"], param or fn)
+
+  def test_a_constant_global_and_a_stack_slot_are_allowed(self):
+    plain = """@K = constant i32 7
+
+define i32 @f() {
+entry:
+  %slot = alloca i32, align 4
+  store i32 1, ptr %slot, align 4
+  %v = load i32, ptr @K, align 4
+  ret i32 %v
+}
+"""
+    held = self.marked(plain, "@f() {", "@f() memory(none) {")
+    self.assertTrue(self.answer(plain, held)["respected"])
+
+  def test_an_argument_pointer_stored_as_a_value(self):
+    plain = """define void @f(ptr %p) {
+entry:
+  %slot = alloca ptr, align 8
+  store ptr %p, ptr %slot, align 8
+  ret void
+}
+"""
+    held = self.marked(plain, "(ptr %p)", "(ptr captures(none) %p)")
+    self.assertIn("more than an address", self.answer(plain, held)["why"])
+
+  def test_a_pointer_from_a_vector_argument(self):
+    plain = """define i32 @f(<2 x ptr> %v) {
+entry:
+  %p = extractelement <2 x ptr> %v, i32 0
+  %x = load i32, ptr %p, align 4
+  ret i32 %x
+}
+"""
+    held = self.marked(plain, "(<2 x ptr> %v)", "(<2 x ptr> writeonly %v)")
+    self.assertIn("more than an address", self.answer(plain, held)["why"])
+
+  def test_modules_that_differ_in_more_than_these_attributes(self):
+    other = self.marked(READ_LOOP, "add i32 %s, %v", "sub i32 %s, %v")
+    self.assertFalse(self.answer(READ_LOOP, other)["respected"])
+    mode = self.marked(READ_LOOP, "%n) {", "%n) null_pointer_is_valid {")
+    self.assertFalse(self.answer(READ_LOOP, mode)["respected"])
+
+  def test_drop_attrs_removes_only_the_checked_attributes(self):
+    fn = (
+      "noundef i32 @f(ptr noundef nonnull readonly captures(none) %p, i32 %n)"
+      " nofree willreturn memory(argmem: read) {"
+    )
+    held = self.marked(READ_LOOP, "i32 @f(ptr %p, i32 %n) {", fn)
+    edited = self.good(run("edit", {"module": held, "op": "drop_attrs"}))["module"]
+    f = self.good(run("validate", {"module": edited}))["functions"]["f"]
+    self.assertEqual(f["signature"], "noundef i32(ptr noundef nonnull, i32) {willreturn}")
+
+  def test_both_modules_are_needed(self):
+    self.bad(run("respected", {"before": READ_LOOP}), "bad_request")
+
+
 class TestFrameDependent(Case):
   def holding(self, module, label, hazard):
     """`module` with the hazard's code first in block `label`."""
