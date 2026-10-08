@@ -107,6 +107,9 @@ class Case(unittest.TestCase):
   def opt(self, what, module=F_SIMPLE, **kw):
     return run("opt", {"module": module, "what": what, **kw})
 
+  def attrs(self, module=F_SIMPLE, **kw):
+    return run("attrs", {"module": module, **kw})
+
   def canon(self, module):
     return self.good(run("canon", {"module": module}))["module"]
 
@@ -1044,7 +1047,7 @@ entry:
     self.assertTrue(self.cyclic(r["module"]))
 
 
-class TestEditAttrs(Case):
+class TestAttrs(Case):
   DECL = """declare i32 @h(ptr, i32)
 
 define i32 @f(ptr %p, i32 %x) {
@@ -1056,8 +1059,7 @@ entry:
 
   def test_pointer_attributes(self):
     r = self.good(
-      self.edit(
-        "attrs",
+      self.attrs(
         module=self.DECL,
         fn="h",
         param=0,
@@ -1070,56 +1072,61 @@ entry:
 
   def test_range(self):
     r = self.good(
-      self.edit("attrs", module=self.DECL, fn="h", param=1, attrs={"range": {"min": 0, "max": 256}})
+      self.attrs(module=self.DECL, fn="h", param=1, attrs={"range": {"min": 0, "max": 256}})
     )
     self.assertIn("range(i32 0, 256)", r["module"])
 
   def test_range_on_a_pointer(self):
     self.bad(
-      self.edit("attrs", module=self.DECL, fn="h", param=0, attrs={"range": {"min": 0, "max": 8}}),
+      self.attrs(module=self.DECL, fn="h", param=0, attrs={"range": {"min": 0, "max": 8}}),
       "invalid",
     )
 
   def test_empty_range(self):
     self.bad(
-      self.edit("attrs", module=self.DECL, fn="h", param=1, attrs={"range": {"min": 4, "max": 4}}),
+      self.attrs(module=self.DECL, fn="h", param=1, attrs={"range": {"min": 4, "max": 4}}),
       "invalid",
     )
 
   def test_align_must_be_a_power_of_two(self):
     self.bad(
-      self.edit("attrs", module=self.DECL, fn="h", param=0, attrs={"align": 3}),
+      self.attrs(module=self.DECL, fn="h", param=0, attrs={"align": 3}),
       "invalid",
     )
 
   def test_attribute_that_does_not_fit_the_type(self):
     self.bad(
-      self.edit("attrs", module=self.DECL, fn="h", param=1, attrs={"nonnull": True}),
+      self.attrs(module=self.DECL, fn="h", param=1, attrs={"nonnull": True}),
       "invalid_ir",
     )
 
   def test_unknown_attribute(self):
     self.bad(
-      self.edit("attrs", module=self.DECL, fn="h", param=0, attrs={"speedy": True}),
+      self.attrs(module=self.DECL, fn="h", param=0, attrs={"speedy": True}),
       "invalid",
     )
 
   def test_unknown_function(self):
     self.bad(
-      self.edit("attrs", module=self.DECL, fn="nope", param=0, attrs={"noundef": True}),
+      self.attrs(module=self.DECL, fn="nope", param=0, attrs={"noundef": True}),
       "not_found",
     )
 
   def test_parameter_out_of_range(self):
     self.bad(
-      self.edit("attrs", module=self.DECL, fn="h", param=7, attrs={"noundef": True}),
+      self.attrs(module=self.DECL, fn="h", param=7, attrs={"noundef": True}),
       "invalid",
+    )
+
+  def test_parameter_that_is_not_an_integer(self):
+    self.bad(
+      self.attrs(module=self.DECL, fn="h", param="0", attrs={"nounwind": True}),
+      "bad_request",
     )
 
   def test_function_attributes_on_declaration(self):
     r = self.good(
-      self.edit(
-        "attrs",
+      self.attrs(
         module=self.DECL,
         fn="h",
         attrs={"memory": "none", "nounwind": True, "willreturn": True, "nofree": True},
@@ -1135,8 +1142,7 @@ entry:
 
   def test_function_attributes_on_definition(self):
     r = self.good(
-      self.edit(
-        "attrs",
+      self.attrs(
         module=self.DECL,
         fn="f",
         attrs={"memory": "none", "nounwind": True},
@@ -1146,13 +1152,13 @@ entry:
 
   def test_invalid_function_attribute(self):
     self.bad(
-      self.edit("attrs", module=self.DECL, fn="h", attrs={"speedy": True}),
+      self.attrs(module=self.DECL, fn="h", attrs={"speedy": True}),
       "invalid",
     )
 
   def test_invalid_memory_effect(self):
     self.bad(
-      self.edit("attrs", module=self.DECL, fn="h", attrs={"memory": "bogus"}),
+      self.attrs(module=self.DECL, fn="h", attrs={"memory": "bogus"}),
       "invalid",
     )
 
@@ -2464,8 +2470,7 @@ class TestSeveralBlocks(Case):
     self.assertIn("icmp sge i32 %j.next, 0", module)
 
   def test_attributes_on_a_module_that_branches(self):
-    request = {"op": "attrs", "fn": "k.ih", "param": 0, "attrs": {"noundef": True}}
-    r = self.good(run("edit", {"module": CALLEE, **request}))
+    r = self.good(self.attrs(CALLEE, fn="k.ih", param=0, attrs={"noundef": True}))
     self.assertIn("declare i32 @k.ih(i32 noundef, i32, i32)", r["module"])
 
   def test_each_edit_works_in_the_block_of_its_instruction(self):

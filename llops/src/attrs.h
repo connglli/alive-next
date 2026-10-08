@@ -1,4 +1,5 @@
-// Attributes as alive2 treats them, by where they sit.
+// Attributes: how alive2 treats each one by where it sits, and `attrs`, which
+// puts them on a function or a parameter as docs/llops.md sets out.
 //
 // alive2 gives some attributes a meaning, ignores the others on a function or
 // a return value, and refuses to check a function with a parameter attribute
@@ -8,8 +9,11 @@
 
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/JSON.h"
 
 namespace llops {
+
+llvm::json::Object attrsCmd(llvm::json::Object &args);
 
 // What an attribute means to alive2 where it sits.
 enum class AttrMeaning {

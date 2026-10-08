@@ -52,12 +52,13 @@ export const Op = Type.Union(
           "Replace the whole body (everything between the 'entry:' label and the closing brace), and nothing else.",
       },
     ),
-    Type.Object({
-      op: Type.Literal("attrs"),
-      fn: Type.String(),
-      param: Type.Integer(),
-      attrs: Type.Record(Type.String(), Type.Unknown()),
-    }),
+    Type.Object(
+      { op: Type.Literal("drop_attrs") },
+      {
+        description:
+          "Remove the function's memory, nofree, readonly, writeonly, readnone and captures(none) attributes, which keep it from being cut.",
+      },
+    ),
     Type.Object({
       op: Type.Literal("flags"),
       v: Ref,

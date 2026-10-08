@@ -4,6 +4,7 @@
 
 #include "analyze.h"
 #include "assume.h"
+#include "attrs.h"
 #include "canon.h"
 #include "detach.h"
 #include "edit.h"
@@ -40,6 +41,7 @@ const char *kUsage = "usage: llops <subcommand> < request.json > response.json\n
                      "  respected  whether a body keeps the attributes added to it\n"
                      "  analyze    known bits, ranges or pointer facts at a program point\n"
                      "  harness    wrap a function in a main that llubi can run\n"
+                     "  attrs      put attributes on a function or a parameter\n"
                      "  assume     state a fact about a value before an instruction\n"
                      "  version    print the version\n"
                      "\n"
@@ -111,6 +113,8 @@ int main(int argc, char **argv) {
     return respond(llops::analyzeCmd(*args));
   if (cmd == "harness")
     return respond(llops::harnessCmd(*args));
+  if (cmd == "attrs")
+    return respond(llops::attrsCmd(*args));
   if (cmd == "assume")
     return respond(llops::assumeCmd(*args));
 

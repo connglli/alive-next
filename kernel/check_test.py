@@ -910,12 +910,10 @@ class TestGolden(Case):
 
     def transform_callee(mod):
       m = llops(
-        "edit",
-        {"module": mod, "op": "attrs", "fn": "g", "param": 0, "attrs": {"noundef": True}},
+        "attrs",
+        {"module": mod, "fn": "g", "param": 0, "attrs": {"noundef": True}},
       )["module"]
-      m = llops("edit", {"module": m, "op": "attrs", "fn": "g", "attrs": {"nounwind": True}})[
-        "module"
-      ]
+      m = llops("attrs", {"module": m, "fn": "g", "attrs": {"nounwind": True}})["module"]
       m = llops(
         "assume",
         {
@@ -928,12 +926,10 @@ class TestGolden(Case):
 
     def transform_outer(mod):
       m = llops(
-        "edit",
-        {"module": mod, "op": "attrs", "fn": "g", "param": 0, "attrs": {"noundef": True}},
+        "attrs",
+        {"module": mod, "fn": "g", "param": 0, "attrs": {"noundef": True}},
       )["module"]
-      m = llops("edit", {"module": m, "op": "attrs", "fn": "g", "attrs": {"nounwind": True}})[
-        "module"
-      ]
+      m = llops("attrs", {"module": m, "fn": "g", "attrs": {"nounwind": True}})["module"]
       return llops("canon", {"module": m})["module"]
 
     new_src = self.built.program(transform_callee(src_mod))
@@ -1023,9 +1019,9 @@ class TestTampered(Case):
     halves = self.detached(PARITY, PARITY_NUW)
     inner = halves["inner"]
     text = (self.built.root / "programs" / f"{inner['src']}.ll").read_text()
-    attrs = {"module": text, "op": "attrs", "fn": "k.ih", "param": 0, "attrs": {"noundef": True}}
+    attrs = {"module": text, "fn": "k.ih", "param": 0, "attrs": {"noundef": True}}
     claimed = self.built.program(
-      llops("canon", {"module": llops("edit", attrs)["module"]})["module"]
+      llops("canon", {"module": llops("attrs", attrs)["module"]})["module"]
     )
     self.built.goal("g3", inner, {**inner, "src": claimed}, [], {"kind": "check"})
     self.refused(self.built.write(), "Hypothesis signature")
@@ -1076,9 +1072,7 @@ b:
       return self.built.program(llops("canon", {"module": text})["module"])
 
     def blind(text: str) -> str:
-      edited = llops(
-        "edit", {"module": text, "op": "attrs", "fn": "h", "attrs": {"memory": "none"}}
-      )
+      edited = llops("attrs", {"module": text, "fn": "h", "attrs": {"memory": "none"}})
       return stored(edited["module"])
 
     self.built.goal(
@@ -1280,9 +1274,7 @@ declare i32 @k.ih(i32)
 
     def marked(digest: str) -> str:
       text = (self.built.root / "programs" / f"{digest}.ll").read_text()
-      module = llops(
-        "edit", {"module": text, "op": "attrs", "fn": "k", "attrs": {"nounwind": True}}
-      )
+      module = llops("attrs", {"module": text, "fn": "k", "attrs": {"nounwind": True}})
       return self.built.program(llops("canon", {"module": module["module"]})["module"])
 
     to = {side: marked(inner[side]) for side in ("src", "tgt")}
@@ -1362,10 +1354,9 @@ declare i32 @k.ih(i32)
     manifest = json.loads((package / "manifest.json").read_text())
     inner = manifest["goals"]["g3"]["end"]["src"]
     stronger = llops(
-      "edit",
+      "attrs",
       {
         "module": (package / "programs" / f"{inner}.ll").read_text(),
-        "op": "attrs",
         "fn": "g",
         "param": 0,
         "attrs": {"noundef": True},
@@ -1456,8 +1447,8 @@ declare i32 @k.ih(i32)
       return self.built.program(llops("canon", {"module": text})["module"])
 
     def declared(text: str) -> str:
-      edit = {"module": text, "op": "attrs", "fn": "g", "param": 0, "attrs": {"noundef": True}}
-      return stored(llops("edit", edit)["module"])
+      attrs = {"module": text, "fn": "g", "param": 0, "attrs": {"noundef": True}}
+      return stored(llops("attrs", attrs)["module"])
 
     whole = {"src": stored(src), "tgt": stored(tgt)}
     marked = s["outer"].replace("@g(i32 %", "@g(i32 noundef %")
@@ -1491,8 +1482,8 @@ declare i32 @k.ih(i32)
       goal = self.built.goals[gid]
       for side in ("src", "tgt"):
         text = (package / "programs" / f"{goal['start'][side]}.ll").read_text()
-        attrs = {"module": text, "op": "attrs", "fn": "g", "attrs": {"memory": "none"}}
-        marked = llops("canon", {"module": llops("edit", attrs)["module"]})["module"]
+        attrs = {"module": text, "fn": "g", "attrs": {"memory": "none"}}
+        marked = llops("canon", {"module": llops("attrs", attrs)["module"]})["module"]
         goal["start"][side] = goal["end"][side] = self.built.program(marked)
     self.refused(self.built.write(), "Bare callee")
 

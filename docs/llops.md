@@ -91,7 +91,6 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 | `retype` | `v`, `ty`, `ext` | give a value another integer type |
 | `dedup` | `a`, `b` | erase `b`, its uses become `a` |
 | `set_body` | `body` | replace the whole body |
-| `attrs` | `fn`, optional `param`, `attrs` | put attributes on a function or parameter |
 | `drop_attrs` | | remove the attributes `respected` reads from the function |
 | `flags` | `v`, `flags` | put or remove the flags an instruction can carry |
 | `splice` | `from`, `to`, `with`, `value_map` | put another module's window in place of the one from `from` to `to` |
@@ -109,8 +108,6 @@ A snippet may use the module's global variables and call its functions. When a s
 `commute` swaps the operands of a commutative operation. On a comparison it swaps the predicate as well, so any predicate can be commuted.
 
 `retype` leaves the definition in the old type, gives the old name to a conversion into the new type, and converts back at every use, with `ext` choosing `zext` or `sext` where a conversion widens. Whether the conversions lose nothing is a claim for the caller's alive2 check.
-
-`attrs` puts attributes on a parameter when `param` is given, or on the function itself when omitted. On a parameter it accepts `noundef`, `nonnull`, `noalias`, `align`, `dereferenceable` and `range`. The last two carry a byte count and a `{ "min": n, "max": m }` pair, the range being the half-open interval `[min, max)`. On a function it accepts `nounwind`, `nofree`, `nosync`, `willreturn`, `norecurse`, `mustprogress` (each boolean `true`), and `memory` (a string such as `"none"`, `"read"`, `"write"`, or `"argmem: readwrite"`).
 
 `flags` names instruction flags with `true` or `false`, so the same op puts and removes: `{ "nuw": true }` puts `nuw` on and `{ "nsw": false }` takes `nsw` off. `nuw` and `nsw` apply to `add`, `sub`, `mul`, `shl` and `trunc`, `exact` to the divisions and shifts that carry it, `disjoint` to `or`, `nneg` to `zext` and `uitofp`, and `fast`, `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn` and `reassoc` to floating-point instructions. A flag the instruction cannot carry is refused rather than ignored, so the agent never guesses what the IR keeps.
 
@@ -269,6 +266,14 @@ Everything worth judging the run on is loaded back under a name beginning `obs.`
 
 The harness does not have the program shape, since it defines a second function, so `validate` will refuse what this produces. It is an artifact for the interpreter rather than a program under proof.
 
+## attrs
+
+Puts attributes on a function the module defines or declares, or on one of its parameters.
+
+Request `{ "module": ..., "fn": "<name>", "param": n, "attrs": { ... } }`, response `{ "ok": true, "module": ... }`. The attributes go on parameter `param` when it is given, and on the function itself when it is omitted.
+
+On a parameter it accepts `noundef`, `nonnull`, `noalias`, `align`, `dereferenceable` and `range`. The last two carry a byte count and a `{ "min": n, "max": m }` pair, the range being the half-open interval `[min, max)`. On a function it accepts `nounwind`, `nofree`, `nosync`, `willreturn`, `norecurse`, `mustprogress` (each boolean `true`), and `memory` (a string such as `"none"`, `"read"`, `"write"`, or `"argmem: readwrite"`).
+
 ## assume
 
 Adds an assumption to a function: an `llvm.assume` before an instruction, stating a fact about a value or a condition written in IR. Inserting an assumption that can be false adds UB the program did not have, so alive2 refuses the change; an insertion alive2 accepts therefore shows the assumption always holds there.
@@ -283,7 +288,7 @@ Request `{ "module": ..., "anchor": { ... }, "assertions": [ ... ] }`, response 
 An assertion names a value in one of two ways. `%x` is a value of the function, in scope where the assumption goes. `!N` is argument N of the call the assumption goes before. At `start`, `!N` is the function's own argument N, and `%x` is refused, since only the arguments are in scope there. So an assertion that names only `!N` and numbers means the same before each call of a function as at that function's start.
 
 `assertions` lists what to assume:
-* A fact about one value: `{ "fact": { ... }, "of": "<name>" }`. Facts use the vocabulary of `edit attrs` (`range`, `noundef`, `nonnull`, `align`, `dereferenceable`); `noalias` is refused.
+* A fact about one value: `{ "fact": { ... }, "of": "<name>" }`. Facts use the vocabulary of `attrs` (`range`, `noundef`, `nonnull`, `align`, `dereferenceable`); `noalias` is refused.
 * A comparison: `{ "op": "ule", "lhs": "<name>", "rhs": "<name or integer>" }`, which becomes one `icmp`. `op` is any integer comparison, and an integer takes the type of the other operand.
 * Lines of IR: `{ "insts": [ ... ] }`, whose last line defines an `i1`. The lines name values as above and may define their own, but may not call a function, use memory, or hold a terminator.
 

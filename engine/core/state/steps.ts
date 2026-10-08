@@ -742,10 +742,9 @@ export class Steps {
     let condAfter = narrowed.after;
     for (const [argIdxStr, fact] of Object.entries(mappedFacts)) {
       const argIdx = Number(argIdxStr);
-      const op = { op: "attrs" as const, fn: narrowed.callee, param: argIdx, attrs: fact };
       const [resFrom, resTo] = await Promise.all([
-        this.llops.edit(condBefore, op),
-        this.llops.edit(condAfter, op),
+        this.llops.attrs(condBefore, narrowed.callee, fact, argIdx),
+        this.llops.attrs(condAfter, narrowed.callee, fact, argIdx),
       ]);
       if (!resFrom.ok || !resTo.ok)
         return {

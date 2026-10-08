@@ -727,24 +727,13 @@ class Check:
       attributed = self.package.program(step["from"][side])
       for param, fact in replayable:
         attributed = self.package.run_llops(
-          "edit",
-          {
-            "module": attributed,
-            "op": "attrs",
-            "fn": role,
-            "param": param,
-            "attrs": fact,
-          },
+          "attrs",
+          {"module": attributed, "fn": role, "param": param, "attrs": fact},
         )["module"]
       if fn_attrs:
         attributed = self.package.run_llops(
-          "edit",
-          {
-            "module": attributed,
-            "op": "attrs",
-            "fn": role,
-            "attrs": fn_attrs,
-          },
+          "attrs",
+          {"module": attributed, "fn": role, "attrs": fn_attrs},
         )["module"]
       if predicates:
         attributed = self.package.run_llops(
@@ -941,24 +930,12 @@ class Check:
       for arg_str, fact in preconditions.items():
         arg = int(arg_str)
         res_from = self.package.run_llops(
-          "edit",
-          {
-            "module": c_from,
-            "op": "attrs",
-            "fn": window["callee"],
-            "param": arg,
-            "attrs": fact,
-          },
+          "attrs",
+          {"module": c_from, "fn": window["callee"], "param": arg, "attrs": fact},
         )
         res_to = self.package.run_llops(
-          "edit",
-          {
-            "module": c_to,
-            "op": "attrs",
-            "fn": window["callee"],
-            "param": arg,
-            "attrs": fact,
-          },
+          "attrs",
+          {"module": c_to, "fn": window["callee"], "param": arg, "attrs": fact},
         )
         c_from = res_from["module"]
         c_to = res_to["module"]

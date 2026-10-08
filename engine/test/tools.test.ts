@@ -336,6 +336,26 @@ describe.skipIf(!built)("the tool layer", () => {
     await call("tx_abort", {});
   });
 
+  test("drop_attrs takes off attributes the tgt's body keeps, with no solver", async () => {
+    const dropping = await Session.start({
+      dir: join(dir, "dropping"),
+      src: cut.src,
+      tgt: cut.tgt.replace("(i32 noundef %x) {", "(i32 noundef %x) nofree memory(none) {"),
+      llops,
+      checker: new NoMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    const droppingTools = createProofAssistantTools(dropping);
+
+    await callFrom(droppingTools, "tx_begin", { gid: "g1", side: "tgt" });
+    expect(await callFrom(droppingTools, "tx_edit", { op: "drop_attrs" })).toContain(
+      "applied, 1 edit so far",
+    );
+    // alive2 refuses every pair here, so only llops could have certified the step.
+    expect(await callFrom(droppingTools, "tx_commit", {})).toContain("certified, g1 tgt is");
+  });
+
   test("a step can be walked back", async () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     await call("tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });

@@ -195,7 +195,6 @@ export type EditOp =
   | { op: "retype"; v: Ref; ty: string; ext?: "zext" | "sext" }
   | { op: "dedup"; a: Ref; b: Ref }
   | { op: "set_body"; body: string }
-  | { op: "attrs"; fn: string; param?: number; attrs: Attrs }
   | { op: "drop_attrs" }
   | { op: "flags"; v: Ref; flags: Record<string, boolean> }
   | {
@@ -232,7 +231,7 @@ export type Comparison = {
 /** Lines of IR whose last line defines the i1 assumed, or one comparison. */
 export type Predicate = { insts: string[] } | Comparison;
 
-/** A fact about one value, in the vocabulary of `edit attrs`. */
+/** A fact about one value, in the vocabulary of `attrs`. */
 export type FactAssertion = { fact: Attrs; of: Name };
 
 export type Assertion = FactAssertion | Predicate;
@@ -266,6 +265,19 @@ export class Llops {
 
   edit(module: Module, op: EditOp): Promise<LlopsResult<ModuleResult>> {
     return this.run("edit", { module, ...op });
+  }
+
+  /** Put attributes on the function `fn`, or on its parameter `param` when given. */
+  attrs(
+    module: Module,
+    fn: string,
+    attrs: Attrs,
+    param?: number,
+  ): Promise<LlopsResult<ModuleResult>> {
+    return this.run(
+      "attrs",
+      param === undefined ? { module, fn, attrs } : { module, fn, param, attrs },
+    );
   }
 
   /** Cut the src side at `cut`, using `params` as the signature if given. */

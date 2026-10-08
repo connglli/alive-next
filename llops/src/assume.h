@@ -9,7 +9,7 @@
 // refuses it.
 //
 // The same vocabulary serves both halves, so what is proved here and what is
-// attributed by `edit attrs` cannot drift apart. A fact whose attribute has no
+// attributed by `attrs` cannot drift apart. A fact whose attribute has no
 // assume form is refused rather than quietly skipped.
 #pragma once
 

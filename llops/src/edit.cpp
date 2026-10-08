@@ -8,15 +8,12 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/AsmParser/LLLexer.h"
 #include "llvm/AsmParser/Parser.h"
-#include "llvm/IR/Attributes.h"
-#include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/ModRef.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Local.h"
@@ -43,138 +40,6 @@ llvm::BasicBlock::iterator beforeUse(const llvm::Use &U) {
   if (auto *phi = llvm::dyn_cast<llvm::PHINode>(user))
     return phi->getIncomingBlock(U)->getTerminator()->getIterator();
   return user->getIterator();
-}
-
-// ---------------------------------------------------------------------------
-// Attributes
-// ---------------------------------------------------------------------------
-
-// Add one parameter attribute described by a JSON entry. Attributes are
-// proposals: an attribute the program does not honour turns into UB, which
-// is what the caller's alive2 check is there to catch.
-bool addParamAttr(llvm::Argument &arg, llvm::StringRef kind, const llvm::json::Value &val,
-                  llvm::json::Object &err) {
-  llvm::LLVMContext &ctx = arg.getContext();
-  auto simple = [&](llvm::Attribute::AttrKind k) {
-    arg.addAttr(llvm::Attribute::get(ctx, k));
-    return true;
-  };
-  if (kind == "noundef")
-    return simple(llvm::Attribute::NoUndef);
-  if (kind == "nonnull")
-    return simple(llvm::Attribute::NonNull);
-  if (kind == "noalias")
-    return simple(llvm::Attribute::NoAlias);
-  if (kind == "align") {
-    auto bytes = val.getAsInteger();
-    if (!bytes || *bytes <= 0 || !llvm::isPowerOf2_64((uint64_t)*bytes)) {
-      err = errResponse("invalid", "align must be a positive power of two");
-      return false;
-    }
-    arg.addAttr(llvm::Attribute::getWithAlignment(ctx, llvm::Align((uint64_t)*bytes)));
-    return true;
-  }
-  if (kind == "dereferenceable") {
-    auto bytes = val.getAsInteger();
-    if (!bytes || *bytes <= 0) {
-      err = errResponse("invalid", "dereferenceable must be a positive byte count");
-      return false;
-    }
-    arg.addAttr(llvm::Attribute::getWithDereferenceableBytes(ctx, (uint64_t)*bytes));
-    return true;
-  }
-  if (kind == "range") {
-    auto *range = val.getAsObject();
-    auto min = range ? range->getInteger("min") : std::nullopt;
-    auto max = range ? range->getInteger("max") : std::nullopt;
-    if (!min || !max) {
-      err = errResponse("invalid", "range needs {\"min\": n, \"max\": m}");
-      return false;
-    }
-    if (!arg.getType()->isIntegerTy()) {
-      err = errResponse("invalid", "range applies to integer parameters only");
-      return false;
-    }
-    unsigned bits = arg.getType()->getIntegerBitWidth();
-    if (bits < 64 && (!llvm::isIntN(bits, *min) || !llvm::isIntN(bits, *max))) {
-      err = errResponse("invalid", "range bounds do not fit the parameter type");
-      return false;
-    }
-    // The range is the half-open interval [min, max), so the two bounds being
-    // equal describes no value at all.
-    if (*min == *max) {
-      err = errResponse("invalid", "range must be a non-empty half-open interval");
-      return false;
-    }
-    llvm::AttrBuilder B(ctx);
-    B.addRangeAttr(llvm::ConstantRange(llvm::APInt(bits, (uint64_t)*min, true),
-                                       llvm::APInt(bits, (uint64_t)*max, true)));
-    arg.addAttrs(B);
-    return true;
-  }
-  err = errResponse("invalid", "unknown attribute '" + kind.str() + "'");
-  return false;
-}
-
-// Add one function-level attribute to a function definition or declaration.
-bool addFunctionAttr(llvm::Function &F, llvm::StringRef kind, const llvm::json::Value &val,
-                     llvm::json::Object &err) {
-  auto simple = [&](llvm::Attribute::AttrKind k) {
-    auto b = val.getAsBoolean();
-    if (!b || !*b) {
-      err = errResponse("invalid", "'" + kind.str() + "' must be true");
-      return false;
-    }
-    F.addFnAttr(k);
-    return true;
-  };
-  if (kind == "nounwind")
-    return simple(llvm::Attribute::NoUnwind);
-  if (kind == "nofree")
-    return simple(llvm::Attribute::NoFree);
-  if (kind == "nosync")
-    return simple(llvm::Attribute::NoSync);
-  if (kind == "willreturn")
-    return simple(llvm::Attribute::WillReturn);
-  if (kind == "norecurse")
-    return simple(llvm::Attribute::NoRecurse);
-  if (kind == "mustprogress")
-    return simple(llvm::Attribute::MustProgress);
-  if (kind == "memory") {
-    auto memStr = val.getAsString();
-    if (!memStr) {
-      err = errResponse("invalid", "memory attribute needs a string (e.g. \"none\")");
-      return false;
-    }
-    if (*memStr == "none") {
-      F.setMemoryEffects(llvm::MemoryEffects::none());
-      return true;
-    }
-    if (*memStr == "read") {
-      F.setMemoryEffects(llvm::MemoryEffects::readOnly());
-      return true;
-    }
-    if (*memStr == "write") {
-      F.setMemoryEffects(llvm::MemoryEffects::writeOnly());
-      return true;
-    }
-    if (*memStr == "argmem: readwrite") {
-      F.setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::ModRef));
-      return true;
-    }
-    if (*memStr == "argmem: read") {
-      F.setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Ref));
-      return true;
-    }
-    if (*memStr == "argmem: write") {
-      F.setMemoryEffects(llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::Mod));
-      return true;
-    }
-    err = errResponse("invalid", "unsupported memory effect '" + memStr->str() + "'");
-    return false;
-  }
-  err = errResponse("invalid", "unknown function attribute '" + kind.str() + "'");
-  return false;
 }
 
 // The globals a value names, through the constants it is built from.
@@ -700,34 +565,6 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
 
   if (*op == "drop_attrs") {
     dropCheckedAttrs(*F);
-    return checkedResponse(*M);
-  }
-
-  if (*op == "attrs") {
-    auto fnName = args.getString("fn");
-    auto param = args.getInteger("param");
-    auto attrs = args.getObject("attrs");
-    if (!fnName || !attrs)
-      return missing("'fn' and 'attrs'");
-    llvm::Function *G = M->getFunction(*fnName);
-    if (!G)
-      return errResponse("not_found", "attrs: no function named '" + fnName->str() + "'");
-    if (param.has_value()) {
-      if (*param < 0 || (uint64_t)*param >= G->arg_size())
-        return errResponse("invalid", "attrs: parameter index out of range");
-      llvm::Argument &arg = *std::next(G->arg_begin(), (unsigned)*param);
-      for (const auto &entry : *attrs) {
-        llvm::json::Object err;
-        if (!addParamAttr(arg, entry.first, entry.second, err))
-          return err;
-      }
-    } else {
-      for (const auto &entry : *attrs) {
-        llvm::json::Object err;
-        if (!addFunctionAttr(*G, entry.first, entry.second, err))
-          return err;
-      }
-    }
     return checkedResponse(*M);
   }
 

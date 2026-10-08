@@ -227,11 +227,7 @@ export class Strengthen {
     if (hasFnAttrs) {
       for (const side of ["src", "tgt"] as Side[]) {
         const unannotated = this.store.get(head(callee, side));
-        const withAttrs = await this.llops.edit(unannotated, {
-          op: "attrs",
-          fn: name,
-          attrs: fnAttrs,
-        });
+        const withAttrs = await this.llops.attrs(unannotated, name, fnAttrs);
         if (!withAttrs.ok) {
           return {
             kind: "refused",
@@ -446,12 +442,7 @@ export class Strengthen {
   ): Promise<string | { kind: "refused"; phase: "attribute"; reason: string }> {
     let text = module;
     for (const param of params) {
-      const result = await this.llops.edit(text, {
-        op: "attrs",
-        fn,
-        param,
-        attrs: paramAttrs[param] as Attrs,
-      });
+      const result = await this.llops.attrs(text, fn, paramAttrs[param] as Attrs, param);
       if (!result.ok) {
         return {
           kind: "refused",
@@ -462,11 +453,7 @@ export class Strengthen {
       text = result.module;
     }
     if (Object.keys(fnAttrs).length > 0) {
-      const result = await this.llops.edit(text, {
-        op: "attrs",
-        fn,
-        attrs: fnAttrs,
-      });
+      const result = await this.llops.attrs(text, fn, fnAttrs);
       if (!result.ok) {
         return {
           kind: "refused",
