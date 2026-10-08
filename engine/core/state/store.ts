@@ -75,6 +75,11 @@ export class Store {
     return hash;
   }
 
+  /** The hash `put` would answer for a program, without storing it. */
+  async hashOf(text: string): Promise<string> {
+    return sha256(await this.canonicalize(text));
+  }
+
   /** The program with this hash, or a throw when it is absent or altered. */
   get(hash: string): string {
     const text = readFileSync(this.pathOf(hash), "utf8");

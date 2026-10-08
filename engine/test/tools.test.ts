@@ -717,6 +717,22 @@ entry:
     expect(listed).toContain("addi-zero-to-x");
     expect(listed).toContain("x + 0 => x");
 
+    // A preview shows the program and lands nothing, so the run stays open.
+    const preview = await callFrom(rewritingTools, "goal_rewrite_preview", {
+      gid: "g1",
+      rules: ["addi-zero-to-x"],
+    });
+    expect(preview).toContain("rewriting g1 src with addi-zero-to-x would make this program");
+    expect(preview).toContain("ret i32 %x");
+    // The tgt is already what the rules make, so nothing fires there.
+    const tgt = await callFrom(rewritingTools, "goal_rewrite_preview", {
+      gid: "g1",
+      side: "tgt",
+      rules: ["addi-zero-to-x"],
+    });
+    expect(tgt).toContain("no rule fires on g1 tgt, so goal_rewrite would leave it as it is");
+    expect(await callFrom(rewritingTools, "run_status", {})).toContain("g1 root, open");
+
     const res = await callFrom(rewritingTools, "goal_rewrite", {
       gid: "g1",
       rules: ["addi-zero-to-x"],

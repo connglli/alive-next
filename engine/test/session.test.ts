@@ -375,11 +375,12 @@ describe.skipIf(!built)("reading a session", () => {
     expect(await run.rewritePreview("g1", "src", ["x"])).toMatchObject({
       kind: "preview",
       program: cut.tgt,
+      changed: true,
     });
 
     const results = log(run).filter((entry) => entry.kind === "tool_result");
     const kept = results.find((entry) => entry.tool === "rewrite_preview");
-    expect(kept?.result).toEqual({ kind: "preview" });
+    expect(kept?.result).toEqual({ kind: "preview", changed: true });
     expect((await run.show("g1")).src.hash).toBe(before.src.hash);
   });
 

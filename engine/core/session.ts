@@ -418,7 +418,8 @@ export class Session {
       "rewrite_preview",
       { gid, side, rules },
       (tree) => this.steps.rewritePreview(tree, gid, side, rules),
-      (result) => (result.kind === "preview" ? { kind: "preview" } : result),
+      (result) =>
+        result.kind === "preview" ? { kind: "preview", changed: result.changed } : result,
     );
   }
 

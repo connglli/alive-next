@@ -194,7 +194,13 @@ export interface RewriteStepOptions {
 
 /** What rewriting one side would make, as `rewritePreview` answers it. */
 export type RewritePreview =
-  | { kind: "preview"; program: string; invocation: LlrwtInvocation }
+  | {
+      kind: "preview";
+      program: string;
+      /** Whether a rule fired. */
+      changed: boolean;
+      invocation: LlrwtInvocation;
+    }
   | { kind: "refused"; code: string; message: string };
 
 /** A rewrite that landed, or the reason it did not. */
@@ -534,13 +540,14 @@ export class Steps {
     if (rules.length === 0) {
       return { kind: "refused", code: "no_rules", message: "no rules were named" };
     }
-    const before = this.store.get(head(workable(tree, gid), side));
+    const from = head(workable(tree, gid), side);
     const timeoutMs = this.timeouts.llrwtMs;
-    const applied = await this.rewriter.apply(before, rules, { timeoutMs });
+    const applied = await this.rewriter.apply(this.store.get(from), rules, { timeoutMs });
     if (!applied.ok) {
       return { kind: "refused", code: applied.code, message: applied.message };
     }
-    return { kind: "preview", program: applied.module, invocation: applied.invocation };
+    const changed = (await this.store.hashOf(applied.module)) !== from;
+    return { kind: "preview", program: applied.module, changed, invocation: applied.invocation };
   }
 
   /**
@@ -569,10 +576,10 @@ export class Steps {
     if (preview.kind === "refused") return preview;
     const { invocation } = preview;
     const goal = workable(tree, gid);
-    const after = await this.store.put(preview.program);
-    if (after === head(goal, side)) {
-      return { kind: "unchanged", hash: after, effects: [], invocation };
+    if (!preview.changed) {
+      return { kind: "unchanged", hash: head(goal, side), effects: [], invocation };
     }
+    const after = await this.store.put(preview.program);
 
     const step: Effect = {
       effect: "step",

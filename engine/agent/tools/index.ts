@@ -23,6 +23,7 @@ import { createOptTool } from "./opt.ts";
 import { createReportCexTool } from "./report-cex.ts";
 import { createRevertTool } from "./revert.ts";
 import { createRewriteTool } from "./rewrite.ts";
+import { createRewritePreviewTool } from "./rewrite-preview.ts";
 import { createRulesTool } from "./rules.ts";
 import { createSandboxTools, SANDBOX_TOOLS } from "./sandbox.ts";
 import { createShowTool } from "./show.ts";
@@ -57,6 +58,7 @@ export function createProofAssistantTools(
     createCheckTool(session),
     createRulesTool(session),
     createRewriteTool(session),
+    createRewritePreviewTool(session),
     createUnfoldTool(session),
     createBeginTool(session),
     createEditTool(session),
