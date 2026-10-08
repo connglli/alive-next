@@ -36,6 +36,12 @@ Named after lli/llc/llubi. One binary, subcommands, invoked process-per-call wit
 
 Constraint: llops builds against the toolchain's LLVM, the one alive-tv and llubi are built against, so the IR dialect it edits is the dialect they parse. It is part of the toolchain, and `make install-deps` builds it last.
 
+### Attributes and outlining
+
+alive2 checks a function's attributes only against that function's own instructions. A cut or a window moves instructions into a new function, which llops gives no attributes: the outer keeps every attribute the original function had and declares the new function without any. Moving instructions out of a function therefore needs care, because an attribute that limits what the body may do, such as `memory(none)` or `readonly`, no longer applies to them. A program whose function has such an attribute is neither cut nor narrowed. `llops validate` lists these attributes as `body_attrs`, and the kernel fails a certificate that cuts or narrows such a program.
+
+`llops/src/attrs.h` and `attrs.cpp` list every attribute alive2 reads on a function, its parameters and its return value, and llops follows that table wherever it looks at an attribute. Like alive2, llops ignores any other attribute on the function or its return value. Any other attribute on a parameter puts the program outside the shape, as alive2 refuses to check such a function. The attributes alive2 ignores do not count when `reshaped` and `respected` compare two modules.
+
 ## External checkers
 
 alive-tv and llubi are separate binaries, built by `make install-deps` into the toolchain and found there by the layout below. TS drivers wrap them, and every invocation is recorded verbatim (argv, flags, timeout) in the trajectory, so replay runs exactly what ran. llubi needs a small driver shape: run one function with given argument values and initial pointed-to memory, report return value, final observable memory, and UB events. If llubi does not support this directly we wrap it (the wrapper lives in llops/ or as a llubi patch, decided at integration time).

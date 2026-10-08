@@ -229,6 +229,15 @@ attributes #0 = { nounwind "frame-pointer"="all" }
 """
     self.assertEqual(self.good(run("validate", {"module": inputs}))["body_attrs"], [])
 
+  def test_parameter_attributes_alive2_refuses(self):
+    for attr in ["noalias", "nest", "captures(address)", '"foo"']:
+      module = f"define i32 @f(ptr {attr} %p) {{\nentry:\n  ret i32 0\n}}\n"
+      r = self.good(run("validate", {"module": module}))
+      self.assertEqual(r["diagnostics"][0]["code"], "unsupported_attr", attr)
+    # What alive2 does not read on a function or a return value, it ignores.
+    head = 'define inreg i32 @f(ptr %p) local_unnamed_addr cold norecurse "foo"="bar" {'
+    self.assertTrue(self.conforms(f"{head}\nentry:\n  ret i32 0\n}}\n"))
+
   def test_use_before_def(self):
     module = """define i32 @f(i32 %x, i32 %y) {
 entry:
@@ -3091,6 +3100,12 @@ next:
 """
     self.bad(run("reshaped", {"before": TOP_TEST, "after": ill}), "invalid_ir")
 
+  def test_attributes_alive2_ignores_do_not_count(self):
+    head = "@f(i32 %n) local_unnamed_addr norecurse nosync {"
+    self.assertTrue(self.reshaped(TOP_TEST, TOP_TEST.replace("@f(i32 %n) {", head)))
+    read = TOP_TEST.replace("@f(i32 %n) {", "@f(i32 %n) nofree {")
+    self.assertFalse(self.reshaped(TOP_TEST, read))
+
   def test_undef_is_refused(self):
     undef = TOP_TEST.replace("[ 0, %entry ], [ %i", "[ undef, %entry ], [ %i")
     self.bad(run("reshaped", {"before": TOP_TEST, "after": undef}), "undef")
@@ -3189,6 +3204,11 @@ entry:
 """
     held = self.marked(plain, "(<2 x ptr> %v)", "(<2 x ptr> writeonly %v)")
     self.assertIn("more than an address", self.answer(plain, held)["why"])
+
+  def test_attributes_alive2_ignores_do_not_count(self):
+    fn = "(ptr readonly %p, i32 %n) local_unnamed_addr norecurse memory(argmem: read) {"
+    held = self.marked(READ_LOOP, "(ptr %p, i32 %n) {", fn)
+    self.assertTrue(self.answer(READ_LOOP, held)["respected"])
 
   def test_modules_that_differ_in_more_than_these_attributes(self):
     other = self.marked(READ_LOOP, "add i32 %s, %v", "sub i32 %s, %v")

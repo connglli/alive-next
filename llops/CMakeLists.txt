@@ -29,6 +29,7 @@ add_definitions(${LLVM_DEFINITIONS_LIST})
 
 set(LLOPS_SOURCES
   src/irutil.cpp
+  src/attrs.cpp
   src/validate.cpp
   src/canon.cpp
   src/number.cpp

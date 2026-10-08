@@ -1,5 +1,6 @@
 #include "respected.h"
 
+#include "attrs.h"
 #include "irutil.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/InstIterator.h"
@@ -194,6 +195,8 @@ llvm::json::Object respectedCmd(llvm::json::Object &args) {
   // `after` is read with its attributes, and then compared to `before` without them.
   Why why = broken(*after);
   dropCheckedAttrs(*after);
+  dropIgnoredAttrs(*beforeMwc->mod);
+  dropIgnoredAttrs(*afterMwc->mod);
   if (printModule(*beforeMwc->mod) != printModule(*afterMwc->mod))
     why = "after is not before with only attributes this check reads added";
 

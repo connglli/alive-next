@@ -1,5 +1,6 @@
 #include "reshaped.h"
 
+#include "attrs.h"
 #include "irutil.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/Constants.h"
@@ -565,6 +566,9 @@ llvm::json::Object reshapedCmd(llvm::json::Object &args) {
   llvm::Function *after = singleFunction(*afterMwc->mod);
   if (!before || !after)
     return errResponse("shape_error", "reshaped needs one defined function in each module");
+  // The attributes alive2 ignores do not count.
+  dropIgnoredAttrs(*beforeMwc->mod);
+  dropIgnoredAttrs(*afterMwc->mod);
   // The walk takes each use to be dominated by its definition, as the verifier checks.
   for (auto *mwc : {beforeMwc.get(), afterMwc.get()})
     if (auto diags = checkModule(*mwc->mod); !diags.empty())

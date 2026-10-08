@@ -1,5 +1,6 @@
 #include "validate.h"
 
+#include "attrs.h"
 #include "irutil.h"
 
 #include "llvm/IR/Attributes.h"
@@ -37,32 +38,20 @@ std::string signatureOf(const llvm::Function &F) {
   return fn.empty() ? sig : sig + " {" + fn + "}";
 }
 
-// The attributes that change what the function's instructions may do, as alive2
-// reads them; recheck the lists when alive2 is updated.
+// The attributes that change what the function's instructions may do.
 llvm::json::Array bodyAttrsOf(const llvm::Function &F) {
-  using Attr = llvm::Attribute;
-  static const Attr::AttrKind fnKinds[] = {Attr::NoFree,     Attr::NoReturn,
-                                           Attr::WillReturn, Attr::NullPointerIsValid,
-                                           Attr::AllocSize,  Attr::AllocKind};
-  static const llvm::StringRef fnStrings[] = {"denormal-fp-math", "denormal-fp-math-f32",
-                                              "alloc-family"};
-  static const Attr::AttrKind paramKinds[] = {
-      Attr::Captures,    Attr::ReadOnly, Attr::WriteOnly,        Attr::ReadNone,
-      Attr::Initializes, Attr::Returned, Attr::AllocatedPointer, Attr::AllocAlign};
   llvm::json::Array found;
   const llvm::AttributeList &AL = F.getAttributes();
-  for (const Attr &A : AL.getFnAttrs()) {
-    bool body = A.isStringAttribute()
-                    ? llvm::is_contained(fnStrings, A.getKindAsString())
-                    : llvm::is_contained(fnKinds, A.getKindAsEnum()) ||
-                          (A.hasAttribute(Attr::Memory) &&
-                           A.getMemoryEffects() != llvm::MemoryEffects::unknown());
-    if (body)
+  for (const llvm::Attribute &A : AL.getFnAttrs()) {
+    // A memory attribute that allows everything limits nothing.
+    bool limits = !A.hasAttribute(llvm::Attribute::Memory) ||
+                  A.getMemoryEffects() != llvm::MemoryEffects::unknown();
+    if (fnAttrMeaning(A) == AttrMeaning::Body && limits)
       found.push_back(A.getAsString());
   }
   for (unsigned k = 0; k < F.arg_size(); ++k)
-    for (const Attr &A : AL.getParamAttrs(k))
-      if (!A.isStringAttribute() && llvm::is_contained(paramKinds, A.getKindAsEnum()))
+    for (const llvm::Attribute &A : AL.getParamAttrs(k))
+      if (paramAttrMeaning(A) == AttrMeaning::Body)
         found.push_back(A.getAsString());
   return found;
 }

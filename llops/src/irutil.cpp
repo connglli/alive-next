@@ -1,5 +1,7 @@
 #include "irutil.h"
 
+#include "attrs.h"
+
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
@@ -201,6 +203,14 @@ bool holdsLoop(const llvm::Function &F) {
 
 std::vector<Diag> checkFunction(llvm::Function &F) {
   std::vector<Diag> diags;
+
+  for (unsigned k = 0; k < F.arg_size(); ++k)
+    for (const llvm::Attribute &A : F.getAttributes().getParamAttrs(k))
+      if (paramAttrMeaning(A) == AttrMeaning::Refused) {
+        diags.push_back({Diag::Severity::Error, "unsupported_attr",
+                         "alive2 does not check '" + A.getAsString() + "' on a parameter"});
+        return diags;
+      }
 
   // Calls must go to a declared function: a call to the one defined function
   // is recursion, and an indirect call has no callee to check against.
