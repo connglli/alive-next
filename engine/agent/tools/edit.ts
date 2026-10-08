@@ -59,6 +59,26 @@ export const Op = Type.Union(
           "Remove the function's memory, nofree, readonly, writeonly, readnone and captures(none) attributes, which keep it from being cut.",
       },
     ),
+    Type.Object(
+      {
+        op: Type.Literal("splice"),
+        from: Ref,
+        to: Ref,
+        with: Type.Object({
+          program: Type.String({ description: "The other program, by its id, such as p4." }),
+          from: Ref,
+          to: Ref,
+        }),
+        value_map: Type.Record(Type.String(), Type.String(), {
+          description:
+            'Each value of this program the ranges involve, paired with its partner in the other, such as { "%3": "%5" }.',
+        }),
+      },
+      {
+        description:
+          "Replace the instructions from `from` to `to` with a copy of another program's instructions from `with.from` to `with.to`, reading values through `value_map`.",
+      },
+    ),
     Type.Object({
       op: Type.Literal("flags"),
       v: Ref,
@@ -84,7 +104,15 @@ export function createEditTool(session: Session) {
       "Rewrite the open transaction's program. Answers with the body as it now stands, or, when the operation is refused, with the body it was refused on. Value references move as a body is edited, so address the body you were last answered with.",
     parameters: Op,
     execute: async (_id, params) => {
-      const edited = await session.edit(params as EditOp);
+      // A splice names the other program by its id, and llops takes its text.
+      const op =
+        params.op === "splice"
+          ? {
+              ...params,
+              with: { ...params.with, module: (await session.program(params.with.program)).text },
+            }
+          : params;
+      const edited = await session.edit(op as EditOp);
       if (edited.kind === "refused") {
         return toolResult(
           false,

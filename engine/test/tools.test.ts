@@ -364,6 +364,20 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(await callFrom(droppingTools, "tx_commit", {})).toContain("certified, g1 tgt is");
   });
 
+  test("a splice takes a window of another program by its id", async () => {
+    await call("tx_begin", { gid: "g1", side: "src" });
+    const spliced = await call("tx_edit", {
+      op: "splice",
+      from: "%2",
+      to: "%2",
+      with: { program: "p2", from: "%2", to: "%2" },
+      value_map: { "%1": "%1", "%2": "%2" },
+    });
+    expect(spliced).toContain("applied, 1 edit so far");
+    expect(spliced).toContain("shl i32");
+    await call("tx_abort", {});
+  });
+
   test("a goal is proved through the program a transaction made", async () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     await call("tx_edit", { op: "commute", v: "%2" });
