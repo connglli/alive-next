@@ -66,6 +66,7 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   const [eagerMs, capMs] = [budgets.eagerCheckMs, budgets.checkCapMs];
   const run: Run = { session, llops, limits, eagerMs, capMs, assumed: new Map() };
   await unrolling(session, llops, root, limits.counterexampleMs);
+  await dropAttrs(session, llops, root);
   const { src, tgt } = await session.show(root);
   const walking = limits.stages && limits.steps;
   const stages = walking ? await stagesToward(llops, src.text, tgt.text) : [];
@@ -87,6 +88,18 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
     await session.giveUp(`no move closed ${open.map((g) => g.gid).join(", ")}`);
   }
   return session.verdict;
+}
+
+/** Drops from the tgt the attributes `llops respected` shows its instructions keep. */
+async function dropAttrs(session: Session, llops: Llops, gid: string) {
+  const held = await llops.validate((await session.show(gid)).tgt.text);
+  if (!held.ok || held.body_attrs.length === 0) return;
+  await session.begin(gid, "tgt");
+  if ((await session.edit({ op: "drop_attrs" })).kind !== "applied") {
+    await session.abort();
+    return;
+  }
+  await session.commit({ eager: false });
 }
 
 /** Acts on the top goal's answer: a proof closes it, a refutation repairs, goals stack. */

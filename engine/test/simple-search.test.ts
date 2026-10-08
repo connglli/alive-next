@@ -375,6 +375,33 @@ exit:
     expect([...session.tree.goals.values()].some((goal) => goal.role === "lhs")).toBe(true);
   }, 180_000);
 
+  test("drops the attributes a tgt's loop respects, so it can cut", async () => {
+    const src = `define i32 @f(i32 noundef %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %s = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  %c = icmp slt i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %s.next = add i32 %s, %i
+  %i.next = add nsw i32 %i, 1
+  br label %head
+
+exit:
+  ret i32 %s
+}
+`;
+    const tgt = src
+      .replace("add i32 %s, %i", "add i32 %i, %s")
+      .replace("%n) {", "%n) memory(none) {");
+    const session = await start(src, tgt, aliveTv);
+    expect(await search(session, llops, limits)).toBe("verified");
+  }, 120_000);
+
   test("leaves e4, which is no refinement, unknown", async () => {
     expect(await run("e4")).toBe("unknown");
   }, 120_000);
