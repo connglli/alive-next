@@ -422,6 +422,14 @@ def bare(package: Package, module: str, name: str) -> bool:
   return function(package, module, name)["bare"] is True
 
 
+def body_attrs(package: Package, module: str) -> list:
+  """The attributes that change what the instructions of a program's function may do."""
+  attrs = package.run_llops("validate", {"module": module}).get("body_attrs")
+  if not isinstance(attrs, list):
+    raise Refused("llops validate does not list body_attrs")
+  return attrs
+
+
 def function(package: Package, module: str, name: str) -> dict:
   """What `llops validate` says about one function the module names."""
   fn = package.run_llops("validate", {"module": module}).get("functions", {}).get(name)
@@ -479,6 +487,20 @@ class Check:
         self.failed += 1
       else:
         self.unresolved += 1
+
+  def outlined(self, gid: str, side: str, module: str) -> None:
+    """A cut or a window moves no instruction out of a function with body_attrs."""
+    started = time.monotonic()
+    held = body_attrs(self.package, module)
+    self.report(
+      result="FAIL" if held else "OK",
+      gid=gid,
+      side=side,
+      tool="llops",
+      check="Outlined body",
+      notes=f"has {', '.join(held)}" if held else "no body_attrs",
+      ms=elapsed_ms(started),
+    )
 
   def fail(self, gid: str, side: str, check: str, notes: str) -> None:
     """Record a structural failure; the caller decides whether to continue."""
@@ -852,6 +874,7 @@ class Check:
         matches,
         ms,
       )
+    self.outlined(gid, side, self.package.program(step["from"]))
 
     if preconditions:
       # Phase 1: Insert assumes before call in outer and verify whole-function
@@ -1117,6 +1140,7 @@ class Check:
         matches,
         ms,
       )
+      self.outlined(gid, side, whole)
 
     # The outer was checked against a declaration; the callee proves a
     # definition. An attribute on one and not the other is a claim nobody

@@ -45,6 +45,8 @@ export interface ValidateResult {
   conforms: boolean;
   /** Whether the body holds a loop. */
   cyclic: boolean;
+  /** The attributes that change what the function's instructions may do. */
+  body_attrs: string[];
   diagnostics: Diagnostic[];
   functions?: Record<string, FunctionMeta>;
 }
@@ -457,6 +459,22 @@ export async function definedIn(
   const functions = Object.entries(result.functions ?? {});
   const [name = ""] = functions.find(([, fn]) => fn.defined) ?? [];
   return { name };
+}
+
+/** Why a program's function may not be cut or narrowed, or nothing when it may. */
+export async function unoutlinable(
+  llops: Llops,
+  module: Module,
+  what: string,
+): Promise<string | undefined> {
+  const result = await llops.validate(module);
+  if (!result.ok) return `${what}: llops validate: ${result.message}`;
+  const held = [...new Set(result.body_attrs)];
+  if (held.length === 0) return undefined;
+  return (
+    `${what} has ${held.join(", ")}, which alive2 applies only to the function's own ` +
+    "instructions, so none of its instructions may move into another function"
+  );
 }
 
 /** A body's instructions, block by block, in index order. */

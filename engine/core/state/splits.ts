@@ -18,12 +18,13 @@
 // A cut that names a block detaches it: the block and every block it reaches
 // become the callee, each branch to it a call, and a back edge a call of the
 // hypothesis, the declaration `llops detach` makes to stand for the callee.
-import type {
-  DetachResult,
-  Llops,
-  LlopsResult,
-  OutlineParam,
-  ParamSpec,
+import {
+  type DetachResult,
+  type Llops,
+  type LlopsResult,
+  type OutlineParam,
+  type ParamSpec,
+  unoutlinable,
 } from "../drivers/llops.ts";
 import type { Ref } from "../refs.ts";
 import { type GoalId, head, interposed, nextGoalIds, type Tree, workable } from "./goals.ts";
@@ -92,6 +93,13 @@ export class Splits {
 
     const srcModule = this.store.get(head(goal, "src"));
     const tgtModule = this.store.get(head(goal, "tgt"));
+    for (const [side, module] of [
+      ["src", srcModule],
+      ["tgt", tgtModule],
+    ] as const) {
+      const message = await unoutlinable(this.llops, module, `the ${side}`);
+      if (message) return { kind: "refused", side, code: "invalid", message };
+    }
     const atBlock = namesBlock(srcCut, srcModule);
     if (atBlock !== namesBlock(tgtCut, tgtModule)) {
       const message = "the two cuts must both name blocks or both name instructions";

@@ -333,6 +333,15 @@ entry:
     });
   });
 
+  test("does not narrow a function whose attributes change what it may do", async () => {
+    const held = (module: string) => module.replace("%p1) {", "%p1) nofree {");
+    const [before, after] = [held(BEFORE), held(AFTER)];
+    const why = expect.stringContaining("the function has nofree");
+    expect(await narrow(llops, await canon(before), await canon(after))).toEqual({ why });
+    const at = { from: "%v1", to: "%v2" };
+    expect(await narrowAt(llops, before, after, at)).toEqual({ why });
+  });
+
   test("outlines an explicit user-supplied window with narrowAt", async () => {
     const before = `define i32 @f(i32 %x, i32 %y) {
 entry:

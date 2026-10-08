@@ -261,6 +261,20 @@ join:
     expect(result).toMatchObject({ kind: "refused", side: "src", code: "not_found" });
   });
 
+  test("refuses a side whose attributes change what its instructions may do", async () => {
+    const held = PROGRAM.replace("%y) {", "%y) nofree memory(none) {");
+    const [splits, map] = [new Splits(store, llops), { "%2": "%2", "%0": "%0" }];
+    for (const [side, pair] of [
+      ["tgt", [PROGRAM, held]],
+      ["src", [held, PROGRAM]],
+    ] as const) {
+      const result = await splits.split(await start(...pair), "g1", "%3", "%3", map);
+      expect(result).toMatchObject({ kind: "refused", side, code: "invalid" });
+      expect(result.kind === "refused" && result.message).toContain("nofree, memory(none)");
+      events = [];
+    }
+  });
+
   test("refuses a map that leaves a live value uncovered", async () => {
     const splits = new Splits(store, llops);
     const result = await splits.split(await start(), "g1", "%3", "%3", { "%2": "%2" });

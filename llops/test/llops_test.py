@@ -208,6 +208,27 @@ declare i32 @h(i32)
     self.assertEqual(funcs["f"]["signature"], "noundef i32(i32 noundef) {memory(none)}")
     self.assertEqual([funcs[n]["bare"] for n in "fgh"], [False, False, True])
 
+  def test_body_attributes(self):
+    held = """define i32 @f(ptr readonly captures(none) %p, i32 %x) #0 {
+entry:
+  ret i32 %x
+}
+
+attributes #0 = { nofree memory(argmem: read) "denormal-fp-math"="ieee" }
+"""
+    r = self.good(run("validate", {"module": held}))
+    fn = ["nofree", "memory(argmem: read)", '"denormal-fp-math"="ieee"']
+    self.assertEqual(r["body_attrs"], [*fn, "readonly", "captures(none)"])
+    # Attributes on the arguments and the return value do not count.
+    inputs = """define range(i32 0, 9) i32 @f(ptr nonnull align 4 %p, i32 noundef %x) #0 {
+entry:
+  ret i32 %x
+}
+
+attributes #0 = { nounwind "frame-pointer"="all" }
+"""
+    self.assertEqual(self.good(run("validate", {"module": inputs}))["body_attrs"], [])
+
   def test_use_before_def(self):
     module = """define i32 @f(i32 %x, i32 %y) {
 entry:

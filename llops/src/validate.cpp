@@ -37,6 +37,36 @@ std::string signatureOf(const llvm::Function &F) {
   return fn.empty() ? sig : sig + " {" + fn + "}";
 }
 
+// The attributes that change what the function's instructions may do, as alive2
+// reads them; recheck the lists when alive2 is updated.
+llvm::json::Array bodyAttrsOf(const llvm::Function &F) {
+  using Attr = llvm::Attribute;
+  static const Attr::AttrKind fnKinds[] = {Attr::NoFree,     Attr::NoReturn,
+                                           Attr::WillReturn, Attr::NullPointerIsValid,
+                                           Attr::AllocSize,  Attr::AllocKind};
+  static const llvm::StringRef fnStrings[] = {"denormal-fp-math", "denormal-fp-math-f32",
+                                              "alloc-family"};
+  static const Attr::AttrKind paramKinds[] = {
+      Attr::Captures,    Attr::ReadOnly, Attr::WriteOnly,        Attr::ReadNone,
+      Attr::Initializes, Attr::Returned, Attr::AllocatedPointer, Attr::AllocAlign};
+  llvm::json::Array found;
+  const llvm::AttributeList &AL = F.getAttributes();
+  for (const Attr &A : AL.getFnAttrs()) {
+    bool body = A.isStringAttribute()
+                    ? llvm::is_contained(fnStrings, A.getKindAsString())
+                    : llvm::is_contained(fnKinds, A.getKindAsEnum()) ||
+                          (A.hasAttribute(Attr::Memory) &&
+                           A.getMemoryEffects() != llvm::MemoryEffects::unknown());
+    if (body)
+      found.push_back(A.getAsString());
+  }
+  for (unsigned k = 0; k < F.arg_size(); ++k)
+    for (const Attr &A : AL.getParamAttrs(k))
+      if (!A.isStringAttribute() && llvm::is_contained(paramKinds, A.getKindAsEnum()))
+        found.push_back(A.getAsString());
+  return found;
+}
+
 llvm::json::Object extractFunctions(llvm::Module &M) {
   llvm::json::Object funcs;
   for (const llvm::Function &F : M) {
@@ -153,6 +183,7 @@ llvm::json::Object validateCmd(llvm::json::Object &args) {
   resp["conforms"] = diags.empty();
   llvm::Function *F = singleFunction(*mwc->mod);
   resp["cyclic"] = F && holdsLoop(*F);
+  resp["body_attrs"] = F ? bodyAttrsOf(*F) : llvm::json::Array();
   addDiagnostics(resp, diags);
   resp["functions"] = extractFunctions(*mwc->mod);
   return resp;

@@ -84,7 +84,7 @@ Two alive2 checks replace the one big check:
 
 The declared `g` must have one signature shared by both sides. The signature is determined by the src side's live values at the cut, and the agent must supply a value map saying which tgt value corresponds to each src live value. Whether the map is *correct* is not trusted: alive2's outer check verifies that corresponding arguments refine each other. When the tgt needs a value that has no src counterpart at the cut, the map lists it under a key that is not a src value, and the src passes `poison` in its place, which any value refines.
 
-The only trusted glue is that outlining is faithful: the outer calling the callee runs as the original program does. That is mechanical, since llops refuses to move code that depends on its frame.
+The only trusted glue is that outlining is faithful: the outer calling the callee runs as the original program does. That is mechanical, since no code is moved that depends on its frame or on its function's attributes, such as `memory(none)`.
 
 A split at a block detaches it instead: the block and every block it reaches become `g`, and each branch to the block becomes a call of `g`. At a loop header, the back edge calls a declared hypothesis `g.ih` in place of `g`, so the callee is one iteration and does not loop. Proving that pair, with `g.ih` an unknown function both sides share, proves the loop by induction: each side calls `g.ih` where it would go around again, so a tgt cannot stop where the src goes on. The glue a checker trusts is `reattach`, the inverse of detaching, as `inline` is of outlining.
 

@@ -26,6 +26,7 @@ import {
   type Llops,
   type Module,
   type OutlineParam,
+  unoutlinable,
 } from "../drivers/llops.ts";
 import { type Ref, resolveRef } from "../refs.ts";
 
@@ -73,6 +74,8 @@ export async function narrow(
   before: Module,
   after: Module,
 ): Promise<Narrowed | NoWindow> {
+  const held = await unoutlinable(llops, before, "the function");
+  if (held) return { why: held };
   // Both sides are canonicalised first, because what the two bodies have in
   // common is read line by line and a scratch program names its values
   // whatever the edits called them. Two programs that differ only in names
@@ -106,6 +109,8 @@ export async function narrowAt(
   after: Module,
   userWindow: Window,
 ): Promise<Narrowed | NoWindow> {
+  const held = await unoutlinable(llops, before, "the function");
+  if (held) return { why: held };
   const listed = await llops.number(before);
   if (!listed.ok) return { why: listed.message };
   const resolved = resolveWindow(listed.body, userWindow);

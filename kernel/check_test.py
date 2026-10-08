@@ -849,10 +849,10 @@ class TestGolden(Case):
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
     self.assertIn("the run used LLVM 19.1.0", done.stdout)
 
-  def cut(self) -> Path:
+  def cut(self, tgt: str = TGT) -> Path:
     """A package whose root is discharged by a cut, built with llops."""
     canon = llops("canon", {"module": SRC})["module"]
-    canon_tgt = llops("canon", {"module": TGT})["module"]
+    canon_tgt = llops("canon", {"module": tgt})["module"]
     src = llops("outline", {"module": canon, "side": "src", "cut": "%1", "callee": "g"})
     tgt = llops(
       "outline",
@@ -1497,6 +1497,18 @@ declare i32 @k.ih(i32)
     )
     self.built.write()
     self.refused(package, "Strengthening replay")
+
+  def test_a_cut_of_a_function_with_body_attrs(self):
+    # alive2 applies memory(none) only to the tgt's own instructions, not the callee's.
+    held = TGT.replace("%0) {", "%0) memory(none) {")
+    self.refused(TestGolden.cut(self, held), "Outlined body")
+
+  def test_a_window_of_a_function_with_body_attrs(self):
+    head = "define i32 @f(i32 %0) nofree {\nentry:\n"
+    tail = "  %2 = add i32 %1, 1\n  ret i32 %2\n}\n"
+    mul, shl = (f"{head}  %1 = {op}\n{tail}" for op in ("mul i32 %0, 2", "shl i32 %0, 1"))
+    self.windowed(mul, shl)
+    self.refused(self.built.write(), "Outlined body")
 
   def test_a_window_that_does_not_inline_back(self):
     # The step claims one window changed and the rest came through. A
