@@ -16,7 +16,13 @@ export function createAnalyzeTool(session: Session) {
     parameters: Type.Object({
       gid: Type.String(),
       side: Type.Union([Type.Literal("src"), Type.Literal("tgt")]),
-      kind: Type.Union(KINDS.map((kind) => Type.Literal(kind))),
+      kind: Type.Union(
+        KINDS.map((kind) => Type.Literal(kind)),
+        {
+          description:
+            "knownbits: the bits known to be 0 or 1. ranges: the bounds a value stays within. pointer: a pointer's alignment, how many bytes from it are known to be accessible, and whether it may be null. defined: whether a value may be poison. scev: how a value changes from one loop iteration to the next, as LLVM's ScalarEvolution writes it, such as {%0,+,1}<%loop> for one that starts at %0 and grows by 1.",
+        },
+      ),
       point: Type.Optional(
         Type.String({
           description:

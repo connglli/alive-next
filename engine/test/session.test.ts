@@ -493,7 +493,7 @@ entry:
     expect(checker.calls).toBe(0);
   });
 
-  test("a pair whose functions are named apart is refused before the run starts", async () => {
+  test("a pair whose functions have different names is refused before the run starts", async () => {
     const checker = new YesMan();
     const attempt = Session.start({
       dir: join(dir, "named"),

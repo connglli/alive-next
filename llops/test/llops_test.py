@@ -1884,7 +1884,7 @@ entry:
 
   def test_values_come_back_in_the_order_the_rest_uses_them(self):
     # Swapping where two values are defined leaves their uses alone, so both
-    # versions hand them back alike and their outers agree.
+    # versions hand them back in the same order and their outers agree.
     swapped = SWAPPED_LOOP.replace(
       "  %i.next = add i32 %i, 1\n  %j.next = add i32 %j, 2\n",
       "  %j.next = add i32 %j, 2\n  %i.next = add i32 %i, 1\n",

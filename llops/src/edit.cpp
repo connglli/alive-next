@@ -176,8 +176,8 @@ llvm::json::Object splice(llvm::json::Object &args, CmdShape &shape) {
     llvm::RemapInstruction(copy, vmap,
                            llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs);
 
-  // A later use of a replaced value now uses its partner: a copied value, or a
-  // value of this module that the copy reads.
+  // A later use of a replaced value takes its partner instead: a copied value,
+  // or a value of this module that the copy reads.
   for (auto *I : liveOutOf(F, window, inside)) {
     auto it = standsFor.find(I);
     llvm::Value *now = nullptr;

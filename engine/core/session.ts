@@ -210,8 +210,8 @@ export class Session {
     if (session.log.read().length > 0) throw new Error(`${options.dir} already holds a run`);
     const named = await session.refuseOutsideShape("src", options.src);
     const other = await session.refuseOutsideShape("tgt", options.tgt);
-    // alive2 compares two modules' functions by name, so a pair named apart
-    // would be asked nothing at every check.
+    // alive2 compares two modules' functions by name, so a pair whose functions
+    // have different names would be asked nothing at every check.
     if (named !== other)
       throw new Error(
         `the src defines @${named} and the tgt @${other}; ` +

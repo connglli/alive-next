@@ -1,4 +1,4 @@
-# AGENTS.md — the documentation standard
+# AGENTS.md: the documentation standard
 
 How to write the prose that stays: the documents under `docs/`, the header comments that explain a design, the notes under [.agents/notes/](../.agents/notes/), and the commit messages that record a change. [AGENTS.md](../AGENTS.md) owns the engineering rules; this file owns the writing.
 
@@ -48,7 +48,7 @@ One physical line per paragraph. Use editor soft-wrap. Code blocks, tables, and 
 
 Sentence case headers. Plain `*` bullets, no emoji (unless in the top-level README.md). Straight quotes and apostrophes. Em dashes sparingly, since two on a page is already many; commas and parentheses do the same work.
 
-No `* **Header:** description` lists. Tables only where the data is tabular: two facts are a sentence.
+A bold title and a colon, `**Title**:`, may open a list item or a paragraph that needs a small title. Tables only where the data is tabular: two facts are a sentence.
 
 Code blocks carry LLVM IR, JSON payloads, a shell invocation, or a pipeline sketch, and have to be true. An IR snippet is something a reader will paste into `llops` or `alive-tv`.
 
@@ -56,7 +56,7 @@ Link with relative paths that resolve, as [docs/design.md](./design.md), never a
 
 ## The slop checklist
 
-Hunt these in any document you touch. Four are mechanical, so grep first: the temporal words ("now", "currently", "previously", "no longer", "used to"), a distinctive phrase from any rule you stated, `**` runs beyond a term's first mention, and a number with no measurement behind it.
+Hunt these in any document you touch. Four are mechanical, so grep first: the temporal words ("now", "currently", "previously", "no longer", "used to"), a distinctive phrase from any rule you stated, `**` runs beyond a term's first mention or a small title, and a number with no measurement behind it.
 
 * The same rule stated in two homes. Keep one, link the other.
 * Narrated history in durable prose: "previously", "was renamed", a commit or branch cited as if it were a fact about the code.

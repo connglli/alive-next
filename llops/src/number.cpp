@@ -26,10 +26,10 @@ std::string lineOf(const llvm::Instruction &I, llvm::ModuleSlotTracker &mst) {
 }
 
 // The line without its result, with poison for every operand the function
-// defines and `anywhere` for every block, so that two instructions doing the
-// same thing to different values or blocks share it. The copy prints beside
-// the original, since a copy outside the module would spell out what the
-// module implies, such as an address space.
+// defines and `anywhere`, printed `%_`, for every block, so that two
+// instructions doing the same thing to different values or blocks share it.
+// The copy prints beside the original, since a copy outside the module would
+// spell out what the module implies, such as an address space.
 std::string formOf(llvm::Instruction &I, llvm::BasicBlock &anywhere, llvm::ModuleSlotTracker &mst) {
   llvm::Instruction *copy = I.clone();
   copy->insertBefore(I.getIterator());

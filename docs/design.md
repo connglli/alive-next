@@ -62,7 +62,7 @@ The framework state has two parts: an immutable **program store** and a **goal t
 - A step on the `src` side replaces S with S' and must show S' refines S (alive2 with src=S, tgt=S'). Then "tgt refines S'" plus this step gives "tgt refines S" by transitivity. This is optimizing the source forward.
 - A step on the `tgt` side replaces T with T' and must show T refines T' (alive2 with src=T', tgt=T). Then "T' refines src" plus this step gives "T refines src". This is deoptimizing the target backward.
 
-**Steps.** A step is a certified transition on one side of one goal. A step is certified in one of two ways: by applying a pre-proved rewrite rule (no alive2 run needed), or by a check in the side-appropriate direction: by `llops reshaped` or `llops respected` when the step only reshapes control flow or changes attributes (see "Steps checked without a solver"), and otherwise by alive2, of either the before/after pair or the window it differs in, which never loops (see "Narrowing a step to what it changed"). The head of a side is the latest program in its history; all tools operate on heads.
+**Steps.** A step is a certified transition on one side of one goal. A step is certified in one of three ways: by applying a pre-proved rewrite rule (no alive2 run needed), by unfolding a loop cut at its header, which a checker repeats (see "Decomposition = outlining"), or by a check in the side-appropriate direction: by `llops reshaped` or `llops respected` when the step only reshapes control flow or changes attributes (see "Steps checked without a solver"), and otherwise by alive2, of either the before/after pair or the window it differs in, which never loops (see "Narrowing a step to what it changed"). The head of a side is the latest program in its history; all tools operate on heads.
 
 **Intermediate programs.** A goal can be split at a program M between its two sides into (src, M) and (M, tgt): M refining the src and the tgt refining M prove the goal by transitivity, as two steps along a chain do. This rewrites rather than decomposes, since no program is taken apart, and it lets a step that one query cannot certify be proved as a goal of its own.
 
@@ -237,7 +237,7 @@ Both children are cross-checked once at the end, after phase 3, and not between 
 
 ## Certificate package
 
-A "verified" verdict is delivered as a self-contained package that anyone can replay with only alive2, the rule applier, and a scripting runtime; the framework and the agent are not needed. Layout:
+A "verified" verdict is delivered as a self-contained package that anyone can replay with only alive2, llops, the rule applier, and a scripting runtime; the framework and the agent are not needed. Layout:
 
 - `programs/`: every IR version referenced by the proof, one file per program, named by content hash. Hash naming makes chain connectivity a trivial string comparison.
 - `manifest.json`: the pruned goal tree. Per goal: its initial (src, tgt) hashes, its chain of certified steps, and how it was discharged, with the checker for a checked leaf. Per step: kind (rule, checked, unfold, split, strengthen), side, before/after hashes, for checked steps the checker (alive2, `llops reshaped` or `llops respected`), and for alive2-backed steps the exact invocation (function pair, direction, options, timeout).
@@ -253,7 +253,7 @@ The script verifies:
 6. Identical discharges: a leaf whose two sides are the same program needs no solver.
 7. Composition: the root is verified iff every leaf discharge and every faithfulness check passed and every parent's children are accounted for.
 
-The consequence for trust is significant: the framework is now just a search assistant and drops out of the trust base entirely. Anything it gets wrong (bookkeeping, direction, outlining) surfaces as a failed replay. The composition rule and the faithfulness check live in `kernel/check.py`, which is small, standalone, and auditable.
+The consequence for trust is significant: the framework is only a search assistant and drops out of the trust base entirely. Anything it gets wrong (bookkeeping, direction, outlining) surfaces as a failed replay. The composition rule and the faithfulness check live in `kernel/check.py`, which is small, standalone, and auditable.
 
 A "counterexample" verdict ships the symmetric package: the two root programs and a script that asks the named checker again. An executed counterexample also carries its input, and the script runs both programs on it under llubi; a pair alive-tv refuted carries no input, and the script asks alive-tv the same question again.
 
