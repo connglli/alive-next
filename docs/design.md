@@ -243,15 +243,7 @@ A "verified" verdict is delivered as a self-contained package that anyone can re
 - `manifest.json`: the pruned goal tree. Per goal: its initial (src, tgt) hashes, its chain of certified steps, and how it was discharged, with the checker for a checked leaf. Per step: kind (rule, checked, unfold, split, strengthen), side, before/after hashes, for checked steps the checker (alive2, `llops reshaped` or `llops respected`), and for alive2-backed steps the exact invocation (function pair, direction, options, timeout).
 - `check.py`: a small standalone script that replays the proof, one step at a time.
 
-The script verifies:
-
-1. Chain connectivity: each step's before-hash matches the current head, starting from the root's LHS and RHS hashes.
-2. Checked steps and leaf discharges: rerun alive-tv on the recorded pair in the recorded direction, or the llops check that checked a step or leaf (`reshaped` or `respected`); alive-tv must answer "correct", and llops yes. Replay timeouts should be more generous than the originals, since solver timing varies across machines.
-3. Rule and unfold steps: re-apply the recorded rule at the recorded location, or unfold again, and check that the output matches the after-hash.
-4. Split faithfulness: inline the callee back into the outer program at the call site, or reattach a detached one, and check alpha-equivalence against the parent's program, per side. Mechanical.
-5. Interposed programs: the `lhs` half of an interposed goal starts at the goal's src and the program, the `rhs` half at the program and the goal's tgt. Mechanical.
-6. Identical discharges: a leaf whose two sides are the same program needs no solver.
-7. Composition: the root is verified iff every leaf discharge and every faithfulness check passed and every parent's children are accounted for.
+The script checks that every chain connects, from the root's two programs on, and reruns the checker, the rule or the unfold behind every step and every leaf. It checks that every cut, put back together, gives the program it was made on, and that every interposed program sits between its goal's two sides. It verifies the root only when every goal under it passed; [implementation.md](./implementation.md#certificate-package-and-checkpy) lists the replay step by step. Replay timeouts should be more generous than the originals, since solver timing varies across machines.
 
 The consequence for trust is significant: the framework is only a search assistant and drops out of the trust base entirely. Anything it gets wrong (bookkeeping, direction, outlining) surfaces as a failed replay. The composition rule and the faithfulness check live in `kernel/check.py`, which is small, standalone, and auditable.
 
