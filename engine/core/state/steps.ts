@@ -149,13 +149,14 @@ export type CheckStepResult =
       /** In order: the step, then the discharge when the eager check proved it. */
       effects: Effect[];
       /**
-       * Who checked it: alive2, or `llops reshaped` when the step only
-       * reshapes control flow, which needs no solver.
+       * Who checked it: alive2, or with no solver `llops reshaped` when the
+       * step only reshapes control flow, and `llops respected` when it only
+       * changes attributes the instructions respect.
        */
-      by: "alive2" | "reshaped";
+      by: "alive2" | "reshaped" | "respected";
       /** What was asked: the window the edit touched, or the whole. */
       on: "window" | "whole";
-      /** alive2's answer, absent when `by` is "reshaped". */
+      /** alive2's answer, absent when llops answered. */
       check?: CheckResult;
       /**
        * Why the step holds without a preconditioned window: the whole was
@@ -342,10 +343,10 @@ export class Steps {
 
   /**
    * Replace one side of a goal with a new program, if a checker agrees that
-   * the goal's claim survives: `llops reshaped` when the step only reshapes
-   * control flow, and alive2 otherwise, on the window the edit touched and
-   * then on the whole. On refusal the head does not move and the reason comes
-   * back for the agent to work with.
+   * the goal's claim survives: `llops reshaped` or `llops respected` when the
+   * step only reshapes control flow or changes attributes, and otherwise
+   * alive2, on the window the edit touched and then on the whole. On refusal
+   * the head does not move and the reason comes back for the agent to work with.
    */
   async checkStep(
     tree: Tree,
@@ -363,14 +364,21 @@ export class Steps {
       // Nothing moved, so there is nothing to certify and nothing to record.
       return { kind: "refused", check: unasked("the edits leave the program as it was") };
     }
-    // A step that only reshapes control flow needs no solver, loops or not.
-    if (await this.reshaped(orient(side, beforeText, afterText))) {
-      const step: Effect = { effect: "step", gid, side, to: after, how: "check", by: "reshaped" };
+    // A step that only reshapes control flow, or only changes attributes the
+    // instructions respect, needs no solver, loops or not.
+    const pair = orient(side, beforeText, afterText);
+    const by = (await this.reshaped(pair))
+      ? "reshaped"
+      : (await this.respected(pair))
+        ? "respected"
+        : undefined;
+    if (by) {
+      const step: Effect = { effect: "step", gid, side, to: after, how: "check", by };
       const certified: Certified = {
         kind: "certified",
         hash: after,
         effects: [step],
-        by: "reshaped",
+        by,
         on: "whole",
       };
       return this.landed(goal, side, certified, options);
@@ -498,6 +506,12 @@ export class Steps {
   private async reshaped(pair: { src: string; tgt: string }): Promise<boolean> {
     const answer = await this.llops.reshaped(pair.src, pair.tgt);
     return answer.ok && answer.reshaped;
+  }
+
+  /** Whether the tgt only adds attributes to the src that its instructions respect. */
+  private async respected(pair: { src: string; tgt: string }): Promise<boolean> {
+    const answer = await this.llops.respected(pair.src, pair.tgt);
+    return answer.ok && answer.respected;
   }
 
   /** A certified step, then the cheap check of the new pair unless that is turned off. */

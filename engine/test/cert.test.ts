@@ -342,6 +342,33 @@ describe.skipIf(!built)("the manifest", () => {
     expect(only).toMatchObject({ kind: "check", side: "src", to: step.hash, by: "reshaped" });
   });
 
+  test("records a step that only dropped attributes the tgt respects", async () => {
+    const read = `define i32 @f(ptr %p) {
+entry:
+  %v = load i32, ptr %p, align 4
+  ret i32 %v
+}
+`;
+    const session = await Session.start({
+      dir: join(dir, "respected"),
+      src: read,
+      tgt: read.replace("(ptr %p) {", "(ptr readonly %p) memory(argmem: read) {"),
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    await session.begin("g1", "tgt");
+    await session.edit({ op: "drop_attrs" });
+    const step = await session.commit();
+    if (step.kind !== "certified") throw new Error("expected the step to land");
+    expect(session.finish()).toBe("verified");
+
+    const [only] = manifestFrom(session.dir).goals.g1?.steps ?? [];
+    const fields = { kind: "check", side: "tgt", to: step.hash, by: "respected" };
+    expect(only).toMatchObject(fields);
+  });
+
   test("records a goal proved through an interposed program, and both halves", async () => {
     const session = await Session.start({
       dir: join(dir, "interposed"),

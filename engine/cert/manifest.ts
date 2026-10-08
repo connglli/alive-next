@@ -32,15 +32,15 @@ export const VERSION = 1;
 export type Step =
   /**
    * A step a checker certified, in the direction the side implies: alive2, or
-   * `llops reshaped`, which asks no solver, when the step only reshaped
-   * control flow.
+   * `llops reshaped` or `llops respected`, which ask no solver, when the step
+   * only reshaped control flow or changed attributes.
    */
   | {
       kind: "check";
       side: "src" | "tgt";
       from: Hash;
       to: Hash;
-      by: "alive2" | "reshaped";
+      by: "alive2" | "reshaped" | "respected";
     }
   /**
    * A step the verified rewriter certified: the rules it ran and exactly what

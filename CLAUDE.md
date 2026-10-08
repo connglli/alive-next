@@ -16,7 +16,7 @@ Standard [alive2](https://github.com/AliveToolkit/alive2) validates whether a ta
 
 The agent/proof-writer is entirely untrusted. It explores search strategies: where to cut a function, which rewrites or simplifications to apply, which interface facts to assert, and which inputs to test for counterexamples. The framework strictly enforces the correctness of each decomposition step, subproof, and rewrite with respect to LLVM's operational semantics:
 
-* **Rewrite steps** are validated by `alive2`, by `llops reshaped` when they only reshape control flow, or by verified pre-proved rewrite rules.
+* **Rewrite steps** are validated by `alive2`, by `llops reshaped` or `llops respected` when they only reshape control flow or change attributes, or by verified pre-proved rewrite rules.
 * **Decomposition and interface facts** are validated by `alive2` through faithful outlining and certified call-site assertions.
 * **Counterexamples** are validated under the checker the certificate names: concrete execution replay under the UB-aware interpreter `llubi`, or `alive2` refuting the root's original pair.
 

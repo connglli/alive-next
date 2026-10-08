@@ -294,12 +294,12 @@ class Tree:
 
 
 def step_note(effect: dict) -> str | None:
-  """The rule behind a rewrite step, or `reshaped` for a step llops checked."""
+  """The rule behind a rewrite step, or the llops check behind a step llops checked."""
   rules = effect.get("rules")
   if isinstance(rules, list) and rules and all(isinstance(rule, str) for rule in rules):
     return ",".join(rules)
-  if effect.get("by") == "reshaped":
-    return "reshaped"
+  if effect.get("by") in ("reshaped", "respected"):
+    return effect["by"]
   return None
 
 

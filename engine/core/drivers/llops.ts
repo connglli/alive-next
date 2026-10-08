@@ -26,6 +26,12 @@ export interface ReshapedResult {
   why?: string;
 }
 
+/** What `respected` answers: whether one function only adds attributes it keeps. */
+export interface RespectedResult {
+  respected: boolean;
+  why?: string;
+}
+
 export interface FunctionParamMeta {
   index: number;
   type: string;
@@ -190,6 +196,7 @@ export type EditOp =
   | { op: "dedup"; a: Ref; b: Ref }
   | { op: "set_body"; body: string }
   | { op: "attrs"; fn: string; param?: number; attrs: Attrs }
+  | { op: "drop_attrs" }
   | { op: "flags"; v: Ref; flags: Record<string, boolean> }
   | {
       op: "splice";
@@ -361,6 +368,15 @@ export class Llops {
    */
   reshaped(before: Module, after: Module): Promise<LlopsResult<ReshapedResult>> {
     return this.run("reshaped", { before, after });
+  }
+
+  /**
+   * Whether the function `after` defines is the one `before` defines with
+   * attributes added that its own instructions cannot break, so that `after`
+   * refines `before`.
+   */
+  respected(before: Module, after: Module): Promise<LlopsResult<RespectedResult>> {
+    return this.run("respected", { before, after });
   }
 
   analyze(module: Module, kind: AnalyzeKind, point?: Ref): Promise<LlopsResult<AnalyzeResult>> {

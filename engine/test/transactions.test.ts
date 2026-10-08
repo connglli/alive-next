@@ -136,9 +136,28 @@ exit:
   %r = phi i32 [ 0, %entry ], [ %s.next, %body ]
   ret i32 %r`;
 
-async function tree(program = PROGRAM) {
+/** A loop that only reads through its pointer argument. */
+const READ = `define i32 @f(ptr %p, i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %q = phi ptr [ %p, %entry ], [ %q.next, %loop ]
+  %s = phi i32 [ 0, %entry ], [ %s.next, %loop ]
+  %v = load i32, ptr %q, align 4
+  %s.next = add i32 %s, %v
+  %q.next = getelementptr inbounds i32, ptr %q, i64 1
+  %more = icmp slt i32 %s.next, %n
+  br i1 %more, label %loop, label %exit
+
+exit:
+  ret i32 %s.next
+}
+`;
+
+async function tree(program = PROGRAM, other = program.replace("%m, %x", "%x, %m")) {
   const src = await store.put(program);
-  const tgt = await store.put(program.replace("%m, %x", "%x, %m"));
+  const tgt = await store.put(other);
   const events: Event[] = [{ kind: "start", src, tgt, config: {}, versions: {} }];
   return derive(events.map((event) => ({ ...event, time: 0, prev: "" }) as Entry));
 }
@@ -286,6 +305,37 @@ describe.skipIf(!built)("transactions", () => {
     const result = await transactions.commit(goals, steps);
 
     // alive2 is asked about no loop, so only a reshaping could have landed it.
+    expect(result.kind).toBe("refused");
+  });
+
+  test("drops attributes a tgt's loop respects with no solver", async () => {
+    const checker = new FakeChecker([]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const transactions = new Transactions(store, llops);
+    const head = "(ptr readonly captures(none) %p, i32 %n) nofree memory(argmem: read) {";
+    const goals = await tree(READ, READ.replace("(ptr %p, i32 %n) {", head));
+
+    transactions.begin(goals, "g1", "tgt");
+    await transactions.edit({ op: "drop_attrs" });
+    const result = await transactions.commit(goals, steps);
+
+    if (result.kind !== "certified") throw new Error("expected the step to land");
+    expect(result).toMatchObject({ by: "respected", on: "whole" });
+    expect(result.effects[0]).toMatchObject({ side: "tgt", how: "check", by: "respected" });
+    expect(checker.calls).toHaveLength(0);
+  });
+
+  test("does not drop attributes a tgt's loop breaks", async () => {
+    const checker = new FakeChecker([]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const transactions = new Transactions(store, llops);
+    const goals = await tree(READ, READ.replace("%n) {", "%n) memory(none) {"));
+
+    transactions.begin(goals, "g1", "tgt");
+    await transactions.edit({ op: "drop_attrs" });
+    const result = await transactions.commit(goals, steps);
+
+    // alive2 is asked about no loop, so only llops could have landed it.
     expect(result.kind).toBe("refused");
   });
 

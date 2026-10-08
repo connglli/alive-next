@@ -378,6 +378,14 @@ exit:
 }
 """
 
+# A load through a pointer argument, which -O3 marks readonly and argmem-only.
+READ = """define i32 @f(ptr %p) {
+entry:
+  %v = load i32, ptr %p, align 4
+  ret i32 %v
+}
+"""
+
 
 @unittest.skipUnless(HAVE, "needs alive-tv and llops")
 class Case(unittest.TestCase):
@@ -581,6 +589,15 @@ class TestGolden(Case):
 
   def test_a_loop_invariant_proved_on_entry_and_kept_verifies(self):
     self.verified(self.invariant())
+
+  def test_a_tgt_step_that_drops_attributes_its_body_respects_verifies(self):
+    plain = self.built.program(canonical(READ))
+    marked = READ.replace("(ptr %p) {", "(ptr readonly %p) memory(argmem: read) {")
+    marked = self.built.program(canonical(marked))
+    step = {"kind": "check", "side": "tgt", "from": marked, "to": plain, "by": "respected"}
+    end = {"src": plain, "tgt": plain}
+    self.built.goal("g1", {"src": plain, "tgt": marked}, end, [step], {"kind": "check"})
+    self.verified(self.built.write())
 
   def test_a_step_that_only_reshapes_control_flow_verifies_on_either_side(self):
     top = self.built.program(canonical(LOOP_TOP))
@@ -1154,6 +1171,15 @@ declare i32 @k.ih(i32)
     end = {"src": inner["tgt"], "tgt": inner["tgt"]}
     self.built.goal("g3", inner, end, [step], {"kind": "check"})
     self.refused(self.built.write(), "Unfold replay")
+
+  def test_a_step_checked_as_respected_whose_body_breaks_the_attributes(self):
+    plain = self.built.program(canonical(READ))
+    text = READ.replace("(ptr %p) {", "(ptr %p) memory(none) {")
+    marked = self.built.program(canonical(text))
+    step = {"kind": "check", "side": "tgt", "from": marked, "to": plain, "by": "respected"}
+    end = {"src": plain, "tgt": plain}
+    self.built.goal("g1", {"src": plain, "tgt": marked}, end, [step], {"kind": "check"})
+    self.refused(self.built.write(), "Chain step")
 
   def test_a_step_checked_as_reshaped_that_changes_a_value(self):
     top = self.built.program(canonical(LOOP_TOP))

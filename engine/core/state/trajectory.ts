@@ -75,10 +75,10 @@ export type Effect =
       how: "rewrite" | "check" | "unfold";
       /**
        * Who checked the step when `how` is "check": alive2, which is also what
-       * an absent `by` means, or `llops reshaped` when the step only reshapes
-       * control flow.
+       * an absent `by` means, or `llops reshaped` or `llops respected` when
+       * the step only reshapes control flow or changes attributes.
        */
-      by?: "alive2" | "reshaped";
+      by?: "alive2" | "reshaped" | "respected";
       /**
        * The rules llrwt ran, present when `how` is "rewrite". A rewrite step is
        * certified by the rules' external proofs rather than by an alive2 run

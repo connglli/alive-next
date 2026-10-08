@@ -549,22 +549,22 @@ class Check:
     """Ask the checker `by` names whether `tgt` refines `src`.
 
     alive-tv answers with a solver. A pair whose tgt only reshapes the
-    control flow of its src is asked of llops instead, which answers without
-    one.
+    control flow of its src, or only adds attributes its instructions
+    respect, is asked of the llops command of that name, with no solver.
     """
     if by == "alive2":
       self.asked(gid, side, check, src, tgt, notes)
       return
-    if by != "reshaped":
+    if by not in ("reshaped", "respected"):
       self.fail(gid, side, "Checker", f"{by}, which this does not know")
       return
     started = time.monotonic()
     program = self.package.program
-    answer = self.package.run_llops("reshaped", {"before": program(src), "after": program(tgt)})
-    if not answer["reshaped"]:
+    answer = self.package.run_llops(by, {"before": program(src), "after": program(tgt)})
+    if not answer[by]:
       notes = f"{notes}; llops: {answer.get('why')}"
     self.report(
-      result="OK" if answer["reshaped"] else "FAIL",
+      result="OK" if answer[by] else "FAIL",
       gid=gid,
       side=side,
       tool="llops",
