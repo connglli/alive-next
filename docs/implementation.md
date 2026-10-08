@@ -16,7 +16,7 @@ alive-next/
   docs/                 system specifications: design.md, implementation.md, llops.md, agent.md
   llops/                stateless C++ LLVM toolbox (CMake)
     src/                IR validation, outlining, inlining, edits, and test harness synthesis
-    test/               llops integration test suite (llops_test.py)
+    test/               llops integration tests (llops_test.py), and tests against alive2 (trust_test.py)
   engine/               interactive validation framework (TypeScript on Bun)
     core/               session lifecycle, state (goals, store, steps, strengthen), and toolchain drivers
     agent/              Pi agent harness, interactive TUI, and proof tactic tools

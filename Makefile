@@ -24,7 +24,7 @@ LLOPS_BUILD := $(TOOLCHAIN)/llops/build
 
 .PHONY: help install-deps deps-status deps-llvm deps-alive2 deps-llubi deps-veir deps-bun \
         deps-js deps-uv deps-py deps-dev llops test-llops engine test-engine test examples \
-        cert test-kernel test-scripts clean
+        cert test-kernel test-scripts test-trust clean
 
 help:
 	@echo "dependencies"
@@ -39,6 +39,7 @@ help:
 	@echo "  test-llops     run the llops tests"
 	@echo "  engine         typecheck the engine"
 	@echo "  test-engine    run the engine tests"
+	@echo "  test-trust     check the llops subcommands the kernel trusts against alive2"
 	@echo "  test           run every test suite"
 	@echo "  examples       prove the example scenarios, into sessions/"
 	@echo "                 (SCENARIO=<name> runs one of them)"
@@ -107,8 +108,14 @@ test-kernel:
 test-scripts:
 	python3 scripts/visualize_test.py
 
+# --- the trusted base --------------------------------------------------------
+# The llops subcommands the kernel trusts, checked against alive-tv on what
+# they accept.
+test-trust: llops
+	LLOPS=$(LLOPS_BUILD)/llops python3 llops/test/trust_test.py
+
 # --- everything --------------------------------------------------------------
-test: test-llops test-engine test-kernel test-scripts
+test: test-llops test-engine test-kernel test-scripts test-trust
 
 # .pre-commit-config.yaml is the one place that says what is checked and with
 # which upstream tool. The hook sees staged files; this sweeps the whole tree.

@@ -3166,6 +3166,9 @@ class TestRespected(Case):
       ("writeonly ", "", "  %v = load i32, ptr %p, align 4\n"),
       ("captures(none) ", "", "  %c = icmp eq ptr %p, null\n"),
       ("", "nofree", "  call void @g()\n"),
+      ("", "memory(argmem: read)", "  %v = load volatile i32, ptr %p, align 4\n"),
+      ("", "memory(argmem: write)", "  store atomic i32 1, ptr %p seq_cst, align 4\n"),
+      ("", "memory(argmem: readwrite)", "  %r = cmpxchg ptr %p, i32 0, i32 1 seq_cst seq_cst\n"),
     ]
     top = "@G = global i32 0\n\ndeclare void @g()\n\n"
     for param, fn, line in cases:
