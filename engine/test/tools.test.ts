@@ -364,6 +364,18 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(await callFrom(droppingTools, "tx_commit", {})).toContain("certified, g1 tgt is");
   });
 
+  test("a pipeline takes the program after one of its stages", async () => {
+    await call("tx_begin", { gid: "g1", side: "src" });
+    expect(await call("tx_opt", { what: "pipeline", stage: 99 })).toContain(", not 99");
+    expect(await call("tx_opt", { what: "pipeline", passes: "verify" })).toContain(
+      "unchanged: no pass of the pipeline changed the program",
+    );
+    const piped = await call("tx_opt", { what: "pipeline" });
+    expect(piped).toContain("applied, 1 edit so far");
+    expect(piped).toContain("## Stages\n0 ");
+    await call("tx_abort", {});
+  });
+
   test("a commit with neither a window nor the whole function asks nothing", async () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     await call("tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });

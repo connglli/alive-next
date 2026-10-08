@@ -44,7 +44,13 @@ export interface EditingRefusal {
  * where a caller looks to find the reference it meant.
  */
 export type EditResult =
-  | { kind: "applied"; text: string; ops: number }
+  | {
+      kind: "applied";
+      text: string;
+      ops: number;
+      /** For a pipeline, the pass of each stage. */
+      stages?: string[];
+    }
   | { kind: "unchanged"; text: string; ops: number }
   | { kind: "refused"; code: string; message: string; text: string };
 
@@ -127,8 +133,8 @@ export class Transactions {
   }
 
   /**
-   * Apply one structural optimizer pass to the scratch program. A refusal
-   * leaves the scratch as it was, exactly as a refused edit does.
+   * Apply one optimizer op to the scratch program. A refusal leaves the
+   * scratch as it was, exactly as a refused edit does.
    */
   async opt(op: OptOp): Promise<EditResult> {
     const transaction = this.require();
@@ -145,8 +151,9 @@ export class Transactions {
       return { kind: "unchanged", text: transaction.text, ops: transaction.ops.length };
     }
     transaction.text = result.module;
-    transaction.ops.push(op);
-    return { kind: "applied", text: result.module, ops: transaction.ops.length };
+    transaction.ops.push(op.what === "pipeline" ? { ...op, stage: result.stage } : op);
+    const stages = result.stages ? { stages: result.stages } : {};
+    return { kind: "applied", text: result.module, ops: transaction.ops.length, ...stages };
   }
 
   /**

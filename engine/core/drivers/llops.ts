@@ -205,10 +205,17 @@ export type EditOp =
       value_map: Record<Ref, Ref>;
     };
 
-/** One structural optimizer pass, as the `opt` subcommand takes it. */
+/** One op of the `opt` subcommand; a pipeline also names the stage to take. */
 export type OptOp =
   | { what: "simplify"; v: Ref }
-  | { what: "instcombine"; max_iterations?: number; debug_counter?: number };
+  | { what: "instcombine"; max_iterations?: number; debug_counter?: number }
+  | { what: "pipeline"; passes?: string; stage?: number };
+
+/** The module an op makes, and for a pipeline, its stages and the one taken. */
+export interface OptResult extends ModuleResult {
+  stage?: number;
+  stages?: string[];
+}
 
 export type AssumeAnchor =
   | { at: "start"; fn: string }
@@ -395,9 +402,21 @@ export class Llops {
     return this.run("analyze", point ? { module, kind, point } : { module, kind });
   }
 
-  /** Apply one structural optimizer op to an instruction or the whole function. */
-  opt(module: Module, op: OptOp): Promise<LlopsResult<ModuleResult>> {
-    return this.run("opt", { module, ...op });
+  /** Apply one optimizer op to an instruction or the whole function. */
+  async opt(module: Module, op: OptOp): Promise<LlopsResult<OptResult>> {
+    if (op.what !== "pipeline") return this.run("opt", { module, ...op });
+    const result = await this.pipelineStages(module, op.passes);
+    if (!result.ok) return result;
+    const stages = result.stages.map((done) => done.pass);
+    // A pipeline that changes nothing has no stage.
+    if (stages.length === 0) return { ok: true, module, stages };
+    const stage = op.stage ?? stages.length - 1;
+    const taken = result.stages[stage];
+    if (!taken) {
+      const message = `the pipeline has stages 0 to ${stages.length - 1}, not ${stage}`;
+      return { ok: false, code: "invalid", message };
+    }
+    return { ok: true, module: taken.module, stage, stages };
   }
 
   /** Run a pass pipeline, `default<O3>` unless `passes` names another, keeping each stage. */

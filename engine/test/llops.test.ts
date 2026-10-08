@@ -138,6 +138,30 @@ entry:
     expect(result.code).toBe("invalid");
   });
 
+  test("opt takes one stage of a pipeline, the last by default", async () => {
+    const last = await llops.opt(F, { what: "pipeline" });
+    if (!last.ok) throw new Error(last.message);
+    const stages = last.stages ?? [];
+    expect(stages.length).toBeGreaterThan(0);
+    expect(last.stage).toBe(stages.length - 1);
+
+    const first = await llops.opt(F, { what: "pipeline", stage: 0 });
+    if (!first.ok) throw new Error(first.message);
+    expect(first.stage).toBe(0);
+
+    const beyond = await llops.opt(F, { what: "pipeline", stage: stages.length });
+    if (beyond.ok) throw new Error("expected a refusal");
+    expect(beyond.message).toContain(`not ${stages.length}`);
+  });
+
+  test("opt leaves a module no pass changes as it was, with no stage", async () => {
+    const result = await llops.opt(F, { what: "pipeline", passes: "verify" });
+    if (!result.ok) throw new Error(result.message);
+    expect(result.module).toBe(F);
+    expect(result.stages).toEqual([]);
+    expect(result.stage).toBeUndefined();
+  });
+
   test("opt simplifies one instruction", async () => {
     const module = `define i32 @f(i32 %x) {
 entry:

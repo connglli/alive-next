@@ -477,7 +477,7 @@ export class Session {
     return this.act("tx_edit", op, () => this.editing.edit(op), scratch);
   }
 
-  /** Apply one llops structural optimizer op to the scratch program. */
+  /** Apply one llops optimizer op to the scratch program. */
   opt(op: OptOp): Promise<EditResult> {
     return this.act("tx_opt", op, () => this.editing.opt(op), scratch);
   }

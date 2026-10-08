@@ -7,7 +7,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
 import type { EditResult } from "../../core/state/transactions.ts";
-import { formatEdits, formatProgram, toolResult } from "./format.ts";
+import { formatEdits, formatProgram, formatSection, toolResult } from "./format.ts";
 
 const OptParams = Type.Union(
   [
@@ -41,6 +41,26 @@ const OptParams = Type.Union(
       },
       { additionalProperties: false },
     ),
+    Type.Object(
+      {
+        what: Type.Literal("pipeline", {
+          description: "Take one stage of a pass pipeline.",
+        }),
+        passes: Type.Optional(
+          Type.String({
+            description: "The pipeline, as opt's -passes takes it; default<O3> when omitted.",
+          }),
+        ),
+        stage: Type.Optional(
+          Type.Integer({
+            minimum: 0,
+            description:
+              "The stage to take, by its number in the answer's list; the last when omitted.",
+          }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
   ],
   { type: "object" },
 );
@@ -50,11 +70,17 @@ export function createOptTool(session: Session) {
     name: "tx_opt",
     label: "Optimize",
     description:
-      "Apply one structural optimizer pass to the open transaction's program. simplify folds one instruction; instcombine combines instructions across the function. Answers with the body as it now stands, or, when the pass is refused, with the body it was refused on.",
+      "Apply one structural optimizer pass to the open transaction's program. simplify folds one instruction; instcombine combines instructions across the function; pipeline takes one stage of a pass pipeline, -O3 by default. Answers with the body as it now stands, or, when the pass is refused, with the body it was refused on.",
     parameters: OptParams,
     execute: async (_id, params) => {
       let edited: EditResult;
-      if (params.what === "instcombine") {
+      if (params.what === "pipeline") {
+        edited = await session.opt({
+          what: params.what,
+          ...(params.passes ? { passes: params.passes } : {}),
+          ...(params.stage === undefined ? {} : { stage: params.stage }),
+        });
+      } else if (params.what === "instcombine") {
         edited = await session.opt({
           what: params.what,
           max_iterations: params.max_iterations,
@@ -77,16 +103,22 @@ export function createOptTool(session: Session) {
         return toolResult(
           true,
           [
-            "unchanged: nothing to fold",
+            params.what === "pipeline"
+              ? "unchanged: no pass of the pipeline changed the program"
+              : "unchanged: nothing to fold",
             formatProgram("Edited program", await session.number(edited.text)),
           ].join("\n\n"),
           edited,
         );
       }
+      const stages = edited.stages
+        ? [formatSection("Stages", edited.stages.map((pass, k) => `${k} ${pass}`).join("\n"))]
+        : [];
       return toolResult(
         true,
         [
           `applied, ${formatEdits(edited.ops)} so far`,
+          ...stages,
           formatProgram("Edited program", await session.number(edited.text)),
         ].join("\n\n"),
         {
