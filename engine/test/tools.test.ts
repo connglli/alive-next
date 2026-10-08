@@ -705,12 +705,9 @@ entry:
 
     // An empty rule list is rejected by the schema, so the engine's no_rules
     // refusal never runs.
-    expect(
-      Check(rewritingTools.find((tool) => tool.name === "goal_rewrite")!.parameters, {
-        gid: "g1",
-        rules: [],
-      }),
-    ).toBe(false);
+    const rewrite = rewritingTools.find((tool) => tool.name === "goal_rewrite");
+    if (!rewrite) throw new Error("no goal_rewrite tool");
+    expect(Check(rewrite.parameters, { gid: "g1", rules: [] })).toBe(false);
 
     const unknownRefused = await callFrom(rewritingTools, "goal_rewrite", {
       gid: "g1",
