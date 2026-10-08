@@ -9,7 +9,7 @@
 // That runs here rather than around the outside, because whether the path is
 // still alive belongs in the answer the agent reads.
 import type { CheckOutcome, CheckResult, Invocation } from "../drivers/alive2.ts";
-import type { Llops } from "../drivers/llops.ts";
+import type { Llops, LlopsResult } from "../drivers/llops.ts";
 import type { Llrwt, LlrwtInvocation, RuleInfo } from "../drivers/llrwt.ts";
 import { named, resolveRef } from "../refs.ts";
 import { child, type Goal, head, type Side, type Tree, workable } from "./goals.ts";
@@ -291,19 +291,20 @@ export class Steps {
     const srcHash = head(goal, "src");
     const tgtHash = head(goal, "tgt");
     const pair = { src: this.store.get(srcHash), tgt: this.store.get(tgtHash) };
-    const by = srcHash === tgtHash ? undefined : await this.withoutSolver(pair);
-    if (by) return { outcome: "proved", by, effects: [{ effect: "proved", gid, by }] };
+    const free = srcHash === tgtHash ? undefined : await this.withoutSolver(pair);
+    if (free && "by" in free)
+      return { outcome: "proved", by: free.by, effects: [{ effect: "proved", gid, by: free.by }] };
     // alive-tv answers a loop only for the iterations it unrolls, so a pair
     // that loops is searched for a counterexample and never proved, unless
     // its two sides are the same program.
     const loops =
       srcHash !== tgtHash && ((await this.loops(pair.src)) || (await this.loops(pair.tgt)));
-    if (loops && unroll === undefined)
+    if (free && loops && unroll === undefined)
       return {
         outcome: "unknown",
         by: "alive2",
         check: unasked(
-          "a pair that loops is proved by splitting it at its loop header; an unroll factor only searches it for a counterexample",
+          `the pair ${free.why}, so a pair that loops is proved by splitting it at its loop header; an unroll factor only searches it for a counterexample`,
         ),
         effects: [],
       };
@@ -359,14 +360,14 @@ export class Steps {
     }
     // A step that only reshapes control flow, or only changes attributes the
     // instructions respect, needs no solver, loops or not.
-    const by = await this.withoutSolver(orient(side, beforeText, afterText));
-    if (by) {
-      const step: Effect = { effect: "step", gid, side, to: after, how: "check", by };
+    const free = await this.withoutSolver(orient(side, beforeText, afterText));
+    if ("by" in free) {
+      const step: Effect = { effect: "step", gid, side, to: after, how: "check", by: free.by };
       const certified: Certified = {
         kind: "certified",
         hash: after,
         effects: [step],
-        by,
+        by: free.by,
         on: "whole",
       };
       return this.landed(goal, side, certified, options);
@@ -441,7 +442,7 @@ export class Steps {
       if (whole.outcome !== "correct") {
         return {
           kind: "refused",
-          check: whole,
+          check: unsolved(whole, `the step ${free.why}`),
           narrowed: local,
           fallback,
         };
@@ -486,16 +487,20 @@ export class Steps {
     return this.landed(goal, side, certified, options);
   }
 
-  /** Which llops check proves with no solver that the tgt refines the src, if either does. */
+  /** Which llops check proves with no solver that the tgt refines the src, or why neither does. */
   private async withoutSolver(pair: {
     src: string;
     tgt: string;
-  }): Promise<"reshaped" | "respected" | undefined> {
+  }): Promise<{ by: "reshaped" | "respected" } | { why: string }> {
     const reshaped = await this.llops.reshaped(pair.src, pair.tgt);
-    if (reshaped.ok && reshaped.reshaped) return "reshaped";
+    if (reshaped.ok && reshaped.reshaped) return { by: "reshaped" };
     const respected = await this.llops.respected(pair.src, pair.tgt);
-    if (respected.ok && respected.respected) return "respected";
-    return undefined;
+    if (respected.ok && respected.respected) return { by: "respected" };
+    const said = (answer: LlopsResult<{ why?: string }>) =>
+      answer.ok ? answer.why : answer.message;
+    return {
+      why: `does more than reshape control flow (${said(reshaped)}) and more than change attributes the body keeps (${said(respected)})`,
+    };
   }
 
   /** A certified step, then the cheap check of the new pair unless that is turned off. */
@@ -634,13 +639,14 @@ export class Steps {
     const eagerSrcHash = side === "src" ? after : head(goal, "src");
     const eagerTgtHash = side === "tgt" ? after : head(goal, "tgt");
     const pair = { src: this.store.get(eagerSrcHash), tgt: this.store.get(eagerTgtHash) };
-    const by = eagerSrcHash === eagerTgtHash ? undefined : await this.withoutSolver(pair);
-    if (by) {
-      effects.push({ effect: "proved", gid, by });
+    const free = eagerSrcHash === eagerTgtHash ? undefined : await this.withoutSolver(pair);
+    if (free && "by" in free) {
+      effects.push({ effect: "proved", gid, by: free.by });
       return undefined;
     }
     const eagerKey = historyKey(eagerSrcHash, eagerTgtHash);
-    const eager = await this.alive2(pair, { timeoutMs: this.timeouts.eagerCheckMs });
+    const asked = await this.alive2(pair, { timeoutMs: this.timeouts.eagerCheckMs });
+    const eager = free ? unsolved(asked, `the new pair ${free.why}`) : asked;
     this.history.set(eagerKey, {
       outcome: goalOutcome(eager.outcome),
       budgetMs: eager.invocation.timeoutMs,
@@ -836,6 +842,11 @@ function rootPair(tree: Tree, gid: string, goal: Goal): boolean {
 
 const LOOPS =
   "alive2 checks a program that loops only through a window, or for the iterations it unrolls";
+
+/** A loop's unasked check, saying why llops did not prove it either. */
+function unsolved(check: CheckResult, why: string): CheckResult {
+  return check.detail === LOOPS ? { ...check, detail: `${LOOPS}, and ${why}` } : check;
+}
 
 /**
  * An answer that cost no solver time, shaped like one that did. Its budget is

@@ -198,7 +198,8 @@ llvm::json::Object respectedCmd(llvm::json::Object &args) {
   dropIgnoredAttrs(*beforeMwc->mod);
   dropIgnoredAttrs(*afterMwc->mod);
   if (printModule(*beforeMwc->mod) != printModule(*afterMwc->mod))
-    why = "after is not before with only attributes this check reads added";
+    why = "the two programs differ in more than their memory, nofree, readonly, writeonly, "
+          "readnone and captures(none) attributes";
 
   llvm::json::Object resp;
   resp["ok"] = true;

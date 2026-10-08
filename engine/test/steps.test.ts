@@ -711,6 +711,8 @@ describe("checking a goal", () => {
     expect(result.outcome).toBe("unknown");
     expect(result.check?.detail).toContain("proved by splitting it at its loop header");
     expect(result.check?.detail).toContain("only searches it for a counterexample");
+    // Why no check without a solver applies, in words the agent knows.
+    expect(result.check?.detail).toContain("does more than reshape control flow");
     expect(checker.calls).toHaveLength(0);
   });
 
@@ -730,6 +732,13 @@ describe("checking a goal", () => {
     if (result.kind !== "certified") throw new Error("expected the step to land");
     expect(result.effects).toContainEqual({ effect: "proved", gid: "g1", by: "respected" });
     expect(checker.calls).toHaveLength(0);
+  });
+
+  test("says why a step on a loop has no proof without a solver", async () => {
+    const steps = new Steps(store, new FakeChecker([]), DEFAULT_TIMEOUTS, llops, unrewriting);
+    const result = await steps.checkStep(await treeOf(LOOP, LOOP), "g1", "src", LATE);
+    if (result.kind !== "refused") throw new Error("expected a refusal");
+    expect(result.check.detail).toContain("does more than reshape control flow");
   });
 
   test("refutes the run when the pair is the root's original one", async () => {
