@@ -364,6 +364,23 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(await callFrom(droppingTools, "tx_commit", {})).toContain("certified, g1 tgt is");
   });
 
+  test("a commit with neither a window nor the whole function asks nothing", async () => {
+    await call("tx_begin", { gid: "g1", side: "src" });
+    await call("tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
+    const refused = await call("tx_commit", { narrow: false, whole: false });
+    expect(refused).toContain("there is no window, and asking the whole function is turned off");
+    expect(refused).toContain("the transaction stays open");
+    await call("tx_abort", {});
+  });
+
+  test("a commit can skip the check of the new pair", async () => {
+    await call("tx_begin", { gid: "g1", side: "src" });
+    await call("tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
+    const committed = await call("tx_commit", { eager: false });
+    expect(committed).toContain("certified, g1 src is p");
+    expect(committed).not.toContain("the new pair is");
+  });
+
   test("a splice takes a window of another program by its id", async () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     const spliced = await call("tx_edit", {

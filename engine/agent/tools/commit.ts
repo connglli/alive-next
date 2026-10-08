@@ -42,6 +42,23 @@ export function createCommitTool(session: Session) {
             "Preconditions on values the window uses, named as in the program the transaction started from, for example { '%v1': { 'noundef': true } }.",
         }),
       ),
+      narrow: Type.Optional(
+        Type.Boolean({
+          description:
+            "Whether to look for the window the edits touched before checking the whole function. On by default.",
+        }),
+      ),
+      whole: Type.Optional(
+        Type.Boolean({
+          description:
+            "Whether to check the whole function when the window does not prove the step. On by default; off spares a check that would only time out.",
+        }),
+      ),
+      eager: Type.Optional(
+        Type.Boolean({
+          description: "Whether to check the goal's new pair once the step lands. On by default.",
+        }),
+      ),
     }),
     execute: async (_id, args) => {
       const step = await session.commit(args, /*imm_abort=*/ false);
