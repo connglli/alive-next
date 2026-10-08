@@ -18,6 +18,7 @@ import { createCommitTool } from "./commit.ts";
 import { createEditTool } from "./edit.ts";
 import { toolResultFrom } from "./format.ts";
 import { createGiveUpTool } from "./give-up.ts";
+import { createInterposeTool } from "./interpose.ts";
 import { createOptTool } from "./opt.ts";
 import { createReportCexTool } from "./report-cex.ts";
 import { createRevertTool } from "./revert.ts";
@@ -31,6 +32,7 @@ import { createStatusTool } from "./status.ts";
 import { createStrengthenTool } from "./strengthen.ts";
 import { createStrengthenPreviewTool } from "./strengthen-preview.ts";
 import { createUnfoldTool } from "./unfold.ts";
+import { createUninterposeTool } from "./uninterpose.ts";
 import { createUnsplitTool } from "./unsplit.ts";
 
 export { createSandboxTools, SANDBOX_TOOLS };
@@ -65,6 +67,8 @@ export function createProofAssistantTools(
     createSplitPreviewTool(session),
     createSplitTool(session),
     createUnsplitTool(session),
+    createInterposeTool(session),
+    createUninterposeTool(session),
     createStrengthenPreviewTool(session),
     createStrengthenTool(session),
     createReportCexTool(session),

@@ -364,6 +364,21 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(await callFrom(droppingTools, "tx_commit", {})).toContain("certified, g1 tgt is");
   });
 
+  test("a goal is proved through the program a transaction made", async () => {
+    await call("tx_begin", { gid: "g1", side: "src" });
+    await call("tx_edit", { op: "commute", v: "%2" });
+    const split = await call("tree_interpose", { gid: "g1" });
+    expect(split).toStartWith("SUCCESS");
+    expect(split).toContain("lhs g2, rhs g3");
+    // The transaction closed when the goal split.
+    expect(await call("run_status", {})).not.toContain("editing:");
+    expect(await call("tree_uninterpose", { gid: "g1" })).toContain("g1 is open again");
+  });
+
+  test("an interpose with no transaction open says what it needs", async () => {
+    expect(await call("tree_interpose", { gid: "g1" })).toContain("no transaction is open on g1");
+  });
+
   test("a step can be walked back", async () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     await call("tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });

@@ -533,16 +533,23 @@ export class Session {
   }
 
   /**
-   * Put a program between a goal's two sides, which splits the goal into two:
-   * the program refines the src, and the tgt refines the program.
+   * Put a program, by default the open transaction's, between a goal's two
+   * sides, which splits the goal into two: the program refines the src, and
+   * the tgt refines the program.
    */
-  interpose(gid: string, program: string): Promise<SessionInterposeResult> {
+  interpose(gid: string, program?: string): Promise<SessionInterposeResult> {
     return this.act("interpose", { gid }, async (tree): Promise<SessionInterposeResult> => {
       const editing = this.editing.open();
-      if (editing && this.editing.isEditing(gid)) {
-        return { kind: "editing", message: openMessage(editing) };
+      const edited = editing && this.editing.isEditing(gid) ? editing : undefined;
+      if (program !== undefined && edited) return { kind: "editing", message: openMessage(edited) };
+      const between = program ?? edited?.text;
+      if (between === undefined) {
+        const message = `no transaction is open on ${gid}, so no program was made to put between its sides`;
+        return { kind: "refused", code: "invalid", message };
       }
-      return interpose(this.store, this.llops, tree, gid, program);
+      const result = await interpose(this.store, this.llops, tree, gid, between);
+      if (result.kind === "interposed" && program === undefined) this.editing.abort();
+      return result;
     });
   }
 
