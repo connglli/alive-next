@@ -2,8 +2,9 @@
 """The llops subcommands the kernel trusts, checked against alive2.
 
 Each test asks llops and alive-tv about the same programs, and fails where
-llops trusts what alive2 does not back: a pair `respected` accepts that alive2
-does not prove, or an attribute llops treats otherwise than alive2 does.
+llops trusts what alive2 does not back: a pair `reshaped` or `respected`
+accepts that alive2 does not prove, or an attribute llops treats otherwise than
+alive2 does.
 alive-tv runs as the kernel runs it, and its answer is read by the kernel's
 own code. Run through `make test-trust`, or directly:
 
@@ -77,6 +78,20 @@ def respected(before: str, after: str) -> bool:
   answer = run("respected", {"before": before, "after": after})
   assert answer.get("ok"), answer
   return answer["respected"]
+
+
+def reshaped(before: str, after: str) -> bool:
+  """Whether `reshaped` accepts the pair, refusing a module LLVM rejects."""
+  answer = run("reshaped", {"before": before, "after": after})
+  assert answer.get("ok") or answer["error"]["code"] in ("parse_error", "invalid_ir"), answer
+  return answer.get("reshaped", False)
+
+
+def accepted(check, pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+  """The pairs `check` accepts, asked in parallel."""
+  with ThreadPoolExecutor(os.cpu_count()) as pool:
+    yes = list(pool.map(lambda pair: check(*pair), pairs))
+  return [pair for pair, ok in zip(pairs, yes, strict=True) if ok]
 
 
 @dataclass
@@ -392,9 +407,9 @@ FLAGS = [["-fno-vectorize", "-fno-slp-vectorize", "-fno-unroll-loops"], []]
 
 
 def compiled(source: str, flags: list[str]) -> str:
-  """The module clang makes of the C `source` at -O3."""
+  """The module clang makes of the C `source` with `flags`."""
   done = subprocess.run(
-    [CLANG, "-O3", "-fno-strict-aliasing", *flags, "-x", "c", "-", "-S", "-emit-llvm", "-o", "-"],
+    [CLANG, "-fno-strict-aliasing", *flags, "-x", "c", "-", "-S", "-emit-llvm", "-o", "-"],
     input=source,
     capture_output=True,
     text=True,
@@ -463,7 +478,7 @@ def real_pairs() -> list[tuple[str, str]]:
   where the function has the program shape."""
   pairs = []
   for source, flags in itertools.product(REAL.values(), FLAGS):
-    after = compiled(source, flags)
+    after = compiled(source, ["-O3", *flags])
     for module in [after, *mutants(after)]:
       if run("validate", {"module": module})["conforms"]:
         pairs.append((stripped(module), module))
@@ -477,18 +492,23 @@ def judged(pair: tuple[str, str]) -> tuple[str, bool]:
   return alive2(*pair, unroll=2 if loops else 0), loops
 
 
-class TestRespected(unittest.TestCase):
+class Case(unittest.TestCase):
+  def assertProved(self, pairs: list[tuple[str, str]]):
+    """alive2 proves each pair, or leaves one that loops undecided."""
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+      answers = list(pool.map(judged, pairs))
+    for (before, after), (said, loops) in zip(pairs, answers, strict=True):
+      with self.subTest(before=before, after=after):
+        # alive2 can time out or crash inside a loop, which shows nothing either way.
+        self.assertIn(said, ("correct", "failed to prove", "no answer") if loops else ("correct",))
+
+
+class TestRespected(Case):
   def assertAccepted(self, pairs: list[tuple[str, str]]):
     """Every pair `respected` accepts is one alive2 proves."""
-    with ThreadPoolExecutor(os.cpu_count()) as pool:
-      yes = list(pool.map(lambda pair: respected(*pair), pairs))
-      accepted = [pair for pair, ok in zip(pairs, yes, strict=True) if ok]
-      answers = list(pool.map(judged, accepted))
-    self.assertTrue(accepted, "respected accepted no pair, so nothing was compared")
-    for (_, after), (said, loops) in zip(accepted, answers, strict=True):
-      with self.subTest(after=after):
-        # A timeout can stop alive2 inside a loop, which shows nothing either way.
-        self.assertIn(said, ("correct", "failed to prove") if loops else ("correct",))
+    yes = accepted(respected, pairs)
+    self.assertTrue(yes, "respected accepted no pair, so nothing was compared")
+    self.assertProved(yes)
 
   def test_seeds(self):
     self.assertAccepted([(seed.program(), after) for seed in SEEDS for after in cases(seed)])
@@ -533,6 +553,102 @@ class TestRespected(unittest.TestCase):
         pair = (seed.program(), seed.program(fn=fn, params=params))
         self.assertEqual(alive2(*pair), "incorrect")
         self.assertFalse(respected(*pair))
+
+
+def canonical(module: str) -> str:
+  """The module as the store keeps it."""
+  return run("canon", {"module": module})["module"]
+
+
+def stage_pairs() -> list[tuple[str, str]]:
+  """Each step of LLVM's -O3 pipeline on each real function, from clang's -O0
+  module, as the modules before and after it, canonical as the store keeps them."""
+  pairs = []
+  for source in REAL.values():
+    start = compiled(source, ["-O0", "-Xclang", "-disable-O0-optnone"])
+    stages = run("opt", {"what": "pipeline", "module": start})["stages"]
+    modules = [canonical(module) for module in [start, *(stage["module"] for stage in stages)]]
+    pairs += zip(modules, modules[1:], strict=False)
+  return pairs
+
+
+# No step above freezes. Here each iteration freezes a value that may be
+# poison, so each freeze may give any value, and the loop with its branch
+# inverted makes the same freezes.
+FROZEN = """define i32 @f(i32 %x, i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %next, %body ]
+  %s = phi i32 [ 0, %entry ], [ %t, %body ]
+  %done = icmp eq i32 %i, %n
+  br i1 %done, label %exit, label %body
+
+body:
+  %y = add nsw i32 %x, %i
+  %f = freeze i32 %y
+  %t = add i32 %s, %f
+  %next = add i32 %i, 1
+  br label %loop
+
+exit:
+  ret i32 %s
+}
+"""
+INVERTED = FROZEN.replace(
+  "icmp eq i32 %i, %n\n  br i1 %done, label %exit, label %body",
+  "icmp ne i32 %i, %n\n  br i1 %done, label %body, label %exit",
+)
+
+INVERSE = dict(eq="ne", ne="eq", slt="sge", sge="slt", sgt="sle", sle="sgt")
+INVERSE |= dict(ult="uge", uge="ult", ugt="ule", ule="ugt")
+SWAPPED = dict(slt="sgt", sgt="slt", sle="sge", sge="sle")
+SWAPPED |= dict(ult="ugt", ugt="ult", ule="uge", uge="ule")
+# One change to a line of a body, as a pattern and what replaces its first
+# match, for each thing `reshaped` compares: the successors of a branch, the
+# predicate of a comparison, the edges of a phi, the values an instruction uses
+# and their order, its constants, flags and alignment, and a store being there.
+EDITS = [
+  (r"br i1 (\S+), label (%\w+), label (%\w+)", r"br i1 \1, label \3, label \2"),
+  (r"icmp (samesign )?(\w+)", lambda m: f"icmp {m[1] or ''}{INVERSE.get(m[2], m[2])}"),
+  (r"icmp (samesign )?(\w+)", lambda m: f"icmp {m[1] or ''}{SWAPPED.get(m[2], m[2])}"),
+  (r"phi (.+?) \[ ([^,]+), (%\w+) \], \[ ([^,]+), (%\w+) \]", r"phi \1 [ \4, \3 ], [ \2, \5 ]"),
+  (r"(?<=[ (])%(\d+)\b(?! =)", lambda m: f"%{int(m[1]) - 1}" if int(m[1]) else m[0]),
+  (r"(= (?:sub|shl|lshr|ashr|udiv|sdiv|urem|srem|icmp)\b.* )(\S+), (\S+)$", r"\1\3, \2"),
+  (r"\b(i\d+) (-?\d+)\b", lambda m: f"{m[1]} {int(m[2]) + 1}"),
+  (r"= add (i\d+)", r"= add nsw \1"),
+  (r"align (\d+)", lambda m: f"align {2 * int(m[1])}"),
+  (r"^  store .*", ""),
+]
+
+
+def edited(module: str) -> list[str]:
+  """The module with one line of its body changed, once for each line and each
+  change that applies to it."""
+  lines = module.split("\n")
+  found = []
+  for k, line in enumerate(lines):
+    if not line.startswith("  "):
+      continue
+    for pattern, replacement in EDITS:
+      changed = re.sub(pattern, replacement, line, count=1)
+      if changed != line:
+        found.append("\n".join([*lines[:k], changed, *lines[k + 1 :]]))
+  return found
+
+
+class TestReshaped(Case):
+  @unittest.skipUnless(os.path.exists(CLANG), "needs the toolchain's clang")
+  def test_pipeline_steps_and_their_mutants(self):
+    # The steps are reshapings LLVM made. A mutant changes one line of a step
+    # `reshaped` accepts, on either side, so most are wrong and must be refused.
+    frozen = (canonical(FROZEN), canonical(INVERTED))
+    steps = accepted(reshaped, [*stage_pairs(), frozen])
+    self.assertIn(frozen, steps)
+    mutants = [(changed, after) for before, after in steps for changed in edited(before)]
+    mutants += [(before, changed) for before, after in steps for changed in edited(after)]
+    self.assertProved(steps + accepted(reshaped, mutants))
 
 
 # Every attribute LLVM defines is listed in its build, with the places it may
