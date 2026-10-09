@@ -47,7 +47,7 @@
 // cannot prove willreturn.
 import { type CheckResult, timedOut } from "../drivers/alive2.ts";
 import type { Assertion, Attrs, Llops, Predicate } from "../drivers/llops.ts";
-import { applyEffect, child, type Goal, head, type Side, type Tree } from "./goals.ts";
+import { applyEffect, child, type Goal, head, interposed, type Side, type Tree } from "./goals.ts";
 import type { Steps } from "./steps.ts";
 import type { Store } from "./store.ts";
 import type { Effect, Hash, StepRef } from "./trajectory.ts";
@@ -396,6 +396,7 @@ export class Strengthen {
       const cutBy = parent.parent ? `; strengthen ${parent.parent}, which cut it` : "";
       throw new Error(`${gid} is ${parent.status}, not split${cutBy}`);
     }
+    if (interposed(tree, parent)) throw new Error(`${gid} was interposed, not split`);
     const outer = child(tree, parent, "outer");
     const callee = child(tree, parent, "callee");
     const name = callee.callee;

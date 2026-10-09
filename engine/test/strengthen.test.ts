@@ -14,6 +14,7 @@ import { type Attrs, Llops, type Predicate } from "../core/drivers/llops.ts";
 import type { Llrwt } from "../core/drivers/llrwt.ts";
 import type { Goal, Tree } from "../core/state/goals.ts";
 import { applyEffect, derive, head } from "../core/state/goals.ts";
+import { interpose } from "../core/state/interpose.ts";
 import { Splits } from "../core/state/splits.ts";
 import { DEFAULT_TIMEOUTS, Steps } from "../core/state/steps.ts";
 import { Store } from "../core/state/store.ts";
@@ -554,6 +555,24 @@ describe.skipIf(!built)("strengthening", () => {
     await expect(
       strengthening(new FakeChecker([])).strengthen(tree, "g3", { param_attrs: { 0: RANGE } }),
     ).rejects.toThrow(/g3 is open, not split; strengthen g1, which cut it/);
+  });
+
+  test("needs a goal that was cut, not interposed", async () => {
+    events.push({
+      kind: "start",
+      src: await store.put(SRC),
+      tgt: await store.put(TGT),
+      config: {},
+      versions: {},
+    });
+    const middle = SRC.replace("mul i32 %m, 2", "shl i32 %m, 1");
+    const result = await interpose(store, llops, replay(), "g1", middle);
+    if (result.kind !== "interposed") throw new Error(result.message);
+    await expect(
+      strengthening(new FakeChecker([])).strengthen(record(result.effects), "g1", {
+        param_attrs: { 0: RANGE },
+      }),
+    ).rejects.toThrow(/g1 was interposed, not split/);
   });
 
   test("facts are keyed by parameter position", async () => {
