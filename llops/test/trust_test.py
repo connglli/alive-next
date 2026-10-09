@@ -655,12 +655,17 @@ class TestReshaped(Case):
 
 # Every attribute LLVM defines is listed in its build, with the places it may
 # take. One that takes an argument is written here with an example argument, or
-# two where the argument decides what alive2 makes of it.
+# more where the argument decides what alive2 makes of it.
 ARGUMENTS = {
   "align": ["align 4"],
   "allockind": ['allockind("alloc")'],
   "allocsize": ["allocsize(0)"],
-  "captures": ["captures(none)", "captures(address)"],
+  "captures": [
+    "captures(none)",
+    "captures(address)",
+    "captures(provenance)",
+    "captures(address, provenance)",
+  ],
   "dereferenceable": ["dereferenceable(4)"],
   "dereferenceable_or_null": ["dereferenceable_or_null(4)"],
   "memory": ["memory(none)", "memory(argmem: read)"],
@@ -700,6 +705,7 @@ def attributes() -> list[tuple[str, str]]:
     else:
       spellings = ARGUMENTS[keyword]
     places = [PLACES[place] for place in re.findall(r"::(\w+Attr)\b", held) if place in PLACES]
+    assert places, f"{keyword} takes no place this test knows"
     found += [(spelled, place) for spelled in spellings for place in places]
   strbool = re.findall(r"^ATTRIBUTE_STRBOOL\(\w+,([\w-]+)\)$", text, re.M)
   return found + [(f'"{keyword}"="true"', "fn") for keyword in strbool] + STRINGS
