@@ -56,7 +56,7 @@ export const Op = Type.Union(
       { op: Type.Literal("drop_attrs") },
       {
         description:
-          "Remove the function's memory, nofree, readonly, writeonly, readnone and captures(none) attributes, which keep it from being cut.",
+          "Remove the function's memory, nofree, readonly, writeonly, readnone and captures(none) attributes, among those that keep it from being cut.",
       },
     ),
     Type.Object(

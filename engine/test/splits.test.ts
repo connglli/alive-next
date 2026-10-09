@@ -271,8 +271,22 @@ join:
       const result = await splits.split(await start(...pair), "g1", "%3", "%3", map);
       expect(result).toMatchObject({ kind: "refused", side, code: "invalid" });
       expect(result.kind === "refused" && result.message).toContain("nofree, memory(none)");
+      expect(result.kind === "refused" && result.message).toContain("until the drop_attrs edit");
       events = [];
     }
+  });
+
+  test("names the attributes no edit removes", async () => {
+    const held = PROGRAM.replace("%y) {", "%y) nofree willreturn {");
+    const map = { "%2": "%2", "%0": "%0" };
+    const result = await new Splits(store, llops).split(
+      await start(PROGRAM, held),
+      "g1",
+      "%3",
+      "%3",
+      map,
+    );
+    expect(result.kind === "refused" && result.message).toContain("and no edit removes willreturn");
   });
 
   test("refuses a map that leaves a live value uncovered", async () => {

@@ -529,10 +529,22 @@ export async function unoutlinable(
   if (!result.ok) return `${what}: llops validate: ${result.message}`;
   const held = [...new Set(result.body_attrs)];
   if (held.length === 0) return undefined;
+  const kept = await undropped(llops, module, held);
+  const remedy =
+    kept.length === 0
+      ? " until the drop_attrs edit removes them"
+      : `, and no edit removes ${kept.join(", ")}`;
   return (
-    `${what} has ${held.join(", ")}, which alive2 applies only to the function's own ` +
-    "instructions, so none of its instructions may move into another function"
+    `${what} has ${held.join(", ")}, which alive2 applies only to its own instructions, ` +
+    `so none may move into another function${remedy}`
   );
+}
+
+/** Of the attributes `held`, those the drop_attrs edit leaves, which no edit removes. */
+async function undropped(llops: Llops, module: Module, held: string[]): Promise<string[]> {
+  const dropped = await llops.edit(module, { op: "drop_attrs" });
+  const result = dropped.ok ? await llops.validate(dropped.module) : undefined;
+  return result?.ok ? [...new Set(result.body_attrs)] : held;
 }
 
 /** A body's instructions, block by block, in index order. */
