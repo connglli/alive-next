@@ -146,7 +146,8 @@ export class Splits {
 
     return {
       kind: "preview",
-      params: src.params,
+      // The tgt's params are the same, and name the tgt value behind each poison.
+      params: tgt.params,
       callee,
       ...(atBlock ? { detach: detachOf(src, tgt) } : {}),
       programs: {

@@ -825,8 +825,10 @@ entry:
     const res = await callFrom(ghostTools, "tree_split", cut);
     const said =
       "The src has no value for parameter 5, so it passes poison. A fact about it holds only once the src passes a real value at the outer's call and at @outlined_g3.ih.";
-    expect(preview).toContain(said);
-    expect(res).toContain(said);
+    for (const answer of [preview, res]) {
+      expect(answer).toContain("5: %p5 i64, poison in the src for the tgt's %5");
+      expect(answer).toContain(said);
+    }
   });
 
   test("goal_analyze shows an expression as ScalarEvolution prints it", async () => {

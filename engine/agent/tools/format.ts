@@ -123,9 +123,12 @@ export function formatDetail(check: CheckResult | undefined): string {
 
 /** A cut's parameters, and why no fact holds yet for one the src passes poison for. */
 export function formatParams(params: OutlineParam[], hypothesis?: string): string {
-  const lines = params.map(
-    (param, at) => `  ${at}: ${param.param} ${param.type}, the src's ${param.live}`,
-  );
+  const lines = params.map((param, at) => {
+    const passed = param.tgt
+      ? `poison in the src for the tgt's ${param.tgt}`
+      : `the src's ${param.live}`;
+    return `  ${at}: ${param.param} ${param.type}, ${passed}`;
+  });
   const ghosts = params.flatMap((param, at) => (param.live === "poison" ? [at] : []));
   if (ghosts.length === 0) return formatSection("Parameters", lines.join("\n"));
   const calls = hypothesis ? `at the outer's call and at @${hypothesis}` : "at the outer's call";
