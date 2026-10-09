@@ -89,6 +89,19 @@ class NoMan implements Checker {
   }
 }
 
+/** A checker that runs out of time on everything, so llubi decides a report. */
+class Unsure implements Checker {
+  async check(): Promise<CheckResult> {
+    return {
+      outcome: "unknown",
+      detail: "ERROR: Timeout",
+      invocation: { binary: "unsure", flags: [], timeoutMs: 0 },
+      stdout: "",
+      ms: 0,
+    };
+  }
+}
+
 /** A body with an addition of zero for the rewriter to fold away. */
 const ADD_ZERO = `define i32 @f(i32 %x) {
 entry:
@@ -448,15 +461,56 @@ entry:
     }
   });
 
-  test("a refuted run ships the pair it was asked about and the input", async () => {
-    // The interpreter is a stand-in: what is under test is what the manifest
-    // keeps, and whether the two runs really diverge is check.py's question.
+  test("a run alive2 refutes at an input ships the pair, the input and the checker", async () => {
+    // The checker is a stand-in: what is under test is what the manifest
+    // keeps, and whether alive2 refutes the pair at the input is check.py's
+    // question.
     const session = await Session.start({
       dir: join(dir, "refuted"),
       src: miscompile.src,
       tgt: miscompile.tgt,
       llops,
-      checker: new YesMan(),
+      checker: new NoMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    const input = [{ kind: "int", value: "-3" } as const];
+    const reported = await session.reportCex(input, 2);
+    expect(reported.kind).toBe("refuted");
+    expect(session.finish()).toBe("counterexample");
+
+    const manifest = JSON.parse(
+      readFileSync(join(certify(session.dir, join(dir, "cex")), "manifest.json"), "utf8"),
+    ) as Counterexample;
+    expect(manifest).toMatchObject({
+      verdict: "counterexample",
+      source: "alive2",
+      input,
+      unroll: 2,
+    });
+    expect(manifest.divergence).toBe("Value mismatch");
+    // The pair is the one the run started from, and both programs travel.
+    const tree = session.tree.goals.get("g1");
+    expect(manifest.pair).toEqual({
+      src: tree?.src.history[0] as string,
+      tgt: tree?.tgt.history[0] as string,
+    });
+    for (const side of ["src", "tgt"] as const) {
+      expect(
+        readFileSync(join(dir, "cex", "programs", `${manifest.pair[side]}.ll`), "utf8").length,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  test("a run llubi refutes where alive2 times out names llubi", async () => {
+    // The interpreter is a stand-in too: whether the two runs really diverge
+    // is check.py's question.
+    const session = await Session.start({
+      dir: join(dir, "llubi"),
+      src: miscompile.src,
+      tgt: miscompile.tgt,
+      llops,
+      checker: new Unsure(),
       interp: {
         async run(): Promise<RunResult> {
           diverging += 1;
@@ -472,28 +526,14 @@ entry:
       rewriter: unrewriting,
     });
     const input = [{ kind: "int", value: "-3" } as const];
-    const reported = await session.reportCex(input);
-    expect(reported.kind).toBe("refuted");
+    expect((await session.reportCex(input)).kind).toBe("refuted");
     expect(session.finish()).toBe("counterexample");
 
     const manifest = JSON.parse(
-      readFileSync(join(certify(session.dir, join(dir, "cex")), "manifest.json"), "utf8"),
+      readFileSync(join(certify(session.dir, join(dir, "llubi-cex")), "manifest.json"), "utf8"),
     ) as Counterexample;
-    expect(manifest.verdict).toBe("counterexample");
-    expect(manifest.source).toBe("llubi");
-    expect(manifest.input).toEqual(input);
+    expect(manifest).toMatchObject({ source: "llubi", input });
     expect(manifest.divergence).toContain("i32 -1 in the src and i32 -2 in the tgt");
-    // The pair is the one the run started from, and both programs travel.
-    const tree = session.tree.goals.get("g1");
-    expect(manifest.pair).toEqual({
-      src: tree?.src.history[0] as string,
-      tgt: tree?.tgt.history[0] as string,
-    });
-    for (const side of ["src", "tgt"] as const) {
-      expect(
-        readFileSync(join(dir, "cex", "programs", `${manifest.pair[side]}.ll`), "utf8").length,
-      ).toBeGreaterThan(0);
-    }
   });
 
   test("refuses a run that proved nothing", async () => {
@@ -634,38 +674,23 @@ Summary:
     expect(manifest.divergence).toBe("Value mismatch");
   });
 
-  test("an executed input supersedes a checker counterexample in the manifest", async () => {
-    let diverging = 0;
+  test("the last refutation is the one the manifest keeps", async () => {
+    // The start check refutes the pair as it stands, and a report then
+    // refutes it at an input, which the manifest carries.
     const session = await Session.start({
       dir: join(dir, "superseded"),
       src: miscompile.src,
       tgt: miscompile.tgt,
       llops,
-      // The checker refutes without a parseable example, so the eager check
-      // falls back to the checker's answer (source alive2). Then report_cex
-      // offers a concrete input the interpreter confirms, and the manifest
-      // carries that one instead.
       checker: new NoMan(),
-      interp: {
-        async run(): Promise<RunResult> {
-          diverging += 1;
-          return {
-            outcome: "returned",
-            observations: { "%obs.result": diverging === 1 ? "i32 -1" : "i32 -2" },
-            reason: "",
-            trace: "",
-            ms: 1,
-          };
-        },
-      },
+      interp: noRun,
       rewriter: unrewriting,
       eager: true,
     });
     expect(session.verdict).toBe("counterexample");
 
     const input = [{ kind: "int", value: "-3" } as const];
-    const reported = await session.reportCex(input);
-    expect(reported.kind).toBe("refuted");
+    expect((await session.reportCex(input)).kind).toBe("refuted");
 
     const manifest = JSON.parse(
       readFileSync(
@@ -673,8 +698,7 @@ Summary:
         "utf8",
       ),
     ) as Counterexample;
-    expect(manifest.source).toBe("llubi");
-    expect(manifest.input).toEqual(input);
-    expect(manifest.divergence).toContain("i32 -1 in the src and i32 -2 in the tgt");
+    expect(manifest).toMatchObject({ source: "alive2", input });
+    expect(manifest.unroll).toBeUndefined();
   });
 });

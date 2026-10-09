@@ -6,10 +6,9 @@
 // here says the addition cannot overflow, so at the largest positive integer
 // the src wraps and the tgt is poison.
 //
-// The harness stores what the entry returned so that it can be observed, and
-// storing poison is UB, so a tgt that returns poison stops there rather than
-// producing a value. That is what tells this apart from a tgt with UB of its
-// own, which the load widening example shows.
+// alive2 reports a tgt that returns poison as more poisonous than the src,
+// which tells it apart from a tgt with UB of its own, as the load widening
+// example shows.
 import { expect, type Scenario } from "../core/scenario.ts";
 
 export const poison: Scenario = {

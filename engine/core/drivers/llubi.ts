@@ -69,6 +69,8 @@ export class Llubi {
       // Counterexamples come from alive2, so llubi is asked to treat
       // uninitialised memory the way alive2 does.
       "--fill-uninitialized-mem-with-poison",
+      // A store of poison poisons memory, as in LLVM, rather than being UB.
+      "--store-poison-is-ub=false",
       ...(options.maxSteps ? [`--max-steps=${options.maxSteps}`] : []),
       ...(options.flags ?? []),
     ];

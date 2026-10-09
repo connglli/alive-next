@@ -162,8 +162,8 @@ export interface Fact {
   scev?: Scev;
 }
 
-/** One argument for a harness, matched to the entry's parameter by position. */
-export type HarnessArg =
+/** One argument of a counterexample's input, matched to a parameter by position. */
+export type InputArg =
   | { kind: "int"; value: string }
   | { kind: "bytes"; bytes: number[]; align?: number }
   | { kind: "null" };
@@ -172,6 +172,8 @@ export interface HarnessResult {
   module: Module;
   /** The names to look for in llubi's trace, in the order they are produced. */
   observations: Ref[];
+  /** What in the entry llubi treats differently from alive2. */
+  differences: string[];
 }
 
 export interface AnalyzeResult {
@@ -439,8 +441,17 @@ export class Llops {
   }
 
   /** Wrap a function in the main llubi runs, with these argument values. */
-  harness(module: Module, entry: string, args: HarnessArg[]): Promise<LlopsResult<HarnessResult>> {
+  harness(module: Module, entry: string, args: InputArg[]): Promise<LlopsResult<HarnessResult>> {
     return this.run("harness", { module, entry, args });
+  }
+
+  /** Assume an input at the entry of both programs of a pair. */
+  instantiate(
+    src: Module,
+    tgt: Module,
+    args: InputArg[],
+  ): Promise<LlopsResult<{ src: Module; tgt: Module }>> {
+    return this.run("instantiate", { src, tgt, args });
   }
 
   /** The version line, which a run records to say what produced its programs. */

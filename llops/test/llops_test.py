@@ -2354,6 +2354,19 @@ entry:
     r = self.good(self.harness(module=module, args=bytes))
     self.assertEqual(r["observations"], ["%obs.mem.1.0"])
 
+  def test_names_what_llubi_treats_differently_from_alive2(self):
+    self.assertEqual(self.good(self.harness(args=self.two_args()))["differences"], [])
+    module = """define i32 @f(ptr writeonly captures(none) %p, i32 %x) {
+entry:
+  %y = freeze i32 %x
+  ret i32 %y
+}
+"""
+    r = self.good(
+      self.harness(module=module, args=[{"kind": "null"}, {"kind": "int", "value": "1"}])
+    )
+    self.assertEqual(r["differences"], ["freeze", "writeonly", "captures(none)"])
+
   def test_a_noreturn_entry(self):
     module = """define void @f() noreturn {
 entry:

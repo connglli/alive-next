@@ -4,7 +4,7 @@ Agent-driven, alive2-certified translation validation for large LLVM IR programs
 
 ## Problem
 
-Translation validation checks that a target program (RHS) is a refinement of a source program (LHS). alive2 is the standard tool for LLVM, but it sends the whole problem to an SMT solver in one query, so it does not scale to large programs. alive-next keeps alive2 as the trusted checker and builds an **interactive translation validation** framework, analogous to interactive theorem proving, where a proof writer searches for a proof and the framework emits an independently replayable certificate.
+Translation validation checks that a target program (RHS) is a refinement of a source program (LHS). alive2 is the standard tool for LLVM, but it sends the whole problem to an SMT solver in one query, so it does not scale to large programs. alive-next keeps alive2 as the trusted checker, follows its semantics of LLVM IR, and builds an **interactive translation validation** framework, analogous to interactive theorem proving, where a proof writer searches for a proof and the framework emits an independently replayable certificate.
 
 ## Insight
 
@@ -18,13 +18,13 @@ The two combine naturally: decomposition cuts the program into chunks small enou
 
 ## Core principle: proof writer proposes, checker certifies
 
-The proof writer (human or agents) is entirely untrusted. It decides *what* to try: where to cut the program, which rewrites to apply, which interface facts to add, which counterexample candidates to test. Nothing the proof writer does can break soundness, because the framework strictly verifies every decomposition step, subproof, and rewrite against LLVM's operational semantics before it counts:
+The proof writer (human or agents) is entirely untrusted. It decides *what* to try: where to cut the program, which rewrites to apply, which interface facts to add, which counterexample candidates to test. Nothing the proof writer does can break soundness, because the framework strictly verifies every decomposition step, subproof, and rewrite against LLVM's operational semantics as alive2 models them, before it counts:
 
 * Rewrite steps are validated by alive2 (or applied via pre-proved rules).
 * Decomposition and interface facts are validated by alive2 through faithful outlining and call-site assertions.
-* Counterexamples are validated under the checker the certificate names: replay under llubi, or a refutation of the root pair by alive2.
+* Counterexamples are validated under the checker the certificate names: alive2 refuting the root pair, or, where alive2 does not decide, a weaker replay under llubi.
 
-A wrong proposal wastes time; it never produces a wrong certificate. Since refinement is transitive, a chain of certified steps from LHS to RHS certifies the whole translation.
+A wrong proposal wastes time; it never produces a wrong certificate, though a counterexample llubi certifies is only as sound as llubi. Since refinement is transitive, a chain of certified steps from LHS to RHS certifies the whole translation.
 
 ## Scope
 
@@ -68,7 +68,7 @@ The framework state has two parts: an immutable **program store** and a **goal t
 
 **Transactions.** A transaction is an editing session on one side of one goal. While it is open, the agent makes arbitrary edits and gets cheap feedback (parse errors, shape check, analyses); the intermediate programs are scratch and never enter any certificate. Committing it certifies it as a single step, in one of the ways listed under Steps above, asking about the window the edits touched before falling back to the whole pair. On failure the head is unchanged and the local counterexample is returned as a hint. There is no separate "checked rewrite" concept: a checked rewrite is a transaction with one edit. Likewise, inserting `llvm.assume(c)` on the src side and committing *is* a proof that `c` always holds; annotation is not special machinery. (An assume inserted on the tgt side commits trivially, but the obligation resurfaces in the remaining goal, so it defers work rather than avoiding it.)
 
-**Certificate.** The deliverable of a successful run: a standalone package (IR files, a manifest, a checker script) that replays the whole proof through alive2 with no framework and no agent involved (see "Certificate package"). It contains only the pruned proof, the goals and steps that actually discharged the root; reverted or abandoned search never appears in it. A refuted root has the symmetric package: the input, when llubi ran one, or nothing, when alive2 refuted the pair itself.
+**Certificate.** The deliverable of a successful run: a standalone package (IR files, a manifest, a checker script) that replays the whole proof through alive2 with no framework and no agent involved (see "Certificate package"). It contains only the pruned proof, the goals and steps that actually discharged the root; reverted or abandoned search never appears in it. A refuted root has the symmetric package: the pair, the input it was refuted at when there is one, and the checker that refuted it.
 
 ## Decomposition = outlining
 
@@ -139,8 +139,10 @@ A check of the root's original pair is a check of the translation itself: what a
 
 A counterexample the run ends on is certified one of two ways, and the certificate names which:
 
-1. Execution (the `llubi` source): a concrete whole-program input on which LHS and RHS are run under a UB/poison-aware interpreter (llubi), and RHS shows a behavior LHS does not allow. That check is cheap, independent of program size, and replayable by anyone.
-2. The root refutation (the `alive2` source): alive-tv refuting the root's original pair. Replaying it asks alive-tv the same question again under the no-undef flags, where the pair must be refuted again.
+1. The `alive2` source: alive-tv refuting the root's original pair, as it stands or at an input the agent names, which `llops instantiate` assumes in both programs. A pair that loops is refuted only with an unroll factor: alive2 counts a run past the bound as UB in the src and leaves it out of the tgt.
+2. The `llubi` source, only where alive2 does not decide an input: LHS and RHS run on it under llubi, and RHS shows a behavior LHS does not allow. llubi's semantics are not alive2's, so this is weaker, and a LHS with a `freeze`, a `writeonly` parameter or a `captures(none)` parameter, which llubi treats differently, is not run.
+
+Replaying asks alive-tv again under the no-undef flags, and runs llubi only for a `llubi` counterexample alive-tv still does not decide.
 
 The search for an input is fully untrusted, so the agent gets full flexibility: infer candidate values from analyses, run programs concretely under llubi or compute anything else in `bash`, or guess.
 
@@ -204,6 +206,7 @@ Every tool call is logged. Tools that create certified steps record enough to re
   - `retype(%v, ty)`: change a value's type (e.g. narrow `i32` to `i22` after a known-bits fact), inserting trunc/ext fixups at the definition and all uses.
   - `dedup(%a, %b)`: merge duplicate computations: erase `%b` and substitute its uses with `%a`.
   - `set_body(text)`: the whole-body escape hatch.
+  - ...
 
   Each edit gets cheap feedback (parses and verifies); no alive2 involved, and every edit stays uncertified until `commit`.
 - `commit()`: certify the transaction's before/after pair, by `llops reshaped` or `llops respected` when it only reshapes control flow or changes attributes, and otherwise with alive2, in the side-appropriate direction. Success: one certified step, head advances. Failure: head unchanged, local counterexample returned as a hint.
@@ -232,7 +235,7 @@ Both children are cross-checked once at the end, after phase 3, and not between 
 
 ### Counterexample search and computation
 
-- `report_cex(inputs)`: the certifying check. The framework itself replays the root pair under llubi; only a confirmed divergence marks the root goal refuted and is recorded in the certificate.
+- `report_cex(inputs, unroll, timeout)`: the certifying check. The framework asks alive2 about the root's original pair at the input, as `check` does, and runs it under llubi where alive2 does not decide; only a refutation marks the root goal refuted and is recorded in the certificate.
 - `bash(cmd)`: general scratch computation for the agent, an interpreter included, since running one is a command. Untrusted; must not touch the program store or goal tree except through the tools above (see Implementation notes).
 
 ## Certificate package
@@ -247,7 +250,7 @@ The script checks that every chain connects, from the root's two programs on, an
 
 The consequence for trust is significant: the framework is only a search assistant and drops out of the trust base entirely. Anything it gets wrong (bookkeeping, direction, outlining) surfaces as a failed replay. The composition rule and the faithfulness check live in `kernel/check.py`, which is small, standalone, and auditable.
 
-A "counterexample" verdict ships the symmetric package: the two root programs and a script that asks the named checker again. An executed counterexample also carries its input, and the script runs both programs on it under llubi; a pair alive-tv refuted carries no input, and the script asks alive-tv the same question again.
+A "counterexample" verdict ships the symmetric package: the two root programs, the input and unroll factor when the refutation named them, and a script that asks the named checker again.
 
 Replay cost is the same order as the original validation run (the solver queries are rerun); that is inherent to a certificate whose checker is alive2 itself.
 
@@ -256,7 +259,7 @@ Replay cost is the same order as the original validation run (the solver queries
 Exactly three:
 
 - **verified**: a certificate package replaying the proof through alive2, under the assumptions about arguments that the package states.
-- **counterexample**: a package replaying an executed input under llubi, or asking alive-tv the same question a root refutation answered.
+- **counterexample**: a package asking alive-tv the same question a refutation of the root pair answered, or replaying an input under llubi where alive2 did not decide it.
 - **unknown**: the agent could not close the gap. Local failures along the way are never reported as bugs. No package is produced.
 
 ## Trust base
@@ -266,9 +269,9 @@ Two tiers, drawn by one criterion: can a bug here cause a wrong verdict to be ac
 **Tier 1, verdict-critical (trusted).** Exactly what the certificate package depends on:
 
 - alive2, and transitively the SMT solver it trusts (Z3) and the LLVM IR parser/printer it links. This is the largest real-world risk in the whole trust base; the rest of LLVM is in only through the llops below. Its proofs back a verified verdict, and its refutation of the root pair backs that counterexample, since the kernel asks it the same question again.
-- llubi, for counterexample verdicts that name an input: a llubi bug cannot fake "verified", and a replay is a single concrete input that is easy to cross-check independently.
+- llubi, for a counterexample alive2 does not decide: a llubi bug cannot fake "verified", and a replay is a single concrete input that is easy to cross-check independently.
 - The verified rewriter llrwt (used by `kernel/check.py` to replay rule steps), together with the rules' external proofs and the MLIR translators it runs under.
-- llops, for the subcommands `kernel/check.py` runs and the LLVM they link: `validate`, `canon`, `inline`, `reattach`, `unfold`, `attrs`, `assume` and `harness` rebuild and gate the programs the replay compares, and `reshaped` and `respected` certify the steps that only reshape control flow or change attributes.
+- llops, for the subcommands `kernel/check.py` runs and the LLVM they link: `validate`, `canon`, `inline`, `reattach`, `unfold`, `attrs`, `assume`, `instantiate` and `harness` rebuild and gate the programs the replay compares, and `reshaped` and `respected` certify the steps that only reshape control flow or change attributes.
 - `kernel/check.py`: the small standalone checker that encodes chain connectivity, split faithfulness, tree composition, and the loop rules no solver checks (induction and unfolding).
 
 **Tier 2, success-critical (untrusted for soundness).** The framework, the analyses, the agent, and `bash` scratch work. A bug here can waste time, mislead the search, or end the run at "unknown"; it cannot survive a certificate replay, so it cannot corrupt a verdict. These components are still engineered and tested like normal software, because the tool's success rate depends on them. The framework in particular orchestrates the search and assembles the package, but its mistakes show up as failed replays, not wrong answers.

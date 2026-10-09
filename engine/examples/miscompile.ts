@@ -2,16 +2,15 @@
 //
 // Halving a signed integer is not a shift: `sdiv` rounds toward zero and
 // `ashr` rounds down, so the two disagree on every negative odd value. The
-// check refutes the pair, and the replay on the input below is what the
-// certificate carries.
+// check refutes the pair, and the input below is what the certificate carries.
 //
-// The script first checks the pair, then offers a concrete input. The
-// framework runs both programs on it under llubi and compares the results.
+// The script first checks the pair, then offers a concrete input, at which
+// alive2 refutes the pair again.
 import { expect, type Scenario } from "../core/scenario.ts";
 
 export const miscompile: Scenario = {
   name: "miscompile",
-  about: "a refutation certified by running both programs",
+  about: "a refutation certified at an input",
   verdict: "counterexample",
 
   src: `define i32 @f(i32 noundef %x) {
@@ -30,7 +29,7 @@ entry:
 
   async prove(session) {
     // A check of the pair the run was asked about refutes the run, and no
-    // input has been replayed yet.
+    // input has been offered yet.
     const checked = await session.check("g1");
     expect("the check refutes the pair", checked.outcome === "refuted", checked);
 

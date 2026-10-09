@@ -5,10 +5,8 @@
 // bytes. Nothing in this pair says it does, so on a one byte object the tgt
 // reads out of bounds where the src is defined.
 //
-// The input here is memory: the parameter is a pointer, and the harness
-// allocates the bytes behind it before the call and reads them back after, so
-// what each side left in the caller's memory is compared like any other
-// observation.
+// The input here is memory: the parameter points to the given byte, and
+// nothing says the object it is in holds more.
 import { expect, type Scenario } from "../core/scenario.ts";
 
 export const widen: Scenario = {

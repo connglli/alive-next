@@ -22,7 +22,7 @@ import {
   type AnalyzeResult,
   definedIn,
   type EditOp,
-  type HarnessArg,
+  type InputArg,
   type Llops,
   type LlopsResult,
   type OptOp,
@@ -149,7 +149,7 @@ export interface SessionOptions {
   dir: string;
   llops: Llops;
   checker: Checker;
-  /** llubi, which is what replays an executed counterexample. */
+  /** llubi, which runs a counterexample alive2 does not decide. */
   interp: Interpreter;
   /** llrwt, which is what certifies a rewrite without a solver run. */
   rewriter: Llrwt;
@@ -201,7 +201,12 @@ export class Session {
     this.splits = new Splits(this.store, options.llops);
     this.strengthening = new Strengthen(this.store, options.llops, this.steps);
     this.editing = new Transactions(this.store, options.llops);
-    this.counterexamples = new Counterexamples(this.store, options.llops, options.interp);
+    this.counterexamples = new Counterexamples(
+      this.store,
+      options.llops,
+      this.steps,
+      options.interp,
+    );
   }
 
   /** Begin a run on a pair, in a directory that has none. */
@@ -600,12 +605,15 @@ export class Session {
   }
 
   /**
-   * Offer a whole-program input as a counterexample. The framework runs the
-   * pair the run was asked about under the interpreter, and a divergence it
-   * sees for itself is what refutes the root.
+   * Offer a whole-program input as a counterexample. alive2 is asked about
+   * the pair the run was asked about at that input, each loop unrolled
+   * `unroll` times, or llubi runs it where alive2 does not decide, and a
+   * divergence either finds is what refutes the root.
    */
-  reportCex(input: HarnessArg[]): Promise<ReportResult> {
-    return this.act("report_cex", { input }, (tree) => this.counterexamples.report(tree, input));
+  reportCex(input: InputArg[], unroll?: number, timeoutMs?: number): Promise<ReportResult> {
+    return this.act("report_cex", { input, unroll, timeout_ms: timeoutMs }, (tree) =>
+      this.counterexamples.report(tree, input, unroll, timeoutMs),
+    );
   }
 
   /**

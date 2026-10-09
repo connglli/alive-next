@@ -4,10 +4,9 @@
     python3 check.py [<package>] [--alive-tv PATH] [--llops PATH] [--llubi PATH] [--llrwt PATH] [--mlir-translate PATH] [--mlir-opt PATH] [--smt-to MS]
 
 The package is the directory this script sits in unless one is named. What is
-needed besides Python: alive-tv for a proof and for a counterexample the
-checker is the source of, llubi for a counterexample that names an input,
-llrwt for a proof that rewrites with pre-proved rules, and llops for the
-subcommands each of them needs. All are taken from the manifest, which records
+needed besides Python: alive-tv, llubi for a counterexample alive-tv did not
+decide, llrwt for a proof that rewrites with pre-proved rules, and llops for
+the subcommands each of them needs. All are taken from the manifest, which records
 where the run found them and which LLVM each one carried; a path that is not
 there falls back to the name on PATH, and an option overrides both.
 
@@ -15,10 +14,11 @@ Nothing here believes the manifest. For a proof it says which pairs the run
 moved through and this reruns every claim about them: the direction of a check
 comes from the side the step moved, the composition rule for a cut is applied
 here, and a program is read only from a file whose name is its hash. For a
-counterexample it says which pair was refuted and what certifies it: an
-executed one names one input, and this runs both programs on it and decides
-for itself whether they diverge; one the checker refuted is asked again, and
-the checker's answer decides.
+counterexample it says which pair was refuted, at which input when it names
+one, and by which checker. The pair, put at that input by `llops
+instantiate`, is asked of alive-tv again. One llubi refuted, because alive-tv
+did not decide it, is run again under llubi only where alive-tv still does
+not decide, and this decides for itself whether the two runs diverge.
 """
 
 import argparse
@@ -129,9 +129,9 @@ class Package:
 
   def say_toolchain(self) -> None:
     """Name the binaries in use, and say when they are not the recorded ones."""
-    solver = self.verdict == "verified" or self.source() == "alive2"
-    checker = ("alive-tv", self.alive_tv) if solver else ("llubi", self.llubi)
-    names = [checker, ("llops", self.llops)]
+    names = [("alive-tv", self.alive_tv), ("llops", self.llops)]
+    if self.verdict == "counterexample" and self.source() == "llubi":
+      names.insert(1, ("llubi", self.llubi))
     if self.verdict == "verified":
       names.append(("llrwt", self.llrwt))
     for name, path in names:
@@ -178,13 +178,13 @@ class Package:
       raise Refused(f"llops canon: {error.get('message')}")
     return answer["module"]
 
-  def shape_gate(self, module: str) -> str:
-    """The module, if `llops validate` says it has the shape of a program and does not loop."""
+  def shape_gate(self, module: str, unroll: int = 0) -> str:
+    """The module, if `llops validate` calls it a program, loop-free unless unrolled."""
     answer = self.run_llops("validate", {"module": module})
     if not answer.get("conforms"):
       codes = ", ".join(d.get("code", "?") for d in answer.get("diagnostics", []))
       raise Refused(f"a program handed to alive-tv is outside the program shape: {codes}")
-    if answer.get("cyclic") is not False:
+    if answer.get("cyclic") is not False and not unroll:
       raise Refused(
         "a program handed to alive-tv loops, which it answers only as far as it unrolls"
       )
@@ -200,11 +200,15 @@ class Package:
     """Ask alive-tv whether the second program refines the first."""
     return self.ask(src, tgt) == "correct"
 
-  def refutes(self, src: str, tgt: str) -> bool:
-    """Ask alive-tv whether the second program fails to refine the first."""
-    return self.ask(src, tgt) == "incorrect"
+  def loops(self, module: str) -> bool:
+    """Whether `llops validate` says the program loops."""
+    return self.run_llops("validate", {"module": module}).get("cyclic") is not False
 
-  def ask(self, src: str, tgt: str) -> str:
+  def refutes(self, src: str, tgt: str, unroll: int = 0) -> bool:
+    """Ask alive-tv whether the second program fails to refine the first."""
+    return self.ask(src, tgt, unroll) == "incorrect"
+
+  def ask(self, src: str, tgt: str, unroll: int = 0) -> str:
     """Ask alive-tv about the pair, and answer with its summary."""
     with tempfile.TemporaryDirectory() as scratch:
       paths = []
@@ -222,11 +226,12 @@ class Package:
             " which the no-undef model excludes",
           )
           text = item
-        path.write_text(self.shape_gate(text))
+        path.write_text(self.shape_gate(text, unroll))
         paths.append(str(path))
+      unrolled = [f"--src-unroll={unroll}", f"--tgt-unroll={unroll}"] if unroll else []
       started = time.monotonic()
       done = subprocess.run(
-        [self.alive_tv, *paths, f"--smt-to={self.smt_to}", "--disable-undef-input"],
+        [self.alive_tv, *paths, f"--smt-to={self.smt_to}", "--disable-undef-input", *unrolled],
         capture_output=True,
         text=True,
       )
@@ -260,11 +265,18 @@ class Package:
       raise Refused("a counterexample names no pair to ask about")
     return pair
 
-  def counterexample_input(self) -> list:
-    """The input an executed counterexample runs both programs on."""
+  def counterexample_input(self) -> list | None:
+    """The input a counterexample names, if it names one."""
     found = self.manifest.get("input")
-    if not isinstance(found, list):
-      raise Refused("an executed counterexample names no input")
+    if found is not None and not isinstance(found, list):
+      raise Refused("a counterexample's input is not a list of arguments")
+    return found
+
+  def counterexample_unroll(self) -> int:
+    """The unroll factor a counterexample names, 0 when it names none."""
+    found = self.manifest.get("unroll", 0)
+    if not isinstance(found, int) or isinstance(found, bool) or found < 0:
+      raise Refused("a counterexample's unroll factor is not a whole number")
     return found
 
   def ask_llops(self, subcommand: str, request: dict) -> dict:
@@ -291,7 +303,13 @@ class Package:
     started = time.monotonic()
     try:
       done = subprocess.run(
-        [self.llubi, "-", "--verbose", "--fill-uninitialized-mem-with-poison"],
+        [
+          self.llubi,
+          "-",
+          "--verbose",
+          "--fill-uninitialized-mem-with-poison",
+          "--store-poison-is-ub=false",
+        ],
         input=module,
         capture_output=True,
         text=True,
@@ -1203,32 +1221,45 @@ class Check:
 
 
 class Refutation:
-  """Re-ask alive-tv about the pair, and require the same answer."""
+  """Re-ask alive-tv about the pair, at its input if any; llubi decides where it does not."""
 
   def __init__(self, package: Package, verbose: bool):
     self.package = package
     self.verbose = verbose
 
-  def confirm(self) -> bool:
-    if "input" in self.package.manifest:
-      raise Refused("a counterexample the checker refuted carries no input")
+  def confirm(self) -> tuple[bool, str]:
     pair = self.package.counterexample_pair()
+    args = self.package.counterexample_input()
+    unroll = self.package.counterexample_unroll()
+    by_llubi = self.package.source() == "llubi"
+    if by_llubi and args is None:
+      raise Refused("a counterexample llubi refuted names no input")
     started = time.monotonic()
-    self.package.program(pair["src"])
-    self.package.program(pair["tgt"])
-    refuted = self.package.refutes(pair["src"], pair["tgt"])
-    ms = elapsed_ms(started)
-    gid = self.package.root_goal()
+    src, tgt = self.package.program(pair["src"]), self.package.program(pair["tgt"])
+    if args is not None:
+      at = self.package.run_llops("instantiate", {"src": src, "tgt": tgt, "args": args})
+      src, tgt = at["src"], at["tgt"]
+    # alive-tv is asked about a loop only with an unroll factor, and then its
+    # answer covers only the iterations it unrolled.
+    looping = by_llubi and (self.package.loops(src) or self.package.loops(tgt))
+    answer = "not asked" if looping and not unroll else self.package.ask(src, tgt, unroll)
+    decided = answer == "incorrect" or answer == "correct" and not looping
     report_row(
-      result="OK" if refuted else "FAIL",
-      gid=gid,
+      result="OK" if answer == "incorrect" else "FAIL" if decided or not by_llubi else "--",
+      gid=self.package.root_goal(),
       side="pair",
       tool="alive-tv",
       check="Root refutation",
-      notes="refuted" if refuted else "not refuted",
-      ms=ms,
+      notes=answer,
+      ms=elapsed_ms(started),
     )
-    return refuted
+    if answer == "incorrect":
+      return True, ""
+    if not by_llubi:
+      return False, "the pair was not refuted again"
+    if decided:
+      return False, "alive-tv finds no divergence at the input"
+    return Replay(self.package, self.verbose).confirm(pair, args)
 
 
 # --- the counterexample ------------------------------------------------------
@@ -1241,17 +1272,6 @@ def entry(package: Package, module: str) -> str:
   if len(defined) != 1:
     raise Refused("a program of the pair does not define exactly one function")
   return defined[0]
-
-
-def poison_return(run: dict) -> bool:
-  """Whether a run stopped in the harness rather than in the program.
-
-  `llops harness` stores what the entry returned so that it can be observed,
-  and storing poison is UB, so that store is the only UB the harness itself
-  can have. Stopping there says the program had no UB: it returned poison,
-  which is a different thing to report and a different thing to fix.
-  """
-  return run["outcome"] == "ub" and run.get("at", "").endswith("at @main")
 
 
 def read_run(trace: str) -> dict:
@@ -1295,11 +1315,10 @@ def read_run(trace: str) -> dict:
 def divergence(src: dict, tgt: dict) -> tuple[bool, str]:
   """Whether the tgt run does what the src run does not allow.
 
-  A src with UB on this input allows every target, so it settles nothing. A
-  tgt with UB where the src returned is a refutation, and so is any
-  observation the two disagree on. Poison needs no case of its own: the
-  harness stores what the entry returns and storing poison is UB, so a poison
-  result arrives as UB on the side that produced it.
+  A src with UB on this input allows every target, so it settles nothing, and
+  a src observation that is poison allows any value there. A tgt with UB
+  where the src returned is a refutation, and so is any other observation the
+  two disagree on, poison in the tgt included.
   """
   for side, run in (("src", src), ("tgt", tgt)):
     if run["outcome"] == "error":
@@ -1307,13 +1326,11 @@ def divergence(src: dict, tgt: dict) -> tuple[bool, str]:
   if src["outcome"] == "ub":
     return False, f"the src has UB on this input ({src['reason']}), so every target refines it"
   if tgt["outcome"] == "ub":
-    if poison_return(tgt):
-      return True, "the tgt returns poison where the src returns a value"
     return True, f"the tgt has UB where the src returns: {tgt['reason']}"
   if sorted(src["observations"]) != sorted(tgt["observations"]):
     return False, "the two runs do not observe the same things"
   for name, value in src["observations"].items():
-    if value != tgt["observations"][name]:
+    if value != tgt["observations"][name] and "poison" not in value:
       return True, f"{name} is {value} in the src and {tgt['observations'][name]} in the tgt"
   return False, "the two runs agree"
 
@@ -1380,11 +1397,7 @@ class Replay:
       print()
       print(f"{name}:")
       run = runs[side]
-      if poison_return(run):
-        # Nothing was observed: the store the harness makes to observe
-        # the result is where it stopped.
-        print("  %obs.result = poison")
-      elif run["outcome"] == "ub":
+      if run["outcome"] == "ub":
         print(f"  UB triggered: {run['reason']}")
       for observed, value in run["observations"].items():
         print(f"  {observed} = {value}")
@@ -1392,15 +1405,15 @@ class Replay:
 
   def error(self, runs: dict) -> str:
     """What went wrong, in the words alive2 reports the same thing in."""
-    if poison_return(runs["tgt"]):
-      return "Target is more poisonous than source"
     if runs["tgt"]["outcome"] == "ub":
       return "Source is more defined than target"
+    for name, value in runs["src"]["observations"].items():
+      theirs = runs["tgt"]["observations"][name]
+      if theirs != value and "poison" not in value:
+        return "Target is more poisonous than source" if "poison" in theirs else "Value mismatch"
     return "Value mismatch"
 
-  def confirm(self) -> bool:
-    pair = self.package.counterexample_pair()
-    args = self.package.counterexample_input()
+  def confirm(self, pair: dict, args: list) -> tuple[bool, str]:
     programs = {side: self.package.program(pair[side]) for side in ("src", "tgt")}
     entries = {side: entry(self.package, text) for side, text in programs.items()}
     if entries["src"] != entries["tgt"]:
@@ -1408,22 +1421,22 @@ class Replay:
         f"the pair defines @{entries['src']} on one side and @{entries['tgt']} on the other"
       )
 
-    runs = {}
-    for side, text in programs.items():
-      harness = self.package.run_llops(
-        "harness",
-        {
-          "module": text,
-          "entry": entries[side],
-          "args": args,
-        },
-      )["module"]
-      runs[side] = read_run(self.package.interpret(harness))
+    harnesses = {
+      side: self.package.run_llops(
+        "harness", {"module": text, "entry": entries[side], "args": args}
+      )
+      for side, text in programs.items()
+    }
+    # llubi's run stands for the src only where llubi treats it as alive2 does.
+    different = harnesses["src"].get("differences") or []
+    if different:
+      return False, f"llubi treats the src's {', '.join(different)} differently from alive2"
+    runs = {side: read_run(self.package.interpret(h["module"])) for side, h in harnesses.items()}
 
     confirmed, reason = divergence(runs["src"], runs["tgt"])
     self.say(entries["src"], programs["src"], runs, confirmed, args)
     print(reason)
-    return confirmed
+    return confirmed, reason
 
 
 def main() -> int:
@@ -1452,15 +1465,11 @@ def main() -> int:
     print(f"checking {args.package}")
     package.say_toolchain()
     if package.verdict == "counterexample":
-      if package.source() == "alive2":
-        if args.verbose:
-          print()
-          report_header()
-        confirmed = Refutation(package, args.verbose).confirm()
+      if args.verbose:
         print()
-      else:
-        confirmed = Replay(package, args.verbose).confirm()
-        print()
+        report_header()
+      confirmed, why = Refutation(package, args.verbose).confirm()
+      print()
     else:
       check = Check(package, args.verbose)
       if args.verbose:
@@ -1473,23 +1482,11 @@ def main() -> int:
     print(f"refused: {error}", file=sys.stderr)
     return 1
 
-  counted = (
-    "runs"
-    if package.verdict == "counterexample" and package.source() != "alive2"
-    else "solver queries"
-  )
   if package.verdict == "counterexample":
-    print(f"{package.queries} {counted} in {package.seconds:.1f}s")
-    said = (
-      "counterexample"
-      if confirmed
-      else (
-        "NOT a counterexample: the pair was not refuted again"
-        if package.source() == "alive2"
-        else "NOT a counterexample: they do not diverge"
-      )
-    )
-    print(said)
+    runs = package.queries - package.solver_queries
+    ran = f" and {runs} runs" if runs else ""
+    print(f"{package.solver_queries} solver queries{ran} in {package.seconds:.1f}s")
+    print("counterexample" if confirmed else f"NOT a counterexample: {why}")
     return 0 if confirmed else 1
 
   # Only proofs need a root for this summary. Their root was already

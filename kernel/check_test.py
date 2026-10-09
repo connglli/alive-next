@@ -184,6 +184,39 @@ exit:
 }
 """
 LATE = LOOP.replace("ret i32 %2", "ret i32 %4")
+# The same loop returning a sum that overflows at n = 2, and one that freezes its sum.
+LOOP_POISON = LOOP.replace("ret i32 %2", "%6 = add nsw i32 %3, 2147483647\n  ret i32 %6")
+LOOP_FROZEN = LOOP.replace("ret i32 %2", "%6 = freeze i32 %2\n  ret i32 %6")
+
+# A null check the tgt drops, which holds because a null is UB at the call.
+NULL_CHECKED = """define i32 @f(ptr noundef nonnull %0) {
+entry:
+  %1 = icmp eq ptr %0, null
+  %2 = zext i1 %1 to i32
+  ret i32 %2
+}
+"""
+NULL_DROPPED = """define i32 @f(ptr noundef nonnull %0) {
+entry:
+  ret i32 0
+}
+"""
+# Where the addition overflows the src may pick any value, the tgt's 7 too.
+OVERFLOW_FROZEN = """define i32 @f(i32 noundef %0) {
+entry:
+  %1 = add nsw i32 %0, 1
+  %2 = freeze i32 %1
+  ret i32 %2
+}
+"""
+OVERFLOW_PICKED = """define i32 @f(i32 noundef %0) {
+entry:
+  %1 = add i32 %0, 1
+  %2 = icmp eq i32 %0, 2147483647
+  %3 = select i1 %2, i32 7, i32 %1
+  ret i32 %3
+}
+"""
 
 
 # j counts the even numbers below n and i all of them, so j <= i on every
@@ -289,15 +322,19 @@ class Built:
     (self.root / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return self.root
 
-  def refutation(self, src: str, tgt: str, input: list[dict]) -> Path:
-    """A counterexample package: the pair, and the input it is run on."""
+  def refutation(
+    self, src: str, tgt: str, input: list[dict], unroll: int = 0, source: str = "alive2"
+  ) -> Path:
+    """A counterexample package: the pair, the input it is refuted at, and the checker."""
     manifest = {
       "version": 1,
       "verdict": "counterexample",
       "root": "g1",
+      "source": source,
       "toolchain": {},
       "pair": {"src": self.program(src), "tgt": self.program(tgt)},
       "input": input,
+      **({"unroll": unroll} if unroll else {}),
       "divergence": "whatever the run said",
     }
     (self.root / "manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -1689,9 +1726,9 @@ declare i32 @k.ih(i32)
     self.refused(self.built.root, "is not a proof")
 
 
-@unittest.skipUnless(HAVE_LLUBI, "needs llubi and llops")
+@unittest.skipUnless(HAVE, "needs alive-tv and llops")
 class TestCounterexample(unittest.TestCase):
-  """A refutation is confirmed by running the pair, not by being asserted."""
+  """A counterexample at an input holds when alive-tv refutes the pair there."""
 
   def setUp(self) -> None:
     self.dir = Path(tempfile.mkdtemp())
@@ -1700,88 +1737,118 @@ class TestCounterexample(unittest.TestCase):
   def tearDown(self) -> None:
     shutil.rmtree(self.dir, ignore_errors=True)
 
-  def replay(self, package: Path) -> subprocess.CompletedProcess:
-    return run(package, "--llops", LLOPS, "--llubi", LLUBI)
-
-  def test_a_divergence_is_confirmed(self):
-    package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}])
-    done = self.replay(package)
+  def confirmed(self, package: Path) -> subprocess.CompletedProcess:
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llubi", LLUBI)
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-    self.assertIn("i32 -1 in the src and i32 -2 in the tgt", done.stdout)
     self.assertIn("counterexample", done.stdout)
+    return done
 
-  def test_it_says_what_was_run_and_what_each_side_did(self):
-    package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}])
-    said = self.replay(package).stdout
-    self.assertIn("ERROR: Value mismatch", said)
-    self.assertIn("Example:\ni32 noundef %0 = -3", said)
-    self.assertIn("Source:\n  %obs.result = i32 -1", said)
-    self.assertIn("Target:\n  %obs.result = i32 -2", said)
+  def refused(self, package: Path, saying: str = "NOT a counterexample") -> None:
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llubi", LLUBI)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn(saying, done.stdout + done.stderr)
 
-  def test_a_tgt_that_returns_poison_is_the_more_poisonous_one(self):
-    # The harness stores what the entry returns and storing poison is UB,
-    # so a tgt that returns poison stops in the harness, which is what
-    # tells it from a tgt with UB of its own.
-    wraps = HALVE.replace("%1 = sdiv i32 %0, 2", "%1 = add i32 %0, 1")
-    nsw = HALVE.replace("%1 = sdiv i32 %0, 2", "%1 = add nsw i32 %0, 1")
-    package = self.built.refutation(wraps, nsw, [{"kind": "int", "value": "2147483647"}])
-    done = self.replay(package)
-    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-    self.assertIn("ERROR: Target is more poisonous than source", done.stdout)
-    self.assertIn("Source:\n  %obs.result = i32 -2147483648", done.stdout)
-    self.assertIn("Target:\n  %obs.result = poison", done.stdout)
-
-  def test_a_tgt_with_ub_of_its_own_leaves_the_src_more_defined(self):
-    # Widening a load past the object it reads from, on an object of one
-    # byte. The pointer argument also shows what the harness does with
-    # memory: the bytes go in before the call and are read back after.
-    package = self.built.refutation(BYTE, WIDE, [{"kind": "bytes", "bytes": [7]}])
-    done = self.replay(package)
-    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-    self.assertIn("ERROR: Source is more defined than target", done.stdout)
-    self.assertIn("ptr noundef %0 = [7]", done.stdout)
-    self.assertIn("%obs.mem.0.0 = i8 7", done.stdout)
-    self.assertIn("Target:\n  UB triggered: Out of bound mem op", done.stdout)
+  def test_a_divergence_at_the_input_is_confirmed(self):
+    self.confirmed(self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}]))
 
   def test_an_input_they_agree_on_is_refused(self):
     # Rounding parts company below zero only, so 4 halves the same way in
     # both, whatever the manifest claims about it.
-    package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "4"}])
-    done = self.replay(package)
-    self.assertNotEqual(done.returncode, 0, done.stdout)
-    self.assertIn("the two runs agree", done.stdout)
-    self.assertIn("NOT a counterexample", done.stdout)
+    self.refused(self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "4"}]))
 
   def test_an_input_the_src_has_ub_on_is_refused(self):
     # Dividing by zero is UB, and a src with UB allows every target.
-    package = self.built.refutation(
-      DIVIDE, SHIFT2, [{"kind": "int", "value": "6"}, {"kind": "int", "value": "0"}]
-    )
-    done = self.replay(package)
-    self.assertNotEqual(done.returncode, 0, done.stdout)
-    self.assertIn("the src has UB on this input", done.stdout)
+    input = [{"kind": "int", "value": "6"}, {"kind": "int", "value": "0"}]
+    self.refused(self.built.refutation(DIVIDE, SHIFT2, input))
+
+  def test_an_input_a_src_parameter_forbids_is_refused(self):
+    self.refused(self.built.refutation(NULL_CHECKED, NULL_DROPPED, [{"kind": "null"}]))
+
+  def test_a_value_the_src_may_pick_is_no_divergence(self):
+    input = [{"kind": "int", "value": "2147483647"}]
+    self.refused(self.built.refutation(OVERFLOW_FROZEN, OVERFLOW_PICKED, input))
+
+  def test_a_tgt_that_reads_past_the_object_is_refuted(self):
+    # One byte is all the input says the object holds, and the tgt reads four.
+    self.confirmed(self.built.refutation(BYTE, WIDE, [{"kind": "bytes", "bytes": [7]}]))
+
+  def test_a_loop_is_refuted_within_its_unroll_factor(self):
+    input = [{"kind": "int", "value": "2"}]
+    self.confirmed(self.built.refutation(canonical(LOOP), canonical(LATE), input, unroll=2))
+    self.refused(self.built.refutation(canonical(LOOP), canonical(LATE), input), "loops")
 
   def test_a_program_that_is_not_what_its_name_says(self):
     package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}])
     digest = json.loads((package / "manifest.json").read_text())["pair"]["tgt"]
     (package / "programs" / f"{digest}.ll").write_text(SHIFT.replace("ashr", "lshr"))
-    done = self.replay(package)
-    self.assertNotEqual(done.returncode, 0, done.stdout)
-    self.assertIn("is not the program its name claims", done.stdout + done.stderr)
+    self.refused(package, "is not the program its name claims")
 
-  def test_an_executed_counterexample_without_an_input_is_refused(self):
+  def test_an_input_or_a_factor_of_the_wrong_shape_is_refused(self):
     package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}])
+    self.built.bend(lambda manifest: manifest.__setitem__("input", {}))
+    self.refused(package, "is not a list of arguments")
+    input = [{"kind": "int", "value": "-3"}]
+    self.built.bend(lambda manifest: manifest.update(input=input, unroll=-1))
+    self.refused(package, "is not a whole number")
+
+
+@unittest.skipUnless(HAVE and HAVE_LLUBI, "needs alive-tv, llubi and llops")
+class TestLlubiRefutation(unittest.TestCase):
+  """A refutation llubi made stands only where alive-tv does not decide the pair."""
+
+  def setUp(self) -> None:
+    self.dir = Path(tempfile.mkdtemp())
+    self.built = Built(self.dir / "package")
+
+  def tearDown(self) -> None:
+    shutil.rmtree(self.dir, ignore_errors=True)
+
+  def replay(self, src: str, tgt: str, value: str) -> subprocess.CompletedProcess:
+    input = [{"kind": "int", "value": value}]
+    package = self.built.refutation(canonical(src), canonical(tgt), input, source="llubi")
+    return run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llubi", LLUBI)
+
+  def test_alive_tv_decides_first_where_it_can(self):
+    done = self.replay(HALVE, SHIFT, "-3")
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertNotIn("Example:", done.stdout)
+    done = self.replay(HALVE, SHIFT, "4")
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("alive-tv finds no divergence at the input", done.stdout)
+
+  def test_llubi_decides_a_loop_alive_tv_is_not_asked_about(self):
+    done = self.replay(LOOP, LATE, "2")
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertIn("ERROR: Value mismatch", done.stdout)
+    self.assertIn("i32 0 in the src and i32 1 in the tgt", done.stdout)
+
+  def test_alive_tv_finding_no_divergence_on_a_loop_leaves_it_to_llubi(self):
+    # Unrolled once, alive-tv leaves out the tgt's run, which takes two.
+    src = canonical("define i32 @f(i32 noundef %0) {\nentry:\n  ret i32 0\n}\n")
+    count = canonical(LOOP.replace("ret i32 %2", "ret i32 %3"))
+    input = [{"kind": "int", "value": "2"}]
+    package = self.built.refutation(src, count, input, unroll=1, source="llubi")
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llubi", LLUBI)
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertIn("i32 0 in the src and i32 2 in the tgt", done.stdout)
+
+  def test_a_tgt_that_returns_poison_is_the_more_poisonous_one(self):
+    done = self.replay(LOOP, LOOP_POISON, "2")
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertIn("ERROR: Target is more poisonous than source", done.stdout)
+    self.assertIn("Target:\n  %obs.result = poison", done.stdout)
+
+  def test_llubi_does_not_stand_in_for_a_src_it_treats_differently(self):
+    done = self.replay(LOOP_FROZEN, LATE, "2")
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("llubi treats the src's freeze differently from alive2", done.stdout)
+
+  def test_a_llubi_refutation_without_an_input_is_refused(self):
+    package = self.built.refutation(HALVE, SHIFT, [], source="llubi")
     self.built.bend(lambda manifest: manifest.pop("input"))
-    done = self.replay(package)
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llubi", LLUBI)
     self.assertNotEqual(done.returncode, 0, done.stdout)
     self.assertIn("names no input", done.stdout + done.stderr)
-
-  def test_an_unknown_source_is_refused(self):
-    package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}])
-    self.built.bend(lambda manifest: manifest.__setitem__("source", "oracle"))
-    done = self.replay(package)
-    self.assertNotEqual(done.returncode, 0, done.stdout)
-    self.assertIn("unknown counterexample source", done.stdout + done.stderr)
 
 
 @unittest.skipUnless(HAVE, "needs alive-tv and llops")
@@ -1806,9 +1873,7 @@ class TestRefuted(unittest.TestCase):
     self.assertIn("counterexample", done.stdout)
     self.assertIn("Root refutation", done.stdout)
 
-  def test_a_pair_that_loops_is_not_asked_about(self):
-    # A refutation of a loop rests on how alive-tv treats the iterations it
-    # did not unroll, so it is refused like a proof; llubi certifies a loop's.
+  def test_a_pair_that_loops_is_not_asked_about_without_an_unroll_factor(self):
     package = self.built.refuted(canonical(LOOP), canonical(LATE))
     done = self.re_asked(package)
     self.assertNotEqual(done.returncode, 0, done.stdout)
@@ -1827,13 +1892,6 @@ class TestRefuted(unittest.TestCase):
     done = self.re_asked(package)
     self.assertNotEqual(done.returncode, 0, done.stdout)
     self.assertIn("is not the program its name claims", done.stdout + done.stderr)
-
-  def test_a_refutation_that_carries_an_input_is_refused(self):
-    package = self.built.refuted(HALVE, SHIFT)
-    self.built.bend(lambda manifest: manifest.__setitem__("input", []))
-    done = self.re_asked(package)
-    self.assertNotEqual(done.returncode, 0, done.stdout)
-    self.assertIn("carries no input", done.stdout + done.stderr)
 
   def test_an_unknown_source_is_refused(self):
     package = self.built.refuted(HALVE, SHIFT)

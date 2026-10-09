@@ -988,7 +988,7 @@ function multilineFields(value, path = "$", result = []) {
 
 function counterexampleFieldLabel(path) {
   if (/\["inputs?"\]$/.test(path)) {
-    return "INPUT (LLUBI)";
+    return "INPUT";
   }
 
   if (/\["result"\]\["replay"\]\["src"\]\["observations"\]$/.test(path)) {

@@ -806,8 +806,9 @@ export class Steps {
     src: string,
     tgt: string,
     timeoutMs: number = this.timeouts.alive2Ms,
+    unroll?: number,
   ): Promise<CheckResult> {
-    return this.alive2({ src, tgt }, { timeoutMs: this.capped(timeoutMs) });
+    return this.alive2({ src, tgt }, { timeoutMs: this.capped(timeoutMs), unroll });
   }
 
   /**

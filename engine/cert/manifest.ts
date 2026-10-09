@@ -4,14 +4,14 @@
 // only reader that matters. Nothing here is a claim on its own. A proof's
 // every step names the pair it moved and the side it moved, and the checker
 // reruns the check that certified it, in the direction the side implies. A
-// counterexample names the pair the run was asked about and its source: an
-// input the checker runs both programs on, or the checker's answer on that
-// pair.
+// counterexample names the pair the run was asked about, the input it was
+// refuted at when there is one, and the checker: alive2, or llubi where alive2
+// did not decide.
 //
 // What the run abandoned does not appear. A goal's chain is the path from the
 // pair it started with to the pair it ended with, which is what the goal tree
 // holds after reverts have truncated it.
-import type { Attrs, HarnessArg, Predicate } from "../core/drivers/llops.ts";
+import type { Attrs, InputArg, Predicate } from "../core/drivers/llops.ts";
 import type { LlrwtInvocation } from "../core/drivers/llrwt.ts";
 import type { ReportResult } from "../core/state/counterexamples.ts";
 import { type Goal, head, interposed, type Role, type Tree } from "../core/state/goals.ts";
@@ -148,13 +148,15 @@ export interface Counterexample {
   verdict: "counterexample";
   root: string;
   toolchain: unknown;
-  /** The interpreter of an executed one, the solver otherwise. */
+  /** alive2, or llubi where alive2 did not decide. */
   source: "llubi" | "alive2";
   /** The pair the run was asked about, which is what the refutation is of. */
   pair: Pair;
-  /** The argument values, as `llops harness` takes them; an executed one only. */
-  input?: HarnessArg[];
-  /** What diverged on the input, or what the checker printed on the pair. */
+  /** The argument values, as `llops instantiate` and `llops harness` take them. */
+  input?: InputArg[];
+  /** How many times alive2 unrolled each loop. */
+  unroll?: number;
+  /** What diverged, in the words of the checker that refuted the pair. */
   divergence?: string;
 }
 
@@ -196,54 +198,29 @@ export function manifestOf(entries: Entry[], tree: Tree): [Manifest, Set<Hash>] 
 }
 
 /**
- * The manifest for a refuted run: the pair the run was asked about, the checker
- * that refuted it, and the input when one was replayed.
+ * The manifest for a refuted run: the pair the run was asked about, the input
+ * and unroll factor it was refuted at when a report named them, and the
+ * checker that refuted it.
  *
- * The steps a run made before the refutation are not part of it. An executed
- * counterexample carries the input and what diverged. One the checker itself
- * refuted carries no input, since only the checker's answer backs it. An
- * executed input supersedes the checker's answer. The last input wins,
- * as does the last answer.
+ * The steps a run made before the refutation are not part of it. The last
+ * entry that refuted the root wins.
  */
 function refutation(entries: Entry[], tree: Tree, root: Goal): [Counterexample, Set<Hash>] {
   const pair = { src: first(root, "src"), tgt: first(root, "tgt") };
-  let said: { input: HarnessArg[]; divergence: string } | undefined;
-  let answer: string | undefined;
+  let refuted: Refuted | undefined;
   for (const entry of entries) {
     if (entry.kind !== "tool_result" && entry.kind !== "framework") continue;
-    if (!refutedEffect(entry, root.id)) continue;
-    const found = report(entry);
-    if (found) {
-      said = found;
-    } else {
-      answer = answerOf(entry) ?? answer;
-    }
+    if (refutedEffect(entry, root.id)) refuted = refutedBy(entry);
   }
-  if (said) {
-    return [
-      {
-        version: VERSION,
-        verdict: "counterexample" as const,
-        root: tree.root,
-        toolchain: toolchainOf(entries),
-        source: "llubi" as const,
-        pair,
-        input: said.input,
-        divergence: said.divergence,
-      },
-      new Set([pair.src, pair.tgt]),
-    ];
-  }
-  if (answer === undefined) throw new NotCertifiable(`nothing in the log refuted ${root.id}`);
+  if (refuted === undefined) throw new NotCertifiable(`nothing in the log refuted ${root.id}`);
   return [
     {
       version: VERSION,
       verdict: "counterexample" as const,
       root: tree.root,
       toolchain: toolchainOf(entries),
-      source: "alive2" as const,
+      ...refuted,
       pair,
-      divergence: answer,
     },
     new Set([pair.src, pair.tgt]),
   ];
@@ -254,31 +231,26 @@ function refutedEffect(entry: ToolResultEvent | FrameworkEvent, gid: string): bo
   return (entry.effects ?? []).some((effect) => effect.effect === "refuted" && effect.gid === gid);
 }
 
-/** What an eager check recorded: the check itself, and a replay when one ran. */
+/** What an eager check recorded. */
 interface EagerOutcome {
   check: CheckGoalResult;
-  report?: ReportResult;
 }
 
-/**
- * The input and divergence a refuting report kept, whether a tool recorded it
- * or an action of the framework's own did.
- */
-function report(
-  entry: ToolResultEvent | FrameworkEvent,
-): { input: HarnessArg[]; divergence: string } | undefined {
-  const said =
-    entry.kind === "tool_result"
-      ? (entry.result as ReportResult | null)
-      : (entry.outcome as EagerOutcome | null)?.report;
-  if (!said?.input) return undefined;
-  return { input: said.input, divergence: "divergence" in said ? said.divergence : "" };
-}
+type Refuted = Pick<Counterexample, "source" | "input" | "unroll" | "divergence">;
 
-/** What the checker printed on the pair it refuted, whatever entry holds the check. */
-function answerOf(entry: ToolResultEvent | FrameworkEvent): string | undefined {
-  if (entry.kind === "tool_result") return (entry.result as CheckGoalResult | null)?.check?.detail;
-  return (entry.outcome as EagerOutcome | null)?.check.check?.detail;
+/** What a refuting entry kept: the checker, a report's input, and what diverged. */
+function refutedBy(entry: ToolResultEvent | FrameworkEvent): Refuted {
+  if (entry.kind === "framework") {
+    return {
+      source: "alive2",
+      divergence: (entry.outcome as EagerOutcome | null)?.check.check?.detail,
+    };
+  }
+  const result = entry.result as ReportResult | CheckGoalResult | null;
+  if (!result || !("checker" in result))
+    return { source: "alive2", divergence: result?.check?.detail };
+  const { checker, input, unroll, divergence } = result;
+  return { source: checker, input, ...(unroll === undefined ? {} : { unroll }), divergence };
 }
 
 /** Walk what discharged the root, and nothing else. */

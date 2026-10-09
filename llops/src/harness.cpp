@@ -6,7 +6,9 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/Support/ModRef.h"
 #include <string>
 #include <vector>
 
@@ -46,6 +48,28 @@ Argument buildArgument(llvm::IRBuilder<> &builder, llvm::Type *paramTy, const Ar
   out.buffer = buffer;
   out.size = arg.bytes.size();
   return out;
+}
+
+// What in `F` llubi treats differently from alive2: it settles a freeze of
+// poison once, returns the bytes a writeonly pointer holds, and lets a
+// captures(none) pointer be stored.
+llvm::json::Array differences(const llvm::Function &F) {
+  bool freezes = false, writeonly = false, captures = false;
+  for (const llvm::Instruction &I : llvm::instructions(F))
+    freezes |= llvm::isa<llvm::FreezeInst>(I);
+  for (const llvm::Argument &arg : F.args()) {
+    writeonly |= arg.hasAttribute(llvm::Attribute::WriteOnly);
+    captures |= arg.hasAttribute(llvm::Attribute::Captures) &&
+                llvm::capturesNothing(arg.getAttribute(llvm::Attribute::Captures).getCaptureInfo());
+  }
+  llvm::json::Array found;
+  if (freezes)
+    found.push_back("freeze");
+  if (writeonly)
+    found.push_back("writeonly");
+  if (captures)
+    found.push_back("captures(none)");
+  return found;
 }
 
 } // namespace
@@ -136,6 +160,7 @@ llvm::json::Object harnessCmd(llvm::json::Object &args) {
   resp["ok"] = true;
   resp["module"] = printModule(M);
   resp["observations"] = std::move(observations);
+  resp["differences"] = differences(*entry);
   return resp;
 }
 

@@ -11,7 +11,7 @@ Interactive translation validation framework with agent-driven, alive2-certified
 
 `alive-next` builds an interactive translation validation framework analogous to interactive theorem proving. [alive2](https://github.com/AliveToolkit/alive2) decides whether one function refines another by sending the whole pair to an SMT solver in one query, so it stops answering as programs grow. alive-next keeps alive2 as the trusted formal checker and puts a proof writer (an untrusted autonomous agent or scripted proof) in front of it to search for proofs using decomposition, Hoare-style reasoning, and stepwise certified rewriting.
 
-The proof writer is untrusted. Every decomposition step, subproof, rewrite, and interface fact it proposes is validated with respect to operational semantics by alive2 before it counts, and every counterexample by running both programs on a concrete input under llubi. A bad proposal wastes time and never produces a wrong answer. A run ends verified, with a package anyone can replay; refuted, with the input that shows it; or unknown.
+The proof writer is untrusted. Every decomposition step, subproof, rewrite, and interface fact it proposes is validated with respect to operational semantics by alive2 before it counts, and every counterexample by alive2 refuting the pair, or, where alive2 cannot decide, by running both programs on a concrete input under llubi. A bad proposal wastes time and never produces a wrong answer, though a counterexample llubi certifies is only as sound as llubi. A run ends verified, with a package anyone can replay; refuted, with the input that shows it; or unknown.
 
 Branches, loops and memory operations included.
 
