@@ -9,6 +9,7 @@
 #include "detach.h"
 #include "edit.h"
 #include "harness.h"
+#include "instantiate.h"
 #include "irutil.h"
 #include "number.h"
 #include "opt.h"
@@ -27,23 +28,24 @@ namespace {
 const char *kUsage = "usage: llops <subcommand> < request.json > response.json\n"
                      "\n"
                      "subcommands:\n"
-                     "  validate   check the program shape\n"
-                     "  canon      renumber values canonically\n"
-                     "  number     mark each instruction with the #N that names it\n"
-                     "  edit       apply one semantic edit op\n"
-                     "  opt        apply one structural optimizer op\n"
-                     "  outline    move a suffix or a window into a function\n"
-                     "  inline     substitute a callee back into its outer function\n"
-                     "  detach     move a block and all it reaches into a function\n"
-                     "  reattach   turn the calls detach made back into branches\n"
-                     "  unfold     put a loop's body at calls of the loop or its hypothesis\n"
-                     "  reshaped   whether every run of one function is a run of another\n"
-                     "  respected  whether a body keeps the attributes added to it\n"
-                     "  analyze    known bits, ranges or pointer facts at a program point\n"
-                     "  harness    wrap a function in a main that llubi can run\n"
-                     "  attrs      put attributes on a function or a parameter\n"
-                     "  assume     state a fact about a value before an instruction\n"
-                     "  version    print the version\n"
+                     "  validate    check the program shape\n"
+                     "  canon       renumber values canonically\n"
+                     "  number      mark each instruction with the #N that names it\n"
+                     "  edit        apply one semantic edit op\n"
+                     "  opt         apply one structural optimizer op\n"
+                     "  outline     move a suffix or a window into a function\n"
+                     "  inline      substitute a callee back into its outer function\n"
+                     "  detach      move a block and all it reaches into a function\n"
+                     "  reattach    turn the calls detach made back into branches\n"
+                     "  unfold      put a loop's body at calls of the loop or its hypothesis\n"
+                     "  reshaped    whether every run of one function is a run of another\n"
+                     "  respected   whether a body keeps the attributes added to it\n"
+                     "  analyze     known bits, ranges or pointer facts at a program point\n"
+                     "  harness     wrap a function in a main that llubi can run\n"
+                     "  instantiate put a counterexample's input into both programs of a pair\n"
+                     "  attrs       put attributes on a function or a parameter\n"
+                     "  assume      state a fact about a value before an instruction\n"
+                     "  version     print the version\n"
                      "\n"
                      "Exit status is 0 when the response says ok, 1 when it does not, and\n"
                      "2 when the command line itself is wrong.\n";
@@ -113,6 +115,8 @@ int main(int argc, char **argv) {
     return respond(llops::analyzeCmd(*args));
   if (cmd == "harness")
     return respond(llops::harnessCmd(*args));
+  if (cmd == "instantiate")
+    return respond(llops::instantiateCmd(*args));
   if (cmd == "attrs")
     return respond(llops::attrsCmd(*args));
   if (cmd == "assume")

@@ -40,7 +40,9 @@ set(LLOPS_SOURCES
   src/reshaped.cpp
   src/respected.cpp
   src/detach.cpp
+  src/input.cpp
   src/harness.cpp
+  src/instantiate.cpp
   src/assume.cpp
   src/analyze.cpp
   src/main.cpp

@@ -1,13 +1,12 @@
 #include "harness.h"
 
+#include "input.h"
 #include "irutil.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/Support/raw_ostream.h"
-#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -23,123 +22,30 @@ struct Argument {
   uint64_t size = 0;
 };
 
-bool readBytes(const llvm::json::Array &bytes, std::vector<uint8_t> &out, llvm::json::Object &err) {
-  for (const auto &entry : bytes) {
-    auto value = entry.getAsInteger();
-    if (!value || *value < 0 || *value > 255) {
-      err = errResponse("invalid", "a byte must be between 0 and 255");
-      return false;
-    }
-    out.push_back(static_cast<uint8_t>(*value));
-  }
-  return true;
-}
-
-// Read an integer argument into the parameter's width.
-//
-// A counterexample is as often negative as not, and LLVM's own parser reads a
-// magnitude only, so the sign is handled here. A value the width cannot hold
-// is refused rather than truncated, because a truncated value is not the one
-// the caller asked about.
-bool readInteger(llvm::StringRef text, unsigned width, llvm::APInt &out, std::string &why) {
-  bool negative = text.consume_front("-");
-  llvm::APInt magnitude(width, 0);
-  if (text.getAsInteger(0, magnitude)) {
-    why = "is not an integer";
-    return false;
-  }
-  // The parse widens rather than truncates, and a sign needs one bit more than
-  // the magnitude it applies to.
-  llvm::APInt value = magnitude.zext(std::max(magnitude.getBitWidth(), width) + 1);
-  if (negative)
-    value.negate();
-  if (!value.isIntN(width) && !value.isSignedIntN(width)) {
-    why = "does not fit in i" + std::to_string(width);
-    return false;
-  }
-  out = value.trunc(width);
-  return true;
-}
-
 // Build the value for one parameter, allocating and filling memory when the
 // parameter is a pointer.
-bool buildArgument(llvm::IRBuilder<> &builder, llvm::Type *paramTy, const llvm::json::Object &spec,
-                   unsigned index, Argument &out, llvm::json::Object &err) {
-  auto kind = spec.getString("kind");
-  if (!kind) {
-    err = errResponse("bad_request", "each argument needs a 'kind'");
-    return false;
+Argument buildArgument(llvm::IRBuilder<> &builder, llvm::Type *paramTy, const Arg &arg,
+                       unsigned index) {
+  Argument out;
+  if (arg.kind == Arg::Kind::Int) {
+    out.value = llvm::ConstantInt::get(paramTy->getContext(), arg.value);
+    return out;
   }
-
-  if (*kind == "int") {
-    if (!paramTy->isIntegerTy()) {
-      err = errResponse("type_mismatch", "argument " + std::to_string(index) +
-                                             " is an int, but the parameter "
-                                             "is not an integer");
-      return false;
-    }
-    auto text = spec.getString("value");
-    if (!text) {
-      err = errResponse("bad_request", "an int argument needs a 'value'");
-      return false;
-    }
-    llvm::APInt parsed(paramTy->getIntegerBitWidth(), 0);
-    std::string why;
-    // The value arrives as text so that a width beyond 64 bits survives JSON.
-    if (!readInteger(*text, paramTy->getIntegerBitWidth(), parsed, why)) {
-      err = errResponse("invalid",
-                        "argument " + std::to_string(index) + ": '" + text->str() + "' " + why);
-      return false;
-    }
-    out.value = llvm::ConstantInt::get(paramTy->getContext(), parsed);
-    return true;
-  }
-
-  if (*kind == "null") {
-    if (!paramTy->isPointerTy()) {
-      err = errResponse("type_mismatch", "argument " + std::to_string(index) +
-                                             " is null, but the parameter is not a pointer");
-      return false;
-    }
+  if (arg.kind == Arg::Kind::Null) {
     out.value = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(paramTy));
-    return true;
+    return out;
   }
-
-  if (*kind == "bytes") {
-    if (!paramTy->isPointerTy()) {
-      err = errResponse("type_mismatch", "argument " + std::to_string(index) +
-                                             " is bytes, but the parameter is not a pointer");
-      return false;
-    }
-    const auto *bytes = spec.getArray("bytes");
-    if (!bytes || bytes->empty()) {
-      err = errResponse("bad_request", "a bytes argument needs a non-empty 'bytes'");
-      return false;
-    }
-    std::vector<uint8_t> raw;
-    if (!readBytes(*bytes, raw, err))
-      return false;
-    auto align = spec.getInteger("align").value_or(1);
-    if (align <= 0 || !llvm::isPowerOf2_64((uint64_t)align)) {
-      err = errResponse("invalid", "align must be a positive power of two");
-      return false;
-    }
-
-    llvm::LLVMContext &ctx = paramTy->getContext();
-    auto *arrayTy = llvm::ArrayType::get(llvm::Type::getInt8Ty(ctx), raw.size());
-    auto *buffer = builder.CreateAlloca(arrayTy, nullptr, "buf" + std::to_string(index));
-    buffer->setAlignment(llvm::Align((uint64_t)align));
-    // One store of the whole initial content, so the harness reads as what it
-    // is: this memory starts out holding these bytes.
-    builder.CreateStore(llvm::ConstantDataArray::get(ctx, raw), buffer);
-    out.value = buffer;
-    out.buffer = buffer;
-    out.size = raw.size();
-    return true;
-  }
-
-  err = errResponse("invalid", "unknown argument kind '" + kind->str() + "'");
-  return false;
+  llvm::LLVMContext &ctx = paramTy->getContext();
+  auto *arrayTy = llvm::ArrayType::get(llvm::Type::getInt8Ty(ctx), arg.bytes.size());
+  auto *buffer = builder.CreateAlloca(arrayTy, nullptr, "buf" + std::to_string(index));
+  buffer->setAlignment(llvm::Align(arg.align));
+  // One store of the whole initial content, so the harness reads as what it
+  // is: this memory starts out holding these bytes.
+  builder.CreateStore(llvm::ConstantDataArray::get(ctx, arg.bytes), buffer);
+  out.value = buffer;
+  out.buffer = buffer;
+  out.size = arg.bytes.size();
+  return out;
 }
 
 } // namespace
@@ -162,11 +68,11 @@ llvm::json::Object harnessCmd(llvm::json::Object &args) {
     return errResponse("not_found", "'@" + entryName->str() + "' is not defined in the module");
   if (M.getFunction("main"))
     return errResponse("invalid", "the module already defines '@main'");
-  if (entry->arg_size() != spec->size()) {
-    return errResponse("bad_request", "'@" + entryName->str() + "' takes " +
-                                          std::to_string(entry->arg_size()) + " arguments, but " +
-                                          std::to_string(spec->size()) + " were given");
-  }
+
+  std::vector<Arg> input;
+  llvm::json::Object err;
+  if (!readArgs(*entry, *spec, input, err))
+    return err;
 
   llvm::LLVMContext &ctx = M.getContext();
   auto *i32 = llvm::Type::getInt32Ty(ctx);
@@ -180,15 +86,8 @@ llvm::json::Object harnessCmd(llvm::json::Object &args) {
   std::vector<Argument> arguments;
   std::vector<llvm::Value *> callArgs;
   for (unsigned i = 0; i < entry->arg_size(); ++i) {
-    const auto *one = (*spec)[i].getAsObject();
-    if (!one)
-      return errResponse("bad_request", "each argument must be an object");
-    Argument argument;
-    llvm::json::Object err;
-    if (!buildArgument(builder, entry->getArg(i)->getType(), *one, i, argument, err))
-      return err;
-    arguments.push_back(argument);
-    callArgs.push_back(argument.value);
+    arguments.push_back(buildArgument(builder, entry->getArg(i)->getType(), input[i], i));
+    callArgs.push_back(arguments.back().value);
   }
 
   auto *call = builder.CreateCall(entry, callArgs);

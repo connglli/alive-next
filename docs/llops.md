@@ -266,6 +266,18 @@ Everything worth judging the run on is loaded back under a name beginning `obs.`
 
 The harness does not have the program shape, since it defines a second function, so `validate` will refuse what this produces. It is an artifact for the interpreter rather than a program under proof.
 
+## instantiate
+
+Puts a counterexample's input into both programs of a pair, as assumptions at the entry, so that alive2 is asked about that input alone.
+
+Request `{ "src": ..., "tgt": ..., "args": [ ... ] }`, response `{ "ok": true, "src": ..., "tgt": ... }`. The two functions must take the same parameters, and `args` holds one argument per parameter, in order:
+
+* `{ "kind": "int", "value": "-3" }` for an integer parameter of any width, which is assumed equal to the value. The value is text, so that a width beyond 64 bits survives JSON; a leading `-` is a sign, and a value the width cannot hold is refused rather than truncated.
+* `{ "kind": "null" }` for a pointer parameter, which is assumed null.
+* `{ "kind": "bytes", "bytes": [7, 9] }` for a pointer parameter, whose memory is assumed to hold these bytes, where no attribute of either function forbids reading it.
+
+Both programs get the same assumptions, and these only read memory, so an input on which alive2 refutes the result refutes the pair itself.
+
 ## attrs
 
 Puts attributes on a function the module defines or declares, or on one of its parameters.

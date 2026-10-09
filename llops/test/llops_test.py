@@ -2424,6 +2424,52 @@ entry:
     self.bad(self.harness(module=module, args=self.two_args()), "invalid")
 
 
+class TestInstantiate(Case):
+  F = """define i32 @f(i32 %x, ptr %p) {
+entry:
+  %v = load i8, ptr %p, align 1
+  %w = zext i8 %v to i32
+  %s = add i32 %x, %w
+  ret i32 %s
+}
+"""
+  INPUT = [{"kind": "int", "value": "-3"}, {"kind": "bytes", "bytes": [7, 9]}]
+
+  def instantiate(self, src=None, tgt=None, args=None):
+    return run(
+      "instantiate", {"src": src or self.F, "tgt": tgt or self.F, "args": args or self.INPUT}
+    )
+
+  def test_assumes_the_input_at_the_entry_of_both(self):
+    r = self.good(self.instantiate(tgt=self.F.replace("%s = add i32 %x, %w", "%s = or i32 %x, %w")))
+    src, tgt = self.body(r["src"]), self.body(r["tgt"])
+    self.assertEqual(src[:2], ["%0 = icmp eq i32 %x, -3", "call void @llvm.assume(i1 %0)"])
+    self.assertIn("%5 = load i8, ptr %4, align 1", src)
+    self.assertIn("%6 = icmp eq i8 %5, 9", src)
+    # The same assumptions on both sides, and nothing else changes.
+    self.assertEqual(src[:10], tgt[:10])
+    self.assertEqual(src[10:], self.body(self.F))
+
+  def test_a_null_pointer(self):
+    r = self.good(self.instantiate(args=[{"kind": "int", "value": "1"}, {"kind": "null"}]))
+    self.assertIn("%1 = icmp eq ptr %p, null", self.body(r["src"]))
+
+  def test_reads_no_byte_either_function_may_not_read(self):
+    r = self.good(
+      self.instantiate(tgt=self.F.replace("(i32 %x, ptr %p)", "(i32 %x, ptr writeonly %p)"))
+    )
+    for side in ("src", "tgt"):
+      self.assertEqual(len(self.body(r[side])) - len(self.body(self.F)), 2)
+
+  def test_two_functions_that_take_different_parameters(self):
+    wider = "define i32 @f(i64 %x, ptr %p) {\nentry:\n  ret i32 0\n}\n"
+    self.bad(self.instantiate(tgt=wider), "type_mismatch")
+
+  def test_an_input_that_does_not_fit(self):
+    self.bad(self.instantiate(args=[{"kind": "int", "value": "1"}]), "bad_request")
+    self.bad(self.instantiate(args=[{"kind": "null"}, {"kind": "null"}]), "type_mismatch")
+
+
 # A loop's callee after a cut at its header: the back edge is a call of the
 # hypothesis, so the body branches and does not loop.
 CALLEE = """declare i32 @k.ih(i32, i32, i32)
