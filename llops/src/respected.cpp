@@ -97,28 +97,8 @@ bool allows(const llvm::Function &F, const llvm::Value *root, bool write) {
 // Stored, returned, converted, compared or passed to a call, it could take the
 // argument's attributes where this check does not look.
 Why escapes(const llvm::Argument &arg) {
-  std::set<const llvm::Value *> seen;
-  std::vector<const llvm::Value *> work{&arg};
-  while (!work.empty()) {
-    const llvm::Value *v = work.back();
-    work.pop_back();
-    if (!seen.insert(v).second)
-      continue;
-    for (const llvm::Use &use : v->uses()) {
-      const llvm::User *user = use.getUser();
-      unsigned at = use.getOperandNo();
-      bool load = llvm::isa<llvm::LoadInst>(user), store = llvm::isa<llvm::StoreInst>(user);
-      if ((load && at == llvm::LoadInst::getPointerOperandIndex()) ||
-          (store && at == llvm::StoreInst::getPointerOperandIndex()))
-        continue;
-      if (llvm::isa<llvm::PHINode>(user) || (llvm::isa<llvm::SelectInst>(user) && at > 0) ||
-          (llvm::isa<llvm::GEPOperator>(user) && at == 0))
-        work.push_back(user);
-      else
-        return "a pointer from " + textOf(arg) +
-               " is used as more than an address: " + textOf(*user);
-    }
-  }
+  if (const llvm::User *user = escapingUse(arg))
+    return "a pointer from " + textOf(arg) + " is used as more than an address: " + textOf(*user);
   return std::nullopt;
 }
 

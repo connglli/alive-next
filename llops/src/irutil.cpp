@@ -19,6 +19,7 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include <set>
 
 namespace llops {
 
@@ -199,6 +200,31 @@ bool holdsLoop(const llvm::Function &F) {
   llvm::SmallVector<std::pair<const llvm::BasicBlock *, const llvm::BasicBlock *>> back;
   llvm::FindFunctionBackedges(F, back);
   return !back.empty();
+}
+
+const llvm::User *escapingUse(const llvm::Value &v) {
+  std::set<const llvm::Value *> seen;
+  std::vector<const llvm::Value *> work{&v};
+  while (!work.empty()) {
+    const llvm::Value *from = work.back();
+    work.pop_back();
+    if (!seen.insert(from).second)
+      continue;
+    for (const llvm::Use &use : from->uses()) {
+      const llvm::User *user = use.getUser();
+      unsigned at = use.getOperandNo();
+      bool load = llvm::isa<llvm::LoadInst>(user), store = llvm::isa<llvm::StoreInst>(user);
+      if ((load && at == llvm::LoadInst::getPointerOperandIndex()) ||
+          (store && at == llvm::StoreInst::getPointerOperandIndex()))
+        continue;
+      if (llvm::isa<llvm::PHINode>(user) || (llvm::isa<llvm::SelectInst>(user) && at > 0) ||
+          (llvm::isa<llvm::GEPOperator>(user) && at == 0))
+        work.push_back(user);
+      else
+        return user;
+    }
+  }
+  return nullptr;
 }
 
 std::vector<Diag> checkFunction(llvm::Function &F) {

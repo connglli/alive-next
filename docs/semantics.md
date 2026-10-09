@@ -148,4 +148,4 @@ alive-next follows alive2's semantics of LLVM IR ([docs/design.md](./design.md))
 
 ## alive-next
 
-alive-next follows alive2. Where alive2 checks an attribute only against the function's own instructions, a cut or a window moves no instruction out of a function that has it, and `llops respected` drops those it shows the body keeps ([docs/implementation.md](./implementation.md), [docs/llops.md](./llops.md)). Where llubi differs, [docs/design.md](./design.md) and [docs/llops.md](./llops.md) state which differences a run is screened for and which the harness closes; a new allocation's address is neither.
+alive-next follows alive2. Where alive2 checks an attribute only against the function's own instructions, a cut or a window moves no instruction out of a function that has it, and `llops respected` drops those it shows the body keeps ([docs/implementation.md](./implementation.md), [docs/llops.md](./llops.md)). Where llubi differs, [docs/design.md](./design.md) and [docs/llops.md](./llops.md) state which differences a run is screened for and which the harness closes.

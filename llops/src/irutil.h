@@ -87,6 +87,10 @@ bool holdsUndef(const llvm::Module &M);
 // Whether the body holds a loop, which alive-tv answers only as far as it unrolls.
 bool holdsLoop(const llvm::Function &F);
 
+// The first use of a pointer from `v` as more than the address of a load or a
+// store, following GEPs, phis and selects, or nothing when there is none.
+const llvm::User *escapingUse(const llvm::Value &v);
+
 // Values are referenced by the token that names them in printed IR, so the
 // agent can quote back what it reads: "%3" for a slot, "%x" for a name and
 // "#7" for the instruction at index 7, which is the only form that reaches

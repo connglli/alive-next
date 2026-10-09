@@ -54,10 +54,15 @@ Argument buildArgument(llvm::IRBuilder<> &builder, llvm::Type *paramTy, const Ar
 // What in `F` llubi does not treat as alive2 does (docs/semantics.md), so that
 // a run of it as the src could show what alive2 does not allow.
 llvm::json::Array differences(const llvm::Function &F) {
-  bool freezes = false, calls = false, writeonly = false, captures = false, initializes = false;
+  bool freezes = false, calls = false, addresses = false;
+  bool writeonly = false, captures = false, initializes = false;
   for (const llvm::Instruction &I : llvm::instructions(F)) {
     freezes |= llvm::isa<llvm::FreezeInst>(I);
     calls |= llvm::isa<llvm::CallBase>(I) && I.mayReadOrWriteMemory();
+    // A call that returns a pointer may return a fresh allocation.
+    bool fresh = llvm::isa<llvm::AllocaInst>(I) ||
+                 (llvm::isa<llvm::CallBase>(I) && I.getType()->isPtrOrPtrVectorTy());
+    addresses |= fresh && escapingUse(I);
   }
   for (const llvm::Argument &arg : F.args()) {
     writeonly |= arg.hasAttribute(llvm::Attribute::WriteOnly);
@@ -72,6 +77,7 @@ llvm::json::Array differences(const llvm::Function &F) {
       {"captures(none)", captures},
       {"initializes", initializes},
       {"a call under memory(...)", limited && calls},
+      {"an allocation's address", addresses},
   };
   llvm::json::Array found;
   for (auto [name, held] : kinds)

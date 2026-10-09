@@ -2388,6 +2388,23 @@ entry:
     r = self.good(self.harness(module=pure, args=[{"kind": "bytes", "bytes": [1, 2, 3, 4]}]))
     self.assertEqual(r["differences"], ["initializes"])
 
+  def test_an_allocation_whose_address_is_used(self):
+    module = """define i64 @f() {
+entry:
+  %a = alloca i32, align 4
+  store i32 0, ptr %a, align 4
+  %i = ptrtoint ptr %a to i64
+  ret i64 %i
+}
+"""
+    r = self.good(self.harness(module=module, args=[]))
+    self.assertEqual(r["differences"], ["an allocation's address"])
+    # A slot only loaded and stored through takes no address llubi can show.
+    slot = module.replace(
+      "%i = ptrtoint ptr %a to i64", "%v = load i32, ptr %a, align 4\n  %i = zext i32 %v to i64"
+    )
+    self.assertEqual(self.good(self.harness(module=slot, args=[]))["differences"], [])
+
   def test_a_noreturn_entry(self):
     module = """define void @f() noreturn {
 entry:
