@@ -260,7 +260,7 @@ Request `{ "module": ..., "entry": "f", "args": [ ... ] }`, one argument per par
 * `{ "kind": "bytes", "bytes": [1, 2], "align": 4 }` for a pointer, which is allocated and filled with those bytes before the call.
 * `{ "kind": "null" }` for a null pointer.
 
-Response `{ "ok": true, "module": ..., "observations": [ ... ], "differences": [ ... ] }`, where `differences` lists what in the entry llubi treats differently from alive2: a `freeze`, a `writeonly` parameter or a `captures(none)` parameter.
+Response `{ "ok": true, "module": ..., "observations": [ ... ], "differences": [ ... ] }`, where `differences` names what in the entry llubi treats differently from alive2: `freeze`, `writeonly`, `captures(none)`, `initializes` or `a call under memory(...)`.
 
 Everything worth judging the run on is loaded back under a name beginning `obs.`, because llubi's verbose trace prints each instruction with its result and that is the only channel wide enough: the exit code is the return value truncated to eight bits. The return value goes through memory for the same reason the final bytes do, so every observation is one trace line of the shape `%obs.something = load ... -> value`. `observations` lists those names in the order the harness produces them: the result first when the entry returns one, then the bytes of each pointer argument not marked `dead_on_return`.
 

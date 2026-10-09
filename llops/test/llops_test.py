@@ -2366,6 +2366,27 @@ entry:
       self.harness(module=module, args=[{"kind": "null"}, {"kind": "int", "value": "1"}])
     )
     self.assertEqual(r["differences"], ["freeze", "writeonly", "captures(none)"])
+    module = """declare void @llvm.memset.p0.i64(ptr, i8, i64, i1 immarg)
+
+define void @f(ptr initializes((0, 4)) %p) memory(argmem: read) {
+entry:
+  call void @llvm.memset.p0.i64(ptr %p, i8 0, i64 4, i1 false)
+  ret void
+}
+"""
+    r = self.good(self.harness(module=module, args=[{"kind": "bytes", "bytes": [1, 2, 3, 4]}]))
+    self.assertEqual(r["differences"], ["initializes", "a call under memory(...)"])
+    # A call that touches no memory is checked the same either way.
+    pure = module.replace(
+      "call void @llvm.memset.p0.i64(ptr %p, i8 0, i64 4, i1 false)",
+      "%m = call i32 @llvm.umax.i32(i32 1, i32 2)",
+    )
+    pure = pure.replace(
+      "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1 immarg)",
+      "declare i32 @llvm.umax.i32(i32, i32)",
+    )
+    r = self.good(self.harness(module=pure, args=[{"kind": "bytes", "bytes": [1, 2, 3, 4]}]))
+    self.assertEqual(r["differences"], ["initializes"])
 
   def test_a_noreturn_entry(self):
     module = """define void @f() noreturn {

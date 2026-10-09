@@ -68,9 +68,9 @@ alive-next follows alive2's semantics of LLVM IR ([docs/design.md](./design.md))
 
 **LangRef.** The attribute covers what callees do.
 
-**llubi.** Each call is checked against its own memory effects.
+**llubi.** Each call, `memset` included, is checked against its own memory effects.
 
-**alive2.** A call never breaks it: a function that calls an unknown function refines itself with `memory(none)` added.
+**alive2.** A call to an unknown function never breaks it, and a memory intrinsic such as `memset`, which is the function's own instruction, does.
 
 ### A new allocation's address
 
@@ -118,7 +118,7 @@ alive-next follows alive2's semantics of LLVM IR ([docs/design.md](./design.md))
 
 **LangRef.** The call captures neither the address nor the provenance of the pointer.
 
-**llubi.** Comparing the pointer is poison, and storing or returning it is not tracked.
+**llubi.** Storing or returning the pointer is not UB.
 
 **alive2.** Storing the pointer where it outlives the call, or returning it, is UB, and comparing it is allowed.
 
@@ -126,7 +126,7 @@ alive-next follows alive2's semantics of LLVM IR ([docs/design.md](./design.md))
 
 **LangRef.** `captures(address)` or `captures(provenance)` lets only that component be captured, and `captures(address, provenance)` is no attribute.
 
-**llubi.** A comparison the attribute does not allow is poison, and other captures are not tracked.
+**llubi.** Comparing the pointer, or reading through a copy loaded back from memory, behaves as without the attribute.
 
 **alive2.** Dropped with a warning.
 
@@ -134,7 +134,7 @@ alive-next follows alive2's semantics of LLVM IR ([docs/design.md](./design.md))
 
 **LangRef.** Through the parameter, a load of a byte not yet stored is poison, and bytes left unstored are `undef` at a normal return. Other pointers are unaffected.
 
-**llubi.** The caller fills the range with poison at the call.
+**llubi.** A read of the range returns what memory holds, and the function need not store it.
 
 **alive2.** Only the function's own stores count, and returning before they cover the range is UB. Reads are checked only when a side has a `memory(...)` that limits something, and then a read of a byte not yet stored through any argument pointer, one that aliases the parameter included, is UB.
 

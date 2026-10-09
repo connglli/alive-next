@@ -140,7 +140,7 @@ A check of the root's original pair is a check of the translation itself: what a
 A counterexample the run ends on is certified one of two ways, and the certificate names which:
 
 1. The `alive2` source: alive-tv refuting the root's original pair, as it stands or at an input the agent names, which `llops instantiate` assumes in both programs. A pair that loops is refuted only with an unroll factor: alive2 counts a run past the bound as UB in the src and leaves it out of the tgt.
-2. The `llubi` source, only where alive2 does not decide an input: LHS and RHS run on it under llubi, and RHS shows a behavior LHS does not allow. llubi's semantics are not alive2's, so this is weaker, and a LHS with a `freeze`, a `writeonly` parameter or a `captures(none)` parameter, which llubi treats differently, is not run.
+2. The `llubi` source, only where alive2 does not decide an input: LHS and RHS run on it under llubi, and RHS shows a behavior LHS does not allow. llubi's semantics are not alive2's ([docs/semantics.md](./semantics.md)), so this is weaker, and a LHS with any of the `differences` `llops harness` lists is not run.
 
 Replaying asks alive-tv again under the no-undef flags, and runs llubi only for a `llubi` counterexample alive-tv still does not decide.
 

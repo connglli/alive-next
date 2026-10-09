@@ -10,6 +10,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/ModRef.h"
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace llops {
@@ -50,25 +51,32 @@ Argument buildArgument(llvm::IRBuilder<> &builder, llvm::Type *paramTy, const Ar
   return out;
 }
 
-// What in `F` llubi treats differently from alive2: it settles a freeze of
-// poison once, returns the bytes a writeonly pointer holds, and lets a
-// captures(none) pointer be stored.
+// What in `F` llubi does not treat as alive2 does (docs/semantics.md), so that
+// a run of it as the src could show what alive2 does not allow.
 llvm::json::Array differences(const llvm::Function &F) {
-  bool freezes = false, writeonly = false, captures = false;
-  for (const llvm::Instruction &I : llvm::instructions(F))
+  bool freezes = false, calls = false, writeonly = false, captures = false, initializes = false;
+  for (const llvm::Instruction &I : llvm::instructions(F)) {
     freezes |= llvm::isa<llvm::FreezeInst>(I);
+    calls |= llvm::isa<llvm::CallBase>(I) && I.mayReadOrWriteMemory();
+  }
   for (const llvm::Argument &arg : F.args()) {
     writeonly |= arg.hasAttribute(llvm::Attribute::WriteOnly);
     captures |= arg.hasAttribute(llvm::Attribute::Captures) &&
                 llvm::capturesNothing(arg.getAttribute(llvm::Attribute::Captures).getCaptureInfo());
+    initializes |= arg.hasAttribute(llvm::Attribute::Initializes);
   }
+  bool limited = F.getMemoryEffects() != llvm::MemoryEffects::unknown();
+  const std::pair<const char *, bool> kinds[] = {
+      {"freeze", freezes},
+      {"writeonly", writeonly},
+      {"captures(none)", captures},
+      {"initializes", initializes},
+      {"a call under memory(...)", limited && calls},
+  };
   llvm::json::Array found;
-  if (freezes)
-    found.push_back("freeze");
-  if (writeonly)
-    found.push_back("writeonly");
-  if (captures)
-    found.push_back("captures(none)");
+  for (auto [name, held] : kinds)
+    if (held)
+      found.push_back(name);
   return found;
 }
 
