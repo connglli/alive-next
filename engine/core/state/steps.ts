@@ -28,14 +28,12 @@ export interface Checker {
 }
 
 export interface Timeouts {
-  /** What `check` uses when the agent names no timeout. */
+  /** What a check uses when the agent names no timeout, and a commit always. */
   checkDefaultMs: number;
   /** The most the agent may ask for. */
   checkCapMs: number;
   /** The budget for the check that follows a step. */
   eagerCheckMs: number;
-  /** What a commit or an apply is validated with. */
-  alive2Ms: number;
   /** What one verified-rewriter run may take before it is killed. */
   llrwtMs: number;
 }
@@ -44,7 +42,6 @@ export const DEFAULT_TIMEOUTS: Timeouts = {
   checkDefaultMs: 30_000,
   checkCapMs: 60_000,
   eagerCheckMs: 3_000,
-  alive2Ms: 30_000,
   llrwtMs: 30_000,
 };
 
@@ -443,7 +440,7 @@ export class Steps {
           fallback,
         };
       const whole = await this.alive2(orient(side, beforeText, afterText), {
-        timeoutMs: this.timeouts.alive2Ms,
+        timeoutMs: this.timeouts.checkDefaultMs,
       });
       if (whole.outcome !== "correct") {
         return {
@@ -727,7 +724,7 @@ export class Steps {
 
     const assumeCheck = await this.alive2(
       { src: whole, tgt: inlined.module },
-      { timeoutMs: this.timeouts.alive2Ms },
+      { timeoutMs: this.timeouts.checkDefaultMs },
     );
     if (assumeCheck.outcome !== "correct")
       return {
@@ -805,7 +802,7 @@ export class Steps {
   async refinementCheck(
     src: string,
     tgt: string,
-    timeoutMs: number = this.timeouts.alive2Ms,
+    timeoutMs: number = this.timeouts.checkDefaultMs,
     unroll?: number,
   ): Promise<CheckResult> {
     return this.alive2({ src, tgt }, { timeoutMs: this.capped(timeoutMs), unroll });

@@ -121,7 +121,9 @@ describe.skipIf(!built)("the tool layer", () => {
   test("proves a pair, one tool call at a time", async () => {
     const status = await call("run_status", {});
     expect(status).toContain("g1 root, open");
-    expect(status).toContain("budgets per query: a check 30000ms by default and at most 60000ms");
+    expect(status).toContain(
+      "budgets per query: a check or a commit 30000ms by default, a check at most 60000ms",
+    );
 
     const shown = await call("goal_show", { ref: "g1" });
     expect(shown).toContain("src p1");

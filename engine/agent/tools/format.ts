@@ -68,8 +68,8 @@ export function toolResultFrom(
  */
 export function formatBudgets(budgets: Timeouts): string {
   return [
-    `budgets per query: a check ${budgets.checkDefaultMs}ms by default and at most ${budgets.checkCapMs}ms`,
-    `a commit ${budgets.alive2Ms}ms`,
+    `budgets per query: a check or a commit ${budgets.checkDefaultMs}ms by default`,
+    `a check at most ${budgets.checkCapMs}ms`,
     `the check after a step ${budgets.eagerCheckMs}ms`,
   ].join(", ");
 }

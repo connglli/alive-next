@@ -36,7 +36,7 @@ export async function startRun(options: RunOptions) {
     src: options.src,
     tgt: options.tgt,
     llops,
-    checker: new AliveTv(toolchain.path("alive-tv"), timeouts.alive2Ms),
+    checker: new AliveTv(toolchain.path("alive-tv"), timeouts.checkDefaultMs),
     interp: new Llubi(toolchain.path("llubi"), config.timeouts.llubiMs),
     rewriter: new Llrwt(toolchain.path("llrwt"), timeouts.llrwtMs, {
       mlirTranslate: toolchain.mlir("mlir-translate"),

@@ -205,7 +205,7 @@ describe("timeouts", () => {
   test("the configuration overrides only what it names", () => {
     const timeouts = timeoutsFrom({ eagerCheckMs: 100 });
     expect(timeouts.eagerCheckMs).toBe(100);
-    expect(timeouts.alive2Ms).toBe(DEFAULT_TIMEOUTS.alive2Ms);
+    expect(timeouts.checkDefaultMs).toBe(DEFAULT_TIMEOUTS.checkDefaultMs);
   });
 
   test("a section that names nothing leaves the defaults", () => {
@@ -480,9 +480,9 @@ describe("stepping", () => {
 
     if (result.kind !== "certified") throw new Error("expected the step to land");
     expect(result.on).toBe("whole");
-    // The whole pair, on the step budget, under what the goal is asked under.
+    // The whole pair, on the default budget, under what the goal is asked under.
     expect(checker.calls[1]).toMatchObject({ src: SRC, tgt: NEW });
-    expect(checker.calls[1]?.timeoutMs).toBe(DEFAULT_TIMEOUTS.alive2Ms);
+    expect(checker.calls[1]?.timeoutMs).toBe(DEFAULT_TIMEOUTS.checkDefaultMs);
     expect(checker.calls[1]?.flags).toEqual(["--disable-undef-input"]);
     const step = result.effects[0];
     if (step?.effect !== "step") throw new Error("expected a step effect");
@@ -544,7 +544,7 @@ describe("stepping", () => {
     expect(checker.calls[2]).toMatchObject({
       src: BEFORE,
       tgt: AFTER,
-      timeoutMs: DEFAULT_TIMEOUTS.alive2Ms,
+      timeoutMs: DEFAULT_TIMEOUTS.checkDefaultMs,
     });
   });
 
@@ -858,7 +858,7 @@ describe("checking a goal", () => {
       unrewriting,
     );
     expect(steps.budgets.eagerCheckMs).toBe(100);
-    expect(steps.budgets.alive2Ms).toBe(DEFAULT_TIMEOUTS.alive2Ms);
+    expect(steps.budgets.checkDefaultMs).toBe(DEFAULT_TIMEOUTS.checkDefaultMs);
   });
 
   test("repeated checks on the same pair receive earlier check history", async () => {
@@ -965,7 +965,7 @@ describe("refinementCheck", () => {
     expect(checker.calls[0]).toMatchObject({
       src: SRC,
       tgt: TGT,
-      timeoutMs: DEFAULT_TIMEOUTS.alive2Ms,
+      timeoutMs: DEFAULT_TIMEOUTS.checkDefaultMs,
       flags: ["--disable-undef-input"],
     });
   });

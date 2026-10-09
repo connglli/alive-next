@@ -15,14 +15,12 @@
   // has to be raised usually says the step is too big rather than the budget
   // too small. `run_status` reports the ones a run resolved to.
   "timeouts": {
-    // What the check tool uses when the agent names no timeout.
+    // What the check tool uses when the agent names no timeout, and a commit always.
     // "check_default_ms": 30000,
     // The most the agent may ask that tool for.
     // "check_cap_ms": 60000,
     // The check that follows every certified step.
     // "eager_check_ms": 3000,
-    // What a commit is validated with.
-    // "alive2_ms": 30000,
     // What one verified-rewriter run may take before it is killed.
     // "llrwt_ms": 30000,
     // How long one llubi run may take before it is killed.

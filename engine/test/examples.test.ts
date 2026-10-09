@@ -36,7 +36,7 @@ const built = await llops
   .catch(() => false);
 
 const timeouts = timeoutsFrom(config.timeouts);
-const aliveTv = new AliveTv(toolchain.path("alive-tv"), timeouts.alive2Ms);
+const aliveTv = new AliveTv(toolchain.path("alive-tv"), timeouts.checkDefaultMs);
 const llubi = new Llubi(toolchain.path("llubi"));
 const installed = await Promise.all([aliveTv.version(), llubi.version()])
   .then((lines) => lines.every((line) => line.length > 0))
@@ -165,7 +165,7 @@ describe.skipIf(!built || !installed)("scenarios, checked by the toolchain", () 
         const replay = spawnSync("python3", [check, certificate, ...tools], { encoding: "utf8" });
         if (replay.status !== 0) throw new Error(replay.stdout + replay.stderr);
       },
-      { timeout: timeouts.alive2Ms * 4 },
+      { timeout: timeouts.checkDefaultMs * 4 },
     );
   }
 });
