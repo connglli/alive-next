@@ -184,6 +184,22 @@ exit:
 }
 """
 LATE = LOOP.replace("ret i32 %2", "ret i32 %4")
+# A function that frees its argument when it is not null.
+FREES = """declare void @free(ptr)
+
+define i32 @f(ptr noundef %0) {
+entry:
+  %1 = icmp eq ptr %0, null
+  br i1 %1, label %none, label %some
+
+none:
+  ret i32 0
+
+some:
+  call void @free(ptr %0)
+  ret i32 0
+}
+"""
 # The same loop returning a sum that overflows at n = 2, and one that freezes its sum.
 LOOP_POISON = LOOP.replace("ret i32 %2", "%6 = add nsw i32 %3, 2147483647\n  ret i32 %6")
 LOOP_FROZEN = LOOP.replace("ret i32 %2", "%6 = freeze i32 %2\n  ret i32 %6")
@@ -1033,6 +1049,46 @@ class TestGolden(Case):
 
 
 class TestTampered(Case):
+  def test_a_callee_that_breaks_a_function_attribute_it_gains(self):
+    # The callee's src frees its argument, which nofree makes UB, so its goal
+    # would hold for nothing although the root is refuted.
+    src = canonical(FREES)
+    tgt = canonical(FREES.replace("free(ptr %0)\n  ret i32 0", "free(ptr %0)\n  ret i32 1"))
+    cut = llops("outline", {"module": src, "side": "src", "cut": "#0", "callee": "g"})
+    tgt_cut = llops(
+      "outline",
+      {
+        "module": tgt,
+        "side": "tgt",
+        "cut": "#0",
+        "callee": "g",
+        "params": cut["params"],
+        "value_map": {"%0": "%0"},
+      },
+    )
+    nofree = {"nofree": True}
+
+    def marked(text: str) -> str:
+      return canonical(llops("attrs", {"module": text, "fn": "g", "attrs": nofree})["module"])
+
+    whole = {"src": self.built.program(src), "tgt": self.built.program(tgt)}
+    outer, inner, outer_end, inner_end = {}, {}, {}, {}
+    for side, done in (("src", cut), ("tgt", tgt_cut)):
+      outer[side] = self.built.program(canonical(done["outer"]))
+      inner[side] = self.built.program(canonical(done["callee"]))
+      outer_end[side] = self.built.program(marked(canonical(done["outer"])))
+      inner_end[side] = self.built.program(marked(canonical(done["callee"])))
+    split = {"kind": "split", "callee": "g", "outer": "g2", "inner": "g3"}
+    self.built.goal("g1", whole, whole, [], split)
+    outer_steps = [
+      {"kind": "check", "side": side, "from": outer[side], "to": outer_end[side]}
+      for side in ("src", "tgt")
+    ]
+    self.built.goal("g2", outer, outer_end, outer_steps, {"kind": "check"})
+    step = {"kind": "strengthen", "from": inner, "to": inner_end, "fn_attrs": nofree}
+    self.built.goal("g3", inner, inner_end, [step], {"kind": "check"})
+    self.refused(self.built.write(), "Callee attributes")
+
   def test_a_program_that_is_not_what_its_name_says(self):
     package = self.leaf()
     (package / "programs" / f"{self.src}.ll").write_text(SRC.replace("mul", "add"))

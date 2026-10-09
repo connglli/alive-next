@@ -728,6 +728,13 @@ class Check:
 
     replayable = parameter_facts(param_attrs)
 
+    # The outer assumes these attributes of the callee, so its src has to keep them.
+    if fn_attrs:
+      bare = self.package.program(step["from"]["src"])
+      kept = self.package.run_llops("attrs", {"module": bare, "fn": role, "attrs": fn_attrs})
+      notes = f"@{role} keeps {', '.join(fn_attrs)}"
+      self.asked(gid, "src", "Callee attributes", bare, kept["module"], notes)
+
     replayed = ", ".join(
       (["parameter attributes"] if param_attrs else [])
       + (["function attributes"] if fn_attrs else [])
