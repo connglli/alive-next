@@ -4,7 +4,7 @@ Agent-driven, alive2-certified translation validation for large LLVM IR programs
 
 ## Problem
 
-Translation validation checks that a target program (RHS) is a refinement of a source program (LHS). alive2 is the standard tool for LLVM, but it sends the whole problem to an SMT solver in one query, so it does not scale to large programs. alive-next keeps alive2 as the trusted checker, follows its semantics of LLVM IR, and builds an **interactive translation validation** framework, analogous to interactive theorem proving, where a proof writer searches for a proof and the framework emits an independently replayable certificate.
+Translation validation checks that a target program (RHS) is a refinement of a source program (LHS). alive2 is the standard tool for LLVM, but it sends the whole problem to an SMT solver in one query, so it does not scale to large programs. alive-next keeps alive2 as the trusted checker, follows [its semantics](./semantics.md) of LLVM IR, and builds an **interactive translation validation** framework, analogous to interactive theorem proving, where a proof writer searches for a proof and the framework emits an independently replayable certificate.
 
 ## Insight
 
