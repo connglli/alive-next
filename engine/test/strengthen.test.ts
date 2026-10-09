@@ -272,6 +272,21 @@ describe.skipIf(!built)("strengthening a loop", () => {
       expect(text).toContain("define i32 @outlined_g3(i32 noundef %0, i32 noundef %1)");
     }
   });
+
+  test("lands nothing past the assume when the hypothesis is refused its facts", async () => {
+    // The iteration's question, the outer's, its two declarations, then the
+    // hypothesis's first declaration, which is refused.
+    const checker = new FakeChecker(["correct", "correct", "correct", "correct", "incorrect"]);
+    const tree = await detached();
+    const result = await strengthening(checker).strengthen(tree, "g1", {
+      param_attrs: { 0: { noundef: true }, 1: { noundef: true } },
+    });
+    expect(result).toMatchObject({ kind: "refused", phase: "attribute" });
+    if (result.kind !== "refused") throw new Error("unreachable");
+    expect(result.effects).toHaveLength(1);
+    expect(store.get(head(goal(tree, "g3"), "src"))).not.toContain("noundef %0");
+    expect(store.get(head(goal(tree, "g2"), "src"))).not.toContain("i32 noundef, i32 noundef");
+  });
 });
 
 /** That i is 0, which holds where the loop is entered and no iteration keeps. */
@@ -485,8 +500,8 @@ describe.skipIf(!built)("strengthening", () => {
     expect(store.get(head(goal(tree, "g3"), "src"))).not.toContain("range");
   });
 
-  test("says what landed when phase two gives up partway", async () => {
-    // The assume is certified; the attribute on the outer tgt is not.
+  test("lands only the assume when the outer's tgt is refused its attributes", async () => {
+    // The assume and the outer src's attribute are certified; the outer tgt's is not.
     const checker = new FakeChecker(["correct", "correct", "incorrect"]);
     const tree = await cut();
     const result = await new Strengthen(
@@ -497,10 +512,14 @@ describe.skipIf(!built)("strengthening", () => {
 
     expect(result).toMatchObject({ kind: "refused", phase: "attribute" });
     if (result.kind !== "refused") throw new Error("unreachable");
-    // Two steps stand, and the head shows them: the agent reverts what it
-    // does not want rather than being told nothing happened.
-    expect(result.effects).toHaveLength(2);
-    expect(store.get(head(goal(tree, "g2"), "src"))).toContain("llvm.assume");
+    // The assume stands, and the head shows it; the declaration does not
+    // gain an attribute its definition lacks.
+    expect(result.effects).toHaveLength(1);
+    const outer = store.get(head(goal(tree, "g2"), "src"));
+    expect(outer).toContain("llvm.assume");
+    expect(
+      outer.split("\n").find((line) => line.startsWith("declare i32 @outlined")),
+    ).not.toContain("range");
     expect(store.get(head(goal(tree, "g3"), "src"))).not.toContain("range");
   });
 

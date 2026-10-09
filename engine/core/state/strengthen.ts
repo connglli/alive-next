@@ -250,10 +250,10 @@ export class Strengthen {
       }
     }
 
-    // Phase 3: Materialize attributes on outer (both src and tgt).
-    // The callee declaration in the outer caller gains parameter and function
-    // attributes. In `outer.src`, this is certified against the assumes proven in
-    // Phase 1; in `outer.tgt`, the caller steps forward along the refinement order.
+    // Phase 3: the callee's declaration in the outer gains the attributes, in
+    // `outer.src` against Phase 1's assumes, and lands with the callee's contract
+    // only once every step is certified, so the two never say different things.
+    const pending: Effect[] = [];
     if (hasParamAttrs || hasFnAttrs) {
       for (const side of ["src", "tgt"] as Side[]) {
         const attributed = await this.attribute(
@@ -274,7 +274,7 @@ export class Strengthen {
             effects: landed,
           };
         }
-        this.land(tree, landed, step.effects);
+        pending.push(...step.effects);
         if (step.check) checks.push(step.check);
       }
     }
@@ -290,37 +290,44 @@ export class Strengthen {
     const tgtRes = await this.materialize(this.store.get(head(callee, "tgt")), name, contract);
     if (typeof tgtRes !== "string") return { ...tgtRes, effects: landed };
 
-    this.land(tree, landed, [
-      {
-        effect: "strengthen",
-        gid: callee.id,
-        src: await this.store.put(srcRes),
-        tgt: await this.store.put(tgtRes),
-        ...(hasParamAttrs ? { param_attrs: rawParamAttrs } : {}),
-        ...(hasFnAttrs ? { fn_attrs: fnAttrs } : {}),
-        ...(hasPredicates ? { predicates } : {}),
-        ...(by ? { by: kept ? [by, { gid: callee.id, hash: kept.hash }] : [by] } : {}),
-      },
-    ]);
+    pending.push({
+      effect: "strengthen",
+      gid: callee.id,
+      src: await this.store.put(srcRes),
+      tgt: await this.store.put(tgtRes),
+      ...(hasParamAttrs ? { param_attrs: rawParamAttrs } : {}),
+      ...(hasFnAttrs ? { fn_attrs: fnAttrs } : {}),
+      ...(hasPredicates ? { predicates } : {}),
+      ...(by ? { by: kept ? [by, { gid: callee.id, hash: kept.hash }] : [by] } : {}),
+    });
 
     // Phase 3, for a loop: the step Phase 0 certified lands in the callee's
     // chain on that answer, so the claim never stands without it, and the
     // hypothesis is declared with the parameter facts.
     if (kept) {
-      this.land(tree, landed, [
-        { effect: "step", gid: callee.id, side: "src", to: kept.hash, how: "check", by: "alive2" },
-      ]);
+      pending.push({
+        effect: "step",
+        gid: callee.id,
+        side: "src",
+        to: kept.hash,
+        how: "check",
+        by: "alive2",
+      });
     }
     if (hypothesis && hasParamAttrs) {
+      // Only a copy of the tree holds the strengthened callee yet.
+      const ahead = structuredClone(tree);
+      for (const effect of pending) applyEffect(ahead, effect);
+      const strengthened = ahead.goals.get(callee.id) as Goal;
       for (const side of ["src", "tgt"] as Side[]) {
         const attributed = await this.attribute(
-          this.store.get(head(callee, side)),
+          this.store.get(head(strengthened, side)),
           hypothesis,
           params,
           rawParamAttrs,
         );
         if (typeof attributed !== "string") return { ...attributed, effects: landed };
-        const step = await this.steps.checkStep(tree, callee.id, side, attributed, {
+        const step = await this.steps.checkStep(ahead, callee.id, side, attributed, {
           eager: false,
         });
         if (step.kind !== "certified") {
@@ -332,10 +339,12 @@ export class Strengthen {
             effects: landed,
           };
         }
-        this.land(tree, landed, step.effects);
+        for (const effect of step.effects) applyEffect(ahead, effect);
+        pending.push(...step.effects);
         if (step.check) checks.push(step.check);
       }
     }
+    this.land(tree, landed, pending);
 
     // Phase 4: Eager goal cross-checks.
     // Once both halves are attributed, both goals are checked. If the newly
