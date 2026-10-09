@@ -66,6 +66,10 @@ llvm::json::Object harnessCmd(llvm::json::Object &args) {
   llvm::Function *entry = M.getFunction(*entryName);
   if (!entry || entry->isDeclaration())
     return errResponse("not_found", "'@" + entryName->str() + "' is not defined in the module");
+  // A run that returns from it would read as defined, since llubi does not check noreturn.
+  if (entry->doesNotReturn())
+    return errResponse("invalid",
+                       "'@" + entryName->str() + "' is noreturn, which llubi does not check");
   if (M.getFunction("main"))
     return errResponse("invalid", "the module already defines '@main'");
 
@@ -91,6 +95,9 @@ llvm::json::Object harnessCmd(llvm::json::Object &args) {
   }
 
   auto *call = builder.CreateCall(entry, callArgs);
+  // llubi applies a parameter's attributes only when the call carries them.
+  call->setAttributes(entry->getAttributes().removeFnAttributes(ctx).removeAttributesAtIndex(
+      ctx, llvm::AttributeList::ReturnIndex));
   llvm::json::Array observations;
 
   // The return value goes to memory and back, so that it is observed the same
@@ -106,7 +113,8 @@ llvm::json::Object harnessCmd(llvm::json::Object &args) {
   // the behaviour worth comparing, read back a byte at a time.
   for (unsigned i = 0; i < arguments.size(); ++i) {
     const Argument &argument = arguments[i];
-    if (!argument.buffer)
+    // alive2 treats the memory behind a dead_on_return parameter as gone after the call.
+    if (!argument.buffer || entry->hasParamAttribute(i, llvm::Attribute::DeadOnReturn))
       continue;
     for (uint64_t offset = 0; offset < argument.size; ++offset) {
       auto *at = builder.CreateConstInBoundsGEP1_64(i8, argument.buffer, offset);

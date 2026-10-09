@@ -2332,6 +2332,36 @@ entry:
     self.assertIn("store [4 x i8]", body[1])
     self.assertIn("call i32 @f", body[2])
 
+  def test_the_call_carries_the_entrys_parameter_attributes(self):
+    module = """define i32 @f(ptr noundef nonnull readonly %p) {
+entry:
+  %v = load i32, ptr %p, align 4
+  ret i32 %v
+}
+"""
+    r = self.good(self.harness(module=module, args=[{"kind": "bytes", "bytes": [1, 0, 0, 0]}]))
+    self.assertIn("call i32 @f(ptr noundef nonnull readonly %buf0)", r["module"])
+
+  def test_memory_behind_a_dead_on_return_parameter_is_not_observed(self):
+    module = """define void @f(ptr dead_on_return %p, ptr %q) {
+entry:
+  store i8 1, ptr %p, align 1
+  store i8 2, ptr %q, align 1
+  ret void
+}
+"""
+    bytes = [{"kind": "bytes", "bytes": [0]}, {"kind": "bytes", "bytes": [0]}]
+    r = self.good(self.harness(module=module, args=bytes))
+    self.assertEqual(r["observations"], ["%obs.mem.1.0"])
+
+  def test_a_noreturn_entry(self):
+    module = """define void @f() noreturn {
+entry:
+  unreachable
+}
+"""
+    self.bad(self.harness(module=module, args=[]), "invalid")
+
   def test_a_null_pointer_argument(self):
     r = self.good(self.harness(args=[{"kind": "int", "value": "1"}, {"kind": "null"}]))
     self.assertIn("call i32 @f(i32 1, ptr null)", r["module"])

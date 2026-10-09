@@ -165,7 +165,7 @@ describe.skipIf(!built)("reporting a counterexample", () => {
 
     // Both sides were run, each wrapped in a main llubi can enter.
     expect(interp.modules).toHaveLength(2);
-    expect(interp.modules[0]).toContain("call i32 @f(i32 -3)");
+    expect(interp.modules[0]).toContain("call i32 @f(i32 noundef -3)");
     expect(interp.modules[1]).toContain("ashr");
   });
 
