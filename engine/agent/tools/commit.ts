@@ -77,11 +77,12 @@ export function createCommitTool(session: Session) {
           [formatDetail(step.check)],
         );
       }
-      const eager = formatEager(step.eager);
+      const eager = formatEager(step.eager, step.effects);
+      const how = step.by === "alive2" ? "" : " with no solver";
       return toolResultFrom(
         session,
         true,
-        `certified, ${formatMoved(session, step.effects)}${eager}${asked(step.fallback, true)}`,
+        `certified${how}, ${formatMoved(session, step.effects)}${eager}${asked(step.fallback, true)}`,
         step,
         [formatEagerDetail(step.eager)],
       );

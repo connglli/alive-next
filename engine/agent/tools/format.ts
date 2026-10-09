@@ -86,8 +86,12 @@ export function outcomeWord(outcome: CheckOutcome): string {
 }
 
 /** What the check of a new pair says: proved discharges the goal, anything else continues the run. */
-export function formatEager(eager: CheckResult | undefined): string {
-  if (!eager) return "";
+export function formatEager(eager: CheckResult | undefined, effects: Effect[]): string {
+  // llops proves a pair with no check to show, so only the discharge says so.
+  if (!eager) {
+    const proved = effects.some((effect) => effect.effect === "proved");
+    return proved ? `, the new pair is ${outcomeWord("correct")}, with no solver` : "";
+  }
   const said = `, the new pair is ${outcomeWord(eager.outcome)}`;
   const budgetMs = eager.invocation.timeoutMs;
   // A check that never asked alive2 says why, which tells more than its timing.

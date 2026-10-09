@@ -361,7 +361,31 @@ describe.skipIf(!built)("the tool layer", () => {
       "applied, 1 edit so far",
     );
     // alive2 refuses every pair here, so only llops could have certified the step.
-    expect(await callFrom(droppingTools, "tx_commit", {})).toContain("certified, g1 tgt is");
+    expect(await callFrom(droppingTools, "tx_commit", {})).toContain(
+      "certified with no solver, g1 tgt is",
+    );
+  });
+
+  test("a commit says when llops proved the new pair", async () => {
+    const plain =
+      "define i32 @f(i32 noundef %x) {\nentry:\n  %y = add i32 %x, 1\n  ret i32 %y\n}\n";
+    const reshaped = plain.replace("entry:\n", "entry:\n  br label %next\n\nnext:\n");
+    const proving = await Session.start({
+      dir: join(dir, "proving"),
+      src: plain,
+      tgt: reshaped.replace("%x) {", "%x) nofree memory(none) {"),
+      llops,
+      checker: new NoMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    const provingTools = createProofAssistantTools(proving);
+    await callFrom(provingTools, "tx_begin", { gid: "g1", side: "tgt" });
+    await callFrom(provingTools, "tx_edit", { op: "drop_attrs" });
+    // Once the attributes are gone, the tgt only reshapes the src's control flow.
+    expect(await callFrom(provingTools, "tx_commit", {})).toContain(
+      "certified with no solver, g1 tgt is p3, the new pair is proved, with no solver",
+    );
   });
 
   test("a pipeline takes the program after one of its stages", async () => {

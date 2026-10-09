@@ -21,7 +21,7 @@ export function createUnfoldTool(session: Session) {
       if (unfolded.kind === "refused") {
         return toolResultFrom(session, false, `refused: ${unfolded.message}`, unfolded);
       }
-      const eager = formatEager(unfolded.eager);
+      const eager = formatEager(unfolded.eager, unfolded.effects);
       return toolResultFrom(
         session,
         true,

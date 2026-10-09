@@ -27,7 +27,7 @@ export function createRewriteTool(session: Session) {
       if (rewritten.kind === "unchanged") {
         return toolResultFrom(session, false, "unchanged: no rule fired on this side", rewritten);
       }
-      const eager = formatEager(rewritten.eager);
+      const eager = formatEager(rewritten.eager, rewritten.effects);
       return toolResultFrom(
         session,
         true,
