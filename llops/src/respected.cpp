@@ -39,7 +39,7 @@ bool capturesNone(const llvm::Function &F, unsigned k) {
 // Whether `F` has an attribute this check reads.
 bool checksAny(const llvm::Function &F) {
   bool memory = F.getMemoryEffects() != llvm::MemoryEffects::unknown();
-  if (memory || F.hasFnAttribute(Attr::NoFree))
+  if (memory || F.hasFnAttribute(Attr::NoFree) || F.hasFnAttribute(Attr::WillReturn))
     return true;
   for (unsigned k = 0; k < F.arg_size(); ++k) {
     auto has = [&](Attr::AttrKind kind) { return F.hasParamAttribute(k, kind); };
@@ -126,6 +126,10 @@ Why escapes(const llvm::Argument &arg) {
 Why broken(const llvm::Function &F) {
   if (!checksAny(F))
     return std::nullopt;
+  // alive2 reads willreturn only at calls; in LLVM, a loop that never ends breaks it too.
+  bool returns = F.hasFnAttribute(Attr::WillReturn);
+  if (returns && holdsLoop(F))
+    return "a loop, which may not end";
   for (const llvm::Instruction &I : llvm::instructions(F)) {
     const llvm::Value *address = nullptr;
     bool write = false;
@@ -147,6 +151,10 @@ Why broken(const llvm::Function &F) {
                .getMemoryEffects()
                .doesNotAccessMemory())
         return "a call that may touch memory: " + textOf(I);
+      // alive2 reads willreturn as attrs.cpp's kFnBody lists it, on the callee and
+      // the call site, as hasFnAttr does.
+      if (returns && !call->hasFnAttr(Attr::WillReturn))
+        return "a call that may not return: " + textOf(I);
     } else if (I.mayReadOrWriteMemory()) {
       return "an access other than a plain load or store: " + textOf(I);
     }
@@ -167,6 +175,7 @@ Why broken(const llvm::Function &F) {
 void dropCheckedAttrs(llvm::Function &F) {
   F.removeFnAttr(Attr::Memory);
   F.removeFnAttr(Attr::NoFree);
+  F.removeFnAttr(Attr::WillReturn);
   for (unsigned k = 0; k < F.arg_size(); ++k) {
     for (Attr::AttrKind kind : kParamKinds)
       F.removeParamAttr(k, kind);
@@ -198,8 +207,7 @@ llvm::json::Object respectedCmd(llvm::json::Object &args) {
   dropIgnoredAttrs(*beforeMwc->mod);
   dropIgnoredAttrs(*afterMwc->mod);
   if (printModule(*beforeMwc->mod) != printModule(*afterMwc->mod))
-    why = "the two programs differ in more than their memory, nofree, readonly, writeonly, "
-          "readnone and captures(none) attributes";
+    why = "the two programs differ in more than the attributes this check reads";
 
   llvm::json::Object resp;
   resp["ok"] = true;

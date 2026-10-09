@@ -277,7 +277,7 @@ join:
   });
 
   test("names the attributes no edit removes", async () => {
-    const held = PROGRAM.replace("%y) {", "%y) nofree willreturn {");
+    const held = PROGRAM.replace("%y) {", "%y) nofree null_pointer_is_valid {");
     const map = { "%2": "%2", "%0": "%0" };
     const result = await new Splits(store, llops).split(
       await start(PROGRAM, held),
@@ -286,7 +286,9 @@ join:
       "%3",
       map,
     );
-    expect(result.kind === "refused" && result.message).toContain("and no edit removes willreturn");
+    expect(result.kind === "refused" && result.message).toContain(
+      "and no edit removes null_pointer_is_valid",
+    );
   });
 
   test("refuses a map that leaves a live value uncovered", async () => {

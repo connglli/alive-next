@@ -318,13 +318,14 @@ FN_ATTRS = [
   "memory(readwrite, argmem: none)",
   "memory(read, argmem: readwrite)",
   "nofree",
+  "willreturn",
 ]
 PARAM_ATTRS = ["readonly", "writeonly", "readnone", "captures(none)"]
 # The sets -O3 puts on a function, with the attribute put on every pointer parameter.
 SETS = [
-  ("nofree memory(none)", "readnone captures(none)"),
-  ("nofree memory(argmem: read)", "readonly captures(none)"),
-  ("nofree memory(argmem: readwrite)", "captures(none)"),
+  ("nofree willreturn memory(none)", "readnone captures(none)"),
+  ("nofree willreturn memory(argmem: read)", "readonly captures(none)"),
+  ("nofree willreturn memory(argmem: readwrite)", "captures(none)"),
 ]
 
 
@@ -419,7 +420,7 @@ def compiled(source: str, flags: list[str]) -> str:
 
 
 PARAM_CHECKED = re.compile(r" (?:readonly|writeonly|readnone|captures\(none\))(?=[ ,)])")
-FN_CHECKED = re.compile(r" (?:nofree|memory\([^)]*\))(?= |})")
+FN_CHECKED = re.compile(r" (?:nofree|willreturn|memory\([^)]*\))(?= |})")
 
 
 def split(define: str) -> tuple[str, list[str], str]:
@@ -538,6 +539,7 @@ class TestRespected(Case):
       "a read through a writeonly pointer": ("load_arg", "", {0: "writeonly"}),
       "a read through a readnone pointer": ("load_arg", "", {0: "readnone"}),
       "a free under nofree": ("free_loaded", "nofree", {}),
+      "a call that may not return under willreturn": ("unknown_call", "willreturn", {}),
       "a memset of a global under memory(argmem: readwrite)": (
         "memset_global",
         "memory(argmem: readwrite)",

@@ -3263,11 +3263,12 @@ class TestRespected(Case):
       ("writeonly ", "", "  %v = load i32, ptr %p, align 4\n"),
       ("captures(none) ", "", "  %c = icmp eq ptr %p, null\n"),
       ("", "nofree", "  call void @g()\n"),
+      ("", "willreturn", "  call void @llvm.seh.scope.begin()\n"),
       ("", "memory(argmem: read)", "  %v = load volatile i32, ptr %p, align 4\n"),
       ("", "memory(argmem: write)", "  store atomic i32 1, ptr %p seq_cst, align 4\n"),
       ("", "memory(argmem: readwrite)", "  %r = cmpxchg ptr %p, i32 0, i32 1 seq_cst seq_cst\n"),
     ]
-    top = "@G = global i32 0\n\ndeclare void @g()\n\n"
+    top = "@G = global i32 0\n\ndeclare void @g()\n\ndeclare void @llvm.seh.scope.begin()\n\n"
     for param, fn, line in cases:
       tail = f"{{\nentry:\n{line}  ret void\n}}\n"
       plain = f"{top}define void @f(ptr %p) {tail}"
@@ -3286,6 +3287,20 @@ entry:
 }
 """
     held = self.marked(plain, "@f() {", "@f() memory(none) {")
+    self.assertTrue(self.answer(plain, held)["respected"])
+
+  def test_willreturn_needs_each_run_to_return(self):
+    looping = self.marked(READ_LOOP, "%n) {", "%n) willreturn {")
+    self.assertEqual(self.answer(READ_LOOP, looping)["why"], "a loop, which may not end")
+    plain = """declare i32 @llvm.umax.i32(i32, i32)
+
+define i32 @f(i32 %x) {
+entry:
+  %m = call i32 @llvm.umax.i32(i32 %x, i32 1)
+  ret i32 %m
+}
+"""
+    held = self.marked(plain, "%x) {", "%x) willreturn {")
     self.assertTrue(self.answer(plain, held)["respected"])
 
   def test_an_argument_pointer_stored_as_a_value(self):
@@ -3329,7 +3344,7 @@ entry:
     held = self.marked(READ_LOOP, "i32 @f(ptr %p, i32 %n) {", fn)
     edited = self.good(run("edit", {"module": held, "op": "drop_attrs"}))["module"]
     f = self.good(run("validate", {"module": edited}))["functions"]["f"]
-    self.assertEqual(f["signature"], "noundef i32(ptr noundef nonnull, i32) {willreturn}")
+    self.assertEqual(f["signature"], "noundef i32(ptr noundef nonnull, i32)")
 
   def test_both_modules_are_needed(self):
     self.bad(run("respected", {"before": READ_LOOP}), "bad_request")
