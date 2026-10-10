@@ -247,8 +247,14 @@ function refutedBy(entry: ToolResultEvent | FrameworkEvent): Refuted {
     };
   }
   const result = entry.result as ReportResult | CheckGoalResult | null;
-  if (!result || !("checker" in result))
-    return { source: "alive2", divergence: result?.check?.detail };
+  if (!result || !("checker" in result)) {
+    const unroll = result?.unroll;
+    return {
+      source: "alive2",
+      ...(unroll === undefined ? {} : { unroll }),
+      divergence: result?.check?.detail,
+    };
+  }
   const { checker, input, unroll, divergence } = result;
   return { source: checker, input, ...(unroll === undefined ? {} : { unroll }), divergence };
 }

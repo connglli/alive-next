@@ -252,6 +252,8 @@ export interface CheckGoalResult {
   by: "alive2" | "reshaped" | "respected";
   /** alive2's answer, absent when llops answered. */
   check?: CheckResult;
+  /** How many iterations alive2 followed each loop for, on a pair that loops. */
+  unroll?: number;
   effects: Effect[];
   /**
    * The most recent check recorded for this exact (src, tgt, flags) pair before
@@ -325,9 +327,9 @@ export class Steps {
       outcome,
       by: "alive2",
       check,
-      effects: loops
-        ? []
-        : check.outcome === "correct"
+      ...(loops && unroll !== undefined ? { unroll } : {}),
+      effects:
+        outcome === "proved"
           ? [{ effect: "proved", gid, by: "alive2" }]
           : check.outcome === "incorrect" && rootPair(tree, gid, goal)
             ? [{ effect: "refuted", gid }]

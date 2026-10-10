@@ -584,11 +584,12 @@ exit:
     expect(asked[0]).toEqual(["--disable-undef-input", "--src-unroll=2", "--tgt-unroll=2"]);
     expect(correct.outcome).toBe("unknown");
 
+    // A divergence within the iterations it followed refutes the root's original pair.
     answer = "incorrect";
     const refuted = await run.check("g1", undefined, 3);
-    expect(refuted.outcome).toBe("refuted");
-    expect(refuted.effects).toEqual([]);
-    expect(run.verdict).toBe("unknown");
+    expect(refuted).toMatchObject({ outcome: "refuted", unroll: 3 });
+    expect(refuted.effects).toEqual([{ effect: "refuted", gid: "g1" }]);
+    expect(run.verdict).toBe("counterexample");
   });
 
   test("a session that is not eager is not checked", async () => {

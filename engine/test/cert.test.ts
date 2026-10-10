@@ -502,6 +502,26 @@ entry:
     }
   });
 
+  test("a check that refutes a root that loops ships its unroll factor", async () => {
+    const session = await Session.start({
+      dir: join(dir, "looping"),
+      src: LOOP_TOP,
+      tgt: LOOP_TOP.replace("%s.next = add i32 %s, %i", "%s.next = add i32 %s, %n"),
+      llops,
+      checker: new NoMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    expect((await session.check("g1", undefined, 2)).outcome).toBe("refuted");
+    expect(session.finish()).toBe("counterexample");
+
+    const manifest = JSON.parse(
+      readFileSync(join(certify(session.dir, join(dir, "looping-cex")), "manifest.json"), "utf8"),
+    ) as Counterexample;
+    expect(manifest).toMatchObject({ source: "alive2", unroll: 2 });
+    expect(manifest.input).toBeUndefined();
+  });
+
   test("a run llubi refutes where alive2 times out names llubi", async () => {
     // The interpreter is a stand-in too: whether the two runs really diverge
     // is check.py's question.

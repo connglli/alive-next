@@ -1,14 +1,14 @@
-// A loop refuted at an input.
+// A loop refuted within its unroll factor.
 //
 // Both sides accumulate a sum the loop carries, and the target returns the
 // value of one iteration too late. alive-tv answers a loop only for the
-// iterations it unrolls, so a check of the pair is a search whose refutation
-// is a hint; the run ends on an input alive2 refutes the pair at.
+// iterations it unrolls, and a divergence within them refutes the root's
+// original pair, which ends the run.
 import { expect, type Scenario } from "../core/scenario.ts";
 
 export const unroll: Scenario = {
   name: "unroll",
-  about: "a loop refuted at an input",
+  about: "a loop refuted within its unroll factor",
   verdict: "counterexample",
 
   src: `define i32 @f(i32 noundef %n) {
@@ -42,14 +42,9 @@ exit:
 `,
 
   async prove(session) {
-    // Unrolled twice the two part company, and the root stays open.
-    const checked = await session.check("g1", undefined, 2);
-    expect("the search refutes the pair", checked.outcome === "refuted", checked);
-    expect("a search does not end the run", session.verdict === "unknown", checked);
-
     // For n = 2 the src returns the accumulated 0 and the tgt the 1 it added
     // after, which alive2 sees when it unrolls the loop twice.
-    const reported = await session.reportCex([{ kind: "int", value: "2" }], 2);
-    expect("the two programs diverge on 2", reported.kind === "refuted", reported);
+    const checked = await session.check("g1", undefined, 2);
+    expect("unrolled twice, the two part company", checked.outcome === "refuted", checked);
   },
 };

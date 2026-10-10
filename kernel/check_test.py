@@ -356,7 +356,7 @@ class Built:
     (self.root / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return self.root
 
-  def refuted(self, src: str, tgt: str) -> Path:
+  def refuted(self, src: str, tgt: str, unroll: int = 0) -> Path:
     """A counterexample package the checker itself refuted: the pair, and no input."""
     manifest = {
       "version": 1,
@@ -365,6 +365,7 @@ class Built:
       "source": "alive2",
       "toolchain": {},
       "pair": {"src": self.program(src), "tgt": self.program(tgt)},
+      **({"unroll": unroll} if unroll else {}),
     }
     (self.root / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return self.root
@@ -1934,6 +1935,11 @@ class TestRefuted(unittest.TestCase):
     done = self.re_asked(package)
     self.assertNotEqual(done.returncode, 0, done.stdout)
     self.assertIn("handed to alive-tv loops", done.stdout + done.stderr)
+
+  def test_a_pair_that_loops_is_refuted_within_its_unroll_factor(self):
+    package = self.built.refuted(canonical(LOOP), canonical(LATE), unroll=2)
+    done = self.re_asked(package)
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
   def test_a_pair_that_refines_is_not_a_counterexample(self):
     package = self.built.refuted(SRC, TGT)
