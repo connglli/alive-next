@@ -762,15 +762,9 @@ Target:
   });
 
   test("strengthens with function attributes and certifies callee", async () => {
-    // 2 callee attr checks (src, tgt), 2 outer steps (src, tgt), 2 cross checks
-    const checker = new FakeChecker([
-      "correct",
-      "correct",
-      "correct",
-      "correct",
-      "unknown",
-      "unknown",
-    ]);
+    // alive2 is asked whether the callee's src keeps them, about the outer's two
+    // steps, and about the callee's new pair; the outer's sides end the same.
+    const checker = new FakeChecker(["correct", "correct", "correct", "unknown"]);
     const tree = await cut();
     const strengthen = new Strengthen(
       store,
@@ -790,6 +784,9 @@ Target:
     const calleeTgt = store.get(head(goal(tree, "g3"), "tgt"));
     expect(calleeTgt).toContain("memory(none)");
     expect(calleeTgt).toContain("nounwind");
+    // Only the callee's src is asked to keep them.
+    expect(checker.calls).toHaveLength(4);
+    expect(checker.calls[0]?.src).toBe(store.get(goal(tree, "g3").src.history[0] as string));
   });
 
   test("strengthens with relational predicates across cut arguments", async () => {
@@ -816,9 +813,8 @@ Target:
   });
 
   test("strengthens with param_attrs, fn_attrs, and predicates combined", async () => {
-    // 1 caller assume step, 2 callee attr checks (src, tgt), 2 outer attribute steps, 2 cross checks
+    // 1 caller assume step, 1 callee attr check (src), 2 outer attribute steps, 2 cross checks
     const checker = new FakeChecker([
-      "correct",
       "correct",
       "correct",
       "correct",

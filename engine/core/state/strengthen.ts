@@ -219,35 +219,31 @@ export class Strengthen {
       by = { gid: outer.id, hash: proof.hash };
     }
 
-    // Phase 2: Verify callee function attributes (fn_attrs) on both sides.
-    // Function attributes assert behavioral guarantees (e.g. `memory(none)`).
-    // If a body violates the attribute (e.g. writes memory), adding the attribute
-    // causes undefined behavior on that execution. Checking `unannotated => with_attrs`
-    // on both `callee.src` and `callee.tgt` ensures neither side introduces UB.
+    // Phase 2: the callee's src keeps the function attributes (fn_attrs), so
+    // the outer may assume them of it. The tgt needs no such check: there they
+    // only add UB, which makes the callee goal harder to prove, not easier.
     if (hasFnAttrs) {
-      for (const side of ["src", "tgt"] as Side[]) {
-        const unannotated = this.store.get(head(callee, side));
-        const withAttrs = await this.llops.attrs(unannotated, name, fnAttrs);
-        if (!withAttrs.ok) {
-          return {
-            kind: "refused",
-            phase: "callee_attr",
-            reason: `the function attributes cannot be put on the callee's ${side}: ${withAttrs.message}`,
-            effects: landed,
-          };
-        }
-        const check = await this.steps.refinementCheck(unannotated, withAttrs.module);
-        if (check.outcome !== "correct") {
-          return {
-            kind: "refused",
-            phase: "callee_attr",
-            reason: `the callee's ${side} is not shown to keep the function attributes`,
-            check,
-            effects: landed,
-          };
-        }
-        checks.push(check);
+      const unannotated = this.store.get(head(callee, "src"));
+      const withAttrs = await this.llops.attrs(unannotated, name, fnAttrs);
+      if (!withAttrs.ok) {
+        return {
+          kind: "refused",
+          phase: "callee_attr",
+          reason: `the function attributes cannot be put on the callee's src: ${withAttrs.message}`,
+          effects: landed,
+        };
       }
+      const check = await this.steps.refinementCheck(unannotated, withAttrs.module);
+      if (check.outcome !== "correct") {
+        return {
+          kind: "refused",
+          phase: "callee_attr",
+          reason: "the callee's src is not shown to keep the function attributes",
+          check,
+          effects: landed,
+        };
+      }
+      checks.push(check);
     }
 
     // Phase 3: the callee's declaration in the outer gains the attributes, in
