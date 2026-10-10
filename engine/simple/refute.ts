@@ -1,8 +1,9 @@
 // Refutes a run with an input to the original programs, read off a
 // counterexample whose inputs are the root's arguments: an unrolled check of a
 // root that loops, or a refuted goal whose src is still the root's function.
-// llubi runs the input on both programs, and only a divergence refutes the run.
-import type { HarnessArg, Llops } from "../core/drivers/llops.ts";
+// The report asks alive2 about the original pair at the input, unrolled as far
+// as the check was, and only a refutation ends the run.
+import type { InputArg, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { headers } from "./regions.ts";
 import { bodies } from "./windows.ts";
@@ -36,7 +37,7 @@ export async function unrolling(session: Session, llops: Llops, root: string, ms
     const started = Date.now();
     const { outcome, check } = await session.check(root, left, factor);
     left -= Date.now() - started;
-    if (outcome === "refuted" && check) await refuteWith(session, check.detail);
+    if (outcome === "refuted" && check) await refuteWith(session, check.detail, factor);
     if (check?.outcome !== "correct") return;
   }
 }
@@ -52,13 +53,13 @@ export async function refuteFrom(session: Session, gid: string, detail: string) 
   return refuteWith(session, detail);
 }
 
-/** Runs the integer inputs of counterexample `detail` on the original programs. */
-async function refuteWith(session: Session, detail: string) {
+/** Reports the integer inputs of counterexample `detail`, unrolled `unroll` times. */
+async function refuteWith(session: Session, detail: string, unroll?: number) {
   if (!detail.includes("Example:")) return false;
-  const args: HarnessArg[] = [];
+  const args: InputArg[] = [];
   for (const input of [...inputsOf(detail)]) {
     if (!input || !/^i\d+$/.test(input.type) || input.value === undefined) return false;
     args.push({ kind: "int", value: `0x${input.value.toString(16)}` });
   }
-  return (await session.reportCex(args)).kind === "refuted";
+  return (await session.reportCex(args, unroll)).kind === "refuted";
 }

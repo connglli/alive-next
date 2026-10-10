@@ -159,7 +159,7 @@ entry:
       checker: windowsOnly,
       interp: noRun,
       rewriter: {} as Llrwt,
-      timeouts: timeoutsFrom({ alive2Ms: 5_000 }),
+      timeouts: timeoutsFrom({ checkDefaultMs: 5_000 }),
     });
     expect(await stepWindows(session, llops, "g1", grow(1))).toEqual([]);
   }, 60_000);

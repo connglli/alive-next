@@ -142,7 +142,7 @@ function start(
   src: string,
   tgt: string,
   checker: Checker,
-  alive2Ms = 5_000,
+  checkDefaultMs = 5_000,
   rewriter = {} as Llrwt,
 ) {
   return Session.start({
@@ -153,7 +153,7 @@ function start(
     checker,
     interp: llubi,
     rewriter,
-    timeouts: timeoutsFrom({ alive2Ms, checkDefaultMs: 5_000 }),
+    timeouts: timeoutsFrom({ checkDefaultMs }),
   });
 }
 
@@ -321,10 +321,10 @@ describe.skipIf(!solving)("bun run simple", () => {
 });
 
 describe.skipIf(!solving)("search with alive-tv", () => {
-  const run = async (name: string, more: Partial<Limits> = {}, alive2Ms?: number) => {
+  const run = async (name: string, more: Partial<Limits> = {}, checkDefaultMs?: number) => {
     const pair = pairs[name];
     if (!pair) throw new Error(`no pair ${name}`);
-    return search(await start(pair.src, pair.tgt, aliveTv, alive2Ms), llops, {
+    return search(await start(pair.src, pair.tgt, aliveTv, checkDefaultMs), llops, {
       ...limits,
       ...more,
     });
