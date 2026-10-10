@@ -3416,6 +3416,23 @@ entry:
   def test_both_modules_are_needed(self):
     self.bad(run("respected", {"before": READ_LOOP}), "bad_request")
 
+  def test_an_ill_formed_module_is_refused(self):
+    # The use of %a in %next is not dominated by its definition.
+    ill = """define i32 @f(i1 %c) {
+entry:
+  br i1 %c, label %def, label %next
+
+def:
+  %a = add i32 1, 2
+  br label %next
+
+next:
+  ret i32 %a
+}
+"""
+    held = self.marked(ill, "(i1 %c) {", "(i1 %c) memory(none) {")
+    self.bad(run("respected", {"before": ill, "after": held}), "invalid_ir")
+
 
 class TestFrameDependent(Case):
   def holding(self, module, label, hazard):

@@ -180,6 +180,10 @@ llvm::json::Object respectedCmd(llvm::json::Object &args) {
   llvm::Function *after = singleFunction(*afterMwc->mod);
   if (!before || !after)
     return errResponse("shape_error", "respected needs one defined function per module");
+  // Only a module the verifier accepts is a program this check can answer for.
+  for (auto *mwc : {beforeMwc.get(), afterMwc.get()})
+    if (auto diags = checkModule(*mwc->mod); !diags.empty())
+      return errResponse(diags.front().code, diags.front().message);
 
   // `after` is read with its attributes, and then compared to `before` without them.
   Why why = broken(*after);
