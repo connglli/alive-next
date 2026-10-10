@@ -64,6 +64,9 @@ llvm::json::Array differences(const llvm::Function &F) {
                  (llvm::isa<llvm::CallBase>(I) && I.getType()->isPtrOrPtrVectorTy());
     addresses |= fresh && escapingUse(I);
   }
+  // llubi lays globals out by the module, so the two programs may place one apart.
+  for (const llvm::GlobalVariable &G : F.getParent()->globals())
+    addresses |= escapingUse(G) != nullptr;
   for (const llvm::Argument &arg : F.args()) {
     writeonly |= arg.hasAttribute(llvm::Attribute::WriteOnly);
     captures |= arg.hasAttribute(llvm::Attribute::Captures) &&

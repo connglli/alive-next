@@ -2405,6 +2405,24 @@ entry:
     )
     self.assertEqual(self.good(self.harness(module=slot, args=[]))["differences"], [])
 
+  def test_a_global_whose_address_is_used(self):
+    module = """@g = global i32 0
+
+define i64 @f() {
+entry:
+  store i32 1, ptr @g, align 4
+  %i = ptrtoint ptr @g to i64
+  ret i64 %i
+}
+"""
+    r = self.good(self.harness(module=module, args=[]))
+    self.assertEqual(r["differences"], ["an allocation's address"])
+    # A global only loaded and stored through takes no address llubi can show.
+    plain = module.replace(
+      "%i = ptrtoint ptr @g to i64", "%v = load i32, ptr @g, align 4\n  %i = zext i32 %v to i64"
+    )
+    self.assertEqual(self.good(self.harness(module=plain, args=[]))["differences"], [])
+
   def test_a_noreturn_entry(self):
     module = """define void @f() noreturn {
 entry:
