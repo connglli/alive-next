@@ -20,7 +20,7 @@ The agent/proof-writer is entirely untrusted. It explores search strategies: whe
 * **Decomposition and interface facts** are validated by `alive2` through faithful outlining and certified call-site assertions.
 * **Counterexamples** are validated under the checker the certificate names: `alive2` refuting the root's original pair, as it stands or at an input, or, where alive2 does not decide, a weaker concrete execution replay under the UB-aware interpreter `llubi`.
 
-A flawed proposal wastes search budget, but can never compromise soundness or yield an incorrect certificate, though a counterexample `llubi` certifies is only as sound as `llubi`. A run concludes in one of three terminal outcomes: **verified** (with a standalone certificate package replayable without an agent), **refuted** (with `alive2` refuting the original pair, or a diverging execution under `llubi` where alive2 does not decide), or **unknown** (when budgets expire or search exhausts without proof).
+A flawed proposal wastes search budget, but can never compromise soundness or yield an incorrect proof. A run concludes in one of three terminal outcomes: **verified** (with a standalone certificate package replayable without an agent), **refuted** (with `alive2` refuting the original pair, or a diverging execution under `llubi` where alive2 does not decide), or **unknown** (when budgets expire or search exhausts without proof).
 
 ### Conceptual Model
 

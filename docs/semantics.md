@@ -72,13 +72,13 @@ alive-next follows alive2's semantics of LLVM IR ([docs/design.md](./design.md))
 
 **alive2.** A call to an unknown function never breaks it, and a memory intrinsic such as `memset`, which is the function's own instruction, does.
 
-### A new allocation's address
+### Addresses
 
-**LangRef.** Unspecified.
+**LangRef.** Unspecified, for a new allocation and for a global.
 
-**llubi.** One concrete address.
+**llubi.** One concrete address each, with globals laid out from the module, so the two programs may place a global apart.
 
-**alive2.** Any address.
+**alive2.** Any address for a new allocation, while a global has one address, the same in the src and the tgt.
 
 ### `noalias` parameter
 

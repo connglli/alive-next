@@ -1496,8 +1496,7 @@ def main() -> int:
     print("counterexample" if confirmed else f"NOT a counterexample: {why}")
     return 0 if confirmed else 1
 
-  # Only proofs need a root for this summary. Their root was already
-  # validated during replay; executed counterexamples gain no new requirement.
+  # Only proofs reach this summary, and replay already validated their root.
   root = package.root_goal()
   solver_noun = "query" if package.solver_queries == 1 else "queries"
   timing = f"{package.solver_queries} solver {solver_noun} · {package.seconds:.1f}s solver time"
