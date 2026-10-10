@@ -68,7 +68,7 @@ alive-next follows alive2's semantics of LLVM IR ([docs/design.md](./design.md))
 
 **LangRef.** The attribute covers what callees do.
 
-**llubi.** Each call, `memset` included, is checked against its own memory effects.
+**llubi.** Each call, `memset` included, is checked against the callee's memory effects.
 
 **alive2.** A call to an unknown function never breaks it, and a memory intrinsic such as `memset`, which is the function's own instruction, does.
 
