@@ -2439,6 +2439,17 @@ entry:
     r = self.good(self.harness(module=module, args=[{"kind": "int", "value": "-3"}]))
     self.assertIn("call i32 @f(i32 -3)", r["module"])
 
+  def test_an_integer_is_decimal_unless_0x_says_hex(self):
+    module = """define i32 @f(i32 %x) {
+entry:
+  ret i32 %x
+}
+"""
+    for value, read in (("010", "10"), ("0x10", "16"), ("-0x10", "-16")):
+      r = self.good(self.harness(module=module, args=[{"kind": "int", "value": value}]))
+      self.assertIn(f"call i32 @f(i32 {read})", r["module"])
+    self.bad(self.harness(module=module, args=[{"kind": "int", "value": "0b101"}]), "invalid")
+
   def test_an_integer_the_parameter_cannot_hold(self):
     module = """define i32 @f(i32 %x) {
 entry:

@@ -31,8 +31,10 @@ bool readBytes(const llvm::json::Array &bytes, std::vector<uint8_t> &out, llvm::
 // the caller asked about.
 bool readInteger(llvm::StringRef text, unsigned width, llvm::APInt &out, std::string &why) {
   bool negative = text.consume_front("-");
+  // Radix 0 would read a leading 0 as octal, which no caller means.
+  unsigned radix = text.consume_front_insensitive("0x") ? 16 : 10;
   llvm::APInt magnitude(width, 0);
-  if (text.getAsInteger(0, magnitude)) {
+  if (text.getAsInteger(radix, magnitude)) {
     why = "is not an integer";
     return false;
   }
