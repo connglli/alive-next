@@ -66,7 +66,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function start(name: string, checker: Checker, alive2Ms = 30_000, pair = pairs[name]) {
+async function start(name: string, checker: Checker, checkDefaultMs = 30_000, pair = pairs[name]) {
   if (!pair) throw new Error(`no pair ${name}`);
   return Session.start({
     dir: join(dir, name),
@@ -76,7 +76,7 @@ async function start(name: string, checker: Checker, alive2Ms = 30_000, pair = p
     checker,
     interp: noRun,
     rewriter: unrewriting,
-    timeouts: timeoutsFrom({ alive2Ms }),
+    timeouts: timeoutsFrom({ checkDefaultMs }),
   });
 }
 

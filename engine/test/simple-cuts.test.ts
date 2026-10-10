@@ -225,7 +225,7 @@ function solved(name: string, src: string, tgt: string) {
     checker: aliveTv,
     interp: {} as Interpreter,
     rewriter: {} as Llrwt,
-    timeouts: timeoutsFrom({ alive2Ms: 5_000 }),
+    timeouts: timeoutsFrom({ checkDefaultMs: 5_000 }),
   });
 }
 
