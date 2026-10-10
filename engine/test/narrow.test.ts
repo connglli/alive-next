@@ -340,6 +340,10 @@ entry:
     expect(await narrow(llops, await canon(before), await canon(after))).toEqual({ why });
     const at = { from: "%v1", to: "%v2" };
     expect(await narrowAt(llops, before, after, at)).toEqual({ why });
+    // An edit that adds the attribute is refused on the edited side, as a cut is.
+    const added = expect.stringContaining("the edited function has nofree");
+    expect(await narrow(llops, await canon(BEFORE), await canon(after))).toEqual({ why: added });
+    expect(await narrowAt(llops, BEFORE, after, at)).toEqual({ why: added });
   });
 
   test("outlines an explicit user-supplied window with narrowAt", async () => {

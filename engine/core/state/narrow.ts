@@ -64,6 +64,14 @@ export interface NoWindow {
   why: string;
 }
 
+/** Why a step may not be narrowed, asked of both sides as a cut asks it. */
+async function heldBack(llops: Llops, before: Module, after: Module): Promise<string | undefined> {
+  return (
+    (await unoutlinable(llops, before, "the function")) ??
+    (await unoutlinable(llops, after, "the edited function"))
+  );
+}
+
 /**
  * The window pair for a step from `before` to `after`, or why not when the
  * two do not line up around one window and the whole function is the only
@@ -74,7 +82,7 @@ export async function narrow(
   before: Module,
   after: Module,
 ): Promise<Narrowed | NoWindow> {
-  const held = await unoutlinable(llops, before, "the function");
+  const held = await heldBack(llops, before, after);
   if (held) return { why: held };
   // Both sides are canonicalised first, because what the two bodies have in
   // common is read line by line and a scratch program names its values
@@ -109,7 +117,7 @@ export async function narrowAt(
   after: Module,
   userWindow: Window,
 ): Promise<Narrowed | NoWindow> {
-  const held = await unoutlinable(llops, before, "the function");
+  const held = await heldBack(llops, before, after);
   if (held) return { why: held };
   const listed = await llops.number(before);
   if (!listed.ok) return { why: listed.message };
