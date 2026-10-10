@@ -270,7 +270,7 @@ The harness does not have the program shape, since it defines a second function,
 
 Puts a counterexample's input into both programs of a pair, as assumptions at the entry, so that alive2 is asked about that input alone.
 
-Request `{ "src": ..., "tgt": ..., "args": [ ... ] }`, response `{ "ok": true, "src": ..., "tgt": ... }`. The two functions must take the same parameters, and `args` holds one argument per parameter, in order:
+Request `{ "src": ..., "tgt": ..., "args": [ ... ] }`, response `{ "ok": true, "src": ..., "tgt": ... }`. The two functions must have the same type, and `args` holds one argument per parameter, in order:
 
 * `{ "kind": "int", "value": "-3" }` for an integer parameter of any width, which is assumed equal to the value. The value is text, so that a width beyond 64 bits survives JSON; a leading `-` is a sign, and a value the width cannot hold is refused rather than truncated.
 * `{ "kind": "null" }` for a pointer parameter, which is assumed null.

@@ -98,6 +98,15 @@ describe.skipIf(!built)("interposing", () => {
     expect(result.kind === "refused" && result.message).toContain("@g");
   });
 
+  test("refuses a program whose function has another type", async () => {
+    const wider = MIDDLE.replace(
+      "define i32 @f(i32 %x, i32 %y)",
+      "define i32 @f(i32 %x, i64 %z)",
+    ).replace("mul i32 %y, %x", "mul i32 %x, %x");
+    const result = await interpose(store, llops, await start(), "g1", wider);
+    expect(result.kind === "refused" && result.message).toContain("has type i32 (i32, i64)");
+  });
+
   test("refuses one of the goal's sides, which would leave the goal a half", async () => {
     const result = await interpose(store, llops, await start(), "g1", TGT);
     expect(result).toMatchObject({ kind: "refused", code: "invalid" });

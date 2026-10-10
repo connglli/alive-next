@@ -502,12 +502,12 @@ export class Llops {
   }
 }
 
-/** The one function a program defines, or why a goal cannot hold it. */
+/** The one function a program defines, by name and type, or why a goal cannot hold it. */
 export async function definedIn(
   llops: Llops,
   module: Module,
   what: string,
-): Promise<{ name: string } | { why: string }> {
+): Promise<{ name: string; type: string } | { why: string }> {
   const result = await llops.validate(module);
   if (!result.ok) return { why: `${what}: llops validate: ${result.message}` };
   if (!result.conforms) {
@@ -515,8 +515,9 @@ export async function definedIn(
     return { why: `${what} is outside the program shape: ${why}` };
   }
   const functions = Object.entries(result.functions ?? {});
-  const [name = ""] = functions.find(([, fn]) => fn.defined) ?? [];
-  return { name };
+  const [name = "", fn] = functions.find(([, fn]) => fn.defined) ?? [];
+  const params = (fn?.params ?? []).map((param) => param.type).join(", ");
+  return { name, type: `${fn?.return_type ?? ""} (${params})` };
 }
 
 /** Why a program's function may not be cut or narrowed, or nothing when it may. */

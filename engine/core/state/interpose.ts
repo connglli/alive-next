@@ -42,9 +42,13 @@ export async function interpose(
     definedIn(llops, program, "the program"),
   ]);
   if ("why" in its) return { kind: "refused", code: "invalid", message: its.why };
-  // alive2 compares functions by name, so another function would be asked nothing.
+  // alive2 compares functions by name and type; another would be asked nothing.
   if ("why" in mine || mine.name !== its.name) {
     const message = `the program defines @${its.name}, which the goal does not`;
+    return { kind: "refused", code: "invalid", message };
+  }
+  if (mine.type !== its.type) {
+    const message = `the program's @${its.name} has type ${its.type}, and the goal's ${mine.type}`;
     return { kind: "refused", code: "invalid", message };
   }
   const hash = await store.put(program);

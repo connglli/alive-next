@@ -215,12 +215,17 @@ export class Session {
     if (session.log.read().length > 0) throw new Error(`${options.dir} already holds a run`);
     const named = await session.refuseOutsideShape("src", options.src);
     const other = await session.refuseOutsideShape("tgt", options.tgt);
-    // alive2 compares two modules' functions by name, so a pair whose functions
-    // have different names would be asked nothing at every check.
-    if (named !== other)
+    // alive2 compares two modules' functions by name and type, so a pair
+    // whose functions differ in either would be asked nothing at every check.
+    if (named.name !== other.name)
       throw new Error(
-        `the src defines @${named} and the tgt @${other}; ` +
+        `the src defines @${named.name} and the tgt @${other.name}; ` +
           "alive2 compares functions by name, so give both the same name",
+      );
+    if (named.type !== other.type)
+      throw new Error(
+        `the src's @${named.name} has type ${named.type} and the tgt's ${other.type}; ` +
+          "alive2 compares only functions of the same type",
       );
     // The programs are stored before the event that names them, so a crash
     // leaves an unreferenced program rather than an event pointing at nothing.
@@ -242,10 +247,13 @@ export class Session {
    * Refuse a root program outside the shape `llops validate` defines.
    * Answers the name of the one function it defines.
    */
-  private async refuseOutsideShape(side: Side, text: string): Promise<string> {
+  private async refuseOutsideShape(
+    side: Side,
+    text: string,
+  ): Promise<{ name: string; type: string }> {
     const found = await definedIn(this.llops, text, `the ${side} program`);
     if ("why" in found) throw new Error(found.why);
-    return found.name;
+    return found;
   }
 
   /** Pick a run back up from its directory, which replays what it did. */

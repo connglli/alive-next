@@ -2571,9 +2571,11 @@ entry:
     for side in ("src", "tgt"):
       self.assertEqual(len(self.body(r[side])) - len(self.body(self.F)), 2)
 
-  def test_two_functions_that_take_different_parameters(self):
+  def test_two_functions_of_different_types(self):
     wider = "define i32 @f(i64 %x, ptr %p) {\nentry:\n  ret i32 0\n}\n"
     self.bad(self.instantiate(tgt=wider), "type_mismatch")
+    returns = "define i64 @f(i32 %x, ptr %p) {\nentry:\n  ret i64 0\n}\n"
+    self.bad(self.instantiate(tgt=returns), "type_mismatch")
 
   def test_an_input_that_does_not_fit(self):
     self.bad(self.instantiate(args=[{"kind": "int", "value": "1"}]), "bad_request")

@@ -511,6 +511,25 @@ entry:
     expect(checker.calls).toBe(0);
   });
 
+  test("a pair whose functions have different types is refused before the run starts", async () => {
+    const checker = new YesMan();
+    const attempt = Session.start({
+      dir: join(dir, "typed"),
+      src: "define i32 @f(i32 %x) {\nentry:\n  ret i32 %x\n}\n",
+      tgt: "define i64 @f(i32 %x) {\nentry:\n  %y = zext i32 %x to i64\n  ret i64 %y\n}\n",
+      llops,
+      checker,
+      interp: noRun,
+      rewriter: unrewriting,
+      eager: true,
+    });
+
+    await expect(attempt).rejects.toThrow(
+      /the src's @f has type i32 \(i32\) and the tgt's i64 \(i32\)/,
+    );
+    expect(checker.calls).toBe(0);
+  });
+
   test("a pair that loops is searched for a counterexample and never proved", async () => {
     // alive-tv calls this pair correct, though the tgt is one iteration late.
     const loop = `define i32 @f(i32 noundef %n) {

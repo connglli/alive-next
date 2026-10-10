@@ -23,12 +23,11 @@ bool mayRead(const llvm::Function &F, unsigned k) {
   return llvm::isRefSet(F.getMemoryEffects().getModRef(llvm::IRMemLocation::ArgMem));
 }
 
-// The parameter types as text, since the two programs live in different contexts.
-std::string paramsText(const llvm::Function &F) {
+// The function's type as text, since the two programs live in different contexts.
+std::string typeOf(const llvm::Function &F) {
   std::string text;
   llvm::raw_string_ostream os(text);
-  for (const llvm::Argument &arg : F.args())
-    os << *arg.getType() << ", ";
+  os << *F.getFunctionType();
   return text;
 }
 
@@ -72,8 +71,9 @@ llvm::json::Object instantiateCmd(llvm::json::Object &args) {
   llvm::Function *tgtF = singleFunction(*tgt->mod);
   if (!srcF || !tgtF)
     return errResponse("shape_error", "instantiate needs one defined function per module");
-  if (paramsText(*srcF) != paramsText(*tgtF))
-    return errResponse("type_mismatch", "the two functions take different parameters");
+  if (typeOf(*srcF) != typeOf(*tgtF))
+    return errResponse("type_mismatch", "the two functions have different types: " + typeOf(*srcF) +
+                                            " and " + typeOf(*tgtF));
 
   std::vector<Arg> input;
   llvm::json::Object err;
