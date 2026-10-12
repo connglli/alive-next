@@ -375,6 +375,39 @@ exit:
     expect([...session.tree.goals.values()].some((goal) => goal.role === "lhs")).toBe(true);
   }, 180_000);
 
+  test("bounds a sum of loaded bytes by a range, although it may be poison", async () => {
+    // The remainder keeps the sum below 65521, so adding a byte cannot wrap,
+    // which holds by induction. A loaded byte may be poison, and so may the
+    // sum, so its loop cut can state the bound only as a range.
+    const src = `define i32 @f(ptr noundef %p, i32 noundef %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %a = phi i32 [ 1, %entry ], [ %a.next, %body ]
+  %c = icmp slt i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %idx = sext i32 %i to i64
+  %q = getelementptr inbounds i8, ptr %p, i64 %idx
+  %b = load i8, ptr %q
+  %bz = zext i8 %b to i32
+  %s = add i32 %a, %bz
+  %a.next = urem i32 %s, 65521
+  %i.next = add nsw i32 %i, 1
+  br label %head
+
+exit:
+  ret i32 %a
+}
+`;
+    const tgt = src.replace("%s = add i32 %a, %bz", "%s = add nuw nsw i32 %a, %bz");
+    const session = await start(src, tgt, aliveTv);
+    expect(await search(session, llops, limits)).toBe("verified");
+  }, 180_000);
+
   test("drops the attributes a tgt's loop respects, so it can cut", async () => {
     const src = `define i32 @f(i32 noundef %n) {
 entry:

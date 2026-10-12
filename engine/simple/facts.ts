@@ -1,7 +1,11 @@
 // What the analyses know about the inputs of a window or a cut, as
-// preconditions a commit can ask for or candidates to strengthen a cut with. A
-// fact about a value that may be poison can never be proved at the call, so
-// only values the analyses find noundef get facts.
+// preconditions a commit can ask for or candidates to strengthen a cut with.
+// A window proves its facts by assuming them, and an assumption about a poison
+// value is undefined behavior, so only values the analyses find noundef get
+// facts there. A cut proves its facts by putting them on the declaration of
+// the function it calls. There a value outside a range becomes poison rather
+// than undefined behavior, so a cut also gives a value that may be poison its
+// range.
 import type {
   AnalyzeKind,
   Attrs,
@@ -39,7 +43,8 @@ export async function factsAt(
 /**
  * What the analyses know about the values a cut passes, as candidates to
  * strengthen it with. Range bounds and known bits are predicates, so each can
- * be kept on its own.
+ * be kept on its own. A value that may be poison gets only its range
+ * instead, as an attribute, since a range can hold of a poison value.
  */
 export async function cutFacts(
   llops: Llops,
@@ -51,9 +56,17 @@ export async function cutFacts(
   const param_attrs: Record<number, Attrs> = {};
   const predicates: Predicate[] = [];
   lives.forEach((live, k) => {
-    if (!about("defined", live)?.noundef) return;
-    param_attrs[k] = { noundef: true, ...pointerAttrs(about("pointer", live)) };
-    predicates.push(...boundsOf(k, about("ranges", live)), ...knownOf(k, about("knownbits", live)));
+    const defined = about("defined", live);
+    if (defined?.noundef) {
+      param_attrs[k] = { noundef: true, ...pointerAttrs(about("pointer", live)) };
+      predicates.push(
+        ...boundsOf(k, about("ranges", live)),
+        ...knownOf(k, about("knownbits", live)),
+      );
+    } else if (defined?.not_poison === false) {
+      const range = rangeOf(about("ranges", live), about("knownbits", live));
+      if (range) param_attrs[k] = { range };
+    }
   });
   return { param_attrs, predicates };
 }
@@ -250,15 +263,21 @@ function knownOf(k: number, fact?: Fact): Predicate[] {
 }
 
 /**
- * The narrower of a value's signed and unsigned ranges as a half-open `range`,
- * unless neither narrows or a bound is too large to send exactly.
+ * The narrowest of a value's signed range, its unsigned range, and the
+ * unsigned range its known bits allow, as a half-open `range`, unless none of
+ * them narrows the type or a bound is too large to send exactly.
  */
-function rangeOf(fact?: Fact): { min: number; max: number } | undefined {
-  const bits = Number(fact?.type.match(/^i(\d+)$/)?.[1]);
-  if (!fact || !bits) return undefined;
+function rangeOf(fact?: Fact, known?: Fact): { min: number; max: number } | undefined {
+  const bits = Number((fact ?? known)?.type.match(/^i(\d+)$/)?.[1]);
+  if (!bits) return undefined;
+  // The known bits allow every value from the one with all unknown bits clear
+  // to the one with all of them set.
+  const one = known?.one_bits && known.unknown_bits ? BigInt(known.one_bits) : undefined;
+  const all = one === undefined ? undefined : one | BigInt(known?.unknown_bits ?? 0);
   const pairs = [
-    [fact.signed_min, fact.signed_max],
-    [fact.unsigned_min, fact.unsigned_max],
+    [fact?.signed_min, fact?.signed_max],
+    [fact?.unsigned_min, fact?.unsigned_max],
+    [one?.toString(), all?.toString()],
   ].flatMap(([low, high]) =>
     low !== undefined && high !== undefined ? [[BigInt(low), BigInt(high)]] : [],
   );
