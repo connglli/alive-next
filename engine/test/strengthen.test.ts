@@ -246,9 +246,17 @@ describe.skipIf(!built)("strengthening a loop", () => {
   });
 
   test("a contract is proved before both calls, the loop's in the callee's chain", async () => {
-    // The iteration's question, the outer's, then the two goals' checks: the
-    // iteration's step lands on its own answer rather than a second one.
-    const checker = new FakeChecker(["correct", "correct", "unknown", "unknown"]);
+    // The iteration's question, the outer's, the tgt steps that assume the
+    // same at the outer's call and at the hypothesis, then the two goals'
+    // checks: the iteration's step lands on its own answer rather than a second one.
+    const checker = new FakeChecker([
+      "correct",
+      "correct",
+      "correct",
+      "correct",
+      "unknown",
+      "unknown",
+    ]);
     const tree = await detached();
     const result = await strengthening(checker).strengthen(tree, "g1", { predicates: WITHIN });
     if (result.kind !== "strengthened") throw new Error(result.reason);
@@ -258,6 +266,13 @@ describe.skipIf(!built)("strengthening a loop", () => {
     expect(claim.by?.map((proof) => proof.gid)).toEqual(["g2", "g3"]);
     const kept = result.effects.find((effect) => effect.effect === "step" && effect.gid === "g3");
     expect(kept).toMatchObject({ side: "src", to: claim.by?.[1]?.hash });
+    // Both sides of the iteration assume the contract at its entry and again
+    // before calling the hypothesis.
+    const after = replayWith(result.effects);
+    for (const side of ["src", "tgt"] as const) {
+      const text = store.get(head(goal(after, "g3"), side));
+      expect(text.match(/call void @llvm\.assume/g)).toHaveLength(2);
+    }
   });
 
   test("parameter facts go on the hypothesis too, on both sides", async () => {
@@ -830,8 +845,8 @@ Target:
   });
 
   test("strengthens with relational predicates across cut arguments", async () => {
-    // 1 caller step, 2 cross checks
-    const checker = new FakeChecker(["correct", "unknown", "unknown"]);
+    // 1 caller step, 1 step that gives the outer's tgt the same, 2 cross checks
+    const checker = new FakeChecker(["correct", "correct", "unknown", "unknown"]);
     const tree = await cutTwice();
     const strengthen = new Strengthen(
       store,
@@ -843,9 +858,12 @@ Target:
     });
 
     if (result.kind !== "strengthened") throw new Error(result.reason);
-    const outerSrc = store.get(head(goal(tree, "g2"), "src"));
-    expect(outerSrc).toContain("icmp slt");
-    expect(outerSrc).toContain("call void @llvm.assume");
+    // The outer's two sides assume the same, so no later step sees it on one side alone.
+    for (const side of ["src", "tgt"] as const) {
+      const outer = store.get(head(goal(tree, "g2"), side));
+      expect(outer).toContain("icmp slt");
+      expect(outer).toContain("call void @llvm.assume");
+    }
 
     const calleeSrc = store.get(head(goal(tree, "g3"), "src"));
     expect(calleeSrc).toContain("icmp slt");

@@ -36,20 +36,20 @@
 // both `src` and `tgt` ensures neither side performs behavior forbidden by the attribute
 // (which would introduce UB into `src` and unsoundly validate invalid targets).
 //
-// Phase three (contract materialization): the caller declaration in `outer.tgt`
-// gains the parameter attributes, and both caller declarations the function
-// attributes. Callee definitions (`callee.src` and `callee.tgt`) gain the
-// parameter attributes, function attributes, and entry predicates. This
-// transition is recorded as an atomic `strengthen` effect linked to the
-// justifying caller step (`by`), and lands with the steps before it only once
-// every one is certified.
+// Phase three (contract materialization): `outer.tgt` gains the contract phase
+// one enforced on `outer.src`, so the outer's two sides stay alike, and both
+// caller declarations gain the function attributes. Callee definitions
+// (`callee.src` and `callee.tgt`) gain the parameter attributes, function
+// attributes, and entry predicates. This transition is recorded as an atomic
+// `strengthen` effect linked to the justifying caller step (`by`), and lands
+// with the steps before it only once every one is certified.
 //
 // A callee cut at a loop header also calls itself, through its hypothesis, so
 // its contract is proved there too, as at the outer's calls: one iteration has
 // to keep it, with the contract assumed at the callee's entry. That question is
 // asked before anything lands, and its step, which declares the hypothesis
 // with the parameter facts in the callee's src, lands in the callee's chain
-// right after the claim; the tgt's hypothesis is declared with them after it.
+// right after the claim; the tgt's calls of the hypothesis take the same after it.
 // The callee takes no function attribute: induction cannot prove willreturn.
 import { type CheckResult, timedOut } from "../drivers/alive2.ts";
 import type { Assertion, Attrs, Llops, Predicate } from "../drivers/llops.ts";
@@ -205,7 +205,9 @@ export class Strengthen {
     // Proving that this refines `outer.src` certifies that they hold across all
     // feasible executions of the caller prefix.
     if (hasParamAttrs || hasPredicates) {
-      const enforced = await this.enforce(this.store.get(head(outer, "src")), name, contract);
+      // The function attributes are the callee's to keep, which Phase 2 asks.
+      const outerSrc = this.store.get(head(outer, "src"));
+      const enforced = await this.enforce(outerSrc, name, contract, "fn_attrs");
       if (typeof enforced !== "string")
         return { kind: "refused", phase: "caller", reason: enforced.reason, effects: [] };
       // A contract of facts the declaration already has adds nothing to prove.
@@ -260,27 +262,26 @@ export class Strengthen {
       checks.push(check);
     }
 
-    // Phase 3: the callee's declaration in the outer gains what Phase 1 did not
-    // give it, the parameter attributes in `outer.tgt` and the function
-    // attributes on both sides, and lands with the callee's contract only once
-    // every step is certified, so the two never say different things.
+    // Phase 3: the outer's tgt takes the contract Phase 1 enforced on its src,
+    // so the two sides stay alike and no later step sees an assume on one side
+    // alone; on the tgt it only makes the program less defined, which a tgt
+    // step may always do.
+    // Both sides' declarations take the function attributes. It all lands with
+    // the callee's contract only once every step is certified, so the two
+    // never say different things.
     for (const side of ["src", "tgt"] as Side[]) {
-      const owed = side === "src" ? [] : params;
-      if (owed.length === 0 && !hasFnAttrs) continue;
-      const attributed = await this.attribute(
-        this.store.get(head(now(outer), side)),
-        name,
-        owed,
-        rawParamAttrs,
-        fnAttrs,
-      );
-      if (typeof attributed !== "string") return { ...attributed, effects: [] };
-      const step = await this.steps.checkStep(ahead, outer.id, side, attributed, { eager: false });
+      // Phase 1 enforced all but the function attributes on the src.
+      if (side === "src" && !hasFnAttrs) continue;
+      const owed = side === "src" ? { fn_attrs: fnAttrs } : contract;
+      const enforced = await this.enforce(this.store.get(head(now(outer), side)), name, owed);
+      if (typeof enforced !== "string")
+        return { kind: "refused", phase: "attribute", reason: enforced.reason, effects: [] };
+      const step = await this.steps.checkStep(ahead, outer.id, side, enforced, { eager: false });
       if (step.kind !== "certified") {
         return {
           kind: "refused",
           phase: "attribute",
-          reason: `the step that adds the attributes to the outer's ${side} is not certified`,
+          reason: `the step that gives the outer's ${side} the interface is not certified`,
           check: step.check,
           effects: [],
         };
@@ -314,28 +315,25 @@ export class Strengthen {
     ]);
 
     // Phase 3, for a loop: the step Phase 0 certified lands in the callee's
-    // chain on that answer, so the claim never stands without it. It declared
-    // the src's hypothesis with the parameter facts, and the tgt's follows.
-    if (kept)
+    // chain on that answer, so the claim never stands without it. It enforced
+    // the contract at the src's calls of the hypothesis, and the tgt's calls
+    // take the same, as the outer's tgt does.
+    if (hypothesis && kept) {
       hold([
         { effect: "step", gid: callee.id, side: "src", to: kept.hash, how: "check", by: "alive2" },
       ]);
-    if (hypothesis && hasParamAttrs) {
-      const attributed = await this.attribute(
-        this.store.get(head(now(callee), "tgt")),
-        hypothesis,
-        params,
-        rawParamAttrs,
-      );
-      if (typeof attributed !== "string") return { ...attributed, effects: [] };
-      const step = await this.steps.checkStep(ahead, callee.id, "tgt", attributed, {
+      const before = this.store.get(head(now(callee), "tgt"));
+      const enforced = await this.enforce(before, hypothesis, contract);
+      if (typeof enforced !== "string")
+        return { kind: "refused", phase: "attribute", reason: enforced.reason, effects: [] };
+      const step = await this.steps.checkStep(ahead, callee.id, "tgt", enforced, {
         eager: false,
       });
       if (step.kind !== "certified") {
         return {
           kind: "refused",
           phase: "attribute",
-          reason: `the step that adds the attributes to @${hypothesis} in the callee's tgt is not certified`,
+          reason: `the step that gives @${hypothesis} in the callee's tgt the interface is not certified`,
           check: step.check,
           effects: [],
         };
@@ -445,18 +443,23 @@ export class Strengthen {
   }
 
   /**
-   * `module` with `contract` enforced at each call of `fn`: its parameter facts
-   * on `fn`'s declaration, and its predicates assumed just before each call.
+   * `module` with `contract` enforced at each call of `fn`, but for the part
+   * `exclude` names: its parameter facts and function attributes on `fn`'s
+   * declaration, and its predicates assumed just before each call.
    */
   private async enforce(
     module: string,
     fn: string,
     contract: StrengthenContract,
+    exclude?: keyof StrengthenContract,
   ): Promise<string | { reason: string }> {
-    const paramAttrs = contract.param_attrs ?? {};
-    const attributed = await this.attribute(module, fn, paramsOf(paramAttrs), paramAttrs);
+    const part = <K extends keyof StrengthenContract>(key: K) =>
+      key === exclude ? undefined : contract[key];
+    const paramAttrs = part("param_attrs") ?? {};
+    const fnAttrs = part("fn_attrs");
+    const attributed = await this.attribute(module, fn, paramsOf(paramAttrs), paramAttrs, fnAttrs);
     if (typeof attributed !== "string") return { reason: attributed.reason };
-    const predicates = contract.predicates ?? [];
+    const predicates = part("predicates") ?? [];
     if (predicates.length === 0) return attributed;
     const assumed = await this.llops.assume(attributed, { at: "before_calls", fn }, predicates);
     return assumed.ok ? assumed.module : { reason: assumed.message };
