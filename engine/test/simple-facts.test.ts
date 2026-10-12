@@ -1,5 +1,6 @@
 // Tests the facts the simple searcher asks for: what the analyses know, kept
-// to values that cannot be poison, and a window that only proves with them.
+// to values that cannot be poison except for a range at a cut, and a window
+// that only proves with them.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,7 +11,7 @@ import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
-import { factsAt, passedOn, union, violated } from "../simple/facts.ts";
+import { cutFacts, factsAt, passedOn, union, violated } from "../simple/facts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { stepWindows } from "../simple/windows.ts";
 import { toolchain } from "./toolchain-under-test.ts";
@@ -67,6 +68,28 @@ entry:
       "%h": { noundef: true, range: { min: 0, max: -128 } },
       "%w": { noundef: true },
     });
+  });
+
+  test("give a cut's input that may be poison its narrowest range, and no predicate", async () => {
+    // %a's range comes from its known bits as well, and %u's from the remainder,
+    // narrower than its known bits; %y narrows to nothing.
+    const module = `define i32 @f(i32 %y, i32 noundef %n) {
+entry:
+  %a = and i32 %y, 255
+  %u = urem i32 %y, 10
+  %k = and i32 %n, 15
+  %r = add i32 %a, %u
+  %s = add i32 %r, %k
+  ret i32 %s
+}
+`;
+    const facts = await cutFacts(llops, module, "%s", ["%a", "%u", "%y", "%k"]);
+    expect(facts.param_attrs).toEqual({
+      0: { range: { min: 0, max: 256 } },
+      1: { range: { min: 0, max: 10 } },
+      3: { noundef: true },
+    });
+    expect(JSON.stringify(facts.predicates)).not.toMatch(/!0|!1|!2/);
   });
 });
 
