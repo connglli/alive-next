@@ -784,10 +784,12 @@ class Check:
       head[side] = step["to"][side]
 
   def predicates(self, discharge: dict, step: dict, hypothesis: str | None) -> None:
-    """The src step that assumed a strengthen step's predicates before each call of the callee.
+    """The src step that enforced a strengthen step's contract at each call of the callee.
 
-    The outer calls it; a recursive callee also calls its hypothesis, where
-    the proof is that one iteration keeps what the entry assumed.
+    The parameter facts go on the declaration of the function called and the
+    predicates are assumed before each call. The outer calls the callee; a
+    recursive callee also calls its hypothesis, where the proof is that one
+    iteration keeps what the entry assumed.
     """
     name = discharge["callee"]
     sites = [(discharge["outer"], name)]
@@ -825,19 +827,23 @@ class Check:
         self.fail(gid, "src", "Predicate proof", f"an unfold follows the proof before @{fn}")
         continue
       started = time.monotonic()
+      enforced = self.package.program(proofs[0]["from"])
+      for param, fact in facts:
+        enforced = self.package.run_llops(
+          "attrs", {"module": enforced, "fn": fn, "param": param, "attrs": fact}
+        )["module"]
       assumed = self.package.run_llops(
         "assume",
         {
-          "module": self.package.program(proofs[0]["from"]),
+          "module": enforced,
           "anchor": {"at": "before_calls", "fn": fn},
-          "assertions": [{"fact": fact, "of": f"!{param}"} for param, fact in facts]
-          + contract_predicates(step),
+          "assertions": contract_predicates(step),
         },
       )["module"]
       same = self.package.run_llops("canon", {"module": assumed})["module"]
       matches = same == self.package.program(proofs[0]["to"])
       self.compared(
-        gid, "src", "llops", "Predicate proof", f"assume before @{fn}", matches, elapsed_ms(started)
+        gid, "src", "llops", "Predicate proof", f"enforced at @{fn}", matches, elapsed_ms(started)
       )
 
   def window(self, gid: str, step: dict, head: dict) -> str:

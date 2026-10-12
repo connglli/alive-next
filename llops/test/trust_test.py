@@ -3,8 +3,9 @@
 
 Each test asks llops and alive-tv about the same programs, and fails where
 llops trusts what alive2 does not back: a pair `reshaped` or `respected`
-accepts that alive2 does not prove, or an attribute llops treats otherwise than
-alive2 does.
+accepts that alive2 does not prove, an attribute llops treats otherwise than
+alive2 does, or a fact `attrs` puts on a declaration that alive2 does not read
+at a call.
 alive-tv runs as the kernel runs it, and its answer is read by the kernel's
 own code. Run through `make test-trust`, or directly:
 
@@ -824,6 +825,63 @@ class TestAttributeTable(unittest.TestCase):
       if answer is not None:
         with self.subTest(attr=case[0], place=case[1]):
           self.assertIn(answer, AGREED)
+
+
+# A strengthen proves a parameter fact by the step that puts it on the callee's
+# declaration, which shows that every value passed keeps it only where alive2
+# reads it there. alive2 lets an unknown function do anything with a poison
+# argument, so it refuses a step that turns a value into poison even at a call
+# it cannot otherwise see, as here: the callee returns nothing and touches no
+# memory. Each fact below is one `attrs` can state, with a value that keeps it;
+# the function's own argument, which may be any value or poison, breaks each
+# one. A range holds of a value that may be poison, since a value it rules out
+# is poison.
+KEPT = [
+  ({"range": {"min": 0, "max": 10}}, "i8", "urem i8 %x, 10"),
+  ({"noundef": True}, "i8", "freeze i8 %x"),
+  ({"nonnull": True}, "ptr", "alloca i32, align 4"),
+  ({"align": 4}, "ptr", "alloca i32, align 4"),
+  ({"dereferenceable": 4}, "ptr", "alloca i32, align 4"),
+]
+
+
+# Every function attribute `attrs` can state, which leaves a call nothing to show.
+PURE = "memory(none) nounwind willreturn nosync nofree norecurse mustprogress"
+
+
+def calling(ty: str, keeps: str = "") -> str:
+  """A function that passes @g its argument %x, or the value `keeps` defines."""
+  passed, line = ("%v", f"  %v = {keeps}\n") if keeps else ("%x", "")
+  return (
+    f"declare void @g({ty}) {PURE}\n\n"
+    f"define void @f({ty} %x) {{\n{line}  call void @g({ty} {passed})\n  ret void\n}}\n"
+  )
+
+
+def declared(module: str, fact: dict) -> str:
+  """The module with `fact` on the first parameter of @g's declaration."""
+  answer = run("attrs", {"module": module, "fn": "g", "param": 0, "attrs": fact})
+  assert answer.get("ok"), answer
+  return answer["module"]
+
+
+class TestDeclaredFacts(unittest.TestCase):
+  def test_alive2_reads_each_fact_on_a_declaration(self):
+    for fact, ty, keeps in KEPT:
+      with self.subTest(fact=fact):
+        broken, kept = calling(ty), calling(ty, keeps)
+        self.assertEqual(alive2(broken, declared(broken, fact)), "incorrect")
+        self.assertEqual(alive2(kept, declared(kept, fact)), "correct")
+
+  def test_alive2_ignores_noalias_on_a_declaration(self):
+    # Both arguments are the same pointer, and alive2 still proves the step,
+    # so a noalias it proves there says nothing about the pointers passed, and
+    # a strengthen refuses it.
+    module = (
+      "declare i8 @g(ptr, ptr)\n\n"
+      "define i8 @f(ptr %x) {\n  %r = call i8 @g(ptr %x, ptr %x)\n  ret i8 %r\n}\n"
+    )
+    self.assertEqual(alive2(module, declared(module, {"noalias": True})), "correct")
 
 
 if __name__ == "__main__":

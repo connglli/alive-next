@@ -18,7 +18,7 @@ import { interpose } from "../core/state/interpose.ts";
 import { Splits } from "../core/state/splits.ts";
 import { DEFAULT_TIMEOUTS, Steps } from "../core/state/steps.ts";
 import { Store } from "../core/state/store.ts";
-import { explainAssumeRefusal, Strengthen } from "../core/state/strengthen.ts";
+import { explainCallerRefusal, Strengthen } from "../core/state/strengthen.ts";
 import type { Effect, Entry, Event } from "../core/state/trajectory.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
@@ -217,8 +217,19 @@ describe.skipIf(!built)("strengthening a loop", () => {
     if (result.kind !== "refused") throw new Error("expected a refusal");
     expect(result.phase).toBe("hypothesis");
     expect(result.explanation).toMatch(
-      /^At #\d+ the src still passes poison for parameter 2 of @outlined_g3\.ih, so no fact about it can hold there\./,
+      /^At #\d+ the src still passes poison for parameter 2 of @outlined_g3\.ih, so only a range, nonnull or align about it can hold there\./,
     );
+  });
+
+  test("does not blame poison for a range, which a poison value keeps", async () => {
+    const result = await strengthening(new FakeChecker(["incorrect"])).strengthen(
+      await ghosted(),
+      "g1",
+      { param_attrs: { 2: { range: { min: 0, max: 10 } } } },
+    );
+    if (result.kind !== "refused") throw new Error("expected a refusal");
+    expect(result.phase).toBe("hypothesis");
+    expect(result.explanation).toContain("Source and Target are both the callee's src");
   });
 
   test("names the outer's call that passes poison for a parameter the facts name", async () => {
@@ -228,7 +239,7 @@ describe.skipIf(!built)("strengthening a loop", () => {
       { predicates: ABOUT_THE_COUNTER },
     );
     if (result.kind !== "refused") throw new Error("expected a refusal");
-    expect(result.phase).toBe("assume");
+    expect(result.phase).toBe("caller");
     expect(result.explanation).toMatch(
       /^At #\d+ the src still passes poison for parameter 2 of @outlined_g3,/,
     );
@@ -250,8 +261,8 @@ describe.skipIf(!built)("strengthening a loop", () => {
   });
 
   test("parameter facts go on the hypothesis too, on both sides", async () => {
-    // The iteration's question, the outer's, its two declarations, the
-    // hypothesis's two declarations, then the two goals' checks.
+    // The iteration's question, the outer's, the outer tgt's declaration, the
+    // tgt's hypothesis's declaration, then the two goals' checks.
     const checker = new FakeChecker([
       "correct",
       "correct",
@@ -266,6 +277,13 @@ describe.skipIf(!built)("strengthening a loop", () => {
     });
     if (result.kind !== "strengthened") throw new Error(result.reason);
 
+    // The iteration's question declares the facts on the hypothesis, with the
+    // facts already on the callee's own parameters.
+    const asked = checker.calls[0];
+    expect(asked?.src).not.toContain("@outlined_g3.ih(i32 noundef");
+    expect(asked?.tgt).toContain("declare i32 @outlined_g3.ih(i32 noundef, i32 noundef)");
+    expect(asked?.tgt).toContain("define i32 @outlined_g3(i32 noundef %0, i32 noundef %1)");
+
     const after = replayWith(result.effects);
     for (const side of ["src", "tgt"] as const) {
       const text = store.get(head(goal(after, "g3"), side));
@@ -274,17 +292,15 @@ describe.skipIf(!built)("strengthening a loop", () => {
     }
   });
 
-  test("lands nothing past the assume when the hypothesis is refused its facts", async () => {
-    // The iteration's question, the outer's, its two declarations, then the
-    // hypothesis's first declaration, which is refused.
-    const checker = new FakeChecker(["correct", "correct", "correct", "correct", "incorrect"]);
+  test("lands nothing when the tgt's hypothesis is refused its facts", async () => {
+    // The iteration's question, the outer's, the outer tgt's declaration, then
+    // the tgt's hypothesis's declaration, which is refused.
+    const checker = new FakeChecker(["correct", "correct", "correct", "incorrect"]);
     const tree = await detached();
     const result = await strengthening(checker).strengthen(tree, "g1", {
       param_attrs: { 0: { noundef: true }, 1: { noundef: true } },
     });
-    expect(result).toMatchObject({ kind: "refused", phase: "attribute" });
-    if (result.kind !== "refused") throw new Error("unreachable");
-    expect(result.effects).toHaveLength(1);
+    expect(result).toMatchObject({ kind: "refused", phase: "attribute", effects: [] });
     expect(store.get(head(goal(tree, "g3"), "src"))).not.toContain("noundef %0");
     expect(store.get(head(goal(tree, "g2"), "src"))).not.toContain("i32 noundef, i32 noundef");
   });
@@ -313,6 +329,15 @@ describe.skipIf(!built)("previewing a strengthen", () => {
     expect(asked).toEqual([false, false, false, true, true, true]);
   });
 
+  test("drops a noalias fact without asking, since alive2 ignores it", async () => {
+    const checker = new FakeChecker([]);
+    const result = await strengthening(checker).preview(await cut(), "g1", {
+      param_attrs: { 0: { noalias: true } },
+    });
+    expect(result).toEqual({ kind: "preview", holds: {} });
+    expect(checker.calls).toHaveLength(0);
+  });
+
   test("assumes in the iteration only the facts that held on entry", async () => {
     const checker = new FakeChecker(["incorrect", "correct", "correct"]);
     const tree = await detached();
@@ -327,7 +352,7 @@ describe.skipIf(!built)("previewing a strengthen", () => {
 
 describe.skipIf(!built)("strengthening", () => {
   test("proves the fact, then attributes it in four programs", async () => {
-    const checker = new FakeChecker(["correct", "correct", "correct", "unknown", "unknown"]);
+    const checker = new FakeChecker(["correct", "correct", "unknown", "unknown"]);
     const tree = await cut();
     const strengthen = new Strengthen(
       store,
@@ -337,17 +362,18 @@ describe.skipIf(!built)("strengthening", () => {
     const result = await strengthen.strengthen(tree, "g1", { param_attrs: { 0: RANGE } });
 
     if (result.kind !== "strengthened") throw new Error(result.reason);
-    // Three certified steps and one claim: the assume, the outer's two
-    // declarations, and the callee's pair.
+    // Two certified steps and one claim: the outer's src declaring the fact,
+    // which proves it, its tgt declaring it, and the callee's pair. The outer's
+    // two sides are then the same program, which proves it.
     expect(result.effects.map((effect) => effect.effect)).toEqual([
       "step",
       "step",
-      "step",
       "strengthen",
+      "proved",
     ]);
 
     const outerSrc = store.get(head(goal(tree, "g2"), "src"));
-    expect(outerSrc).toContain("call void @llvm.assume");
+    expect(outerSrc).not.toContain("llvm.assume");
     expect(outerSrc).toContain("declare i32 @outlined_g3(i32 range(i32 0, 256))");
     expect(store.get(head(goal(tree, "g2"), "tgt"))).toContain("range(i32 0, 256)");
     expect(store.get(head(goal(tree, "g3"), "src"))).toContain(
@@ -356,8 +382,8 @@ describe.skipIf(!built)("strengthening", () => {
     expect(store.get(head(goal(tree, "g3"), "tgt"))).toContain("range(i32 0, 256)");
   });
 
-  test("the callee's two sides move together, justified by the assume", async () => {
-    const checker = new FakeChecker(["correct", "correct", "correct", "unknown", "unknown"]);
+  test("the callee's two sides move together, justified by the step that states the fact", async () => {
+    const checker = new FakeChecker(["correct", "correct", "unknown", "unknown"]);
     const tree = await cut();
     const result = await new Strengthen(
       store,
@@ -366,7 +392,7 @@ describe.skipIf(!built)("strengthening", () => {
     ).strengthen(tree, "g1", { param_attrs: { 0: RANGE } });
     if (result.kind !== "strengthened") throw new Error(result.reason);
 
-    const last = result.effects[3];
+    const last = result.effects[2];
     if (last?.effect !== "strengthen") throw new Error("expected a strengthen effect");
     expect(last.gid).toBe("g3");
     // It names the step that makes it sound, which is what a replay re-checks.
@@ -374,8 +400,9 @@ describe.skipIf(!built)("strengthening", () => {
   });
 
   test("checks both goals once at the end", async () => {
-    // Three steps, then one cross-check each: no solver is asked about the
-    // state between the outer's two sides being attributed.
+    // Two steps, then one cross-check each: no solver is asked about the
+    // state between the outer's two sides being attributed, and none about
+    // the outer, whose two sides end as the same program.
     const checker = new FakeChecker(["correct", "correct", "correct", "correct", "correct"]);
     const tree = await cut();
     const result = await new Strengthen(
@@ -385,10 +412,10 @@ describe.skipIf(!built)("strengthening", () => {
     ).strengthen(tree, "g1", { param_attrs: { 0: RANGE } });
     if (result.kind !== "strengthened") throw new Error(result.reason);
 
-    expect(checker.calls).toHaveLength(5);
-    // The fourth call is the callee's own pair, both sides now attributed.
-    expect(checker.calls[3]?.src).toContain("define i32 @outlined_g3(i32 range(i32 0, 256)");
-    expect(checker.calls[3]?.tgt).toContain("range(i32 0, 256)");
+    expect(checker.calls).toHaveLength(3);
+    // The third call is the callee's own pair, both sides now attributed.
+    expect(checker.calls[2]?.src).toContain("define i32 @outlined_g3(i32 range(i32 0, 256)");
+    expect(checker.calls[2]?.tgt).toContain("range(i32 0, 256)");
     // Both discharge, and that carries the parent with them.
     expect(goal(tree, "g3").status).toBe("proved");
     expect(goal(tree, "g2").status).toBe("proved");
@@ -396,9 +423,9 @@ describe.skipIf(!built)("strengthening", () => {
   });
 
   test("several parameters cost what one does", async () => {
-    // An interface is one thing, so the assumes are proved together and the
-    // attributes land together: three steps and two cross-checks, as for one.
-    const checker = new FakeChecker(["correct", "correct", "correct", "unknown", "unknown"]);
+    // An interface is one thing, so the facts are proved together and land
+    // together: two steps and the callee's cross-check, as for one.
+    const checker = new FakeChecker(["correct", "correct", "unknown", "unknown"]);
     const tree = await cutTwice();
     const result = await new Strengthen(
       store,
@@ -407,20 +434,19 @@ describe.skipIf(!built)("strengthening", () => {
     ).strengthen(tree, "g1", { param_attrs: { 0: RANGE, 1: { noundef: true } } });
     if (result.kind !== "strengthened") throw new Error(result.reason);
 
-    expect(checker.calls).toHaveLength(5);
+    expect(checker.calls).toHaveLength(3);
     const calleeSrc = store.get(head(goal(tree, "g3"), "src"));
     expect(calleeSrc).toContain("range(i32 0, 256)");
     expect(calleeSrc).toContain("noundef");
-    // Both assumes went to alive2 in the one step that certifies the pair.
-    expect(checker.calls[0]?.tgt.match(/call void @llvm\.assume/g)).toHaveLength(2);
+    // Both facts went to alive2 in the one step that certifies the pair.
+    expect(checker.calls[0]?.tgt).toContain("@outlined_g3(i32 range(i32 0, 256), i32 noundef)");
   });
 
   test("a second fact can be added after the first discharged the outer", async () => {
     // The callee needs two facts, so its first cross-check settles nothing
     // while the outer's discharges it. The second round reopens the outer,
-    // because that proof was about the pair the new assume replaces.
+    // because that proof was about the pair the new step replaces.
     const checker = new FakeChecker([
-      "correct",
       "correct",
       "correct",
       "unknown",
@@ -466,8 +492,8 @@ describe.skipIf(!built)("strengthening", () => {
     expect(result.reason).toContain("g3 is split");
   });
 
-  test("the assume is what goes to alive2 first, in the src direction", async () => {
-    const checker = new FakeChecker(["correct", "correct", "correct", "unknown", "unknown"]);
+  test("the fact on the declaration is what goes to alive2 first, in the src direction", async () => {
+    const checker = new FakeChecker(["correct", "correct", "unknown", "unknown"]);
     const tree = await cut();
     const before = store.get(head(goal(tree, "g2"), "src"));
     await new Strengthen(
@@ -479,11 +505,12 @@ describe.skipIf(!built)("strengthening", () => {
     });
 
     expect(checker.calls[0]?.src).toBe(before);
-    expect(checker.calls[0]?.tgt).toContain("llvm.assume");
+    expect(checker.calls[0]?.tgt).toContain("declare i32 @outlined_g3(i32 range(i32 0, 256))");
   });
 
   test("stops at phase one when the fact does not hold", async () => {
-    // alive2 refuses the assume, which is what a false fact looks like.
+    // alive2 refuses the step that states the fact, which is what a false
+    // fact looks like.
     const checker = new FakeChecker(["incorrect"]);
     const tree = await cut();
     const before = head(goal(tree, "g2"), "src");
@@ -493,7 +520,7 @@ describe.skipIf(!built)("strengthening", () => {
       new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
     ).strengthen(tree, "g1", { param_attrs: { 0: RANGE } });
 
-    expect(result).toMatchObject({ kind: "refused", phase: "assume" });
+    expect(result).toMatchObject({ kind: "refused", phase: "caller" });
     if (result.kind !== "refused") throw new Error("unreachable");
     expect(result.effects).toEqual([]);
     expect(head(goal(tree, "g2"), "src")).toBe(before);
@@ -501,9 +528,9 @@ describe.skipIf(!built)("strengthening", () => {
     expect(store.get(head(goal(tree, "g3"), "src"))).not.toContain("range");
   });
 
-  test("lands only the assume when the outer's tgt is refused its attributes", async () => {
-    // The assume and the outer src's attribute are certified; the outer tgt's is not.
-    const checker = new FakeChecker(["correct", "correct", "incorrect"]);
+  test("lands nothing when the outer's tgt is refused its attributes", async () => {
+    // The outer src's fact is certified; the outer tgt's attribute is not.
+    const checker = new FakeChecker(["correct", "incorrect"]);
     const tree = await cut();
     const result = await new Strengthen(
       store,
@@ -511,27 +538,34 @@ describe.skipIf(!built)("strengthening", () => {
       new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting),
     ).strengthen(tree, "g1", { param_attrs: { 0: RANGE } });
 
-    expect(result).toMatchObject({ kind: "refused", phase: "attribute" });
-    if (result.kind !== "refused") throw new Error("unreachable");
-    // The assume stands, and the head shows it; the declaration does not
-    // gain an attribute its definition lacks.
-    expect(result.effects).toHaveLength(1);
+    expect(result).toMatchObject({ kind: "refused", phase: "attribute", effects: [] });
+    // The declaration does not gain an attribute its definition lacks.
     const outer = store.get(head(goal(tree, "g2"), "src"));
-    expect(outer).toContain("llvm.assume");
     expect(
       outer.split("\n").find((line) => line.startsWith("declare i32 @outlined")),
     ).not.toContain("range");
     expect(store.get(head(goal(tree, "g3"), "src"))).not.toContain("range");
   });
 
-  test("refuses a fact llops will not state", async () => {
+  test("refuses a fact the declaration already has, saying so", async () => {
+    const strengthen = strengthening(new FakeChecker(["correct", "correct", "correct"]));
+    const tree = await cut();
+    const fact = { param_attrs: { 0: { noundef: true } } };
+    expect((await strengthen.strengthen(tree, "g1", fact)).kind).toBe("strengthened");
+    const again = await strengthen.strengthen(tree, "g1", fact);
+    expect(again).toMatchObject({ kind: "refused", phase: "caller", effects: [] });
+    if (again.kind !== "refused") throw new Error("unreachable");
+    expect(again.reason).toContain("already has every fact");
+  });
+
+  test("refuses a fact alive2 ignores", async () => {
     const tree = await cut();
     const result = await new Strengthen(
       store,
       llops,
       new Steps(store, new FakeChecker([]), DEFAULT_TIMEOUTS, llops, unrewriting),
     ).strengthen(tree, "g1", { param_attrs: { 0: { noalias: true } } });
-    expect(result).toMatchObject({ kind: "refused", phase: "assume" });
+    expect(result).toMatchObject({ kind: "refused", phase: "caller", effects: [] });
     if (result.kind !== "refused") throw new Error("unreachable");
     expect(result.reason).toContain("noalias");
   });
@@ -608,7 +642,7 @@ describe.skipIf(!built)("strengthening", () => {
     expect(checker.calls).toHaveLength(0);
   });
 
-  test("explainAssumeRefusal produces clear diagnostic on noundef poison failure", () => {
+  test("explainCallerRefusal produces clear diagnostic on noundef poison failure", () => {
     const detail = `ERROR: Source is more defined than target
 
 Example:
@@ -626,13 +660,15 @@ Target:
       stdout: "",
       ms: 10,
     };
-    const explanation = explainAssumeRefusal([1], { 1: { noundef: true } }, check, "g2");
+    const explanation = explainCallerRefusal([1], { 1: { noundef: true } }, check, "g2");
     expect(explanation).toContain("The outer's example input: i32 %1 = poison");
-    expect(explanation).toContain("a parameter is poison, and no fact holds for a poison value");
+    expect(explanation).toContain(
+      "a parameter is poison, and of the facts only range, nonnull and align hold for a poison value",
+    );
     expect(explanation).toContain('goal_analyze on g2 with kind "defined"');
   });
 
-  test("explainAssumeRefusal names the range analysis for a failed range fact", () => {
+  test("explainCallerRefusal names the range analysis for a failed range fact", () => {
     const check: CheckResult = {
       outcome: "incorrect",
       detail: "ERROR: Value mismatch\n\nExample:\ni32 %0 = 300\n",
@@ -640,7 +676,7 @@ Target:
       stdout: "",
       ms: 10,
     };
-    const explanation = explainAssumeRefusal(
+    const explanation = explainCallerRefusal(
       [0],
       { 0: { range: { min: 0, max: 256 } } },
       check,
@@ -650,7 +686,7 @@ Target:
     expect(explanation).toContain('goal_analyze on g2 with kind "ranges" and point "#1"');
   });
 
-  test("explainAssumeRefusal sends pointer facts to the pointer analysis", () => {
+  test("explainCallerRefusal sends pointer facts to the pointer analysis", () => {
     const check: CheckResult = {
       outcome: "incorrect",
       detail: "ERROR: Value mismatch\n\nExample:\nptr %0 = null\n",
@@ -658,11 +694,11 @@ Target:
       stdout: "",
       ms: 10,
     };
-    const explanation = explainAssumeRefusal([0], { 0: { nonnull: true } }, check, "g2");
+    const explanation = explainCallerRefusal([0], { 0: { nonnull: true } }, check, "g2");
     expect(explanation).toContain('goal_analyze on g2 with kind "pointer"');
   });
 
-  test("explainAssumeRefusal reads the arrow style alive2 sometimes prints", () => {
+  test("explainCallerRefusal reads the arrow style alive2 sometimes prints", () => {
     const detail = `ERROR: Source is more defined than target
 
 Example:
@@ -676,17 +712,19 @@ i32 %1 -> poison
       stdout: "",
       ms: 10,
     };
-    const explanation = explainAssumeRefusal(
+    const explanation = explainCallerRefusal(
       [0, 1],
       { 0: { noundef: true }, 1: { noundef: true } },
       check,
       "g2",
     );
     expect(explanation).toContain("The outer's example input: i32 %0 -> 0, i32 %1 -> poison");
-    expect(explanation).toContain("a parameter is poison, and no fact holds for a poison value");
+    expect(explanation).toContain(
+      "a parameter is poison, and of the facts only range, nonnull and align hold for a poison value",
+    );
   });
 
-  test("explainAssumeRefusal reads a value that contains its own '='", () => {
+  test("explainCallerRefusal reads a value that contains its own '='", () => {
     const detail = `ERROR: Source is more defined than target
 
 Example:
@@ -699,16 +737,16 @@ ptr %p = pointer(non-local, block_id=1, offset=0) / Address=#x04
       stdout: "",
       ms: 10,
     };
-    const explanation = explainAssumeRefusal([0], { 0: { noundef: true } }, check, "g2");
+    const explanation = explainCallerRefusal([0], { 0: { noundef: true } }, check, "g2");
     expect(explanation).toContain(
       "The outer's example input: ptr %p = pointer(non-local, block_id=1, offset=0) / Address=#x04",
     );
     expect(explanation).not.toContain(
-      "a parameter is poison, and no fact holds for a poison value",
+      "a parameter is poison, and of the facts only range, nonnull and align hold for a poison value",
     );
   });
 
-  test("explainAssumeRefusal shows the whole example when several were asked", () => {
+  test("explainCallerRefusal shows the whole example when several were asked", () => {
     const detail = `ERROR: Source is more defined than target
 
 Example:
@@ -727,17 +765,19 @@ Target:
       stdout: "",
       ms: 10,
     };
-    const explanation = explainAssumeRefusal(
+    const explanation = explainCallerRefusal(
       [0, 1],
       { 0: { noundef: true }, 1: { noundef: true } },
       check,
       "g2",
     );
     expect(explanation).toContain("The outer's example input: i32 %0 = 1, i32 %1 = poison");
-    expect(explanation).toContain("a parameter is poison, and no fact holds for a poison value");
+    expect(explanation).toContain(
+      "a parameter is poison, and of the facts only range, nonnull and align hold for a poison value",
+    );
   });
 
-  test("explainAssumeRefusal tells a killed check from one the solver gave up on", () => {
+  test("explainCallerRefusal tells a killed check from one the solver gave up on", () => {
     const killed: CheckResult = {
       outcome: "unknown",
       detail: "killed after 150000ms without an answer",
@@ -745,7 +785,7 @@ Target:
       stdout: "",
       ms: 150001,
     };
-    expect(explainAssumeRefusal([0], { 0: { noundef: true } }, killed)).toContain(
+    expect(explainCallerRefusal([0], { 0: { noundef: true } }, killed)).toContain(
       "alive2 ran out of time.",
     );
 
@@ -756,7 +796,7 @@ Target:
       stdout: "",
       ms: 900,
     };
-    expect(explainAssumeRefusal([0], { 0: { noundef: true } }, gaveUp)).toContain(
+    expect(explainCallerRefusal([0], { 0: { noundef: true } }, gaveUp)).toContain(
       "alive2 could not settle whether they hold.",
     );
   });
@@ -790,7 +830,7 @@ Target:
   });
 
   test("strengthens with relational predicates across cut arguments", async () => {
-    // 1 caller assume step, 2 cross checks
+    // 1 caller step, 2 cross checks
     const checker = new FakeChecker(["correct", "unknown", "unknown"]);
     const tree = await cutTwice();
     const strengthen = new Strengthen(
@@ -813,7 +853,7 @@ Target:
   });
 
   test("strengthens with param_attrs, fn_attrs, and predicates combined", async () => {
-    // 1 caller assume step, 1 callee attr check (src), 2 outer attribute steps, 2 cross checks
+    // 1 caller step, 1 callee attr check (src), 2 outer attribute steps, 2 cross checks
     const checker = new FakeChecker([
       "correct",
       "correct",
@@ -836,7 +876,7 @@ Target:
 
     if (result.kind !== "strengthened") throw new Error(result.reason);
     const outerSrc = store.get(head(goal(tree, "g2"), "src"));
-    expect(outerSrc).toContain('"noundef"');
+    expect(outerSrc).toMatch(/declare i32 @outlined_g3\(i32 noundef, i32\) #0/);
     expect(outerSrc).toContain("icmp slt");
     expect(outerSrc).toContain("nounwind");
 

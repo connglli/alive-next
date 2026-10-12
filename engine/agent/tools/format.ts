@@ -125,7 +125,7 @@ export function formatDetail(check: CheckResult | undefined): string {
   return formatSection("alive2", `\`\`\`text\n${detail}\n\`\`\``);
 }
 
-/** A cut's parameters, and why no fact holds yet for one the src passes poison for. */
+/** A cut's parameters, and why no fact helps yet with one the src passes poison for. */
 export function formatParams(params: OutlineParam[], hypothesis?: string): string {
   const lines = params.map((param, at) => {
     const passed = param.tgt
@@ -137,7 +137,7 @@ export function formatParams(params: OutlineParam[], hypothesis?: string): strin
   if (ghosts.length === 0) return formatSection("Parameters", lines.join("\n"));
   const calls = hypothesis ? `at the outer's call and at @${hypothesis}` : "at the outer's call";
   const one = ghosts.length === 1;
-  const ghostly = `The src has no value for parameter${one ? "" : "s"} ${ghosts.join(", ")}, so it passes poison. A fact about ${one ? "it" : "them"} holds only once the src passes a real value ${calls}.`;
+  const ghostly = `The src has no value for parameter${one ? "" : "s"} ${ghosts.join(", ")}, so it passes poison. A fact about ${one ? "it" : "them"} helps the callee only once the src passes a real value ${calls}.`;
   return formatSection("Parameters", `${lines.join("\n")}\n\n${ghostly}`);
 }
 

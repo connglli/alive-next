@@ -3,22 +3,15 @@
 // The tgt narrows the multiply to i16, which is only sound because the mask
 // before it leaves the value below 256. Cut between the two and the callee no
 // longer knows that: on its own it is false, and alive2 says so with a
-// counterexample above 65535. Strengthening states the range as an assume
-// where the mask still proves it, and then attributes it to the parameter, at
-// which point both halves hold.
+// counterexample above 65535. Strengthening puts the range on the callee's
+// declaration in the outer, where the mask still proves it, and then on the
+// callee's parameter, at which point both halves hold.
 //
-// A fact is about a value being defined as much as about its range. An
-// attribute a caller has to honour is violated by a poison argument as surely
-// as by an out of range one, and the assume that proves it says so: its condition
-// is poison exactly when the value is, and an assume on a poison condition is UB
-// the program did not have, so alive2 refuses the step. Here the parameter is
-// `noundef` and the mask cannot make poison, so both facts hold; a parameter that
-// could be poison would have to be frozen first, which is what LLVM does when it
-// needs the same guarantee.
-//
-// So the two facts travel together in one call. The range is what the callee
-// needs, and being defined is what the callee needs before any question about
-// it can be answered at all.
+// The range holds although `%n` may be poison. A value a range rules out is
+// poison, so the outer with the range refines the one without when every value
+// it passes is in range or poison, which the mask makes so. The callee assumes
+// no more than that: a poison parameter makes both of its sides poison. A fact
+// that needs a defined value, such as `noundef` or a predicate, would not hold.
 import { expect, type Scenario } from "../core/scenario.ts";
 
 export const strengthen: Scenario = {
@@ -26,7 +19,7 @@ export const strengthen: Scenario = {
   about: "a cut the callee cannot survive without a fact from its caller",
   verdict: "verified",
 
-  src: `define i32 @f(i32 noundef %n) {
+  src: `define i32 @f(i32 %n) {
 entry:
   %m = and i32 %n, 255
   %s = mul i32 %m, 2
@@ -34,7 +27,7 @@ entry:
 }
 `,
 
-  tgt: `define i32 @f(i32 noundef %n) {
+  tgt: `define i32 @f(i32 %n) {
 entry:
   %m = and i32 %n, 255
   %t = trunc i32 %m to i16
@@ -55,8 +48,8 @@ entry:
     await session.check(split.children.callee);
 
     const stronger = await session.strengthen("g1", {
-      param_attrs: { 0: { noundef: true, range: { min: 0, max: 256 } } },
+      param_attrs: { 0: { range: { min: 0, max: 256 } } },
     });
-    expect("state the facts on the parameter", stronger.kind === "strengthened", stronger);
+    expect("state the range on the parameter", stronger.kind === "strengthened", stronger);
   },
 };

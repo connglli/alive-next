@@ -63,7 +63,7 @@ export function createStrengthenTool(session: Session) {
         // The outer's refusal is explained from alive2's example, so the
         // example is not repeated; every other refusal shows what alive2 said.
         const why = stronger.explanation ? `\n\n${stronger.explanation}` : "";
-        const detail = stronger.phase === "assume" ? "" : formatDetail(stronger.check);
+        const detail = stronger.phase === "caller" ? "" : formatDetail(stronger.check);
         return toolResultFrom(session, false, `refused: ${stronger.reason}${why}`, stronger, [
           detail,
         ]);

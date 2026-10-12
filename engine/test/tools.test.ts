@@ -850,7 +850,7 @@ entry:
     const preview = await callFrom(ghostTools, "tree_split_preview", cut);
     const res = await callFrom(ghostTools, "tree_split", cut);
     const said =
-      "The src has no value for parameter 5, so it passes poison. A fact about it holds only once the src passes a real value at the outer's call and at @outlined_g3.ih.";
+      "The src has no value for parameter 5, so it passes poison. A fact about it helps the callee only once the src passes a real value at the outer's call and at @outlined_g3.ih.";
     for (const answer of [preview, res]) {
       expect(answer).toContain("5: %p5 i64, poison in the src for the tgt's %5");
       expect(answer).toContain(said);

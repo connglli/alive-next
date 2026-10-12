@@ -581,28 +581,40 @@ class Case(unittest.TestCase):
       request["callee"] = self.text(callee)
     return self.built.program(canonical(llops("unfold", request)["module"]))
 
-  def invariant(self, kept: bool = True) -> Path:
+  def declared(self, digest: str, fn: str, fact: dict | None) -> str:
+    """The program with `fact` on parameter 0 of `fn`, as a strengthen states it."""
+    if fact is None:
+      return digest
+    request = {"module": self.text(digest), "fn": fn, "param": 0, "attrs": fact}
+    return self.built.program(canonical(llops("attrs", request)["module"]))
+
+  def invariant(self, kept: bool = True, fact: dict | None = None) -> Path:
     """The parity loop proved with j <= i, assumed at the callee's entry and
     proved before each call: the outer's (on entry) and k.ih's (each
-    iteration), unless `kept` is false."""
+    iteration), unless `kept` is false. A `fact` about i goes on the
+    declaration of the function each call goes to, and on k's parameter."""
     halves = self.detached(PARITY, PARITY_SUB_NUW)
     outer, inner = halves["outer"], halves["inner"]
-    assumed = self.assumed
+    assumed, declared = self.assumed, self.declared
 
-    entered = assumed(outer["src"], {"at": "before_calls", "fn": "k"})
-    initiation = {"kind": "check", "side": "src", "from": outer["src"], "to": entered}
-    self.built.goal(
-      "g2", outer, {"src": entered, "tgt": outer["tgt"]}, [initiation], {"kind": "check"}
-    )
+    entered = assumed(declared(outer["src"], "k", fact), {"at": "before_calls", "fn": "k"})
+    steps = [{"kind": "check", "side": "src", "from": outer["src"], "to": entered}]
+    outer_end = {"src": entered, "tgt": declared(outer["tgt"], "k", fact)}
+    if fact is not None:
+      steps.append({"kind": "check", "side": "tgt", "from": outer["tgt"], "to": outer_end["tgt"]})
+    self.built.goal("g2", outer, outer_end, steps, {"kind": "check"})
 
     start = {"at": "start", "fn": "k"}
-    strong = {side: assumed(inner[side], start) for side in ("src", "tgt")}
-    kept_by = assumed(strong["src"], {"at": "before_calls", "fn": "k.ih"})
+    strong = {side: assumed(declared(inner[side], "k", fact), start) for side in ("src", "tgt")}
+    kept_by = assumed(declared(strong["src"], "k.ih", fact), {"at": "before_calls", "fn": "k.ih"})
     by = [{"gid": "g2", "hash": entered}] + ([{"gid": "g3", "hash": kept_by}] if kept else [])
-    steps = [{"kind": "strengthen", "from": inner, "to": strong, "predicates": ORDER, "by": by}]
+    claim = {"kind": "strengthen", "from": inner, "to": strong, "predicates": ORDER, "by": by}
+    steps = [{**claim, **({"param_attrs": {"0": fact}} if fact is not None else {})}]
     if kept:
       steps.append({"kind": "check", "side": "src", "from": strong["src"], "to": kept_by})
-    end = {"src": kept_by if kept else strong["src"], "tgt": strong["tgt"]}
+    end = {"src": kept_by if kept else strong["src"], "tgt": declared(strong["tgt"], "k.ih", fact)}
+    if fact is not None:
+      steps.append({"kind": "check", "side": "tgt", "from": strong["tgt"], "to": end["tgt"]})
     self.built.goal("g3", inner, end, steps, {"kind": "check"})
     return self.built.write()
 
@@ -643,6 +655,14 @@ class TestGolden(Case):
 
   def test_a_loop_invariant_proved_on_entry_and_kept_verifies(self):
     self.verified(self.invariant())
+
+  def test_a_loop_invariant_with_a_parameter_fact_verifies(self):
+    # The proof at each call declares the fact on the function called and
+    # assumes the predicate, which is the step the kernel rebuilds.
+    package = self.invariant(fact={"noundef": True})
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertEqual(done.stdout.count("Predicate proof"), 2, done.stdout)
 
   def test_a_tgt_step_that_drops_attributes_its_body_respects_verifies(self):
     plain = self.built.program(canonical(READ))
@@ -999,20 +1019,22 @@ class TestGolden(Case):
     new_tgt = self.built.program(transform_callee(tgt_mod))
     strengthened = {"src": new_src, "tgt": new_tgt}
 
-    # The outer proves the facts before the call, then declares the callee
-    # with them, in the order the engine takes the two steps. Unproved, it
+    # The outer states the facts at the call, the parameter's on the callee's
+    # declaration and the predicate by an assume, then declares the function
+    # attribute, in the order the engine takes the two steps. Unproved, it
     # only declares them.
+    fact = {"module": outer_src_mod, "fn": "g", "param": 0, "attrs": {"noundef": True}}
     assumed = llops(
       "assume",
       {
-        "module": outer_src_mod,
+        "module": llops("attrs", fact)["module"],
         "anchor": {"at": "before_calls", "fn": "g"},
-        "assertions": [{"fact": {"noundef": True}, "of": "!0"}, PREDICATE],
+        "assertions": [PREDICATE],
       },
     )["module"]
-    assumed_src = llops("canon", {"module": assumed})["module"]
-    proof = self.built.program(assumed_src)
-    declaring = assumed_src if proved else outer_src_mod
+    enforced_src = llops("canon", {"module": assumed})["module"]
+    proof = self.built.program(enforced_src)
+    declaring = enforced_src if proved else outer_src_mod
     new_outer_src = self.built.program(transform_outer(declaring))
     new_outer_tgt = self.built.program(transform_outer(outer_tgt_mod))
     outer_strengthened = {"src": new_outer_src, "tgt": new_outer_tgt}
@@ -1089,6 +1111,48 @@ class TestTampered(Case):
     step = {"kind": "strengthen", "from": inner, "to": inner_end, "fn_attrs": nofree}
     self.built.goal("g3", inner, inner_end, [step], {"kind": "check"})
     self.refused(self.built.write(), "Callee attributes")
+
+  def test_an_outer_whose_call_breaks_a_parameter_attribute_it_declares(self):
+    # The tgt answers 1, which a callee proves only if its argument is 0. The
+    # outer passes values from 0 to 9, so the step that declares range(i8 0, 1)
+    # turns most of them into poison and alive-tv refuses it, although every
+    # goal holds under the range.
+    src = canonical(
+      "define i8 @f(i8 %x) {\n  %y = urem i8 %x, 10\n  %s = add i8 %y, 1\n  ret i8 %s\n}\n"
+    )
+    tgt = canonical("define i8 @f(i8 %x) {\n  %y = urem i8 %x, 10\n  ret i8 1\n}\n")
+    cut = llops("outline", {"module": src, "side": "src", "cut": "#1", "callee": "g"})
+    request = {"module": tgt, "side": "tgt", "cut": "#1", "callee": "g", "params": cut["params"]}
+    tgt_cut = llops("outline", {**request, "value_map": {"%1": "%1"}})
+    zero = {"range": {"min": 0, "max": 1}}
+
+    def declared(text: str) -> str:
+      attrs = {"module": text, "fn": "g", "param": 0, "attrs": zero}
+      return self.built.program(canonical(llops("attrs", attrs)["module"]))
+
+    whole = {"src": self.built.program(src), "tgt": self.built.program(tgt)}
+    outer, inner, outer_end, inner_end = {}, {}, {}, {}
+    for side, done in (("src", cut), ("tgt", tgt_cut)):
+      outer[side] = self.built.program(canonical(done["outer"]))
+      inner[side] = self.built.program(canonical(done["callee"]))
+      outer_end[side] = declared(canonical(done["outer"]))
+      inner_end[side] = declared(canonical(done["callee"]))
+    split = {"kind": "split", "callee": "g", "outer": "g2", "inner": "g3"}
+    self.built.goal("g1", whole, whole, [], split)
+    outer_steps = [
+      {"kind": "check", "side": side, "from": outer[side], "to": outer_end[side]}
+      for side in ("src", "tgt")
+    ]
+    self.built.goal("g2", outer, outer_end, outer_steps, {"kind": "check"})
+    step = {
+      "kind": "strengthen",
+      "from": inner,
+      "to": inner_end,
+      "param_attrs": {"0": zero},
+      "by": [{"gid": "g2", "hash": outer_end["src"]}],
+    }
+    self.built.goal("g3", inner, inner_end, [step], {"kind": "check"})
+    self.refused(self.built.write(), "Chain step")
 
   def test_a_program_that_is_not_what_its_name_says(self):
     package = self.leaf()

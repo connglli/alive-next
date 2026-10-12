@@ -21,30 +21,36 @@
 //
 // Verification proceeds in three certified phases:
 //
-// Phase one (caller preconditions): preconditions (`param_attrs` and `predicates`)
-// are inserted as `llvm.assume` instructions immediately before the `@callee` call
-// site in `outer.src`. Alive2 verifies this whole-program step. If an assumption is
-// false on any feasible execution, `llvm.assume` introduces undefined behavior where
-// the original program was defined, causing Alive2 to refute the step.
+// Phase one (caller preconditions): in `outer.src`, the parameter attributes go on
+// the declaration of `@callee` and the predicates into `llvm.assume` instructions
+// just before each call. Alive2 verifies this whole-program step, which refines
+// the outer only if every value passed keeps each attribute and meets each
+// predicate: a false predicate is undefined behavior where the original program
+// was defined, and a value an attribute rules out is poison under `range`,
+// `nonnull` and `align`, and undefined behavior under the others. So those three
+// hold of a value that may be poison, as they do on the callee's parameter.
+// `noalias` is refused, since alive2 ignores it on a declaration and on a parameter.
 //
 // Phase two (callee guarantees): semantic function attributes (`fn_attrs`) are verified
 // on the callee bodies via refinement checks (`unannotated => with_fn_attrs`). Checking
 // both `src` and `tgt` ensures neither side performs behavior forbidden by the attribute
 // (which would introduce UB into `src` and unsoundly validate invalid targets).
 //
-// Phase three (contract materialization): caller declarations (`outer.src` and `outer.tgt`)
-// are updated with the certified parameter and function attributes. Callee definitions
-// (`callee.src` and `callee.tgt`) gain the parameter attributes, function attributes,
-// and entry predicates. This transition is recorded as an atomic `strengthen`
-// effect linked to the justifying caller step (`by`).
+// Phase three (contract materialization): the caller declaration in `outer.tgt`
+// gains the parameter attributes, and both caller declarations the function
+// attributes. Callee definitions (`callee.src` and `callee.tgt`) gain the
+// parameter attributes, function attributes, and entry predicates. This
+// transition is recorded as an atomic `strengthen` effect linked to the
+// justifying caller step (`by`), and lands with the steps before it only once
+// every one is certified.
 //
 // A callee cut at a loop header also calls itself, through its hypothesis, so
-// its contract is proved there too: one iteration has to keep it, with the
-// contract assumed at the callee's entry. That question is asked before
-// anything lands, and its step lands in the callee's chain right after the
-// claim. The hypothesis is declared with the parameter facts, as the outer's
-// declaration is, and the callee takes no function attribute: induction
-// cannot prove willreturn.
+// its contract is proved there too, as at the outer's calls: one iteration has
+// to keep it, with the contract assumed at the callee's entry. That question is
+// asked before anything lands, and its step, which declares the hypothesis
+// with the parameter facts in the callee's src, lands in the callee's chain
+// right after the claim; the tgt's hypothesis is declared with them after it.
+// The callee takes no function attribute: induction cannot prove willreturn.
 import { type CheckResult, timedOut } from "../drivers/alive2.ts";
 import type { Assertion, Attrs, Llops, Predicate } from "../drivers/llops.ts";
 import { applyEffect, child, type Goal, head, interposed, type Side, type Tree } from "./goals.ts";
@@ -72,13 +78,13 @@ export type StrengthenResult =
   | {
       kind: "refused";
       /** Which validation phase failed, identifying why the proposal was rejected. */
-      phase: "assume" | "attribute" | "callee_attr" | "hypothesis";
+      phase: "caller" | "attribute" | "callee_attr" | "hypothesis";
       reason: string;
       /** Detailed diagnostic explanation for humans and agents. */
       explanation?: string;
       /** The solver result when Alive2 refused the step. */
       check?: CheckResult;
-      /** Steps that landed before the refusal, already reflected in the tree head. */
+      /** None: a strengthen lands only once every step is certified. */
       effects: Effect[];
     };
 
@@ -119,19 +125,26 @@ export class Strengthen {
 
     const halves = this.halves(tree, gid);
     if ("reason" in halves)
-      return { kind: "refused", phase: "assume", reason: halves.reason, effects: [] };
+      return { kind: "refused", phase: "caller", reason: halves.reason, effects: [] };
     const { outer, callee, name, hypothesis } = halves;
     if (hypothesis && hasFnAttrs) {
       const reason = `@${name} calls @${hypothesis}, so it takes no function attributes: induction cannot prove willreturn`;
       return { kind: "refused", phase: "callee_attr", reason, effects: [] };
     }
+    const aliasing = noaliasIn(rawParamAttrs);
+    if (aliasing !== undefined) {
+      const reason = `parameter ${aliasing}: alive2 ignores noalias, so it can be neither proved at a call nor assumed by the callee`;
+      return { kind: "refused", phase: "caller", reason, effects: [] };
+    }
 
-    // The parameters the facts name: the keys of param_attrs and each `!N` in a predicate.
-    const named = new Set([...params, ...predicates.flatMap(namedIn)]);
-    const landed: Effect[] = [];
+    // The parameters whose facts a poison argument breaks: those given an
+    // attribute other than range, nonnull and align, and each `!N` in a predicate.
+    const needsValue = new Set([
+      ...params.filter((param) => !holdsOfPoison(rawParamAttrs[param] ?? {})),
+      ...predicates.flatMap(namedIn),
+    ]);
     const checks: CheckResult[] = [];
     let by: StepRef | undefined;
-    const assertions = assertionsOf(contract);
 
     // At the callee's start only its arguments are in scope, so llops refuses
     // a contract that names anything else. Ask that before anything lands.
@@ -139,7 +152,7 @@ export class Strengthen {
       const start = { at: "start" as const, fn: name };
       const probe = await this.llops.assume(this.store.get(head(callee, "src")), start, predicates);
       if (!probe.ok)
-        return { kind: "refused", phase: "assume", reason: probe.message, effects: [] };
+        return { kind: "refused", phase: "caller", reason: probe.message, effects: [] };
     }
 
     // Phase 0, for a loop: the contract has to hold again where the callee
@@ -150,22 +163,18 @@ export class Strengthen {
     if (hypothesis && (hasParamAttrs || hasPredicates)) {
       const entered = await this.materialize(this.store.get(head(callee, "src")), name, contract);
       if (typeof entered !== "string") return { ...entered, effects: [] };
-      const next = await this.llops.assume(
-        entered,
-        { at: "before_calls", fn: hypothesis },
-        assertions,
-      );
-      if (!next.ok)
-        return { kind: "refused", phase: "hypothesis", reason: next.message, effects: [] };
-      const check = await this.steps.refinementCheck(entered, next.module);
+      const next = await this.enforce(entered, hypothesis, contract);
+      if (typeof next !== "string")
+        return { kind: "refused", phase: "hypothesis", reason: next.reason, effects: [] };
+      const check = await this.steps.refinementCheck(entered, next);
       if (check.outcome !== "correct") {
-        const reason = `one iteration of @${name} is not shown to keep the facts before @${hypothesis}`;
+        const reason = `one iteration of @${name} is not shown to keep the facts at @${hypothesis}`;
         const calls = await this.callsOf(this.store.get(head(callee, "src")), hypothesis);
         // alive2's Source and Target read as the goal's two sides, and are not.
         const explanation =
-          poisonExplained(calls, hypothesis, named) ??
+          poisonExplained(calls, hypothesis, needsValue) ??
           (check.outcome === "incorrect"
-            ? "Source and Target are both the callee's src, and only Target asserts the facts before the call, which the example's arguments break."
+            ? "Source and Target are both the callee's src, and only Target states the facts at the call, which the example's arguments break."
             : undefined);
         return {
           kind: "refused",
@@ -177,44 +186,49 @@ export class Strengthen {
         };
       }
       checks.push(check);
-      kept = { from: await this.store.put(entered), hash: await this.store.put(next.module) };
+      kept = { from: await this.store.put(entered), hash: await this.store.put(next) };
     }
 
-    // Phase 1: Prove caller preconditions (param_attrs & predicates) in outer src.
-    // Preconditions are inserted as `llvm.assume` before the `@callee` call sites.
-    // Proving `outer.src + assumes <= outer.src` certifies that the assumptions
-    // hold across all feasible executions of the caller prefix.
+    // Certified steps wait in a copy of the tree until every one is certified,
+    // so a refusal changes nothing, and a declaration never gains an attribute
+    // its definition lacks.
+    const ahead = structuredClone(tree);
+    const pending: Effect[] = [];
+    const hold = (effects: Effect[]) => {
+      for (const effect of effects) applyEffect(ahead, effect);
+      pending.push(...effects);
+    };
+    const now = (goal: Goal) => ahead.goals.get(goal.id) as Goal;
+
+    // Phase 1: the outer's src enforces the contract at its calls of the callee,
+    // the parameter facts on its declaration and the predicates by assumes.
+    // Proving that this refines `outer.src` certifies that they hold across all
+    // feasible executions of the caller prefix.
     if (hasParamAttrs || hasPredicates) {
-      const one = await this.llops.assume(
-        this.store.get(head(outer, "src")),
-        { at: "before_calls", fn: name },
-        assertions,
-      );
-      if (!one.ok) {
-        return {
-          kind: "refused",
-          phase: "assume",
-          reason: one.message,
-          effects: landed,
-        };
+      const enforced = await this.enforce(this.store.get(head(outer, "src")), name, contract);
+      if (typeof enforced !== "string")
+        return { kind: "refused", phase: "caller", reason: enforced.reason, effects: [] };
+      // A contract of facts the declaration already has adds nothing to prove.
+      if ((await this.store.put(enforced)) === head(outer, "src")) {
+        const reason = `the declaration of @${name} already has every fact, so there is nothing to add`;
+        return { kind: "refused", phase: "caller", reason, effects: [] };
       }
-      const assumed = one.module;
-      const proof = await this.steps.checkStep(tree, outer.id, "src", assumed, { eager: false });
+      const proof = await this.steps.checkStep(ahead, outer.id, "src", enforced, { eager: false });
       if (proof.kind !== "certified") {
         const calls = await this.callsOf(this.store.get(head(outer, "src")), name);
         const explanation =
-          poisonExplained(calls, name, named) ??
-          explainAssumeRefusal(params, rawParamAttrs, proof.check, outer.id, calls[0]?.at);
+          poisonExplained(calls, name, needsValue) ??
+          explainCallerRefusal(params, rawParamAttrs, proof.check, outer.id, calls[0]?.at);
         return {
           kind: "refused",
-          phase: "assume",
+          phase: "caller",
           reason: `the facts are not shown to hold where the outer calls @${name}`,
           explanation,
           check: proof.check,
-          effects: landed,
+          effects: [],
         };
       }
-      this.land(tree, landed, proof.effects);
+      hold(proof.effects);
       if (proof.check) checks.push(proof.check);
       by = { gid: outer.id, hash: proof.hash };
     }
@@ -230,7 +244,7 @@ export class Strengthen {
           kind: "refused",
           phase: "callee_attr",
           reason: `the function attributes cannot be put on the callee's src: ${withAttrs.message}`,
-          effects: landed,
+          effects: [],
         };
       }
       const check = await this.steps.refinementCheck(unannotated, withAttrs.module);
@@ -240,39 +254,39 @@ export class Strengthen {
           phase: "callee_attr",
           reason: "the callee's src is not shown to keep the function attributes",
           check,
-          effects: landed,
+          effects: [],
         };
       }
       checks.push(check);
     }
 
-    // Phase 3: the callee's declaration in the outer gains the attributes, in
-    // `outer.src` against Phase 1's assumes, and lands with the callee's contract
-    // only once every step is certified, so the two never say different things.
-    const pending: Effect[] = [];
-    if (hasParamAttrs || hasFnAttrs) {
-      for (const side of ["src", "tgt"] as Side[]) {
-        const attributed = await this.attribute(
-          this.store.get(head(outer, side)),
-          name,
-          params,
-          rawParamAttrs,
-          fnAttrs,
-        );
-        if (typeof attributed !== "string") return { ...attributed, effects: landed };
-        const step = await this.steps.checkStep(tree, outer.id, side, attributed, { eager: false });
-        if (step.kind !== "certified") {
-          return {
-            kind: "refused",
-            phase: "attribute",
-            reason: `the step that adds the attributes to the outer's ${side} is not certified`,
-            check: step.check,
-            effects: landed,
-          };
-        }
-        pending.push(...step.effects);
-        if (step.check) checks.push(step.check);
+    // Phase 3: the callee's declaration in the outer gains what Phase 1 did not
+    // give it, the parameter attributes in `outer.tgt` and the function
+    // attributes on both sides, and lands with the callee's contract only once
+    // every step is certified, so the two never say different things.
+    for (const side of ["src", "tgt"] as Side[]) {
+      const owed = side === "src" ? [] : params;
+      if (owed.length === 0 && !hasFnAttrs) continue;
+      const attributed = await this.attribute(
+        this.store.get(head(now(outer), side)),
+        name,
+        owed,
+        rawParamAttrs,
+        fnAttrs,
+      );
+      if (typeof attributed !== "string") return { ...attributed, effects: [] };
+      const step = await this.steps.checkStep(ahead, outer.id, side, attributed, { eager: false });
+      if (step.kind !== "certified") {
+        return {
+          kind: "refused",
+          phase: "attribute",
+          reason: `the step that adds the attributes to the outer's ${side} is not certified`,
+          check: step.check,
+          effects: [],
+        };
       }
+      hold(step.effects);
+      if (step.check) checks.push(step.check);
     }
 
     // Phase 3 (continued): Materialize contract on callee (both src and tgt).
@@ -282,64 +296,54 @@ export class Strengthen {
     const srcRes = kept
       ? this.store.get(kept.from)
       : await this.materialize(this.store.get(head(callee, "src")), name, contract);
-    if (typeof srcRes !== "string") return { ...srcRes, effects: landed };
+    if (typeof srcRes !== "string") return { ...srcRes, effects: [] };
     const tgtRes = await this.materialize(this.store.get(head(callee, "tgt")), name, contract);
-    if (typeof tgtRes !== "string") return { ...tgtRes, effects: landed };
+    if (typeof tgtRes !== "string") return { ...tgtRes, effects: [] };
 
-    pending.push({
-      effect: "strengthen",
-      gid: callee.id,
-      src: await this.store.put(srcRes),
-      tgt: await this.store.put(tgtRes),
-      ...(hasParamAttrs ? { param_attrs: rawParamAttrs } : {}),
-      ...(hasFnAttrs ? { fn_attrs: fnAttrs } : {}),
-      ...(hasPredicates ? { predicates } : {}),
-      ...(by ? { by: kept ? [by, { gid: callee.id, hash: kept.hash }] : [by] } : {}),
-    });
+    hold([
+      {
+        effect: "strengthen",
+        gid: callee.id,
+        src: await this.store.put(srcRes),
+        tgt: await this.store.put(tgtRes),
+        ...(hasParamAttrs ? { param_attrs: rawParamAttrs } : {}),
+        ...(hasFnAttrs ? { fn_attrs: fnAttrs } : {}),
+        ...(hasPredicates ? { predicates } : {}),
+        ...(by ? { by: kept ? [by, { gid: callee.id, hash: kept.hash }] : [by] } : {}),
+      },
+    ]);
 
     // Phase 3, for a loop: the step Phase 0 certified lands in the callee's
-    // chain on that answer, so the claim never stands without it, and the
-    // hypothesis is declared with the parameter facts.
-    if (kept) {
-      pending.push({
-        effect: "step",
-        gid: callee.id,
-        side: "src",
-        to: kept.hash,
-        how: "check",
-        by: "alive2",
-      });
-    }
+    // chain on that answer, so the claim never stands without it. It declared
+    // the src's hypothesis with the parameter facts, and the tgt's follows.
+    if (kept)
+      hold([
+        { effect: "step", gid: callee.id, side: "src", to: kept.hash, how: "check", by: "alive2" },
+      ]);
     if (hypothesis && hasParamAttrs) {
-      // Only a copy of the tree holds the strengthened callee yet.
-      const ahead = structuredClone(tree);
-      for (const effect of pending) applyEffect(ahead, effect);
-      const strengthened = ahead.goals.get(callee.id) as Goal;
-      for (const side of ["src", "tgt"] as Side[]) {
-        const attributed = await this.attribute(
-          this.store.get(head(strengthened, side)),
-          hypothesis,
-          params,
-          rawParamAttrs,
-        );
-        if (typeof attributed !== "string") return { ...attributed, effects: landed };
-        const step = await this.steps.checkStep(ahead, callee.id, side, attributed, {
-          eager: false,
-        });
-        if (step.kind !== "certified") {
-          return {
-            kind: "refused",
-            phase: "attribute",
-            reason: `the step that adds the attributes to @${hypothesis} in the callee's ${side} is not certified`,
-            check: step.check,
-            effects: landed,
-          };
-        }
-        for (const effect of step.effects) applyEffect(ahead, effect);
-        pending.push(...step.effects);
-        if (step.check) checks.push(step.check);
+      const attributed = await this.attribute(
+        this.store.get(head(now(callee), "tgt")),
+        hypothesis,
+        params,
+        rawParamAttrs,
+      );
+      if (typeof attributed !== "string") return { ...attributed, effects: [] };
+      const step = await this.steps.checkStep(ahead, callee.id, "tgt", attributed, {
+        eager: false,
+      });
+      if (step.kind !== "certified") {
+        return {
+          kind: "refused",
+          phase: "attribute",
+          reason: `the step that adds the attributes to @${hypothesis} in the callee's tgt is not certified`,
+          check: step.check,
+          effects: [],
+        };
       }
+      hold(step.effects);
+      if (step.check) checks.push(step.check);
     }
+    const landed: Effect[] = [];
     this.land(tree, landed, pending);
 
     // Phase 4: Eager goal cross-checks.
@@ -369,7 +373,7 @@ export class Strengthen {
     const caller = this.store.get(head(outer, "src"));
     const entering: Assertion[] = [];
     for (const fact of assertionsOf(contract))
-      if (await this.holdsBefore(caller, name, fact)) entering.push(fact);
+      if (await this.holdsAt(caller, name, fact)) entering.push(fact);
     if (!hypothesis || entering.length === 0)
       return { kind: "preview", holds: contractOf(entering) };
     const entered = await this.materialize(
@@ -379,8 +383,7 @@ export class Strengthen {
     );
     if (typeof entered !== "string") return { kind: "refused", reason: entered.reason };
     const kept: Assertion[] = [];
-    for (const fact of entering)
-      if (await this.holdsBefore(entered, hypothesis, fact)) kept.push(fact);
+    for (const fact of entering) if (await this.holdsAt(entered, hypothesis, fact)) kept.push(fact);
     return { kind: "preview", holds: contractOf(kept) };
   }
 
@@ -429,13 +432,34 @@ export class Strengthen {
   }
 
   /**
-   * Whether `fact` holds before each call of `fn` in `module`: alive2 shows it
-   * when assuming the fact there adds no UB.
+   * Whether `fact` holds at each call of `fn` in `module`: alive2 shows it when
+   * the module with the fact enforced there refines the module. A noalias
+   * never holds, since alive2 ignores it.
    */
-  private async holdsBefore(module: string, fn: string, fact: Assertion) {
-    const assumed = await this.llops.assume(module, { at: "before_calls", fn }, [fact]);
-    if (!assumed.ok) return false;
-    return (await this.steps.refinementCheck(module, assumed.module)).outcome === "correct";
+  private async holdsAt(module: string, fn: string, fact: Assertion) {
+    const one = contractOf([fact]);
+    if (noaliasIn(one.param_attrs ?? {}) !== undefined) return false;
+    const enforced = await this.enforce(module, fn, one);
+    if (typeof enforced !== "string") return false;
+    return (await this.steps.refinementCheck(module, enforced)).outcome === "correct";
+  }
+
+  /**
+   * `module` with `contract` enforced at each call of `fn`: its parameter facts
+   * on `fn`'s declaration, and its predicates assumed just before each call.
+   */
+  private async enforce(
+    module: string,
+    fn: string,
+    contract: StrengthenContract,
+  ): Promise<string | { reason: string }> {
+    const paramAttrs = contract.param_attrs ?? {};
+    const attributed = await this.attribute(module, fn, paramsOf(paramAttrs), paramAttrs);
+    if (typeof attributed !== "string") return { reason: attributed.reason };
+    const predicates = contract.predicates ?? [];
+    if (predicates.length === 0) return attributed;
+    const assumed = await this.llops.assume(attributed, { at: "before_calls", fn }, predicates);
+    return assumed.ok ? assumed.module : { reason: assumed.message };
   }
 
   /** The program with parameter and function attributes added. */
@@ -490,12 +514,13 @@ export class Strengthen {
 }
 
 /**
- * Diagnostic explanation when an assume step fails verification in the caller.
+ * Diagnostic explanation when the step that enforces the facts at the caller's
+ * calls fails verification.
  *
- * Parses counterexamples from Alive2 to provide actionable suggestions (e.g. poison
- * values triggering UB under llvm.assume, or directing the agent to specific analyses).
+ * Parses counterexamples from Alive2 to provide actionable suggestions (e.g. a poison
+ * value that a fact needs defined, or directing the agent to specific analyses).
  */
-export function explainAssumeRefusal(
+export function explainCallerRefusal(
   params: number[],
   paramAttrs: Record<number, Attrs>,
   check?: CheckResult,
@@ -525,7 +550,9 @@ export function explainAssumeRefusal(
   const values = exampleLines.map(assignedValue);
   const isPoison = values.some((value) => value.includes("poison"));
   if (isPoison) {
-    lines.push("On that input a parameter is poison, and no fact holds for a poison value.");
+    lines.push(
+      "On that input a parameter is poison, and of the facts only range, nonnull and align hold for a poison value.",
+    );
   }
 
   if (outerGid && params.length > 0) {
@@ -562,7 +589,24 @@ function paramsOf(paramAttrs: Record<number, Attrs>): number[] {
   return keys.map(Number).sort((a, b) => a - b);
 }
 
-/** A contract's facts as `llops assume` takes them: one per parameter, then the predicates. */
+/** Attributes that make a value they rule out poison, so that a poison value keeps them. */
+const POISON_GENERATING = new Set(["range", "nonnull", "align"]);
+
+/** Whether every attribute in `attrs` holds of a poison value. */
+function holdsOfPoison(attrs: Attrs): boolean {
+  return Object.keys(attrs).every((attr) => POISON_GENERATING.has(attr));
+}
+
+/**
+ * The first parameter `paramAttrs` gives noalias. alive2 ignores noalias on a
+ * declaration and on a parameter, so a step that adds it proves nothing and a
+ * callee that has it gains nothing.
+ */
+function noaliasIn(paramAttrs: Record<number, Attrs>): number | undefined {
+  return paramsOf(paramAttrs).find((k) => "noalias" in (paramAttrs[k] ?? {}));
+}
+
+/** A contract's facts one at a time: each parameter's attributes, then each predicate. */
 function assertionsOf(contract: StrengthenContract): Assertion[] {
   const paramAttrs = contract.param_attrs ?? {};
   const attributes = paramsOf(paramAttrs).map((p) => ({
@@ -592,12 +636,12 @@ function namedIn(predicate: Predicate): number[] {
   return [...text.matchAll(/!(\d+)/g)].map((match) => Number(match[1]));
 }
 
-/** The first call that passes poison for a parameter the facts name, said as a fix. */
-function poisonExplained(calls: Call[], fn: string, named: Set<number>): string | undefined {
+/** The first call that passes poison for a parameter in `needsValue`, said as a fix. */
+function poisonExplained(calls: Call[], fn: string, needsValue: Set<number>): string | undefined {
   for (const { at, args } of calls) {
-    const param = args.findIndex((arg, index) => arg === "poison" && named.has(index));
+    const param = args.findIndex((arg, index) => arg === "poison" && needsValue.has(index));
     if (param >= 0)
-      return `At #${at} the src still passes poison for parameter ${param} of @${fn}, so no fact about it can hold there. Make the src pass a real value at that call first.`;
+      return `At #${at} the src still passes poison for parameter ${param} of @${fn}, so only a range, nonnull or align about it can hold there. Make the src pass a real value at that call first.`;
   }
   return undefined;
 }

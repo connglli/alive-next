@@ -248,7 +248,7 @@ describe.skipIf(!built)("the manifest", () => {
     expect(attributed).toHaveLength(1);
     const [only] = attributed;
     if (only?.kind !== "strengthen") throw new Error("a strengthen step");
-    expect(only.param_attrs).toEqual({ 0: { noundef: true, range: { min: 0, max: 256 } } });
+    expect(only.param_attrs).toEqual({ 0: { range: { min: 0, max: 256 } } });
     // The step it names is a step of the outer's chain, which is checked. A
     // callee that is not a loop is called only from the outer, so there is one.
     const [by] = only.by ?? [];
