@@ -4,11 +4,12 @@
 // alive2 refuses, the window grows backward over the instructions that define
 // the values either side reads, and last, the window is tried again with what
 // the analyses know about those values.
-import type { Instruction, Llops } from "../core/drivers/llops.ts";
+import type { Instruction, Llops, Predicate } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { factsAt } from "./facts.ts";
 import type { Limits } from "./limits.ts";
 import { diff, isTerminator, type Region, regions } from "./regions.ts";
+import { relationsAt } from "./relations.ts";
 
 /** A goal being stepped, toward its tgt unless `toward` names another program. */
 interface Run {
@@ -135,8 +136,11 @@ async function attempt(run: Run, at: Region, withFacts: boolean) {
   if (!wiring) return { certified: false };
   const { map, reads } = wiring;
   const from = `#${at.src[0]}`;
-  const preconditions = withFacts ? await factsAt(llops, view.src.text, from, reads) : {};
-  if (withFacts && Object.keys(preconditions).length === 0) return { certified: false, reads };
+  const text = view.src.text;
+  const preconditions = withFacts ? await factsAt(llops, text, from, reads) : {};
+  const predicates = withFacts ? await relatedReads(llops, text, from, reads, src) : [];
+  const known = Object.keys(preconditions).length > 0;
+  if (withFacts && !known && predicates.length === 0) return { certified: false, reads };
   await session.begin(gid, "src");
   const edited = await session.edit({
     op: "splice",
@@ -154,11 +158,35 @@ async function attempt(run: Run, at: Region, withFacts: boolean) {
   // The whole function is what windows avoid, so it is not asked, after the
   // window or after the step; with windows off, it is the only question.
   const window = { from, to: `#${at.src.at(-1)}` };
+  const given = {
+    ...(known ? { preconditions } : {}),
+    ...(predicates.length ? { predicates } : {}),
+  };
   const options = run.limits.windows
-    ? { window, whole: false, eager: false, ...(withFacts ? { preconditions } : {}) }
+    ? { window, whole: false, eager: false, ...given }
     : { narrow: false, eager: false };
   const result = await session.commit(options);
   return { certified: result.kind === "certified", reads };
+}
+
+/** The relations ScalarEvolution shows among the values a window reads, named by them. */
+async function relatedReads(
+  llops: Llops,
+  module: string,
+  point: string,
+  reads: string[],
+  body: Instruction[],
+): Promise<Predicate[]> {
+  const typeOf = (read: string) => body.find((i) => i.value === read)?.type ?? "";
+  const side = { module, point, values: reads };
+  const related = await relationsAt(llops, [side], reads.map(typeOf));
+  const read = (whole: string, k: string) => reads[Number(k)] ?? whole;
+  const name = (text: string) => text.replace(/!(\d+)/g, read);
+  return related.map((predicate) => {
+    if ("insts" in predicate) return { insts: predicate.insts.map(name) };
+    const side = (x: string | number) => (typeof x === "number" ? x : name(x));
+    return { ...predicate, lhs: side(predicate.lhs), rhs: side(predicate.rhs) };
+  });
 }
 
 /**

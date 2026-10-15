@@ -169,6 +169,27 @@ entry:
     expect(await arrived(session)).toBe(true);
   }, 60_000);
 
+  test("a region reading another copy of a value steps by their relation", async () => {
+    // Both copies are defined in the block before, so the window cannot grow
+    // over them; ScalarEvolution sees both as x + 1, which relates the two reads.
+    const src = `define i32 @f(i32 noundef %x) {
+entry:
+  %a = add i32 %x, 1
+  %b = sub i32 %x, -1
+  br label %next
+
+next:
+  %r = mul i32 %a, 3
+  ret i32 %r
+}
+`;
+    const tgt = src.replace("mul i32 %a, 3", "mul i32 %b, 3");
+    const pair = { about: "", refines: true, src, tgt };
+    const session = await start("copies", aliveTv, 5_000, pair);
+    expect(await stepWindows(session, llops, "g1", grow(1))).toEqual([]);
+    expect(await arrived(session)).toBe(true);
+  }, 60_000);
+
   test("a region whose tgt also hands a value to its own later code steps", async () => {
     // The paper's straight-line pair. The tgt's middle region computes %q, the
     // partner of the src's %t, and %s, which only the tgt's last region reads,
