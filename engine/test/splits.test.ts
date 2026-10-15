@@ -224,6 +224,30 @@ join:
     expect(preview.tgtParams?.map((param) => param.live)).toEqual(["%1", "%2", "%0"]);
   });
 
+  test("a preview says which values are what a stack slot holds", async () => {
+    const slotted = `define i32 @f(i32 %n) {
+entry:
+  %i = alloca i32, align 4
+  store i32 0, ptr %i, align 4
+  br label %loop
+
+loop:
+  %0 = load i32, ptr %i, align 4
+  %1 = add i32 %0, 1
+  store i32 %1, ptr %i, align 4
+  %c = icmp ult i32 %1, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  ret i32 %0
+}
+`;
+    const splits = new Splits(store, llops);
+    const preview = await splits.preview(await start(slotted, LOOP), "g1", "%bb1", "%bb1");
+    if (preview.kind !== "preview") throw new Error(preview.message);
+    expect(preview.slots).toEqual({ src: [0], tgt: [] });
+  });
+
   test("refuses a cut whose halves do not go back together as the side", async () => {
     // One tgt phi stands for two src phis, which detach takes and reattach
     // cannot undo: the tgt comes back with two phis.

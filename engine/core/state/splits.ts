@@ -120,7 +120,9 @@ export class Splits {
     if (!valueMap) {
       const own = await cutAlone(tgtModule, tgtCut);
       if (!own.ok) return { kind: "refused", side: "tgt", code: own.code, message: own.message };
-      return { kind: "preview", params: first.params, tgtParams: own.params, callee };
+      const slots = slotsOf(first, own);
+      const listed = slots ? { slots } : {};
+      return { kind: "preview", params: first.params, tgtParams: own.params, callee, ...listed };
     }
 
     const tgt: LlopsResult<DetachResult> = atBlock
