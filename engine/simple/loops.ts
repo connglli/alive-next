@@ -51,28 +51,23 @@ export async function unfoldToMatch(
     if (!(await unfolded(session, outer, d > 0 ? "src" : "tgt"))) return;
 }
 
-/**
- * Strengthens loop cut `gid` with `last`, the contract a cut of the same loop
- * landed, or else with the inductive part of `candidates`, and answers what landed.
- */
+/** Strengthens loop cut `gid` with the inductive part of `candidates`. */
 export async function strengthenLoop(
   session: Session,
   gid: string,
   candidates: StrengthenContract,
-  last?: StrengthenContract,
 ) {
-  if (last && (await session.strengthen(gid, last)).kind === "strengthened") return last;
   let kept = candidates;
   while (size(kept) > 0) {
     const preview = await session.strengthenPreview(gid, kept);
-    if (preview.kind !== "preview") return undefined;
+    if (preview.kind !== "preview") return [];
     if (size(preview.holds) === size(kept)) break;
     const lost = noundefLost(kept, preview.holds);
     kept = { ...preview.holds, param_attrs: { ...preview.holds.param_attrs, ...lost } };
   }
-  if (size(kept) === 0) return undefined;
+  if (size(kept) === 0) return [];
   const landed = (await session.strengthen(gid, kept)).kind === "strengthened";
-  return landed ? kept : undefined;
+  return landed ? (kept.predicates ?? []) : [];
 }
 
 /** Guesses invariants about `params` from Houdini's templates. */

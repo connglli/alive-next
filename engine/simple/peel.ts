@@ -3,7 +3,7 @@
 // block. A cut the framework refuses ends the peel.
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
-import { cut, firstOwn, type Learned } from "./cuts.ts";
+import { type Assumed, cut, firstOwn } from "./cuts.ts";
 import type { Limits } from "./limits.ts";
 import type { Region } from "./regions.ts";
 import { bodies } from "./windows.ts";
@@ -15,7 +15,7 @@ export async function peel(
   gid: string,
   limits: Limits,
   region: Region,
-  learned?: Learned,
+  assumed?: Assumed,
 ) {
   const [src, tgt] = await bodies(session, llops, gid);
   const [a, b, c, d] = [region.src[0], region.src.at(-1), region.tgt[0], region.tgt.at(-1)];
@@ -24,7 +24,7 @@ export async function peel(
   const after: string[] = [];
   let at = gid;
   if (src[b + 1]?.block === src[b]?.block && tgt[d + 1]?.block === tgt[d]?.block) {
-    const split = await cut(session, llops, at, limits, `#${b + 1}`, `#${d + 1}`, learned);
+    const split = await cut(session, llops, at, limits, `#${b + 1}`, `#${d + 1}`, assumed);
     if (!split) return none;
     after.push(split.callee);
     at = split.outer;
@@ -33,7 +33,7 @@ export async function peel(
   if (first) return { goals: [at, ...after], region: at };
   const head = src[a]?.phi ? [src[a]?.block, tgt[c]?.block] : [`#${a}`, `#${c}`];
   const [srcHead = "", tgtHead = ""] = head;
-  const split = await cut(session, llops, at, limits, srcHead, tgtHead, learned);
+  const split = await cut(session, llops, at, limits, srcHead, tgtHead, assumed);
   if (!split) return { goals: [at, ...after], region: at };
   return { goals: [split.outer, split.callee, ...after], region: split.callee };
 }
