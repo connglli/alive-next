@@ -28,16 +28,22 @@ A wrong proposal wastes time; it never produces a wrong certificate, though a co
 
 ## Scope
 
-**All** features alive2 supports, including memory operations and branches. A loop is proved by induction once split at its header, and refuted by running it.
+The framework proves that one LLVM function refines another, or refutes it, under alive2's semantics and the [no-`undef` model](#parameter-definedness-and-the-no-undef-model). A pair is in reach when its proof breaks into steps and goals that each take at most one alive2 query.
 
-Induction proves a pair of loops only when both reach the header with the same state, and a fact over the callee's parameters relates them there. That leaves out of reach:
+**Programs**: each side is a module with one defined function of the [program shape](./llops.md#the-program-shape), and the two functions have the same name and type. Every operation alive2 supports is in reach: integer, floating-point, vector and pointer values, memory and globals, calls to declared functions, branches and switches. Attributes count as alive2 treats them. Indirect calls, inline assembly, a second defined function and an attribute alive2 refuses are out of reach.
+
+**Cuts and facts**: code that depends on its frame or on its function's attributes, such as `memory(none)`, is never moved out of its function ([Decomposition = outlining](#decomposition--outlining)); a tgt step drops such attributes where its instructions keep them, except `initializes`. Of a value that may be poison, a fact can state only `range`, `nonnull` or `align` ([Interface facts](#interface-facts-are-proved-where-the-evidence-lives)), so "the low bits are zero" of a sum that may be poison is out of reach.
+
+**Loops**: a loop is proved by induction once cut at its header, and alive2 is never asked about a loop as a whole. Both sides have to reach the header in lockstep, one call of the hypothesis per iteration, and a fact over the callee's parameters relates them there. One side's iteration may be unfolded to match an unroll by a power of two, and its first iterations to match a peel. That leaves out of reach:
 
 * A variable the tgt dropped, such as `%i` after linear function test replacement: the tgt would have to pass the shared hypothesis a value refining the src's.
-* Loop state the src keeps in stack slots and the tgt in values, as at `-O0` against an optimized tgt: the src passes a slot's address where the tgt passes a value, and no step promotes the slots, since that changes the loop as a whole. Such a src is paired after `mem2reg`.
-* Unrolling with a remainder loop, a loop replaced by a call such as `memset`, and a deleted loop: the tgt makes no call to pair with the src's call of its hypothesis, and alive2 refuses a call on one side only, since it may not return.
+* Loop state the src keeps in stack slots and the tgt in values, as at `-O0` against an optimized tgt: the src passes a slot's address where the tgt passes a value. Such a src is paired after `mem2reg`.
+* Unrolling by a factor that is not a power of two, unrolling with a remainder loop, a loop replaced by a call such as `memset`, and a deleted loop: no call of the tgt pairs with each call of the src's hypothesis.
 * Reordering transformations (interchange, fusion, fission, tiling, reversal): the two sides agree on memory only at the end, which takes a quantified invariant.
 * An irreducible loop, whose second entry breaks the single entry a split at a block needs.
 * A pointer carried as loop state: a fact compares addresses, not the objects the pointers may access.
+
+**Counterexamples**: a translation is refuted on its original pair ([Counterexamples](#counterexamples-certified-by-execution-or-by-the-root-refutation)): as a whole, within the iterations alive2 unrolls when it loops, or at an input that gives each parameter an integer, a null pointer, a pointer to given bytes or poison. An input with a floating-point or vector value other than poison is out of reach.
 
 ## Parameter definedness and the no-undef model
 
