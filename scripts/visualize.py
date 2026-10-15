@@ -531,7 +531,7 @@ def render(session: Path) -> str:
   run = replay(grouped)
   programs = programs_for(session / "store", run.nodes)
 
-  recorded = next((e["outcome"] for e in entries if e["kind"] == "verdict"), None)
+  recorded = next((e["outcome"] for e in reversed(entries) if e["kind"] == "verdict"), None)
   if recorded is not None and recorded != run.verdict and run.error is None:
     raise Broken(f"the log records {recorded} and this replay arrives at {run.verdict}")
 

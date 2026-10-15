@@ -94,6 +94,7 @@ const { session, config } = await startRun({ src, tgt, dir, eager: true });
 
 const started = Date.now();
 let summary: string | undefined;
+let closed: string | undefined;
 
 // The start check can end the run before the model is asked for anything:
 // either verdict settles it. No search is left, so the run is concluded with
@@ -173,13 +174,14 @@ function parseThinkingLevel(level: string): ThinkingLevel {
 }
 
 /**
- * Close the run and say how it went, once however often it is asked. The TUI
- * quits through `process.exit`, and a run can be abandoned before it settles,
- * so this has to be safe to call from either end.
+ * Close the run and say how it went, once for each verdict it reaches. The
+ * TUI quits through `process.exit`, and a run stopped by its budget can still
+ * settle there, so this has to be safe to call from either end.
  */
 function finishRun(): void {
-  if (summary !== undefined) return;
+  if (closed === session.verdict) return;
   const { outcome, lines } = closeRun(session, started);
+  closed = outcome;
   const settled = outcome !== "unknown";
   summary = `${lines.map((line) => `  ${line}`).join("\n")}\n`;
   // A verdict is news where the run is being watched; the shell gets it too,

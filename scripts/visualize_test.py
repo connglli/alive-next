@@ -118,6 +118,13 @@ class TestFold(Case):
     )
     self.assertEqual(nodes["n0"]["gid"], "g1")
 
+  def test_a_run_closed_again_is_read_by_its_last_verdict(self):
+    # A run its budget stopped is closed as unknown, and again once it settles.
+    self.session.append({"kind": "verdict", "outcome": "unknown"})
+    self.session.result("check", {"effect": "proved", "gid": "g1"})
+    self.session.append({"kind": "verdict", "outcome": "verified"})
+    self.assertEqual(self.data()["verdict"], "verified")
+
   def test_a_step_reopens_a_proved_goal(self):
     other = self.session.program(SRC.replace("mul i32 %0, 2", "add i32 %0, %0"))
     self.session.result("check", {"effect": "proved", "gid": "g1"})
