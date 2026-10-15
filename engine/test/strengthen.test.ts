@@ -7,7 +7,7 @@
 // are made and of what kind.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CheckOutcome, CheckResult } from "../core/drivers/alive2.ts";
 import { type Attrs, Llops, type Predicate } from "../core/drivers/llops.ts";
@@ -22,12 +22,19 @@ import { explainCallerRefusal, Strengthen } from "../core/state/strengthen.ts";
 import type { Effect, Entry, Event } from "../core/state/trajectory.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
+/** How a query is answered when queries are asked at once, so in no set order. */
+type Answer = (src: string, tgt: string) => CheckOutcome | Promise<CheckOutcome>;
+
+/** Answers in the order the test lined up, or by what each query asks. */
 class FakeChecker {
   readonly calls: { src: string; tgt: string }[] = [];
-  constructor(private outcomes: CheckOutcome[]) {}
+  constructor(private outcomes: CheckOutcome[] | Answer) {}
   async check(src: string, tgt: string): Promise<CheckResult> {
     this.calls.push({ src, tgt });
-    const outcome = this.outcomes.shift() ?? "unknown";
+    const outcome =
+      typeof this.outcomes === "function"
+        ? await this.outcomes(src, tgt)
+        : (this.outcomes.shift() ?? "unknown");
     return {
       outcome,
       detail: outcome === "incorrect" ? "ERROR: Value mismatch" : "",
@@ -324,13 +331,22 @@ describe.skipIf(!built)("strengthening a loop", () => {
 /** That i is 0, which holds where the loop is entered and no iteration keeps. */
 const AT_ZERO = { op: "eq" as const, lhs: "!0", rhs: 0 };
 
+/** Whether a query enforces the fact whose IR holds `text`, which its src then lacks. */
+function enforces(text: string, src: string, tgt: string): boolean {
+  return tgt.split(text).length > src.split(text).length;
+}
+
+/** Whether a query asks about the calls of a loop's hypothesis. */
+function atHypothesis(tgt: string): boolean {
+  return tgt.includes("@outlined_g3.ih(");
+}
+
 describe.skipIf(!built)("previewing a strengthen", () => {
   test("drops a fact that holds on entry but that an iteration does not keep", async () => {
     // Each fact is asked alone at the outer's call, then at the hypothesis's.
-    const checker = new FakeChecker([
-      ...["correct", "correct", "correct"],
-      ...["correct", "correct", "incorrect"],
-    ] as CheckOutcome[]);
+    const checker = new FakeChecker((src, tgt) =>
+      atHypothesis(tgt) && enforces("icmp eq", src, tgt) ? "incorrect" : "correct",
+    );
     const tree = await detached();
     const result = await strengthening(checker).preview(tree, "g1", {
       param_attrs: { 1: { noundef: true } },
@@ -340,8 +356,31 @@ describe.skipIf(!built)("previewing a strengthen", () => {
       kind: "preview",
       holds: { param_attrs: { 1: { noundef: true } }, predicates: WITHIN },
     });
-    const asked = checker.calls.map((call) => call.tgt.includes("@outlined_g3.ih("));
+    const asked = checker.calls.map((call) => atHypothesis(call.tgt));
     expect(asked).toEqual([false, false, false, true, true, true]);
+  });
+
+  test("asks its facts at once, up to one per core", async () => {
+    // No answer comes until every query that may run at once is asked, which
+    // never happens if one waits for another's answer.
+    const together = Math.min(3, availableParallelism());
+    let asked = 0;
+    let allAsked = () => {};
+    const gathered = new Promise<void>((resolve) => {
+      allAsked = resolve;
+    });
+    const checker = new FakeChecker(async (): Promise<CheckOutcome> => {
+      if (++asked === together) allAsked();
+      await gathered;
+      return "correct";
+    });
+    const contract = {
+      param_attrs: { 0: { noundef: true }, 1: { noundef: true } },
+      predicates: WITHIN,
+    };
+    const result = await strengthening(checker).preview(await cutTwice(), "g1", contract);
+    expect(result).toEqual({ kind: "preview", holds: contract });
+    expect(checker.calls).toHaveLength(3);
   });
 
   test("drops a noalias fact without asking, since alive2 ignores it", async () => {
@@ -354,7 +393,9 @@ describe.skipIf(!built)("previewing a strengthen", () => {
   });
 
   test("assumes in the iteration only the facts that held on entry", async () => {
-    const checker = new FakeChecker(["incorrect", "correct", "correct"]);
+    const checker = new FakeChecker((src, tgt) =>
+      enforces("icmp ule", src, tgt) ? "incorrect" : "correct",
+    );
     const tree = await detached();
     const result = await strengthening(checker).preview(tree, "g1", {
       predicates: [...WITHIN, AT_ZERO],

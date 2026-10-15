@@ -51,6 +51,7 @@
 // with the parameter facts in the callee's src, lands in the callee's chain
 // right after the claim; the tgt's calls of the hypothesis take the same after it.
 // The callee takes no function attribute: induction cannot prove willreturn.
+import { availableParallelism } from "node:os";
 import { type CheckResult, timedOut } from "../drivers/alive2.ts";
 import type { Assertion, Attrs, Llops, Predicate } from "../drivers/llops.ts";
 import { applyEffect, child, type Goal, head, interposed, type Side, type Tree } from "./goals.ts";
@@ -369,9 +370,7 @@ export class Strengthen {
     if ("reason" in halves) return { kind: "refused", reason: halves.reason };
     const { outer, callee, name, hypothesis } = halves;
     const caller = this.store.get(head(outer, "src"));
-    const entering: Assertion[] = [];
-    for (const fact of assertionsOf(contract))
-      if (await this.holdsAt(caller, name, fact)) entering.push(fact);
+    const entering = await this.holding(caller, name, assertionsOf(contract));
     if (!hypothesis || entering.length === 0)
       return { kind: "preview", holds: contractOf(entering) };
     const entered = await this.materialize(
@@ -380,9 +379,18 @@ export class Strengthen {
       contractOf(entering),
     );
     if (typeof entered !== "string") return { kind: "refused", reason: entered.reason };
-    const kept: Assertion[] = [];
-    for (const fact of entering) if (await this.holdsAt(entered, hypothesis, fact)) kept.push(fact);
+    const kept = await this.holding(entered, hypothesis, entering);
     return { kind: "preview", holds: contractOf(kept) };
+  }
+
+  /**
+   * The `facts` that hold at each call of `fn` in `module`, in their order.
+   * Each is a whole-function query that keeps one core busy, so they are
+   * asked up to one per core at a time rather than one after another.
+   */
+  private async holding(module: string, fn: string, facts: Assertion[]) {
+    const holds = await concurrently(facts, (fact) => this.holdsAt(module, fn, fact));
+    return facts.filter((_, i) => holds[i]);
   }
 
   /** The two goals split goal `gid` left, or why its interface can no longer change. */
@@ -630,6 +638,21 @@ function contractOf(facts: Assertion[]): StrengthenContract {
     ...(Object.keys(paramAttrs).length > 0 ? { param_attrs: paramAttrs } : {}),
     ...(predicates.length > 0 ? { predicates } : {}),
   };
+}
+
+/** `each` of `items`, up to one per core at a time, answered in the items' order. */
+async function concurrently<T, R>(items: T[], each: (item: T) => Promise<R>): Promise<R[]> {
+  const answers: R[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      answers[i] = await each(items[i] as T);
+    }
+  };
+  const workers = Math.min(availableParallelism(), items.length);
+  await Promise.all(Array.from({ length: workers }, worker));
+  return answers;
 }
 
 /** The parameters a predicate names as `!N`. */
