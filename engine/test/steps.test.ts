@@ -1020,4 +1020,23 @@ describe("refinementCheck", () => {
     await steps.refinementCheck(SRC, TGT, DEFAULT_TIMEOUTS.checkCapMs * 5);
     expect(checker.calls[1]?.timeoutMs).toBe(DEFAULT_TIMEOUTS.checkCapMs);
   });
+
+  test("asks a question it has a proof or a counterexample for only once", async () => {
+    const checker = new FakeChecker(["incorrect", "correct"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const first = await steps.refinementCheck(LOOP, LATE, 1000, 2);
+    // A smaller budget asks the same question, so it gets the same answer.
+    expect(await steps.refinementCheck(LOOP, LATE, 100, 2)).toEqual(first);
+    // Another unroll factor is another question.
+    expect((await steps.refinementCheck(LOOP, LATE, 1000, 4)).outcome).toBe("correct");
+    expect(checker.calls).toHaveLength(2);
+  });
+
+  test("asks again what timed out, since more time may settle it", async () => {
+    const checker = new FakeChecker(["unknown", "correct"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    await steps.refinementCheck(SRC, TGT);
+    expect((await steps.refinementCheck(SRC, TGT)).outcome).toBe("correct");
+    expect(checker.calls).toHaveLength(2);
+  });
 });

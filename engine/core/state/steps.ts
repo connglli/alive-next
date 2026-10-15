@@ -270,7 +270,8 @@ export interface CheckGoalResult {
 }
 
 export class Steps {
-  private readonly history = new Map<string, CheckHistoryEntry>();
+  /** alive2's last answer to each question it was asked. */
+  private readonly history = new Map<string, CheckResult>();
   private readonly looping = new Map<Hash, boolean>();
 
   constructor(
@@ -313,15 +314,12 @@ export class Steps {
         ),
         effects: [],
       };
-    const key = historyKey(srcHash, tgtHash, loops ? unroll : undefined);
-    const prior = this.history.get(key);
-
     const askedMs = timeoutMs ?? this.timeouts.checkDefaultMs;
     const budgetMs = this.capped(askedMs);
     const options = { timeoutMs: budgetMs, ...(loops ? { unroll } : {}) };
+    const prior = this.history.get(question(pair, options.unroll));
     const check = await this.alive2(pair, options);
-    const outcome = loops && check.outcome === "correct" ? "unknown" : goalOutcome(check.outcome);
-    this.history.set(key, { outcome, budgetMs: check.invocation.timeoutMs, ms: check.ms });
+    const outcome = goalOutcome(check.outcome, loops);
 
     const result: CheckGoalResult = {
       outcome,
@@ -335,7 +333,12 @@ export class Steps {
             ? [{ effect: "refuted", gid }]
             : [],
     };
-    if (prior) result.prior = prior;
+    if (prior)
+      result.prior = {
+        outcome: goalOutcome(prior.outcome, loops),
+        budgetMs: prior.invocation.timeoutMs,
+        ms: prior.ms,
+      };
     if (askedMs > budgetMs) result.cappedFromMs = askedMs;
     return result;
   }
@@ -650,14 +653,8 @@ export class Steps {
       effects.push({ effect: "proved", gid, by: free.by });
       return undefined;
     }
-    const eagerKey = historyKey(eagerSrcHash, eagerTgtHash);
     const asked = await this.alive2(pair, { timeoutMs: this.timeouts.eagerCheckMs });
     const eager = free ? unsolved(asked, `the new pair ${free.why}`) : asked;
-    this.history.set(eagerKey, {
-      outcome: goalOutcome(eager.outcome),
-      budgetMs: eager.invocation.timeoutMs,
-      ms: eager.ms,
-    });
     if (eager.outcome === "correct") effects.push({ effect: "proved", gid, by: "alive2" });
     return eager;
   }
@@ -776,15 +773,15 @@ export class Steps {
     if (pair.src === pair.tgt) return unasked("the two sides are the same program", "correct");
     const cyclic = (await this.loops(pair.src)) || (await this.loops(pair.tgt));
     if (cyclic && options.unroll === undefined) return unasked(LOOPS);
-    // The no-`undef` model: every query is asked with `--disable-undef-input`.
-    const unroll =
-      options.unroll === undefined
-        ? []
-        : [`--src-unroll=${options.unroll}`, `--tgt-unroll=${options.unroll}`];
-    return this.checker.check(pair.src, pair.tgt, {
+    const key = question(pair, options.unroll);
+    const known = this.history.get(key);
+    if (known?.outcome === "correct" || known?.outcome === "incorrect") return known;
+    const check = await this.checker.check(pair.src, pair.tgt, {
       timeoutMs: options.timeoutMs,
-      flags: ["--disable-undef-input", ...unroll],
+      flags: flagsFor(options.unroll),
     });
+    this.history.set(key, check);
+    return check;
   }
 
   /** Whether a program loops, as `llops validate` says. */
@@ -832,8 +829,8 @@ export class Steps {
 }
 
 /** What a check's answer says about the goal it was asked about. */
-function goalOutcome(outcome: CheckOutcome): CheckGoalResult["outcome"] {
-  if (outcome === "correct") return "proved";
+function goalOutcome(outcome: CheckOutcome, loops = false): CheckGoalResult["outcome"] {
+  if (outcome === "correct") return loops ? "unknown" : "proved";
   return outcome === "incorrect" ? "refuted" : "unknown";
 }
 
@@ -867,6 +864,13 @@ function unasked(detail: string, outcome: CheckOutcome = "error"): CheckResult {
   return { outcome, detail, invocation, stdout: "", ms: 0 };
 }
 
-function historyKey(src: Hash, tgt: Hash, unroll?: number): string {
-  return unroll === undefined ? `${src}\0${tgt}` : `${src}\0${tgt}\0${unroll}`;
+/** The flags every query is asked with: the no-`undef` model and any unroll factor. */
+function flagsFor(unroll?: number): string[] {
+  if (unroll === undefined) return ["--disable-undef-input"];
+  return ["--disable-undef-input", `--src-unroll=${unroll}`, `--tgt-unroll=${unroll}`];
+}
+
+/** A question to alive2 as `history` keeps it: the two programs and the flags. */
+function question(pair: { src: string; tgt: string }, unroll?: number): string {
+  return [sha256(pair.src), sha256(pair.tgt), ...flagsFor(unroll)].join("\0");
 }
