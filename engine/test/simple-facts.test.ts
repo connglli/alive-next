@@ -53,6 +53,30 @@ entry:
     });
   });
 
+  test("treat a value a branch keeps from poison as noundef, in the range the branch allows", async () => {
+    // Branching on %c is undefined behavior when %j is poison, so %j cannot be
+    // poison at %d.
+    const module = `define i32 @f(i32 %j) {
+entry:
+  %c = icmp sgt i32 %j, -1
+  br i1 %c, label %then, label %exit
+
+then:
+  %d = add i32 %j, 1
+  ret i32 %d
+
+exit:
+  ret i32 0
+}
+`;
+    expect(await factsAt(llops, module, "%d", ["%j"])).toEqual({
+      "%j": { noundef: true, range: { min: 0, max: -2147483648 } },
+    });
+    const cut = await cutFacts(llops, module, "%d", ["%j"]);
+    expect(cut.param_attrs).toEqual({ 0: { noundef: true } });
+    expect(cut.predicates).toContainEqual({ op: "sge", lhs: "!0", rhs: 0 });
+  });
+
   test("a range that reaches the top of its type wraps, and one too wide to send is left out", async () => {
     const module = `define i64 @f(i8 noundef %x, i64 noundef %y) {
 entry:
