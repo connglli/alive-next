@@ -8,7 +8,15 @@
 // proves, the kernel replays.
 import type { Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
-import { type Assumed, balancedPoints, beforePoints, cut, cutLoop, quota } from "./cuts.ts";
+import {
+  balancedPoints,
+  beforePoints,
+  cut,
+  cutLoop,
+  type Learned,
+  learning,
+  quota,
+} from "./cuts.ts";
 import { strengthenAgainst } from "./facts.ts";
 import type { Limits } from "./limits.ts";
 import { peel } from "./peel.ts";
@@ -26,8 +34,8 @@ interface Run {
   eagerMs: number;
   /** The budget of a goal's last check, after its cuts: the largest a check may have. */
   capMs: number;
-  /** The predicates each goal assumes at its entry. */
-  assumed: Assumed;
+  /** What the run learns at its cuts. */
+  learned: Learned;
 }
 
 /** How many cuts a goal, and the goals its cuts leave, may still make. */
@@ -64,7 +72,7 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   const { root, budgets } = await session.status();
   if ((await session.check(root, limits.rootMs)).outcome !== "unknown") return session.verdict;
   const [eagerMs, capMs] = [budgets.eagerCheckMs, budgets.checkCapMs];
-  const run: Run = { session, llops, limits, eagerMs, capMs, assumed: new Map() };
+  const run: Run = { session, llops, limits, eagerMs, capMs, learned: learning() };
   await unrolling(session, llops, root, limits.counterexampleMs);
   await dropAttrs(session, llops, root);
   const { src, tgt } = await session.show(root);
@@ -122,7 +130,8 @@ async function repair(run: Run, agenda: Goal[], g: Goal, detail: string) {
   for (;;) {
     const landed = await strengthenAgainst(run.session, g.gid, cex);
     if (landed.length === 0) break;
-    run.assumed.set(g.gid, [...(run.assumed.get(g.gid) ?? []), ...landed]);
+    const { assumed } = run.learned;
+    assumed.set(g.gid, [...(assumed.get(g.gid) ?? []), ...landed]);
     await requeue(run, agenda, g);
     const { outcome, check } = await run.session.check(g.gid, run.eagerMs);
     if (outcome === "proved") agenda.pop();
@@ -210,8 +219,8 @@ async function* moves(
   yield checking(run, gid, run.eagerMs);
   const [src, tgt] = await bodies(session, llops, gid);
   const at = (point: [string, string]) =>
-    halves(run, cuts, () => cut(session, llops, gid, limits, ...point, run.assumed));
-  yield halves(run, cuts, () => cutLoop(session, llops, gid, limits, run.assumed));
+    halves(run, cuts, () => cut(session, llops, gid, limits, ...point, run.learned));
+  yield halves(run, cuts, () => cutLoop(session, llops, gid, limits, run.learned));
   for (const point of beforePoints(src, tgt)) yield at(point);
   if (peelable) yield peeled(run, gid, cuts);
   for (const point of balancedPoints(src, tgt)) yield at(point);
@@ -253,7 +262,7 @@ function peeled(run: Run, gid: string, cuts: Cuts): Move {
     const { session, llops, limits } = run;
     if (cuts.left <= 0) return NONE;
     const [region] = regions(...(await bodies(session, llops, gid)));
-    const made = region && (await peel(session, llops, gid, limits, region, run.assumed));
+    const made = region && (await peel(session, llops, gid, limits, region, run.learned));
     if (!made || made.goals.length < 2) return NONE;
     const peelable = (id: string) => id !== made.region;
     const goals = made.goals.map((id) => goal(run, id, { cuts, peelable: peelable(id) }));

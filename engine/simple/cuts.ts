@@ -10,6 +10,7 @@
 import type { Instruction, Llops, OutlineParam, Predicate } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { SplitResult } from "../core/state/splits.ts";
+import type { StrengthenContract } from "../core/state/strengthen.ts";
 import { cutFacts, passedOn, predicatesAt, strengthenCut, union } from "./facts.ts";
 import { fillCut } from "./fill.ts";
 import type { Limits } from "./limits.ts";
@@ -66,8 +67,18 @@ export function firstOwn(body: Instruction[]): number {
   return own < 0 ? body.length : own;
 }
 
-/** The predicates each goal assumes at its entry, by goal. */
-export type Assumed = Map<string, Predicate[]>;
+/** What a run learns at its cuts, for the cuts after them. */
+export interface Learned {
+  /** The predicates each goal assumes at its entry, by goal. */
+  assumed: Map<string, Predicate[]>;
+  /** The contract the last cut of a loop landed, by the types of the values it passes. */
+  loops: Map<string, StrengthenContract>;
+}
+
+/** What a run knows before its first cut. */
+export function learning(): Learned {
+  return { assumed: new Map(), loops: new Map() };
+}
 
 /** One cut of goal `gid`, or nothing when the framework refuses it or a value has no match. */
 export async function cut(
@@ -77,7 +88,7 @@ export async function cut(
   limits: Limits,
   srcCut: string,
   tgtCut: string,
-  assumed: Assumed = new Map(),
+  learned: Learned = learning(),
 ) {
   const preview = await session.splitPreview(gid, srcCut, tgtCut);
   if (preview.kind !== "preview") return undefined;
@@ -102,11 +113,11 @@ export async function cut(
     await unfoldToMatch(session, llops, split, sides, limits.unfolds);
   }
   // The outer keeps the goal's entry, so it assumes what the goal assumes.
-  const inherited = assumed.get(gid) ?? [];
-  assumed.set(split.children.outer, inherited);
+  const inherited = learned.assumed.get(gid) ?? [];
+  learned.assumed.set(split.children.outer, inherited);
   if (limits.facts) {
-    const landed = await strengthenSplit(session, llops, gid, split, sides, inherited);
-    assumed.set(split.children.callee, landed);
+    const landed = await strengthenSplit(session, llops, gid, split, sides, learned);
+    learned.assumed.set(split.children.callee, landed);
   }
   return split.children;
 }
@@ -151,7 +162,7 @@ async function strengthenSplit(
   gid: string,
   split: Extract<SplitResult, { kind: "split" }>,
   [mine, theirs]: [Side, Side],
-  inherited: Predicate[],
+  { assumed, loops }: Learned,
 ) {
   const lives = split.params.map((param) => param.live);
   const facts = await cutFacts(llops, mine.module, mine.point, lives);
@@ -161,10 +172,14 @@ async function strengthenSplit(
   // At a loop's header, what the tgt knows is a guess the src's iteration may keep too.
   const known = loop ? await predicatesAt(llops, theirs) : [];
   const guesses = loop ? union(guessInvariants(split.params), { predicates: known }) : {};
-  const own = { predicates: passedOn(inherited, lives) };
+  const own = { predicates: passedOn(assumed.get(gid) ?? [], lives) };
   const candidates = union(guesses, facts, relations, own);
-  if (loop) return strengthenLoop(session, gid, candidates);
-  return strengthenCut(session, gid, candidates);
+  if (!loop) return strengthenCut(session, gid, candidates);
+  // A stage walk cuts the same loop again in each step goal.
+  const key = types.join("\0");
+  const landed = await strengthenLoop(session, gid, candidates, loops.get(key));
+  if (landed) loops.set(key, landed);
+  return landed?.predicates ?? [];
 }
 
 /**
@@ -182,10 +197,10 @@ export async function cutLoop(
   llops: Llops,
   gid: string,
   limits: Limits,
-  assumed?: Assumed,
+  learned?: Learned,
 ) {
   const at = loopCut(...(await bodies(session, llops, gid)));
-  return at ? cut(session, llops, gid, limits, ...at, assumed) : undefined;
+  return at ? cut(session, llops, gid, limits, ...at, learned) : undefined;
 }
 
 /**
