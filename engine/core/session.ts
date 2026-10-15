@@ -62,7 +62,14 @@ import {
   type StrengthenPreview,
   type StrengthenResult,
 } from "./state/strengthen.ts";
-import { type Effect, type Entry, type Event, type Hash, Trajectory } from "./state/trajectory.ts";
+import {
+  type Effect,
+  type Entry,
+  type Event,
+  type Hash,
+  type ToolResultEvent,
+  Trajectory,
+} from "./state/trajectory.ts";
 import {
   type CommitOptions,
   type EditingRefusal,
@@ -686,20 +693,31 @@ export class Session {
     written: (result: T) => unknown = (result) => result,
   ): Promise<T> {
     const started = Date.now();
-    const result = await move(this.tree);
+    let result: T;
+    try {
+      result = await move(this.tree);
+    } catch (thrown) {
+      // A move that throws changed nothing, and is still a move the log keeps.
+      const error = thrown instanceof Error ? thrown.message : String(thrown);
+      this.logged(tool, args, { effects: [], result: { error }, ms: Date.now() - started });
+      throw thrown;
+    }
+    // A move that changed the tree says so in an `effects` field, and one
+    // that reads or refuses has none, which is what this asks each result.
+    const effects = (result as { effects?: Effect[] }).effects ?? [];
+    this.logged(tool, args, { effects, result: written(result), ms: Date.now() - started });
+    return result;
+  }
+
+  /** The two lines that record one move: its call, and what it answered. */
+  private logged(
+    tool: string,
+    args: unknown,
+    answer: Pick<ToolResultEvent, "effects" | "result" | "ms">,
+  ): void {
     const id = `t${++this.calls}`;
     this.append({ kind: "tool_call", id, tool, args });
-    this.append({
-      kind: "tool_result",
-      id,
-      tool,
-      // A move that changed the tree says so in an `effects` field, and one
-      // that reads or refuses has none, which is what this asks each result.
-      effects: (result as { effects?: Effect[] }).effects ?? [],
-      result: written(result),
-      ms: Date.now() - started,
-    });
-    return result;
+    this.append({ kind: "tool_result", id, tool, ...answer });
   }
 
   private append(event: Event): void {

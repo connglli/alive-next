@@ -168,8 +168,8 @@ export interface ToolResultEvent {
   /**
    * What it did to the tree, in order, and empty for a tool that only reads.
    * A list rather than one effect because a tool is one move the agent made:
-   * strengthen lands four records and may discharge two goals, and splitting
-   * that across four lines would lose which move they came from.
+   * strengthen lands several records and may discharge two goals, and splitting
+   * that across lines would lose which move they came from.
    */
   effects?: Effect[];
   result: unknown;

@@ -177,6 +177,21 @@ describe.skipIf(!built)("reading a session", () => {
     expect(result.effects).toEqual([]);
   });
 
+  test("the log keeps a move that throws, with what it threw", async () => {
+    const run = await session();
+    const editing = run.edit({ op: "erase", v: "%2" });
+    await expect(editing).rejects.toThrow("no transaction is open");
+
+    const [call, result] = log(run).slice(-2);
+    expect(call).toMatchObject({ kind: "tool_call", tool: "tx_edit" });
+    expect(result).toMatchObject({
+      kind: "tool_result",
+      tool: "tx_edit",
+      effects: [],
+      result: { error: "no transaction is open" },
+    });
+  });
+
   test("status is the tree, with the transaction when one is open", async () => {
     const run = await session();
     const split = await run.split("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
