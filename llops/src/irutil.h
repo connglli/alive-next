@@ -151,13 +151,20 @@ llvm::Type *passedType(llvm::Value &v);
 // The ascending positions a request's `slots` names among `count` parameters, or nothing.
 std::optional<std::vector<unsigned>> slotParams(const llvm::json::Object &args, unsigned count);
 
-// The loads right before a call that pass it private slots' contents at `slots`.
+// The loads right before a call of private slots at `slots`: passed, or unused for poison.
 std::optional<std::vector<llvm::LoadInst *>> slotLoads(llvm::CallInst &call,
                                                        llvm::ArrayRef<unsigned> slots);
 
 // The stores that open a callee by copying its `slots` parameters into private slots.
 std::optional<std::vector<llvm::StoreInst *>> slotCopies(llvm::Function &callee,
                                                          llvm::ArrayRef<unsigned> slots);
+
+// Whether every path from a copying store stores into its slot again before a used load.
+bool storedBeforeRead(llvm::StoreInst &copying);
+
+// Whether each copy a call passes poison for is stored into again before it is read.
+bool deadSlotsUnread(llvm::CallInst &call, llvm::ArrayRef<unsigned> slots,
+                     llvm::ArrayRef<llvm::StoreInst *> stores);
 
 // Each copy mapped back to its slot and skipped with its store, unless the two differ.
 bool slotsBack(llvm::ArrayRef<llvm::LoadInst *> loads, llvm::ArrayRef<llvm::StoreInst *> stores,

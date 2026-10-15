@@ -545,6 +545,7 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
   // The outer's slots take the place of the callee's copies of what they held.
   llvm::SmallPtrSet<llvm::Instruction *, 8> copies;
   std::vector<llvm::Value *> outerSlots;
+  std::vector<llvm::StoreInst *> copying;
   if (!slots->empty()) {
     llvm::CallInst *first = nullptr;
     for (auto &Q : *F)
@@ -557,6 +558,7 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
                                     "as a cut passes one");
     for (auto *load : *loads)
       outerSlots.push_back(load->getPointerOperand());
+    copying = *stores;
   }
 
   // The callee's blocks come back, its entry first, with its parameters as
@@ -619,7 +621,7 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
     for (unsigned k = 0; loads && k < loads->size(); ++k)
       if ((*loads)[k]->getPointerOperand() != outerSlots[k])
         loads = std::nullopt;
-    if (!loads)
+    if (!loads || !deadSlotsUnread(*call, *slots, copying))
       return errResponse("invalid", "the call of '@" + call->getCalledFunction()->getName().str() +
                                         "' does not pass the slots as a cut passes them");
     for (Edge e : edgesInto(*F, Q)) {

@@ -2472,6 +2472,88 @@ entry:
 """
 
 
+# A loop whose body stores into slot %t before it reads it.
+DEAD_LOOP = """define i32 @f(i32 %n) {
+entry:
+  %i = alloca i32, align 4
+  %t = alloca i32, align 4
+  store i32 0, ptr %i, align 4
+  br label %loop
+
+loop:
+  %i0 = load i32, ptr %i, align 4
+  %c = icmp slt i32 %i0, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %i1 = load i32, ptr %i, align 4
+  %d = mul i32 %i1, 2
+  store i32 %d, ptr %t, align 4
+  %t1 = load i32, ptr %t, align 4
+  %i2 = add i32 %i1, %t1
+  store i32 %i2, ptr %i, align 4
+  br label %loop
+
+exit:
+  %r = load i32, ptr %i, align 4
+  ret i32 %r
+}
+"""
+
+# DEAD_LOOP detached at %loop, passing poison for %t.
+DEAD_LOOP_OUTER = """define i32 @f(i32 %n) {
+entry:
+  %i = alloca i32, align 4
+  %t = alloca i32, align 4
+  store i32 0, ptr %i, align 4
+  br label %call
+
+call:
+  %a = load i32, ptr %i, align 4
+  %b = load i32, ptr %t, align 4
+  %k = call i32 @k(i32 %a, i32 poison, i32 %n)
+  ret i32 %k
+}
+
+declare i32 @k(i32, i32, i32)
+"""
+
+DEAD_LOOP_CALLEE = """declare i32 @f(i32)
+
+define i32 @k(i32 %p0, i32 %p1, i32 %p2) {
+loop:
+  %i = alloca i32, align 4
+  %t = alloca i32, align 4
+  store i32 %p0, ptr %i, align 4
+  store i32 %p1, ptr %t, align 4
+  %i0 = load i32, ptr %i, align 4
+  %c = icmp slt i32 %i0, %p2
+  br i1 %c, label %body, label %exit
+
+body:
+  %i1 = load i32, ptr %i, align 4
+  %d = mul i32 %i1, 2
+  store i32 %d, ptr %t, align 4
+  %t1 = load i32, ptr %t, align 4
+  %i2 = add i32 %i1, %t1
+  store i32 %i2, ptr %i, align 4
+  br label %back
+
+exit:
+  %r = load i32, ptr %i, align 4
+  ret i32 %r
+
+back:
+  %a = load i32, ptr %i, align 4
+  %b = load i32, ptr %t, align 4
+  %h = call i32 @k.ih(i32 %a, i32 poison, i32 %p2)
+  ret i32 %h
+}
+
+declare i32 @k.ih(i32, i32, i32)
+"""
+
+
 class TestSlots(Case):
   def reattach(self, outer=SLOT_LOOP_OUTER, callee=SLOT_LOOP_CALLEE, slots=(0, 1), phis=()):
     request = {"outer": outer, "callee": callee, "callee_name": "k", "hypothesis": "k.ih"}
@@ -2554,6 +2636,89 @@ class TestSlots(Case):
   def test_a_window_holds_no_slot(self):
     outer = SLOT_F_OUTER.replace("  ret i32 %1", "  %2 = add i32 %1, 0\n  ret i32 %2")
     self.bad(self.inline(outer), "frame_dependent")
+
+  def test_a_slot_whose_value_the_callee_overwrites_first_comes_back(self):
+    back = self.good(self.reattach(DEAD_LOOP_OUTER, DEAD_LOOP_CALLEE))["module"]
+    self.assertEqual(self.canon(back), self.canon(DEAD_LOOP))
+    # The callee stores into %s before it reads it.
+    dead = SLOT_F_OUTER.replace("%1 = call i32 @g(i32 %0,", "%1 = call i32 @g(i32 poison,")
+    back = self.good(self.inline(dead))["module"]
+    self.assertEqual(self.canon(back), self.canon(SLOT_F))
+
+  def test_a_slot_passed_as_poison_that_the_callee_reads_first_is_refused(self):
+    head = "  %i0 = load i32, ptr %i, align 4\n"
+    unused = DEAD_LOOP_CALLEE.replace(head, head + "  %t0 = load i32, ptr %t, align 4\n")
+    used = unused.replace("  %c = icmp", "  %u = add i32 %t0, 1\n  %c = icmp")
+    self.bad(self.reattach(DEAD_LOOP_OUTER, used), "invalid")
+    # A read nothing uses is no read, as the loads before the calls are not.
+    self.good(self.reattach(DEAD_LOOP_OUTER, unused))
+    passed = SLOT_F_OUTER.replace("%1 = call i32 @g(i32 %0,", "%1 = call i32 @g(i32 poison,")
+    first = "  %z = load i32, ptr %s, align 4\n  %b = add i32 %z, 1\n"
+    read = SLOT_F_CALLEE.replace("  %b = add i32 %p1, 1\n", first)
+    self.bad(self.inline(passed, read), "invalid")
+
+  def test_a_slot_stored_on_every_path_before_it_is_read_comes_back(self):
+    # Each branch stores, and the join reads, as a retval slot does.
+    whole = """define i32 @f(i1 %c) {
+entry:
+  %s = alloca i32, align 4
+  br label %cut
+
+cut:
+  br i1 %c, label %a, label %b
+
+a:
+  store i32 1, ptr %s, align 4
+  br label %join
+
+b:
+  store i32 2, ptr %s, align 4
+  br label %join
+
+join:
+  %r = load i32, ptr %s, align 4
+  ret i32 %r
+}
+"""
+    outer = """define i32 @f(i1 %c) {
+entry:
+  %s = alloca i32, align 4
+  br label %call
+
+call:
+  %l = load i32, ptr %s, align 4
+  %r = call i32 @g(i32 poison, i1 %c)
+  ret i32 %r
+}
+
+declare i32 @g(i32, i1)
+"""
+    callee = """declare i32 @f(i1)
+
+define i32 @g(i32 %p0, i1 %p1) {
+cut:
+  %s = alloca i32, align 4
+  store i32 %p0, ptr %s, align 4
+  br i1 %p1, label %a, label %b
+
+a:
+  store i32 1, ptr %s, align 4
+  br label %join
+
+b:
+  store i32 2, ptr %s, align 4
+  br label %join
+
+join:
+  %r = load i32, ptr %s, align 4
+  ret i32 %r
+}
+"""
+    request = {"outer": outer, "callee": callee, "callee_name": "g", "phis": [], "slots": [0]}
+    back = self.good(run("reattach", request))["module"]
+    self.assertEqual(self.canon(back), self.canon(whole))
+    one = callee.replace("  store i32 2, ptr %s, align 4\n", "")
+    self.bad(run("reattach", {**request, "callee": one}), "invalid")
 
   def test_a_cut_passes_what_a_private_slot_holds(self):
     request = {"module": SLOT_LOOP, "side": "src", "block": "%loop", "callee": "k"}

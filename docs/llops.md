@@ -188,7 +188,7 @@ A window may hold memory. Its pair is then asked about an arbitrary entry state,
 
 Request `{ "outer": ..., "callee": ..., "callee_name": "g" }`, optionally with `"slots": [ 0 ]`, response `{ "ok": true, "module": ... }`.
 
-The call is replaced by the callee's body, and the declaration, which nothing else may use, is dropped. When the callee answers with a struct, each part goes back to its uses. For each parameter `slots` names, the outer's slot takes the place of the callee's copy, and the loads and the store that passed it go. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, and so are halves that declare a shared symbol differently or pass a slot otherwise. In each case the rebuilt module would not mean what the halves were checked as. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was.
+The call is replaced by the callee's body, and the declaration, which nothing else may use, is dropped. When the callee answers with a struct, each part goes back to its uses. For each parameter `slots` names, passed loaded, or as `poison` that the callee overwrites unread, the outer's slot takes the place of the callee's copy. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, and so are halves that declare a shared symbol differently or pass a slot otherwise. In each case the rebuilt module would not mean what the halves were checked as. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was.
 
 ## detach
 

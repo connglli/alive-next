@@ -932,5 +932,68 @@ class TestPoisonInput(unittest.TestCase):
     self.assertEqual(false, [])
 
 
+# A cut whose outer passes poison for a slot, naming it by the load before the call.
+DEAD_OUTER = """define i32 @f(i32 %x, i1 %c) {
+entry:
+  %s = alloca i32, align 4
+  %l = load i32, ptr %s, align 4
+  %r = call i32 @g(i32 poison, i32 %x, i1 %c)
+  ret i32 %r
+}
+
+declare i32 @g(i32, i32, i1)
+"""
+
+
+def dead_callee(body: str, first: str = "%p0") -> str:
+  """The callee that copies `first` into a slot of its own, `%s`, and then runs `body`."""
+  return f"""declare i32 @f(i32, i1)
+
+define i32 @g(i32 %p0, i32 %p1, i1 %p2) {{
+entry:
+  %s = alloca i32, align 4
+  store i32 {first}, ptr %s, align 4
+{body}
+}}
+"""
+
+
+# Bodies after the copy, which read what it starts with or not.
+DEAD_BODIES = [
+  "  store i32 %p1, ptr %s, align 4\n  %v = load i32, ptr %s, align 4\n  ret i32 %v",
+  "  %v = load i32, ptr %s, align 4\n  ret i32 %v",
+  "  %u = load i32, ptr %s, align 4\n  store i32 %p1, ptr %s, align 4\n"
+  "  %v = load i32, ptr %s, align 4\n  ret i32 %v",
+  "  %v = load i32, ptr %s, align 4\n  %u = add i32 %v, 1\n  store i32 %p1, ptr %s, align 4\n"
+  "  %w = load i32, ptr %s, align 4\n  ret i32 %w",
+  "  br i1 %p2, label %a, label %b\n\na:\n  store i32 1, ptr %s, align 4\n  br label %j\n\n"
+  "b:\n  store i32 %p1, ptr %s, align 4\n  br label %j\n\nj:\n"
+  "  %v = load i32, ptr %s, align 4\n  ret i32 %v",
+  "  br i1 %p2, label %a, label %j\n\na:\n  store i32 1, ptr %s, align 4\n  br label %j\n\nj:\n"
+  "  %v = load i32, ptr %s, align 4\n  ret i32 %v",
+  "  br i1 %p2, label %a, label %b\n\na:\n  store i32 %p1, ptr %s, align 4\n"
+  "  %v = load i32, ptr %s, align 4\n  ret i32 %v\n\nb:\n  ret i32 0",
+]
+
+
+def unread(body: str) -> tuple[bool, str]:
+  """Whether inline takes the copy as unread, and whether alive2 lets it start as poison."""
+  callee = dead_callee(body)
+  request = {"outer": DEAD_OUTER, "callee": callee, "callee_name": "g", "slots": [0]}
+  return run("inline", request).get("ok", False), alive2(callee, dead_callee(body, "poison"))
+
+
+class TestDeadSlots(unittest.TestCase):
+  def test_inline_takes_as_unread_only_what_alive2_shows_unread(self):
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+      answers = list(pool.map(unread, DEAD_BODIES))
+    # Both verdicts occur, so each is compared.
+    self.assertEqual({taken for taken, _ in answers}, {True, False})
+    for body, (taken, said) in zip(DEAD_BODIES, answers, strict=True):
+      with self.subTest(body=body):
+        if taken:
+          self.assertEqual(said, "correct")
+
+
 if __name__ == "__main__":
   unittest.main(verbosity=2)

@@ -669,8 +669,10 @@ std::optional<std::vector<llvm::LoadInst *>> slotLoads(llvm::CallInst &call,
   for (unsigned k = slots.size(); k-- > 0;) {
     auto *load = llvm::dyn_cast_or_null<llvm::LoadInst>(at->getPrevNode());
     auto *slot = load ? llvm::dyn_cast<llvm::AllocaInst>(load->getPointerOperand()) : nullptr;
-    if (!slot || !load->hasOneUse() || call.getArgOperand(slots[k]) != load ||
-        !privateSlot(*slot) || load->getAlign() > slot->getAlign())
+    llvm::Value *arg = slot ? call.getArgOperand(slots[k]) : nullptr;
+    bool passed = arg == load && load->hasOneUse();
+    bool dead = llvm::isa_and_nonnull<llvm::PoisonValue>(arg) && load->use_empty();
+    if (!(passed || dead) || !privateSlot(*slot) || load->getAlign() > slot->getAlign())
       return std::nullopt;
     loads[k] = load;
     at = load;
@@ -699,6 +701,39 @@ std::optional<std::vector<llvm::StoreInst *>> slotCopies(llvm::Function &callee,
     stores.push_back(store);
   }
   return stores;
+}
+
+bool storedBeforeRead(llvm::StoreInst &copying) {
+  llvm::Value *slot = copying.getPointerOperand();
+  // Blocks a path enters before it stores into the slot again, scanned from their start.
+  llvm::SmallPtrSet<llvm::BasicBlock *, 16> entered;
+  std::vector<llvm::BasicBlock::iterator> todo = {std::next(copying.getIterator())};
+  while (!todo.empty()) {
+    llvm::BasicBlock::iterator at = todo.back();
+    todo.pop_back();
+    llvm::BasicBlock *block = at->getParent();
+    bool stored = false;
+    for (; at != block->end() && !stored; ++at) {
+      auto *load = llvm::dyn_cast<llvm::LoadInst>(&*at);
+      if (load && load->getPointerOperand() == slot && !load->use_empty())
+        return false;
+      auto *store = llvm::dyn_cast<llvm::StoreInst>(&*at);
+      stored = store && store->getPointerOperand() == slot;
+    }
+    if (!stored)
+      for (llvm::BasicBlock *next : llvm::successors(block))
+        if (entered.insert(next).second)
+          todo.push_back(next->begin());
+  }
+  return true;
+}
+
+bool deadSlotsUnread(llvm::CallInst &call, llvm::ArrayRef<unsigned> slots,
+                     llvm::ArrayRef<llvm::StoreInst *> stores) {
+  for (unsigned k = 0; k < slots.size(); ++k)
+    if (llvm::isa<llvm::PoisonValue>(call.getArgOperand(slots[k])) && !storedBeforeRead(*stores[k]))
+      return false;
+  return true;
 }
 
 bool slotsBack(llvm::ArrayRef<llvm::LoadInst *> loads, llvm::ArrayRef<llvm::StoreInst *> stores,

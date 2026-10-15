@@ -352,7 +352,8 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   if (!slots->empty()) {
     auto loads = slotLoads(*call, *slots);
     auto stores = slotCopies(*callee, *slots);
-    if (window || !loads || !stores || !slotsBack(*loads, *stores, vmap, copies))
+    if (window || !loads || !stores || !slotsBack(*loads, *stores, vmap, copies) ||
+        !deadSlotsUnread(*call, *slots, *stores))
       return errResponse("invalid", "'slots' names a parameter that does not carry a slot "
                                     "as a cut passes one");
     passed = std::move(*loads);
