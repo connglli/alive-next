@@ -17,7 +17,7 @@ import { rotated } from "../examples/rotated.ts";
 import { scenario } from "../examples/scenarios.ts";
 import { strchr } from "../examples/strchr.ts";
 import { unfold } from "../examples/unfold.ts";
-import { balancedPoints, beforePoints, cut, cutLoop } from "../simple/cuts.ts";
+import { balancedPoints, beforePoints, cut, cutLoop, learning } from "../simple/cuts.ts";
 import { strengthenCut } from "../simple/facts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { strengthenLoop } from "../simple/loops.ts";
@@ -416,6 +416,23 @@ exit:
     const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
     if (!halves) throw new Error("expected a cut");
     expect(statuses(session, [halves.outer, halves.callee])).toEqual(["proved", "proved"]);
+  }, 120_000);
+
+  test("a second cut of a loop lands what the first landed, with no preview", async () => {
+    const learned = learning();
+    const first = await solved("first", countdown.src, countdown.tgt);
+    await cutLoop(first, llops, "g1", DEFAULT_LIMITS, learned);
+    const second = await solved("second", countdown.src, countdown.tgt);
+    let previews = 0;
+    const preview = second.strengthenPreview.bind(second);
+    second.strengthenPreview = (...args: Parameters<typeof preview>) => {
+      previews += 1;
+      return preview(...args);
+    };
+    const halves = await cutLoop(second, llops, "g1", DEFAULT_LIMITS, learned);
+    if (!halves) throw new Error("expected a cut");
+    expect(previews).toBe(0);
+    expect(statuses(second, [halves.outer, halves.callee])).toEqual(["proved", "proved"]);
   }, 120_000);
 
   test("a loop the tgt unrolled is cut with the src's iteration unfolded", async () => {
