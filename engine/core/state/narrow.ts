@@ -26,6 +26,8 @@ import {
   type Llops,
   type Module,
   type OutlineParam,
+  type OutlineResult,
+  type ParamSpec,
   unoutlinable,
 } from "../drivers/llops.ts";
 import { type Ref, resolveRef } from "../refs.ts";
@@ -265,37 +267,67 @@ async function outlineBoth(
   oldAt: Window,
   newAt: Window,
 ): Promise<Narrowed | NoWindow> {
-  const [was, now] = await Promise.all([
-    llops.outlineWindow(before, oldAt.from, oldAt.to, CALLEE),
-    llops.outlineWindow(after, newAt.from, newAt.to, CALLEE),
-  ]);
-  if (!was.ok) return { why: was.message };
-  if (!now.ok) return { why: now.message };
-  const [oldOuter, newOuter] = await Promise.all([llops.canon(was.outer), llops.canon(now.outer)]);
-  if (!oldOuter.ok) return { why: oldOuter.message };
-  if (!newOuter.ok) return { why: newOuter.message };
-  if (oldOuter.module !== newOuter.module) {
-    const [oldReads, newReads] = [was, now].map((half) => half.params.map((p) => p.live).join(" "));
-    return {
-      why:
-        oldReads === newReads
-          ? "the edit reaches past the window"
-          : `the window reads ${oldReads} before the edit and ${newReads} after`,
-    };
+  let pair = await outlinePair(llops, before, after, oldAt, newAt);
+  if ("why" in pair) return pair;
+  if (pair.oldOuter !== pair.newOuter) {
+    const reads = (half: OutlineResult) => half.params.map((p) => p.live);
+    const [oldReads, newReads] = [reads(pair.was), reads(pair.now)];
+    if (oldReads.join(" ") === newReads.join(" "))
+      return { why: "the edit reaches past the window" };
+    // Halves that read different values share an outer only over all of them.
+    const added = pair.now.params.filter((p) => !oldReads.includes(p.live));
+    const both = [...pair.was.params, ...added].map(({ live, type }) => ({ live, type }));
+    const over = await outlinePair(llops, before, after, oldAt, newAt, both);
+    if ("why" in over) {
+      const said = `${oldReads.join(" ")} before the edit and ${newReads.join(" ")} after`;
+      return { why: `the window reads ${said}` };
+    }
+    if (over.oldOuter !== over.newOuter) return { why: "the edit reaches past the window" };
+    pair = over;
   }
   const back = await Promise.all([
-    putBack(llops, oldOuter.module, was.callee, before),
-    putBack(llops, oldOuter.module, now.callee, after),
+    putBack(llops, pair.oldOuter, pair.was.callee, before),
+    putBack(llops, pair.oldOuter, pair.now.callee, after),
   ]);
   if (back.includes(false)) return { why: "a half does not go back into the outer" };
   return {
-    outer: oldOuter.module,
-    before: was.callee,
-    after: now.callee,
+    outer: pair.oldOuter,
+    before: pair.was.callee,
+    after: pair.now.callee,
     callee: CALLEE,
     at: { before: oldAt, after: newAt },
-    params: was.params,
+    params: pair.was.params,
   };
+}
+
+/** The two halves of a window and the outers they leave, canonical. */
+interface Pair {
+  was: OutlineResult;
+  now: OutlineResult;
+  oldOuter: Module;
+  newOuter: Module;
+}
+
+/** Both sides outlined at the given windows, over `params` when given, and their outers. */
+async function outlinePair(
+  llops: Llops,
+  before: Module,
+  after: Module,
+  oldAt: Window,
+  newAt: Window,
+  params?: ParamSpec[],
+): Promise<Pair | NoWindow> {
+  const [was, now] = await Promise.all([
+    llops.outlineWindow(before, oldAt.from, oldAt.to, CALLEE, params),
+    llops.outlineWindow(after, newAt.from, newAt.to, CALLEE, params),
+  ]);
+  if (!was.ok) return { why: was.message };
+  if (!now.ok) return { why: now.message };
+  const canonical = (half: OutlineResult) => llops.canon(half.outer);
+  const [oldOuter, newOuter] = await Promise.all([canonical(was), canonical(now)]);
+  if (!oldOuter.ok) return { why: oldOuter.message };
+  if (!newOuter.ok) return { why: newOuter.message };
+  return { was, now, oldOuter: oldOuter.module, newOuter: newOuter.module };
 }
 
 /** Whether a half inlined back into the outer is the program it came out of. */

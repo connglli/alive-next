@@ -96,6 +96,16 @@ const LCSSA = LOOP.replace("ret i32 %i", "%r = phi i32 [ %i, %l ]\n  ret i32 %r"
 /** The same loop with attributes its body keeps, since it touches no memory. */
 const KEPT = LOOP.replace("@f(i32 %n) {", "@f(i32 %n) nofree memory(none) {");
 
+/** A value computed twice, which an edit then reads the other copy of. */
+const REREAD = `define i32 @f(i32 noundef %x) {
+entry:
+  %a = and i32 %x, 255
+  %b = and i32 %x, 255
+  %c = add i32 %a, 1
+  ret i32 %c
+}
+`;
+
 /** A loop that makes an odd number in its body, by adding 1 to an even one. */
 const ODD = `define i32 @f(i32 %n) {
 entry:
@@ -212,6 +222,13 @@ async function preconditionedTree() {
       prev: "",
     } as Entry,
   ]);
+}
+
+/** A program as the store keeps it, with its values numbered. */
+async function canon(text: string) {
+  const result = await llops.canon(text);
+  if (!result.ok) throw new Error(result.message);
+  return result.module;
 }
 
 /** The window the pair narrows to, which the preconditioned tests step on. */
@@ -570,6 +587,25 @@ describe("stepping", () => {
     // Both halves of the small pair assume them at their start.
     for (const half of [checker.calls[1]?.src, checker.calls[1]?.tgt])
       expect(half).toContain("@llvm.assume");
+  });
+
+  test("a predicate relates what a window reads before and after an edit", async () => {
+    const was = await canon(REREAD);
+    const now = await canon(REREAD.replace("add i32 %a, 1", "add i32 %b, 1"));
+    const narrowed = await narrow(llops, was, now);
+    if ("why" in narrowed) throw new Error(narrowed.why);
+    const checker = new FakeChecker(["correct", "correct"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const result = await steps.checkStep(await treeOf(was, now), "g1", "src", now, {
+      narrowed,
+      predicates: [{ op: "eq", lhs: "%1", rhs: "%2" }],
+      eager: false,
+    });
+
+    if (result.kind !== "certified") throw new Error("expected the step to land");
+    const step = result.effects[0];
+    if (step?.effect !== "step") throw new Error("expected a step effect");
+    expect(step.window?.predicates).toEqual([{ op: "eq", lhs: "!0", rhs: "!1" }]);
   });
 
   test("a predicate over a value the window does not read is refused", async () => {

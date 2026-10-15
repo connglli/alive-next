@@ -285,11 +285,10 @@ entry:
     });
   });
 
-  test("says what the window reads when the edit changes it", async () => {
-    // The two windows are the same shape in the same place, and still not one
-    // question: the edit changed which value flows in, so the calls disagree
-    // and the outers are not the same program. This is the verification doing
-    // the work rather than the guess.
+  test("narrows an edit that changes what the window reads over both values", async () => {
+    // The two windows are the same shape in the same place, but the edit
+    // changed which value flows in, so their own calls disagree; over both
+    // values, the calls and so the outers are the same program.
     const before = `define i32 @f(i32 %x) {
 entry:
   %h = lshr i32 %x, 4
@@ -299,9 +298,11 @@ entry:
 }
 `;
     const after = before.replace("add i32 %h, 1", "add i32 %g, 1");
-    expect(await narrow(llops, await canon(before), await canon(after))).toEqual({
-      why: "the window reads %1 before the edit and %2 after",
-    });
+    const found = await narrow(llops, await canon(before), await canon(after));
+    if ("why" in found) throw new Error(found.why);
+    expect(found.params.map((p) => p.live)).toEqual(["%1", "%2"]);
+    expect(found.before).toContain("add i32 %p0, 1");
+    expect(found.after).toContain("add i32 %p1, 1");
   });
 
   test("says no window holds a changed return", async () => {

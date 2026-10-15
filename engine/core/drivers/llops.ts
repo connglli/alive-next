@@ -362,8 +362,10 @@ export class Llops {
     from: Ref,
     to: Ref,
     callee: string,
+    params?: ParamSpec[],
   ): Promise<LlopsResult<OutlineResult>> {
-    return this.run("outline", { module, cut: from, to, callee });
+    const given = params ? { params } : {};
+    return this.run("outline", { module, cut: from, to, callee, ...given });
   }
 
   inline(outer: Module, callee: Module, calleeName: string): Promise<LlopsResult<ModuleResult>> {
