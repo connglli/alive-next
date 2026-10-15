@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { inputsOf } from "../simple/refute.ts";
 
 describe("inputs", () => {
-  test("each has its type, and its bits unless it is poison or a pointer", () => {
+  test("each has its type, and its bits or that it is poison", () => {
     const detail = `ERROR: Value mismatch
 
 Example:
@@ -17,7 +17,7 @@ i32 %#3 = #x0000000a (10)
     expect(inputsOf(detail)).toEqual([
       { type: "i32", value: 10n },
       { type: "ptr", value: undefined },
-      { type: "i8", value: undefined },
+      { type: "i8", value: undefined, poison: true },
     ]);
   });
 });

@@ -8,13 +8,14 @@ import type { Session } from "../core/session.ts";
 import { headers } from "./regions.ts";
 import { bodies } from "./windows.ts";
 
-/** An input in alive2's example: its type, its parameter, and its bits. */
-const INPUT = /^(\S+) .*?%#(\d+) = (?:#x([0-9a-f]+))?/;
+/** An input in alive2's example: its type, its parameter, and its bits or poison. */
+const INPUT = /^(\S+) .*?%#(\d+) = (?:#x([0-9a-f]+)|(poison)$)?/;
 
-/** A counterexample's input: its type, and its bits unless poison or a pointer. */
+/** A counterexample's input: its type, and its bits or that it is poison. */
 export interface Input {
   type: string;
   value?: bigint;
+  poison?: boolean;
 }
 
 /** The inputs of alive2's counterexample `detail`, by parameter. */
@@ -22,9 +23,10 @@ export function inputsOf(detail: string): Input[] {
   const inputs: Input[] = [];
   const example = detail.match(/Example:\n([\s\S]*?)\n\n/)?.[1] ?? "";
   for (const line of example.split("\n")) {
-    const [, type, k, hex] = line.match(INPUT) ?? [];
+    const [, type, k, hex, poison] = line.match(INPUT) ?? [];
     const value = hex ? BigInt(`0x${hex}`) : undefined;
-    if (type && k) inputs[Number(k)] = { type, value };
+    if (!type || !k) continue;
+    inputs[Number(k)] = poison ? { type, value, poison: true } : { type, value };
   }
   return inputs;
 }
@@ -53,13 +55,15 @@ export async function refuteFrom(session: Session, gid: string, detail: string) 
   return refuteWith(session, detail);
 }
 
-/** Reports the integer inputs of counterexample `detail`, unrolled `unroll` times. */
+/** Reports counterexample `detail`'s integer or poison inputs, unrolled `unroll` times. */
 async function refuteWith(session: Session, detail: string, unroll?: number) {
   if (!detail.includes("Example:")) return false;
   const args: InputArg[] = [];
   for (const input of [...inputsOf(detail)]) {
-    if (!input || !/^i\d+$/.test(input.type) || input.value === undefined) return false;
-    args.push({ kind: "int", value: `0x${input.value.toString(16)}` });
+    if (input?.poison) args.push({ kind: "poison" });
+    else if (input && /^i\d+$/.test(input.type) && input.value !== undefined)
+      args.push({ kind: "int", value: `0x${input.value.toString(16)}` });
+    else return false;
   }
   return (await session.reportCex(args, unroll)).kind === "refuted";
 }

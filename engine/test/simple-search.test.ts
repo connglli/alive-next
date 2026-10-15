@@ -16,6 +16,7 @@ import { induction } from "../examples/induction.ts";
 import { nested } from "../examples/nested.ts";
 import { unroll } from "../examples/unroll.ts";
 import { DEFAULT_LIMITS, type Limits } from "../simple/limits.ts";
+import { refuteFrom } from "../simple/refute.ts";
 import { search } from "../simple/search.ts";
 import { PAPER, pairs } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
@@ -522,6 +523,17 @@ exit:
     },
     60_000,
   );
+
+  test("reports a goal's counterexample whose input is poison", async () => {
+    // Only a poison %x tells them apart: the tgt then returns poison, and the src 1.
+    const src = "define i32 @f(i32 %x) {\nentry:\n  ret i32 1\n}\n";
+    const same = "  %e = icmp eq i32 %x, %x\n  %r = zext i1 %e to i32\n  ret i32 %r";
+    const session = await start(src, src.replace("  ret i32 1", same), aliveTv);
+    const detail = "ERROR: Target is more poisonous\n\nExample:\ni32 %#0 = poison\n\n";
+    expect(await refuteFrom(session, "g1", detail)).toBe(true);
+    const report = calls(session).find((call) => call.tool === "report_cex");
+    expect(report?.args.input).toEqual([{ kind: "poison" }]);
+  }, 60_000);
 
   test("refutes a pair at the root", async () => {
     const src = "define i32 @f(i32 %x) {\nentry:\n  %r = add i32 %x, 1\n  ret i32 %r\n}\n";
