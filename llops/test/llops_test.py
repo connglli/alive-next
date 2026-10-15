@@ -1839,6 +1839,18 @@ exit:
     )
     self.assertEqual(self.canon(flipped), self.canon(ROTATED))
 
+  def test_a_tgt_whose_phis_come_in_another_order_reattaches(self):
+    i = "  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]\n"
+    j = "  %j = phi i32 [ 0, %entry ], [ %j.next, %loop ]\n"
+    swapped = SWAPPED_LOOP.replace(i + j, j + i)
+    self.assertNotEqual(swapped, SWAPPED_LOOP)
+    src = self.good(self.detach(SWAPPED_LOOP, "%loop", "k"))
+    value_map = {"%i": "%i", "%j": "%j", "%n": "%n"}
+    tgt = self.good(self.detach(swapped, "%loop", "k", params=src["params"], value_map=value_map))
+    self.assertEqual(tgt["phis"], [1, 0])
+    self.reattaches(SWAPPED_LOOP, src, "k")
+    self.reattaches(swapped, tgt, "k")
+
 
 SWAPPED_LOOP = """define i32 @f(i32 %n) {
 entry:

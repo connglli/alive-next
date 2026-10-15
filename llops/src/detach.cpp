@@ -330,25 +330,27 @@ llvm::CallInst *onlyCalls(llvm::BasicBlock &Q, llvm::ArrayRef<llvm::Function *> 
   return call;
 }
 
-// The positions of the parameters that are B's phis.
+// The positions of the parameters that are B's phis, in the order B has them.
 llvm::json::Array phiPositions(llvm::ArrayRef<llvm::Value *> params, llvm::BasicBlock *B) {
   llvm::json::Array positions;
-  for (unsigned i = 0; i < params.size(); ++i)
-    if (auto *phi = llvm::dyn_cast<llvm::PHINode>(params[i]); phi && phi->getParent() == B)
-      positions.push_back(i);
+  for (llvm::PHINode &phi : B->phis())
+    for (unsigned i = 0; i < params.size(); ++i)
+      if (params[i] == &phi)
+        positions.push_back(i);
   return positions;
 }
 
-// Which of `count` parameters `list` names as phis; nothing if it names one out of range.
-std::optional<std::vector<bool>> phiParams(const llvm::json::Array &list, unsigned count) {
-  std::vector<bool> isPhi(count, false);
+// The parameters of `count` that `list` names as phis, in its order; nothing if it
+// names one twice or out of range.
+std::optional<std::vector<unsigned>> phiParams(const llvm::json::Array &list, unsigned count) {
+  std::vector<unsigned> phis;
   for (const auto &entry : list) {
     auto i = entry.getAsInteger();
-    if (!i || *i < 0 || *i >= count)
+    if (!i || *i < 0 || *i >= count || llvm::is_contained(phis, *i))
       return std::nullopt;
-    isPhi[*i] = true;
+    phis.push_back(*i);
   }
-  return isPhi;
+  return phis;
 }
 
 // Move `region` into `name` and answer with the two halves; `joined` takes back the call.
@@ -487,11 +489,12 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
                                             "' as the callee defines it");
   if (auto d = frameDependence(*K, /*window=*/false))
     return errResponse(d->code, d->message);
-  auto isPhi = phiParams(*phiList, K->arg_size());
-  if (!isPhi)
+  auto listed = phiParams(*phiList, K->arg_size());
+  if (!listed)
     return errResponse("bad_request", "'phis' names a parameter the callee does not have");
+  auto isPhi = [&](unsigned i) { return llvm::is_contained(*listed, i); };
   auto slots = slotParams(args, K->arg_size());
-  if (!slots || llvm::any_of(*slots, [&](unsigned i) { return (*isPhi)[i]; }))
+  if (!slots || llvm::any_of(*slots, isPhi))
     return errResponse("bad_request",
                        "'slots' lists parameters of the callee that are not phis, ascending");
 
@@ -524,7 +527,7 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
   }
 
   // The callee's blocks come back, its entry first, with its parameters as
-  // phis there that the calls below fill in.
+  // phis there, the block's own in its order, that the calls below fill in.
   std::vector<llvm::BasicBlock *> blocks;
   for (auto &B : *K) {
     auto *moved = llvm::BasicBlock::Create(outerM.getContext(), B.getName(), F);
@@ -532,11 +535,14 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
     blocks.push_back(moved);
   }
   llvm::BasicBlock *entry = blocks.front();
-  std::vector<llvm::PHINode *> phis;
-  for (auto &arg : K->args()) {
-    auto *phi = llvm::PHINode::Create(arg.getType(), 0, "", entry);
-    vmap[&arg] = phi;
-    phis.push_back(phi);
+  std::vector<llvm::PHINode *> phis(K->arg_size(), nullptr);
+  std::vector<unsigned> order = *listed;
+  for (unsigned i = 0; i < K->arg_size(); ++i)
+    if (!isPhi(i))
+      order.push_back(i);
+  for (unsigned i : order) {
+    phis[i] = llvm::PHINode::Create(K->getArg(i)->getType(), 0, "", entry);
+    vmap[K->getArg(i)] = phis[i];
   }
   std::vector<llvm::Instruction *> clones;
   unsigned b = 0;
@@ -600,7 +606,7 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
       phis[i]->eraseFromParent();
       continue;
     }
-    if ((*isPhi)[i] || phis[i]->getNumIncomingValues() == 0)
+    if (isPhi(i) || phis[i]->getNumIncomingValues() == 0)
       continue;
     llvm::Value *same = phis[i]->hasConstantValue();
     if (!same)
