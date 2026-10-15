@@ -288,6 +288,15 @@ exit:
 }
 """
 
+# SLOT_COUNT with a slot its body stores into before it reads it, so that the
+# slot's value at the header is never read.
+DEAD_COUNT = SLOT_COUNT.replace(
+  "  store i32 0, ptr %i, align 4\n", "  %t = alloca i32, align 4\n  store i32 0, ptr %i, align 4\n"
+).replace(
+  "  %2 = add i32 %1, 1\n",
+  "  store i32 %1, ptr %t, align 4\n  %t1 = load i32, ptr %t, align 4\n  %2 = add i32 %t1, 1\n",
+)
+
 PHI_COUNT = """define i32 @f(i32 %n) {
 entry:
   br label %head
@@ -693,6 +702,13 @@ class TestGolden(Case):
         self.detached(SLOT_COUNT, tgt)
         self.assertEqual(self.built.goals["g1"]["discharge"]["slots"], slots)
         self.verified(self.built.write())
+
+  def test_a_cut_that_passes_a_dead_slot_as_poison_verifies(self):
+    halves = self.detached(DEAD_COUNT, PHI_COUNT, {"%t": "poison"})
+    self.assertEqual(self.built.goals["g1"]["discharge"]["slots"], {"src": [0, 1], "tgt": []})
+    outer = (self.built.root / "programs" / f"{halves['outer']['src']}.ll").read_text()
+    self.assertIn("i32 poison", outer)
+    self.verified(self.built.write())
 
   def test_state_only_the_tgt_carries_verifies(self):
     # The tgt keeps a countdown nothing reads, and the src passes poison for it.

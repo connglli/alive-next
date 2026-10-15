@@ -703,11 +703,10 @@ std::optional<std::vector<llvm::StoreInst *>> slotCopies(llvm::Function &callee,
   return stores;
 }
 
-bool storedBeforeRead(llvm::StoreInst &copying) {
-  llvm::Value *slot = copying.getPointerOperand();
-  // Blocks a path enters before it stores into the slot again, scanned from their start.
+bool readFirst(llvm::Value &slot, llvm::BasicBlock::iterator from) {
+  // Blocks a path enters before it stores into the slot, scanned from their start.
   llvm::SmallPtrSet<llvm::BasicBlock *, 16> entered;
-  std::vector<llvm::BasicBlock::iterator> todo = {std::next(copying.getIterator())};
+  std::vector<llvm::BasicBlock::iterator> todo = {from};
   while (!todo.empty()) {
     llvm::BasicBlock::iterator at = todo.back();
     todo.pop_back();
@@ -715,17 +714,21 @@ bool storedBeforeRead(llvm::StoreInst &copying) {
     bool stored = false;
     for (; at != block->end() && !stored; ++at) {
       auto *load = llvm::dyn_cast<llvm::LoadInst>(&*at);
-      if (load && load->getPointerOperand() == slot && !load->use_empty())
-        return false;
+      if (load && load->getPointerOperand() == &slot && !load->use_empty())
+        return true;
       auto *store = llvm::dyn_cast<llvm::StoreInst>(&*at);
-      stored = store && store->getPointerOperand() == slot;
+      stored = store && store->getPointerOperand() == &slot;
     }
     if (!stored)
       for (llvm::BasicBlock *next : llvm::successors(block))
         if (entered.insert(next).second)
           todo.push_back(next->begin());
   }
-  return true;
+  return false;
+}
+
+bool storedBeforeRead(llvm::StoreInst &copying) {
+  return !readFirst(*copying.getPointerOperand(), std::next(copying.getIterator()));
 }
 
 bool deadSlotsUnread(llvm::CallInst &call, llvm::ArrayRef<unsigned> slots,
@@ -794,15 +797,15 @@ llvm::Value *mappedParam(const llvm::json::Value &entry, const llvm::json::Objec
         errResponse("bad_request", "value_map does not cover the live value '" + live->str() + "'");
     return nullptr;
   }
-  llvm::Value *tgtVal = refs.resolve(*mapped);
-  if (!tgtVal) {
-    err = errResponse("not_found", "value_map: '" + mapped->str() + "' is not a tgt value");
-    return nullptr;
-  }
   llvm::SMDiagnostic smd;
   llvm::Type *want = llvm::parseType(*type, smd, *F.getParent());
   if (!want) {
     err = errResponse("bad_request", "params: '" + type->str() + "' is not a type");
+    return nullptr;
+  }
+  llvm::Value *tgtVal = *mapped == "poison" ? llvm::PoisonValue::get(want) : refs.resolve(*mapped);
+  if (!tgtVal) {
+    err = errResponse("not_found", "value_map: '" + mapped->str() + "' is not a tgt value");
     return nullptr;
   }
   if (passedType(*tgtVal) != want) {

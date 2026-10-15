@@ -159,6 +159,9 @@ std::optional<std::vector<llvm::LoadInst *>> slotLoads(llvm::CallInst &call,
 std::optional<std::vector<llvm::StoreInst *>> slotCopies(llvm::Function &callee,
                                                          llvm::ArrayRef<unsigned> slots);
 
+// Whether some path from `from` uses a read of `slot` before it stores into it.
+bool readFirst(llvm::Value &slot, llvm::BasicBlock::iterator from);
+
 // Whether every path from a copying store stores into its slot again before a used load.
 bool storedBeforeRead(llvm::StoreInst &copying);
 

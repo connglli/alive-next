@@ -118,10 +118,11 @@ std::string typeText(llvm::Value &v) {
   return out;
 }
 
-// Whether the tgt can pass `v` into the region: a phi of B or a value from outside.
+// Whether the tgt can pass `v` into the region: a phi of B, a value from outside or poison.
 bool passable(llvm::Value *v, const Region &region, ValueRefs &refs, llvm::json::Object &err) {
   auto *phi = llvm::dyn_cast<llvm::PHINode>(v);
-  if ((phi && phi->getParent() == region.front()) || fromOutside(v, region))
+  if ((phi && phi->getParent() == region.front()) || fromOutside(v, region) ||
+      llvm::isa<llvm::PoisonValue>(v))
     return true;
   err = errResponse("invalid", "value_map: '" + refs.print(*v) +
                                    "' is neither a phi of the block nor defined before it");
@@ -243,17 +244,20 @@ std::vector<Edge> edgesInto(llvm::Function &F, llvm::BasicBlock *B) {
 // Route edge `e` into a fresh block that calls `target` and returns what it answers.
 llvm::BasicBlock *callInstead(Edge e, llvm::BasicBlock *B, llvm::Function *target,
                               llvm::ArrayRef<llvm::Value *> params, llvm::Function *k,
-                              llvm::ArrayRef<llvm::AllocaInst *> copies) {
+                              llvm::ArrayRef<llvm::AllocaInst *> copies,
+                              llvm::ArrayRef<bool> dead) {
   llvm::Function *F = e.from->getParent();
   auto *Q = llvm::BasicBlock::Create(F->getContext(), "", F);
   llvm::IRBuilder<> at(Q);
   std::vector<llvm::Value *> args;
   for (unsigned i = 0; i < params.size(); ++i) {
     auto *phi = llvm::dyn_cast<llvm::PHINode>(params[i]);
-    // A slot is loaded right before the call: the callee's copy at a back edge.
+    // A slot is loaded right before the call, the copy at a back edge, and poison if dead.
     auto *slot = copies[i] && !k ? llvm::cast<llvm::AllocaInst>(params[i]) : copies[i];
-    if (slot)
-      args.push_back(at.CreateAlignedLoad(slot->getAllocatedType(), slot, slot->getAlign()));
+    llvm::Value *held =
+        slot ? at.CreateAlignedLoad(slot->getAllocatedType(), slot, slot->getAlign()) : nullptr;
+    if (held)
+      args.push_back(dead[i] ? llvm::PoisonValue::get(held->getType()) : held);
     else if (phi && phi->getParent() == B)
       args.push_back(phi->getIncomingValueForBlock(e.from));
     else if (llvm::isa<llvm::PoisonValue>(params[i]))
@@ -286,8 +290,8 @@ std::vector<llvm::AllocaInst *> copiesOf(llvm::BasicBlock &B, llvm::ArrayRef<llv
 
 // Move the region into `name`; edges from outside call it, back edges call `hypothesis`.
 llvm::Function *cutOut(llvm::Module &M, llvm::Function &F, const Region &region,
-                       llvm::ArrayRef<llvm::Value *> params, llvm::StringRef name,
-                       llvm::StringRef hypothesis, bool &recurses) {
+                       llvm::ArrayRef<llvm::Value *> params, llvm::ArrayRef<bool> dead,
+                       llvm::StringRef name, llvm::StringRef hypothesis, bool &recurses) {
   llvm::BasicBlock *B = region.front();
   std::vector<llvm::Type *> types;
   for (llvm::Value *p : params)
@@ -302,7 +306,8 @@ llvm::Function *cutOut(llvm::Module &M, llvm::Function &F, const Region &region,
     bool back = region.contains(e.from);
     if (back && !ih)
       ih = llvm::Function::Create(type, llvm::Function::ExternalLinkage, hypothesis, &M);
-    llvm::BasicBlock *Q = callInstead(e, B, back ? ih : k, params, back ? k : nullptr, copies);
+    llvm::BasicBlock *Q =
+        callInstead(e, B, back ? ih : k, params, back ? k : nullptr, copies, dead);
     if (back)
       moving.insert(Q);
   }
@@ -402,12 +407,15 @@ llvm::json::Object moveRegion(llvm::json::Object &args, llvm::Module &M, llvm::F
 
   auto phis = phiPositions(params, region.front());
   llvm::json::Array slots;
+  llvm::SmallVector<bool, 8> dead(params.size(), false);
   for (unsigned i = 0; i < params.size(); ++i)
-    if (heldSlot(*params[i]))
+    if (llvm::AllocaInst *slot = heldSlot(*params[i])) {
       slots.push_back(i);
+      dead[i] = !readFirst(*slot, region.front()->begin());
+    }
   std::string hypothesis = name.str() + ".ih";
   bool recurses = false;
-  llvm::Function *k = cutOut(M, F, region, params, name, hypothesis, recurses);
+  llvm::Function *k = cutOut(M, F, region, params, dead, name, hypothesis, recurses);
   if (auto d = frameDependence(*k, /*window=*/false))
     return errResponse(d->code, d->message);
   for (unsigned i = 0; i < paramInfo.size(); ++i)

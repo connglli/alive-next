@@ -150,7 +150,7 @@ The response carries the two modules and the signature:
 
 The signature is the values the moved instructions use from before them, instructions in the order they are printed and then arguments, or a window's given `params`, which cover those and name only values in scope at the cut.
 
-The tgt side is cut against that same signature, with a value map naming the tgt value that stands in for each src live value:
+The tgt side is cut against that same signature, with a value map naming the tgt value, or `poison`, that stands in for each src live value:
 
 ```json
 { "module": "...", "side": "tgt", "cut": "%sum", "callee": "g",
@@ -162,7 +162,7 @@ Both sides answer with the same `params`, so a caller can compare them. A tgt va
 
 The callee is declared with no attributes. An attribute is an assumption the call site has to honour, so adding one is a proof obligation that belongs to the strengthen flow rather than to the cut.
 
-The callee runs in a frame of its own, so `outline`, `detach`, `inline`, `reattach` and `unfold` refuse with `frame_dependent` a callee that depends on its frame: a call of `llvm.stacksave`, `llvm.stackrestore`, `llvm.returnaddress`, `llvm.addressofreturnaddress`, `llvm.frameaddress`, `llvm.sponentry`, `llvm.localescape` or `llvm.localrecover`; a `va_arg` or a call of `llvm.va_start`, `llvm.va_copy` or `llvm.va_end`; a `musttail` call; or a call with an `inalloca` or `preallocated` argument. A window, which returns before the rest of the body runs, may not hold an `alloca` either. A private stack slot, an entry-block `alloca` of a single-value type used only as the address of simple loads and stores of that type, crosses a cut as what it holds: each call loads it, the callee's entry stores it in a copy, and `slots` lists those parameters.
+The callee runs in a frame of its own, so `outline`, `detach`, `inline`, `reattach` and `unfold` refuse with `frame_dependent` a callee that depends on its frame: a call of `llvm.stacksave`, `llvm.stackrestore`, `llvm.returnaddress`, `llvm.addressofreturnaddress`, `llvm.frameaddress`, `llvm.sponentry`, `llvm.localescape` or `llvm.localrecover`; a `va_arg` or a call of `llvm.va_start`, `llvm.va_copy` or `llvm.va_end`; a `musttail` call; or a call with an `inalloca` or `preallocated` argument. A window, which returns before the rest of the body runs, may not hold an `alloca` either. A private stack slot, an entry-block `alloca` used only as the address of simple loads and stores of its single-value type, crosses a cut as what it holds, or as `poison` where every path stores into it first: each call loads it, the callee copies the argument, and `slots` lists those parameters.
 
 ### A window rather than a suffix
 

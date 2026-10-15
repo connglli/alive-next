@@ -92,7 +92,7 @@ The declared `g` must have one signature shared by both sides. The signature is 
 
 The only trusted glue is that outlining is faithful: the outer calling the callee runs as the original program does. That is mechanical, since no code is moved that depends on its frame or on its function's attributes, such as `memory(none)`.
 
-A stack slot that only loads and stores of its type use crosses a cut as what it holds: the outer loads it right before the call, and the callee stores it in a slot of its own. No other code sees either slot and the outer returns right after the call, so the copy holds what the slot would, and `inline` and `reattach` put the slot back in its place.
+A stack slot that only loads and stores of its type use crosses a cut as what it holds, or as `poison` when every path stores into it first, and the callee keeps it in a slot of its own. No other code sees either slot and the outer returns right after the call, so the copy holds what the slot would wherever it is read, and `inline` and `reattach` put the slot back in its place.
 
 A split at a block detaches it instead: the block and every block it reaches become `g`, and each branch to the block becomes a call of `g`. At a loop header, the back edge calls a declared hypothesis `g.ih` in place of `g`, so the callee is one iteration and does not loop. Proving that pair, with `g.ih` an unknown function both sides share, proves the loop by induction: each side calls `g.ih` where it would go around again, so a tgt cannot stop where the src goes on. The glue a checker trusts is `reattach`, the inverse of detaching, as `inline` is of outlining.
 

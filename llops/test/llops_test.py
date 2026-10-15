@@ -2500,6 +2500,26 @@ exit:
 }
 """
 
+# DEAD_LOOP after mem2reg, where %t is a value of each iteration.
+DEAD_LOOP_PROMOTED = """define i32 @f(i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i2, %body ]
+  %c = icmp slt i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %d = mul i32 %i, 2
+  %i2 = add i32 %i, %d
+  br label %loop
+
+exit:
+  ret i32 %i
+}
+"""
+
 # DEAD_LOOP detached at %loop, passing poison for %t.
 DEAD_LOOP_OUTER = """define i32 @f(i32 %n) {
 entry:
@@ -2729,8 +2749,25 @@ join:
     self.assertEqual(self.canon(half["callee"]), self.canon(SLOT_LOOP_CALLEE))
     out = self.good(run("outline", {"module": SLOT_F, "side": "src", "cut": "%b", "callee": "g"}))
     self.assertEqual(out["slots"], [0])
-    self.assertEqual(self.canon(out["outer"]), self.canon(SLOT_F_OUTER))
+    # The rest stores into %s before it reads it, so the call passes poison.
+    dead = SLOT_F_OUTER.replace("@g(i32 %0,", "@g(i32 poison,")
+    self.assertEqual(self.canon(out["outer"]), self.canon(dead))
     self.assertEqual(self.canon(out["callee"]), self.canon(SLOT_F_CALLEE))
+    half = self.good(run("detach", {**request, "module": DEAD_LOOP}))
+    self.assertEqual(half["slots"], [0, 1])
+    self.assertEqual(self.canon(half["outer"]), self.canon(DEAD_LOOP_OUTER))
+    self.assertEqual(self.canon(half["callee"]), self.canon(DEAD_LOOP_CALLEE))
+
+  def test_a_tgt_passes_poison_for_a_slot_the_src_passes_as_poison(self):
+    src = self.good(
+      run("detach", {"module": DEAD_LOOP, "side": "src", "block": "%loop", "callee": "k"})
+    )
+    value_map = {"%i": "%i", "%t": "poison", "%n": "%n"}
+    request = {"module": DEAD_LOOP_PROMOTED, "side": "tgt", "block": "%loop", "callee": "k"}
+    tgt = self.good(run("detach", {**request, "params": src["params"], "value_map": value_map}))
+    self.assertIn("i32 poison, i32 %n)", tgt["outer"])
+    back = self.good(self.reattach(tgt["outer"], tgt["callee"], slots=(), phis=tgt["phis"]))
+    self.assertEqual(self.canon(back["module"]), self.canon(DEAD_LOOP_PROMOTED))
 
   def test_a_value_of_the_tgt_stands_for_a_slot_of_the_src(self):
     src = self.good(
