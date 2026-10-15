@@ -6,9 +6,9 @@
 // the edit touched out of both versions, leaving one outer and two small
 // functions, and the small pair is then what a checker has to be asked about.
 //
-// The search is not what makes that sound. Identical outers show that the
-// difference is confined to the window, and `llops inline` puts each side back
-// together, so a window that is wrong is caught rather than believed; the
+// The search is not what makes that sound. One outer that both halves go back
+// into through `llops inline` shows that the difference is confined to the
+// window, so a window that is wrong is caught rather than believed; the
 // search puts them back too, so it proposes no window a checker would refuse.
 // It is free to guess: a bad guess costs a few llops calls and falls back to
 // the whole function.
@@ -269,11 +269,9 @@ async function outlineBoth(
 ): Promise<Narrowed | NoWindow> {
   let pair = await outlinePair(llops, before, after, oldAt, newAt);
   if ("why" in pair) return pair;
-  if (pair.oldOuter !== pair.newOuter) {
-    const reads = (half: OutlineResult) => half.params.map((p) => p.live);
-    const [oldReads, newReads] = [reads(pair.was), reads(pair.now)];
-    if (oldReads.join(" ") === newReads.join(" "))
-      return { why: "the edit reaches past the window" };
+  const reads = (half: OutlineResult) => half.params.map((p) => p.live);
+  const [oldReads, newReads] = [reads(pair.was), reads(pair.now)];
+  if (pair.oldOuter !== pair.newOuter && oldReads.join(" ") !== newReads.join(" ")) {
     // Halves that read different values share an outer only over all of them.
     const added = pair.now.params.filter((p) => !oldReads.includes(p.live));
     const both = [...pair.was.params, ...added].map(({ live, type }) => ({ live, type }));
@@ -282,16 +280,20 @@ async function outlineBoth(
       const said = `${oldReads.join(" ")} before the edit and ${newReads.join(" ")} after`;
       return { why: `the window reads ${said}` };
     }
-    if (over.oldOuter !== over.newOuter) return { why: "the edit reaches past the window" };
     pair = over;
   }
-  const back = await Promise.all([
-    putBack(llops, pair.oldOuter, pair.was.callee, before),
-    putBack(llops, pair.oldOuter, pair.now.callee, after),
-  ]);
-  if (back.includes(false)) return { why: "a half does not go back into the outer" };
+  // Outers that differ only in a declaration the edit added or dropped share
+  // the one without it, since a half brings back the declarations it uses.
+  const outer = await sharedOuter(llops, pair, before, after);
+  if (!outer) {
+    const same = pair.oldOuter === pair.newOuter;
+    const why = same
+      ? "a half does not go back into the outer"
+      : "the edit reaches past the window";
+    return { why };
+  }
   return {
-    outer: pair.oldOuter,
+    outer,
     before: pair.was.callee,
     after: pair.now.callee,
     callee: CALLEE,
@@ -328,6 +330,23 @@ async function outlinePair(
   if (!oldOuter.ok) return { why: oldOuter.message };
   if (!newOuter.ok) return { why: newOuter.message };
   return { was, now, oldOuter: oldOuter.module, newOuter: newOuter.module };
+}
+
+/** The outer of either side that both halves go back into, if one is. */
+async function sharedOuter(
+  llops: Llops,
+  pair: Pair,
+  before: Module,
+  after: Module,
+): Promise<Module | undefined> {
+  for (const outer of new Set([pair.oldOuter, pair.newOuter])) {
+    const back = await Promise.all([
+      putBack(llops, outer, pair.was.callee, before),
+      putBack(llops, outer, pair.now.callee, after),
+    ]);
+    if (!back.includes(false)) return outer;
+  }
+  return undefined;
 }
 
 /** Whether a half inlined back into the outer is the program it came out of. */

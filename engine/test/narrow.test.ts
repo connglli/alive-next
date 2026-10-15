@@ -305,6 +305,41 @@ entry:
     expect(found.after).toContain("add i32 %p1, 1");
   });
 
+  test("narrows an edit that adds or drops a declaration", async () => {
+    // Only the window calls the intrinsic, so the two outers differ in a
+    // declaration nothing in them uses; the one without it is shared, since
+    // the half that calls it brings the declaration back.
+    const select = `define i32 @f(i32 %a, i32 %b, i32 %x) {
+entry:
+  %y = mul i32 %x, 3
+  %c = icmp ugt i32 %a, %b
+  %m = select i1 %c, i32 %a, i32 %b
+  %r = add i32 %m, %y
+  ret i32 %r
+}
+`;
+    const umax = `define i32 @f(i32 %a, i32 %b, i32 %x) {
+entry:
+  %y = mul i32 %x, 3
+  %m = call i32 @llvm.umax.i32(i32 %a, i32 %b)
+  %r = add i32 %m, %y
+  ret i32 %r
+}
+
+declare i32 @llvm.umax.i32(i32, i32)
+`;
+    for (const [before, after] of [
+      [select, umax],
+      [umax, select],
+    ] as const) {
+      const found = await narrow(llops, await canon(before), await canon(after));
+      if ("why" in found) throw new Error(found.why);
+      expect(found.outer).not.toContain("@llvm.umax");
+      expect(await inlined(found.outer, found.before)).toBe(await canon(before));
+      expect(await inlined(found.outer, found.after)).toBe(await canon(after));
+    }
+  });
+
   test("says no window holds a changed return", async () => {
     const before = "define i32 @f(i32 %x) {\nentry:\n  ret i32 %x\n}\n";
     const after = "define i32 @f(i32 %x) {\nentry:\n  ret i32 0\n}\n";
