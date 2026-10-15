@@ -31,8 +31,9 @@ std::string typeOf(const llvm::Function &F) {
   return text;
 }
 
-// Assume `input` at the entry of `F`, reading only the pointers `read` marks.
-void assumeInput(llvm::Function &F, const std::vector<Arg> &input, const std::vector<bool> &read) {
+// Put `input` into `F`: assumed at the entry, or poison in place of the
+// parameter, reading only the pointers `read` marks.
+void putInput(llvm::Function &F, const std::vector<Arg> &input, const std::vector<bool> &read) {
   llvm::IRBuilder<> b(&*F.getEntryBlock().getFirstInsertionPt());
   for (unsigned k = 0; k < F.arg_size(); ++k) {
     llvm::Argument *param = F.getArg(k);
@@ -42,6 +43,8 @@ void assumeInput(llvm::Function &F, const std::vector<Arg> &input, const std::ve
       b.CreateAssumption(b.CreateICmpEQ(param, value));
     } else if (arg.kind == Arg::Kind::Null) {
       b.CreateAssumption(b.CreateIsNull(param));
+    } else if (arg.kind == Arg::Kind::Poison) {
+      param->replaceAllUsesWith(llvm::PoisonValue::get(param->getType()));
     } else if (read[k]) {
       for (uint64_t at = 0; at < arg.bytes.size(); ++at) {
         auto *byte =
@@ -84,8 +87,8 @@ llvm::json::Object instantiateCmd(llvm::json::Object &args) {
   std::vector<bool> read;
   for (unsigned k = 0; k < srcF->arg_size(); ++k)
     read.push_back(mayRead(*srcF, k) && mayRead(*tgtF, k));
-  assumeInput(*srcF, input, read);
-  assumeInput(*tgtF, input, read);
+  putInput(*srcF, input, read);
+  putInput(*tgtF, input, read);
 
   for (auto *M : {src->mod.get(), tgt->mod.get()})
     if (auto diags = checkModule(*M); !diags.empty())

@@ -45,6 +45,11 @@ const Attr::AttrKind kParamBody[] = {
     Attr::ReadOnly,    Attr::WriteOnly,        Attr::ReadNone,   Attr::Returned,
     Attr::Initializes, Attr::AllocatedPointer, Attr::AllocAlign,
 };
+// What alive2's ParamAttrs::poisonImpliesUB names.
+const Attr::AttrKind kParamPoisonUB[] = {
+    Attr::ByVal,   Attr::Dereferenceable, Attr::DereferenceableOrNull,
+    Attr::NoUndef, Attr::Writable,        Attr::Initializes,
+};
 // What alive2's handleRetAttrs reads, with the range it reads where the function returns.
 const Attr::AttrKind kRetValue[] = {
     Attr::SExt,
@@ -104,6 +109,20 @@ AttrMeaning paramAttrMeaning(const llvm::Attribute &A) {
 AttrMeaning retAttrMeaning(const llvm::Attribute &A) {
   bool read = !A.isStringAttribute() && llvm::is_contained(kRetValue, A.getKindAsEnum());
   return read ? AttrMeaning::Value : AttrMeaning::Ignored;
+}
+
+std::optional<llvm::Attribute::AttrKind> poisonUB(const llvm::Argument &arg) {
+  for (Attr::AttrKind kind : kParamPoisonUB)
+    if (arg.hasAttribute(kind))
+      return kind;
+  // alive2's FnAttrs::computeAllocSize makes a poison size UB at each return.
+  const llvm::Function &F = *arg.getParent();
+  if (F.hasFnAttribute(Attr::AllocSize)) {
+    auto [size, count] = F.getFnAttribute(Attr::AllocSize).getAllocSizeArgs();
+    if (size == arg.getArgNo() || count == arg.getArgNo())
+      return Attr::AllocSize;
+  }
+  return std::nullopt;
 }
 
 void dropIgnoredAttrs(llvm::Module &M) {

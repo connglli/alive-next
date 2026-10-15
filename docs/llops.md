@@ -259,6 +259,7 @@ Request `{ "module": ..., "entry": "f", "args": [ ... ] }`, one argument per par
 * `{ "kind": "int", "value": "42" }` for an integer parameter of any width, the value as text so that a width beyond 64 bits survives JSON. A leading `-` is read as a sign, and a value the parameter's width cannot hold is refused rather than truncated.
 * `{ "kind": "bytes", "bytes": [1, 2], "align": 4 }` for a pointer, which is allocated and filled with those bytes before the call.
 * `{ "kind": "null" }` for a null pointer.
+* `{ "kind": "poison" }` for poison of any type, refused where an attribute makes a poison argument undefined behavior, such as `noundef`.
 
 Response `{ "ok": true, "module": ..., "observations": [ ... ], "differences": [ ... ] }`, where `differences` names what in the entry llubi treats differently from alive2: `freeze`, `writeonly`, `captures(none)`, `initializes`, `a call under memory(...)` or `an allocation's address`.
 
@@ -268,15 +269,16 @@ The harness does not have the program shape, since it defines a second function,
 
 ## instantiate
 
-Puts a counterexample's input into both programs of a pair, as assumptions at the entry, so that alive2 is asked about that input alone.
+Puts a counterexample's input into both programs of a pair, so that alive2 is asked about that input alone.
 
 Request `{ "src": ..., "tgt": ..., "args": [ ... ] }`, response `{ "ok": true, "src": ..., "tgt": ... }`. The two functions must have the same type, and `args` holds one argument per parameter, in order:
 
 * `{ "kind": "int", "value": "-3" }` for an integer parameter of any width, which is assumed equal to the value. The value is text, so that a width beyond 64 bits survives JSON; a leading `-` is a sign, and a value the width cannot hold is refused rather than truncated.
 * `{ "kind": "null" }` for a pointer parameter, which is assumed null.
 * `{ "kind": "bytes", "bytes": [7, 9] }` for a pointer parameter, whose memory is assumed to hold these bytes, where no attribute of either function forbids reading it.
+* `{ "kind": "poison" }` for a parameter of any type, which is replaced by poison wherever it is used, refused where an attribute of the src makes a poison argument undefined behavior, such as `noundef`.
 
-Both programs get the same assumptions, and these only read memory, so an input on which alive2 refutes the result refutes the pair itself.
+Both programs get the same input, and putting it in only reads memory, so an input on which alive2 refutes the result refutes the pair itself.
 
 ## attrs
 

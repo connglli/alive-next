@@ -2342,6 +2342,14 @@ entry:
     r = self.good(self.harness(module=module, args=[{"kind": "bytes", "bytes": [1, 0, 0, 0]}]))
     self.assertIn("call i32 @f(ptr noundef nonnull readonly %buf0)", r["module"])
 
+  def test_poison_is_passed_as_it_is(self):
+    args = [{"kind": "poison"}, {"kind": "null"}]
+    r = self.good(self.harness(args=args))
+    self.assertIn("call i32 @f(i32 poison, ptr null)", r["module"])
+    noundef = self.F.replace("(i32 %x, ptr %p)", "(i32 noundef %x, ptr %p)")
+    r = self.bad(self.harness(module=noundef, args=args), "invalid")
+    self.assertIn("under noundef", r["error"]["message"])
+
   def test_memory_behind_a_dead_on_return_parameter_is_not_observed(self):
     module = """define void @f(ptr dead_on_return %p, ptr %q) {
 entry:
@@ -2570,6 +2578,29 @@ entry:
     )
     for side in ("src", "tgt"):
       self.assertEqual(len(self.body(r[side])) - len(self.body(self.F)), 2)
+
+  def test_poison_in_place_of_a_parameter(self):
+    # An assumption cannot say that a value is poison, so its uses become poison.
+    r = self.good(self.instantiate(args=[{"kind": "poison"}, {"kind": "null"}]))
+    for side in ("src", "tgt"):
+      self.assertIn("%s = add i32 poison, %w", self.body(r[side]))
+    # A parameter of any type takes it.
+    real = "define float @f(float %a) {\nentry:\n  %b = fadd float %a, 1.0\n  ret float %b\n}\n"
+    r = self.good(self.instantiate(src=real, tgt=real, args=[{"kind": "poison"}]))
+    self.assertIn("%b = fadd float poison, 1.000000e+00", self.body(r["src"]))
+
+  def test_no_poison_where_the_src_makes_it_undefined_behavior(self):
+    noundef = self.F.replace("(i32 %x, ptr %p)", "(i32 noundef %x, ptr %p)")
+    args = [{"kind": "poison"}, {"kind": "null"}]
+    r = self.bad(self.instantiate(src=noundef, args=args), "invalid")
+    self.assertIn("under noundef", r["error"]["message"])
+    # Only the src's attributes refuse it.
+    self.good(self.instantiate(tgt=noundef, args=args))
+    # A function attribute can make it undefined behavior too: alive2 makes a
+    # poison allocsize argument UB at each return.
+    sized = "define ptr @f(i64 %n) allocsize(0) {\nentry:\n  ret ptr null\n}\n"
+    r = self.bad(self.instantiate(src=sized, tgt=sized, args=[{"kind": "poison"}]), "invalid")
+    self.assertIn("under allocsize", r["error"]["message"])
 
   def test_two_functions_of_different_types(self):
     wider = "define i32 @f(i64 %x, ptr %p) {\nentry:\n  ret i32 0\n}\n"

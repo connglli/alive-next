@@ -13,6 +13,8 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/JSON.h"
 
+#include <optional>
+
 namespace llops {
 
 llvm::json::Object attrsCmd(llvm::json::Object &args);
@@ -28,6 +30,9 @@ enum class AttrMeaning {
 AttrMeaning fnAttrMeaning(const llvm::Attribute &A);
 AttrMeaning paramAttrMeaning(const llvm::Attribute &A);
 AttrMeaning retAttrMeaning(const llvm::Attribute &A);
+
+// The attribute, of `arg` or of its function, that makes a poison `arg` UB to alive2.
+std::optional<llvm::Attribute::AttrKind> poisonUB(const llvm::Argument &arg);
 
 // Remove the attributes alive2 ignores from every function and call, and unnamed_addr.
 void dropIgnoredAttrs(llvm::Module &M);

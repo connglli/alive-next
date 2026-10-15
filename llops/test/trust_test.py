@@ -4,8 +4,8 @@
 Each test asks llops and alive-tv about the same programs, and fails where
 llops trusts what alive2 does not back: a pair `reshaped` or `respected`
 accepts that alive2 does not prove, an attribute llops treats otherwise than
-alive2 does, or a fact `attrs` puts on a declaration that alive2 does not read
-at a call.
+alive2 does, a fact `attrs` puts on a declaration that alive2 does not read
+at a call, or a poison input `instantiate` takes where alive2 makes it UB.
 alive-tv runs as the kernel runs it, and its answer is read by the kernel's
 own code. Run through `make test-trust`, or directly:
 
@@ -882,6 +882,54 @@ class TestDeclaredFacts(unittest.TestCase):
       "define i8 @f(ptr %x) {\n  %r = call i8 @g(ptr %x, ptr %x)\n  ret i8 %r\n}\n"
     )
     self.assertEqual(alive2(module, declared(module, {"noalias": True})), "correct")
+
+
+# A counterexample's input may give a parameter poison, which `instantiate`
+# puts in place of its uses. Where an attribute makes a poison argument UB in
+# the src, the pair holds at that input, and putting poison in place of the
+# uses would drop that UB, so `instantiate` has to refuse it. Each pair below
+# differs only where %x is poison, so alive2 proves it exactly when the
+# attribute makes a poison %x UB.
+# How a value of each type is compared with itself: true, unless it is poison.
+SELF_EQUAL = {
+  "i64": "%c = icmp eq i64 %x, %x",
+  "ptr": "%c = icmp eq ptr %x, %x",
+  "float": "%b = bitcast float %x to i32\n  %c = icmp eq i32 %b, %b",
+}
+
+
+def poisoned(attr: str, place: str) -> tuple[str, str] | None:
+  """A pair that differs only where %x is poison, with `attr` in `place`, or
+  nothing when no program llops accepts can have it there."""
+  for ty, test in SELF_EQUAL.items():
+    params, fn = (f"{ty} {attr} %x", "") if place == "param" else (f"{ty} %x", f" {attr}")
+    head = f"define i32 @f({params}){fn} {{\nentry:\n"
+    src = head + "  ret i32 1\n}\n"
+    tgt = head + f"  {test}\n  %r = select i1 %c, i32 1, i32 poison\n  ret i32 %r\n}}\n"
+    if well_formed(src) and llops_treats(src, src, place) != "refuses":
+      return src, tgt
+  return None
+
+
+def refuted_at_poison(pair: tuple[str, str]) -> bool:
+  """Whether the pair, which alive2 proves, is refuted at a poison input."""
+  answer = run("instantiate", {"src": pair[0], "tgt": pair[1], "args": [{"kind": "poison"}]})
+  return answer.get("ok", False) and alive2(answer["src"], answer["tgt"]) == "incorrect"
+
+
+class TestPoisonInput(unittest.TestCase):
+  @unittest.skipUnless(os.path.exists(ATTRIBUTES), "needs the toolchain's LLVM build")
+  def test_no_attribute_lets_poison_refute_what_alive2_proves(self):
+    cases = [case for case in attributes() if case[1] != "ret"]
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+      pairs = [pair for pair in pool.map(lambda case: poisoned(*case), cases) if pair]
+      said = pool.map(lambda pair: alive2(*pair), pairs)
+      proved = [pair for pair, answer in zip(pairs, said, strict=True) if answer == "correct"]
+      bad = pool.map(refuted_at_poison, proved)
+      false = [pair[0] for pair, wrong in zip(proved, bad, strict=True) if wrong]
+    # Some attribute makes a poison argument UB, so the test has something to check.
+    self.assertGreater(len(proved), 0)
+    self.assertEqual(false, [])
 
 
 if __name__ == "__main__":

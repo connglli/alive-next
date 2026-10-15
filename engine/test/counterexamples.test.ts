@@ -207,6 +207,17 @@ describe.skipIf(!built)("reporting a counterexample", () => {
     for (const side of [first.src, first.tgt]) expect(side).toContain("icmp eq i32 %0, -3");
   });
 
+  test("asks about a poison input with poison in place of the parameter", async () => {
+    const free = (text: string) => text.replace("i32 noundef %x", "i32 %x");
+    const tree = await asked(free(SRC), free(TGT));
+    const solver = new Solver(["incorrect"]);
+    const result = await reporter(solver, new Canned([])).report(tree, [{ kind: "poison" }]);
+
+    expect(result.kind).toBe("refuted");
+    expect(solver.asked[0]?.src).toContain("sdiv i32 poison, 2");
+    expect(solver.asked[0]?.tgt).toContain("ashr i32 poison, 1");
+  });
+
   test("asks about the pair the run was asked about, not the one it has reached", async () => {
     await asked();
     // A step the search made, which a counterexample says nothing about.

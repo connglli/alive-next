@@ -1,5 +1,6 @@
 #include "input.h"
 
+#include "attrs.h"
 #include "irutil.h"
 
 #include "llvm/Support/MathExtras.h"
@@ -51,8 +52,10 @@ bool readInteger(llvm::StringRef text, unsigned width, llvm::APInt &out, std::st
   return true;
 }
 
-bool readArg(llvm::Type *paramTy, const llvm::json::Object &spec, unsigned index, Arg &out,
+bool readArg(const llvm::Argument &param, const llvm::json::Object &spec, Arg &out,
              llvm::json::Object &err) {
+  llvm::Type *paramTy = param.getType();
+  unsigned index = param.getArgNo();
   auto kind = spec.getString("kind");
   if (!kind) {
     err = errResponse("bad_request", "each argument needs a 'kind'");
@@ -115,6 +118,17 @@ bool readArg(llvm::Type *paramTy, const llvm::json::Object &spec, unsigned index
     return true;
   }
 
+  if (*kind == "poison") {
+    if (auto attr = poisonUB(param)) {
+      err = errResponse("invalid", "argument " + std::to_string(index) + " is poison, but under " +
+                                       llvm::Attribute::getNameFromAttrKind(*attr).str() +
+                                       " a poison argument is undefined behavior");
+      return false;
+    }
+    out.kind = Arg::Kind::Poison;
+    return true;
+  }
+
   err = errResponse("invalid", "unknown argument kind '" + kind->str() + "'");
   return false;
 }
@@ -136,7 +150,7 @@ bool readArgs(const llvm::Function &F, const llvm::json::Array &spec, std::vecto
       return false;
     }
     Arg arg;
-    if (!readArg(F.getArg(i)->getType(), *one, i, arg, err))
+    if (!readArg(*F.getArg(i), *one, arg, err))
       return false;
     out.push_back(std::move(arg));
   }

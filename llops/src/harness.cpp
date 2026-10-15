@@ -38,6 +38,10 @@ Argument buildArgument(llvm::IRBuilder<> &builder, llvm::Type *paramTy, const Ar
     out.value = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(paramTy));
     return out;
   }
+  if (arg.kind == Arg::Kind::Poison) {
+    out.value = llvm::PoisonValue::get(paramTy);
+    return out;
+  }
   llvm::LLVMContext &ctx = paramTy->getContext();
   auto *arrayTy = llvm::ArrayType::get(llvm::Type::getInt8Ty(ctx), arg.bytes.size());
   auto *buffer = builder.CreateAlloca(arrayTy, nullptr, "buf" + std::to_string(index));

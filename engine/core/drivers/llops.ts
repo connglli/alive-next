@@ -166,7 +166,8 @@ export interface Fact {
 export type InputArg =
   | { kind: "int"; value: string }
   | { kind: "bytes"; bytes: number[]; align?: number }
-  | { kind: "null" };
+  | { kind: "null" }
+  | { kind: "poison" };
 
 export interface HarnessResult {
   module: Module;

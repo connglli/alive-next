@@ -16,6 +16,7 @@ const Argument = Type.Union([
     align: Type.Optional(Type.Integer()),
   }),
   Type.Object({ kind: Type.Literal("null") }),
+  Type.Object({ kind: Type.Literal("poison") }),
 ]);
 
 export function createReportCexTool(session: Session) {
