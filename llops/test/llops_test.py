@@ -4133,6 +4133,28 @@ entry:
     self.assertEqual(facts["%x"]["signed_min"], "-8")
     self.assertEqual(facts["%x"]["signed_max"], "8")
 
+  def test_ranges_see_the_branch_that_leads_to_the_point(self):
+    module = """define i32 @f(i32 %j) {
+entry:
+  %c = icmp sgt i32 %j, -1
+  br i1 %c, label %then, label %exit
+
+then:
+  %d = add i32 %j, 1
+  ret i32 %d
+
+exit:
+  ret i32 0
+}
+"""
+    # No instruction bounds %j; only the branch taken to %d does.
+    facts, _ = self.facts(module, "ranges", point="d")
+    self.assertEqual(facts["%j"]["signed_min"], "0")
+    self.assertEqual(facts["%j"]["unsigned_max"], "2147483647")
+    # At the branch itself, either way is still open.
+    at, _ = self.facts(module, "ranges", point="#1")
+    self.assertEqual(at["%j"]["signed_min"], "-2147483648")
+
   def test_pointer(self):
     module = """define i32 @f(ptr align 8 dereferenceable(16) %p) {
 entry:

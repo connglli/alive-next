@@ -3,6 +3,7 @@
 #include "irutil.h"
 
 #include "llvm/Analysis/AssumptionCache.h"
+#include "llvm/Analysis/LazyValueInfo.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
@@ -55,14 +56,25 @@ void knownBitsFact(llvm::Value &V, const llvm::DataLayout &DL, llvm::AssumptionC
   fact["unknown_bits"] = "0x" + apToString(~(KB.Zero | KB.One), 16, false);
 }
 
-// The signed and the unsigned range are computed separately: LLVM reasons
-// about one interpretation at a time and the two answers differ.
+// The values both ranges allow, or `known` alone where they share none.
+llvm::ConstantRange narrowed(const llvm::ConstantRange &known, const llvm::ConstantRange &where,
+                             llvm::ConstantRange::PreferredRangeType type) {
+  llvm::ConstantRange both = known.intersectWith(where, type);
+  return both.isEmptySet() ? known : both;
+}
+
+// The signed and the unsigned range are computed separately, since LLVM's
+// answers for the two differ, and LazyValueInfo narrows each with the branches
+// that lead to the point.
 void rangeFact(llvm::Value &V, llvm::AssumptionCache &AC, const llvm::DominatorTree &DT,
-               const llvm::Instruction *point, llvm::json::Object &fact) {
-  llvm::ConstantRange S = llvm::computeConstantRange(&V, /*ForSigned=*/true,
-                                                     /*UseInstrInfo=*/true, &AC, point, &DT);
-  llvm::ConstantRange U = llvm::computeConstantRange(&V, /*ForSigned=*/false,
-                                                     /*UseInstrInfo=*/true, &AC, point, &DT);
+               llvm::LazyValueInfo &LVI, llvm::Instruction *point, llvm::json::Object &fact) {
+  llvm::ConstantRange where = LVI.getConstantRange(&V, point, /*UndefAllowed=*/false);
+  llvm::ConstantRange S = narrowed(
+      llvm::computeConstantRange(&V, /*ForSigned=*/true, /*UseInstrInfo=*/true, &AC, point, &DT),
+      where, llvm::ConstantRange::Signed);
+  llvm::ConstantRange U = narrowed(
+      llvm::computeConstantRange(&V, /*ForSigned=*/false, /*UseInstrInfo=*/true, &AC, point, &DT),
+      where, llvm::ConstantRange::Unsigned);
   fact["signed_min"] = apToString(S.getSignedMin(), 10, true);
   fact["signed_max"] = apToString(S.getSignedMax(), 10, true);
   fact["unsigned_min"] = apToString(U.getUnsignedMin(), 10, false);
@@ -317,6 +329,7 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
   llvm::TargetLibraryInfoImpl TLII(M.getTargetTriple());
   llvm::TargetLibraryInfo TLI(TLII);
   llvm::ScalarEvolution SE(*F, TLI, AC, DT, LI);
+  llvm::LazyValueInfo LVI(&AC, &DL);
 
   llvm::json::Array facts;
   Defined defined = definedWalks(AC, DT);
@@ -340,7 +353,7 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
     } else if (*kind == "knownbits")
       knownBitsFact(V, DL, AC, DT, point, fact);
     else if (*kind == "ranges")
-      rangeFact(V, AC, DT, point, fact);
+      rangeFact(V, AC, DT, LVI, point, fact);
     else if (*kind == "defined")
       definedFact(V, point, defined, fact);
     else
