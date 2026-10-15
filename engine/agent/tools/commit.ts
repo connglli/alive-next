@@ -1,6 +1,7 @@
 // tx_commit: certify the open transaction as one step.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import type { Attrs, Predicate } from "../../core/drivers/llops.ts";
 import type { Session } from "../../core/session.ts";
 import type { Fallback } from "../../core/state/steps.ts";
 import {
@@ -11,6 +12,7 @@ import {
   outcomeWord,
   toolResultFrom,
 } from "./format.ts";
+import { PredicateShape } from "./strengthen.ts";
 
 export function createCommitTool(session: Session) {
   return defineTool({
@@ -42,6 +44,12 @@ export function createCommitTool(session: Session) {
             "Preconditions on values the window uses, proved over the whole function and named as in the program the transaction started from, for example { '%v1': { 'noundef': true } }.",
         }),
       ),
+      predicates: Type.Optional(
+        Type.Array(PredicateShape, {
+          description:
+            "Predicates over values the window uses, proved and named as the preconditions are. Each is a comparison, e.g. { 'op': 'ult', 'lhs': '%i', 'rhs': '%n' }, or lines of IR whose last line defines an i1.",
+        }),
+      ),
       narrow: Type.Optional(
         Type.Boolean({
           description:
@@ -61,7 +69,8 @@ export function createCommitTool(session: Session) {
       ),
     }),
     execute: async (_id, args) => {
-      const step = await session.commit(args, /*imm_abort=*/ false);
+      const predicates = args.predicates as Predicate[] | undefined;
+      const step = await session.commit({ ...args, predicates }, /*imm_abort=*/ false);
       if (step.kind === "refused") {
         // The budget is part of the refusal: a timeout says how much was
         // spent failing, and a refusal that spent nothing says that instead.
@@ -104,10 +113,8 @@ function asked(fallback: Fallback | undefined, whole: boolean): string {
       before && after
         ? ` ${before.from}..${before.to} (${after.from}..${after.to} after the edit)`
         : "";
-    const pre =
-      fallback.preconditions && Object.keys(fallback.preconditions).length > 0
-        ? ` with preconditions (${factsOf(fallback.preconditions)})`
-        : "";
+    const facts = factsOf(fallback.preconditions ?? {}, fallback.predicates ?? []);
+    const pre = facts ? ` with preconditions (${facts})` : "";
     const unused = fallback.conditioning
       ? `\nthe preconditions were not used, since ${fallback.conditioning}`
       : "";
@@ -121,13 +128,17 @@ function asked(fallback: Fallback | undefined, whole: boolean): string {
 }
 
 /** The facts of a conditioned window, as a reader can act on them. */
-function factsOf(preconditions: Record<string, Record<string, unknown>>): string {
-  return Object.entries(preconditions)
-    .map(
-      ([param, facts]) =>
-        `parameter ${param}: ${Object.entries(facts)
-          .map(([kind, spec]) => (spec === true ? kind : `${kind} ${JSON.stringify(spec)}`))
-          .join(", ")}`,
-    )
-    .join("; ");
+function factsOf(preconditions: Record<number, Attrs>, predicates: Predicate[]): string {
+  const attributes = Object.entries(preconditions).map(
+    ([param, facts]) =>
+      `parameter ${param}: ${Object.entries(facts)
+        .map(([kind, spec]) => (spec === true ? kind : `${kind} ${JSON.stringify(spec)}`))
+        .join(", ")}`,
+  );
+  const stated = predicates.map((predicate) =>
+    "insts" in predicate
+      ? predicate.insts.join(", ")
+      : `${predicate.lhs} ${predicate.op} ${predicate.rhs}`,
+  );
+  return [...attributes, ...stated].join("; ");
 }

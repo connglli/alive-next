@@ -850,12 +850,12 @@ class Check:
     """A step narrowed to a window, optionally with proved preconditions.
 
     Both halves are inlined back into the outer program to verify faithfulness.
-    If preconditions are present:
+    If preconditions or predicates are present:
     Phase 1: Prove whole-function that outer + llvm.assume refines the whole
     being replaced, which is the before whole for a src step and the after
     whole for a tgt step. That is the side whose definedness the step's
     obligation starts from, so it is the one the facts must hold on.
-    Phase 2: Add attributes to parameters of both window halves and check small pair.
+    Phase 2: Add attributes and predicates to both window halves and check small pair.
     """
     side = step["side"]
     if step["from"] != head[side]:
@@ -868,6 +868,7 @@ class Check:
 
     window = step["window"]
     preconditions = window.get("preconditions", {})
+    predicates = window.get("predicates", [])
 
     for whole, half, which in (
       (step["from"], window["from"], "from"),
@@ -896,9 +897,9 @@ class Check:
       )
     self.outlined(gid, side, self.package.program(step["from"]))
 
-    if preconditions:
+    if preconditions or predicates:
       # Phase 1: Insert assumes before call in outer and verify whole-function
-      assertions = []
+      assertions = list(predicates)
       for arg_str, fact in preconditions.items():
         try:
           arg = int(arg_str)
@@ -970,6 +971,14 @@ class Check:
         )
         c_from = res_from["module"]
         c_to = res_to["module"]
+      if predicates:
+        start = {"at": "start", "fn": window["callee"]}
+        c_from, c_to = (
+          self.package.run_llops(
+            "assume", {"module": half, "anchor": start, "assertions": predicates}
+          )["module"]
+          for half in (c_from, c_to)
+        )
 
       pair = (c_from, c_to) if side == "src" else (c_to, c_from)
       tool = "llops+alive-tv"

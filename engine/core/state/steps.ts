@@ -9,7 +9,7 @@
 // That runs here rather than around the outside, because whether the path is
 // still alive belongs in the answer the agent reads.
 import type { CheckOutcome, CheckResult, Invocation } from "../drivers/alive2.ts";
-import type { Llops, LlopsResult } from "../drivers/llops.ts";
+import type { Attrs, Llops, LlopsResult, Predicate } from "../drivers/llops.ts";
 import type { Llrwt, LlrwtInvocation, RuleInfo } from "../drivers/llrwt.ts";
 import { named, resolveRef } from "../refs.ts";
 import { child, type Goal, head, type Side, type Tree, workable } from "./goals.ts";
@@ -82,7 +82,9 @@ export interface CheckStepOptions {
    * Preconditions on live-in values of the window, named as in the program the
    * step opens on (e.g. { "%1": { "noundef": true } }).
    */
-  preconditions?: Record<string, Record<string, unknown>>;
+  preconditions?: Record<string, Attrs>;
+  /** Predicates over live-in values of the window, named the same way. */
+  predicates?: Predicate[];
   /**
    * Whether to check the whole function when the check of the window does not
    * prove the step. On by default.
@@ -118,7 +120,9 @@ export interface Fallback {
   /** The window bounds that were tried, if any. */
   window?: { before: Window; after: Window };
   /** The preconditions the reported window check actually ran under. */
-  preconditions?: Record<string, Record<string, unknown>>;
+  preconditions?: Record<number, Attrs>;
+  /** The predicates it ran under, over the window's parameters. */
+  predicates?: Predicate[];
   /** Why a preconditioned window attempt did not run to a check, if one was asked for. */
   conditioning?: string;
   /** Why no window was found, when the caller looked for one. */
@@ -134,7 +138,8 @@ type Conditioned =
   | {
       kind: "checked";
       check: CheckResult;
-      preconditions: Record<string, Record<string, unknown>>;
+      preconditions: Record<number, Attrs>;
+      predicates: Predicate[];
     }
   | { kind: "refused"; reason: string };
 
@@ -384,21 +389,24 @@ export class Steps {
     const narrowed = options.narrowed && "why" in options.narrowed ? undefined : options.narrowed;
 
     let local: CheckResult | undefined;
-    let usedPreconditions: Record<string, Record<string, unknown>> | undefined;
+    let usedPreconditions: Record<number, Attrs> | undefined;
+    let usedPredicates: Predicate[] | undefined;
     let conditioned: Conditioned | undefined;
 
-    if (narrowed && options.preconditions && this.llops) {
+    if (narrowed && (options.preconditions || options.predicates) && this.llops) {
       conditioned = await this.tryConditionedWindow(
         beforeText,
         afterText,
         narrowed,
-        options.preconditions,
+        options.preconditions ?? {},
+        options.predicates ?? [],
         side,
       );
       if (conditioned?.kind === "checked") {
         if (conditioned.check.outcome === "correct") {
           local = conditioned.check;
           usedPreconditions = conditioned.preconditions;
+          usedPredicates = conditioned.predicates;
         } else if (conditioned.check.outcome === "incorrect") {
           // The same attributes are on both window halves. Its failing input
           // satisfies them, so it also refutes the plain window query.
@@ -417,6 +425,7 @@ export class Steps {
     // asked about inputs the body around it may never produce, so what it
     // refutes may be the window rather than the step. Only the whole function
     // can refuse one.
+    const ran = conditioned?.kind === "checked" ? conditioned : undefined;
     let check = local;
     let fallback: Fallback | undefined;
     if (check?.outcome !== "correct") {
@@ -426,9 +435,10 @@ export class Steps {
             // The conditioned check is the one whose preconditions the summary
             // prints, so it is the one the fallback reports when it ran; the
             // plain window check is only the fallback's evidence otherwise.
-            narrowed: conditioned?.kind === "checked" ? conditioned.check : local,
+            narrowed: ran?.check ?? local,
             window: narrowed ? { before: narrowed.at.before, after: narrowed.at.after } : undefined,
-            preconditions: conditioned?.kind === "checked" ? conditioned.preconditions : undefined,
+            preconditions: ran?.preconditions,
+            predicates: ran?.predicates,
             conditioning: conditioned?.kind === "refused" ? conditioned.reason : undefined,
           }
         : {
@@ -481,6 +491,7 @@ export class Steps {
         ...(usedPreconditions && Object.keys(usedPreconditions).length > 0
           ? { preconditions: usedPreconditions }
           : {}),
+        ...(usedPredicates?.length ? { predicates: usedPredicates } : {}),
       };
     }
     const certified: Certified = {
@@ -663,10 +674,11 @@ export class Steps {
     before: string,
     after: string,
     narrowed: Narrowed,
-    preconditions: Record<string, Record<string, unknown>>,
+    preconditions: Record<string, Attrs>,
+    predicates: Predicate[],
     side: Side,
   ): Promise<Conditioned | undefined> {
-    const mappedFacts: Record<string, Record<string, unknown>> = {};
+    const mappedFacts: Record<number, Attrs> = {};
     const [raw, outer] = await Promise.all([
       this.llops.number(before),
       this.llops.number(narrowed.outer),
@@ -675,27 +687,33 @@ export class Steps {
     // parameters are that same program's values. Either the name is the
     // parameter's own, or the instruction that defines it is shared with the
     // outer, whose value at that index is the canonical one the parameter carries.
-    for (const [ref, fact] of Object.entries(preconditions)) {
+    const paramOf = (ref: string) => {
       const clean = named(ref);
       const rawIdx = raw.ok ? resolveRef(raw.body, ref) : -1;
       const outerVal = outer.ok && rawIdx >= 0 ? outer.body[rawIdx]?.value : undefined;
-
-      const idx = narrowed.params.findIndex((p) => p.live === clean || p.live === outerVal);
+      return narrowed.params.findIndex((p) => p.live === clean || p.live === outerVal);
+    };
+    for (const [ref, fact] of Object.entries(preconditions)) {
+      const idx = paramOf(ref);
       if (idx >= 0) {
         mappedFacts[idx] = fact;
       }
     }
+    const mappedPredicates = predicates.map((predicate) => overParams(predicate, paramOf));
     // A fact that maps to nothing would certify something other than what the
     // caller asked for, and two facts collapsing onto one parameter would
     // overwrite one of them, so the attempt is refused rather than trimmed.
-    if (Object.keys(mappedFacts).length !== Object.keys(preconditions).length)
+    const unmapped = mappedPredicates.some((predicate) => predicate === undefined);
+    if (Object.keys(mappedFacts).length !== Object.keys(preconditions).length || unmapped)
       return { kind: "refused", reason: "some preconditions do not name a value of the window" };
+    const windowed = mappedPredicates as Predicate[];
 
     // Phase 1: Insert assumes before call in outer and verify whole-function
-    const assertions = Object.entries(mappedFacts).map(([argIdxStr, fact]) => ({
+    const facts = Object.entries(mappedFacts).map(([argIdxStr, fact]) => ({
       fact,
       of: `!${argIdxStr}`,
     }));
+    const assertions = [...facts, ...windowed];
     const res = await this.llops.assume(
       narrowed.outer,
       { at: "before_calls", fn: narrowed.callee },
@@ -734,7 +752,7 @@ export class Steps {
             : "the preconditions are not shown to hold before the window",
       };
 
-    // Phase 2: Add attributes to both window halves and check small pair
+    // Phase 2: Add attributes and predicates to both window halves and check small pair
     let condBefore = narrowed.before;
     let condAfter = narrowed.after;
     for (const [argIdxStr, fact] of Object.entries(mappedFacts)) {
@@ -751,12 +769,28 @@ export class Steps {
       condBefore = resFrom.module;
       condAfter = resTo.module;
     }
+    if (windowed.length > 0) {
+      const start = { at: "start" as const, fn: narrowed.callee };
+      const [resFrom, resTo] = await Promise.all([
+        this.llops.assume(condBefore, start, windowed),
+        this.llops.assume(condAfter, start, windowed),
+      ]);
+      const why = "a precondition cannot be assumed in the window";
+      if (!resFrom.ok || !resTo.ok) return { kind: "refused", reason: why };
+      condBefore = resFrom.module;
+      condAfter = resTo.module;
+    }
 
     const condCheck = await this.alive2(orient(side, condBefore, condAfter), {
       timeoutMs: this.timeouts.eagerCheckMs,
     });
 
-    return { kind: "checked", check: condCheck, preconditions: mappedFacts };
+    return {
+      kind: "checked",
+      check: condCheck,
+      preconditions: mappedFacts,
+      predicates: windowed,
+    };
   }
 
   /**
@@ -826,6 +860,33 @@ export class Steps {
   private capped(timeoutMs: number): number {
     return Math.min(timeoutMs, this.timeouts.checkCapMs);
   }
+}
+
+/** `predicate` over a window's parameters, or nothing when a value it names has none. */
+function overParams(predicate: Predicate, paramOf: (ref: string) => number) {
+  const param = (ref: string) => {
+    const k = paramOf(ref);
+    return k >= 0 ? `!${k}` : undefined;
+  };
+  if (!("insts" in predicate)) {
+    const [lhs, rhs] = [predicate.lhs, predicate.rhs].map((side) =>
+      typeof side === "number" ? side : param(side),
+    );
+    return lhs === undefined || rhs === undefined ? undefined : { ...predicate, lhs, rhs };
+  }
+  const own = new Set(
+    predicate.insts.flatMap((line) => line.match(/^\s*(%[-\w$.]+)\s*=/)?.[1] ?? []),
+  );
+  let missing = false;
+  const insts = predicate.insts.map((line) =>
+    line.replace(/%[-\w$.]+/g, (ref) => {
+      if (own.has(ref)) return ref;
+      const k = param(ref);
+      if (k === undefined) missing = true;
+      return k ?? ref;
+    }),
+  );
+  return missing ? undefined : { insts };
 }
 
 /** What a check's answer says about the goal it was asked about. */

@@ -71,7 +71,8 @@ export type Step =
         outer: Hash;
         from: Hash;
         to: Hash;
-        preconditions?: Record<string, Record<string, unknown>>;
+        preconditions?: Record<number, Attrs>;
+        predicates?: Predicate[];
       };
     }
   /**

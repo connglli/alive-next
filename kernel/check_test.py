@@ -855,6 +855,70 @@ class TestGolden(Case):
       done.stdout.count("inline the from half") + done.stdout.count("inline the to half"), 2
     )
 
+  def predicated(self, predicates: list) -> Path:
+    """A src step that adds `nuw` to an add of the masked input, under `predicates`."""
+    head = "define i32 @f(i32 noundef %0) {\nentry:\n  %1 = and i32 %0, 255\n"
+    tail = "  ret i32 %2\n"
+    was, now = (
+      llops("canon", {"module": f"{head}  %2 = add{flag} i32 %1, 1\n{tail}}}\n"})["module"]
+      for flag in ("", " nuw")
+    )
+    cut = [
+      llops("outline", {"module": module, "cut": "#1", "to": "#1", "callee": "w"})
+      for module in (was, now)
+    ]
+    outer = llops("canon", {"module": cut[0]["outer"]})["module"]
+    window = {
+      "callee": "w",
+      "outer": self.built.program(outer),
+      "from": self.built.program(llops("canon", {"module": cut[0]["callee"]})["module"]),
+      "to": self.built.program(llops("canon", {"module": cut[1]["callee"]})["module"]),
+    }
+    if predicates:
+      window["predicates"] = predicates
+    step = {
+      "kind": "window",
+      "side": "src",
+      "from": self.built.program(was),
+      "to": self.built.program(now),
+      "window": window,
+    }
+    self.built.goal(
+      "g1",
+      {"src": step["from"], "tgt": step["to"]},
+      {"src": step["to"], "tgt": step["to"]},
+      [step],
+      {"kind": "check"},
+    )
+    return self.built.write()
+
+  def test_a_window_step_under_a_predicate_verifies(self):
+    package = self.predicated([{"op": "ult", "lhs": "!0", "rhs": 256}])
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertIn("VERIFIED - root", done.stdout)
+    self.assertIn("Window precondition", done.stdout)
+
+  def test_a_window_predicate_that_does_not_hold_where_it_is_called_fails(self):
+    # The masked input reaches 255, so `ult 128` is false at some call.
+    package = self.predicated([{"op": "ult", "lhs": "!0", "rhs": 128}])
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("Window precondition", done.stdout)
+
+  def test_a_window_predicate_that_names_an_outer_value_fails(self):
+    # Before the call, %1 is the masked input, so the outer proves it; inside
+    # a half only arguments can be named, so the same text cannot be assumed there.
+    package = self.predicated([{"op": "ult", "lhs": "%1", "rhs": 256}])
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("only arguments may be named", done.stdout + done.stderr)
+
+  def test_a_window_step_that_needs_its_predicate_fails_without_it(self):
+    done = run(self.predicated([]), "--alive-tv", ALIVE_TV, "--llops", LLOPS)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("Window refinement", done.stdout)
+
   def test_a_conditioned_window_step_is_asked_about_the_side_it_replaces(self):
     # A tgt step's obligation runs backward (before refines after), so the
     # facts only have to hold where the AFTER whole is defined. Here the

@@ -55,7 +55,8 @@ export type EditResult =
   | { kind: "refused"; code: string; message: string; text: string };
 
 /** How a commit checks its step. */
-export interface CommitOptions extends Pick<CheckStepOptions, "preconditions" | "whole" | "eager"> {
+export interface CommitOptions
+  extends Pick<CheckStepOptions, "preconditions" | "predicates" | "whole" | "eager"> {
   window?: Window;
   /** Whether to look for a window to check instead of the whole function. On by default. */
   narrow?: boolean;
@@ -205,6 +206,7 @@ export class Transactions {
       {
         narrowed,
         preconditions: options?.preconditions,
+        predicates: options?.predicates,
         whole: options?.whole,
         eager: options?.eager,
       },

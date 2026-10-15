@@ -546,6 +546,48 @@ describe("stepping", () => {
     expect(step.window?.preconditions).toEqual({ 0: { noundef: true } });
   });
 
+  test("records predicates over the window's parameters when they certify it", async () => {
+    const checker = new FakeChecker(["correct", "correct", "unknown"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const result = await steps.checkStep(await preconditionedTree(), "g1", "src", AFTER, {
+      narrowed: await preconditionedNarrow(),
+      predicates: [
+        { op: "ult", lhs: "%v1", rhs: 100 },
+        { insts: ["%low = and i32 %v1, 1", "%even = icmp eq i32 %low, 0"] },
+      ],
+    });
+
+    if (result.kind !== "certified") throw new Error("expected the step to land");
+    expect(result.on).toBe("window");
+    const step = result.effects[0];
+    if (step?.effect !== "step") throw new Error("expected a step effect");
+    // Each value the predicates name is the window's parameter that carries it,
+    // and what the lines define stays theirs.
+    expect(step.window?.predicates).toEqual([
+      { op: "ult", lhs: "!0", rhs: 100 },
+      { insts: ["%low = and i32 !0, 1", "%even = icmp eq i32 %low, 0"] },
+    ]);
+    // Both halves of the small pair assume them at their start.
+    for (const half of [checker.calls[1]?.src, checker.calls[1]?.tgt])
+      expect(half).toContain("@llvm.assume");
+  });
+
+  test("a predicate over a value the window does not read is refused", async () => {
+    const checker = new FakeChecker(["correct"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const result = await steps.checkStep(await preconditionedTree(), "g1", "src", AFTER, {
+      narrowed: await preconditionedNarrow(),
+      predicates: [{ op: "ult", lhs: "%x", rhs: 100 }],
+      eager: false,
+    });
+
+    if (result.kind !== "certified") throw new Error("expected the window to certify");
+    expect(result.fallback).toMatchObject({
+      reason: "preconditions_refused",
+      conditioning: "some preconditions do not name a value of the window",
+    });
+  });
+
   test("an incorrect conditioned window skips the plain retry", async () => {
     const checker = new FakeChecker(["correct", "incorrect", "correct"]);
     const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);

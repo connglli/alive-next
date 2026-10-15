@@ -14,22 +14,22 @@ export const ParamAttrs = Type.Optional(
   }),
 );
 
+/** One predicate: a comparison, or lines of IR whose last line defines an i1. */
+export const PredicateShape = Type.Union([
+  Type.Object({
+    op: Type.String(),
+    lhs: Type.Union([Type.String(), Type.Number()]),
+    rhs: Type.Union([Type.String(), Type.Number()]),
+  }),
+  Type.Object({ insts: Type.Array(Type.String()) }),
+]);
+
 /** The preconditions a strengthen proves, over the callee's arguments. */
 export const Predicates = Type.Optional(
-  Type.Array(
-    Type.Union([
-      Type.Object({
-        op: Type.String(),
-        lhs: Type.Union([Type.String(), Type.Number()]),
-        rhs: Type.Union([Type.String(), Type.Number()]),
-      }),
-      Type.Object({ insts: Type.Array(Type.String()) }),
-    ]),
-    {
-      description:
-        'Preconditions over the callee\'s arguments, named !0, !1, ... by parameter index, as in param_attrs. Each is a comparison, e.g. {"op": "ule", "lhs": "!1", "rhs": "!0"}, or lines of IR whose last line defines an i1, e.g. {"insts": ["%rest = sub i32 !3, !0", "%ok = icmp eq i32 !2, %rest"]}.',
-    },
-  ),
+  Type.Array(PredicateShape, {
+    description:
+      'Preconditions over the callee\'s arguments, named !0, !1, ... by parameter index, as in param_attrs. Each is a comparison, e.g. {"op": "ule", "lhs": "!1", "rhs": "!0"}, or lines of IR whose last line defines an i1, e.g. {"insts": ["%rest = sub i32 !3, !0", "%ok = icmp eq i32 !2, %rest"]}.',
+  }),
 );
 
 export function createStrengthenTool(session: Session) {
