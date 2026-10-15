@@ -731,7 +731,10 @@ export class Steps {
     if (assumeCheck.outcome !== "correct")
       return {
         kind: "refused",
-        reason: "the preconditions are not shown to hold before the window",
+        reason:
+          assumeCheck.detail === LOOPS
+            ? "the preconditions cannot be shown to hold before the window in a function that loops; cut it at its loop header first"
+            : "the preconditions are not shown to hold before the window",
       };
 
     // Phase 2: Add attributes to both window halves and check small pair

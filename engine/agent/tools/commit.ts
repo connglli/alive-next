@@ -17,7 +17,7 @@ export function createCommitTool(session: Session) {
     name: "tx_commit",
     label: "Commit",
     description:
-      "Check the open transaction as one step, in the direction tx_begin stated. If the step holds, the side becomes the edited program. alive2 first checks only the instructions the edits changed, or the window you give, and then the whole function if needed. If the commit is refused, the side does not change and the transaction stays open, so you can edit further or discard it with tx_abort. A counterexample is only a hint. After a step, the goal's new pair is checked once on a small budget, so the last step of a proof proves the goal here.",
+      "Check the open transaction as one step, in the direction tx_begin stated. If the step holds, the side becomes the edited program. Commit the edits to each block on their own: alive2 first checks only the instructions the edits changed in one block, or the window you give, and then the whole function if needed, which it never does for a function that loops. If the commit is refused, the side does not change and the transaction stays open, so you can edit further or discard it with tx_abort. A counterexample is only a hint. After a step, the goal's new pair is checked once on a small budget, so the last step of a proof proves the goal here.",
     parameters: Type.Object({
       window: Type.Optional(
         Type.Object(
@@ -39,7 +39,7 @@ export function createCommitTool(session: Session) {
       preconditions: Type.Optional(
         Type.Record(Type.String(), Type.Any(), {
           description:
-            "Preconditions on values the window uses, named as in the program the transaction started from, for example { '%v1': { 'noundef': true } }.",
+            "Preconditions on values the window uses, proved over the whole function and named as in the program the transaction started from, for example { '%v1': { 'noundef': true } }.",
         }),
       ),
       narrow: Type.Optional(

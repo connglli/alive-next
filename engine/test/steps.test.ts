@@ -96,6 +96,26 @@ const LCSSA = LOOP.replace("ret i32 %i", "%r = phi i32 [ %i, %l ]\n  ret i32 %r"
 /** The same loop with attributes its body keeps, since it touches no memory. */
 const KEPT = LOOP.replace("@f(i32 %n) {", "@f(i32 %n) nofree memory(none) {");
 
+/** A loop that makes an odd number in its body, by adding 1 to an even one. */
+const ODD = `define i32 @f(i32 %n) {
+entry:
+  br label %l
+
+l:
+  %i = phi i32 [ 0, %entry ], [ %j, %l ]
+  %v1 = mul i32 %i, 2
+  %v2 = add i32 %v1, 1
+  %j = add i32 %i, 1
+  %c = icmp ult i32 %j, %n
+  br i1 %c, label %l, label %e
+
+e:
+  ret i32 %v2
+}
+`;
+/** The same loop setting that bit with `or`, a step a window in its body holds. */
+const ODD_BY_OR = ODD.replace("add i32 %v1, 1", "or i32 %v1, 1");
+
 async function tree(...events: Event[]) {
   return treeOf(SRC, TGT, ...events);
 }
@@ -623,6 +643,26 @@ describe("stepping", () => {
       reason: "preconditions_refused",
       conditioning: "some preconditions do not name a value of the window",
     });
+  });
+
+  test("a conditioning refusal in a function that loops says to cut it first", async () => {
+    // The preconditions are proved over the whole function, which alive2 is
+    // not asked about while it loops, so the plain window is the only query.
+    const checker = new FakeChecker(["correct"]);
+    const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
+    const narrowed = await narrow(llops, ODD, ODD_BY_OR);
+    if ("why" in narrowed) throw new Error(narrowed.why);
+    const result = await steps.checkStep(await treeOf(ODD, ODD_BY_OR), "g1", "src", ODD_BY_OR, {
+      narrowed,
+      preconditions: { "%v1": { noundef: true } },
+      eager: false,
+    });
+
+    if (result.kind !== "certified") throw new Error("expected the step to be certified");
+    expect(checker.calls).toHaveLength(1);
+    expect(result.fallback?.conditioning).toBe(
+      "the preconditions cannot be shown to hold before the window in a function that loops; cut it at its loop header first",
+    );
   });
 
   test("an inline refusal is reported, not swallowed", async () => {
