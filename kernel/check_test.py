@@ -262,6 +262,49 @@ exit:
 }
 """
 PARITY_NUW = PARITY.replace("%i.next = add i32", "%i.next = add nuw i32")
+
+# A count kept in a stack slot, as -O0 code keeps it, and in a phi of the same
+# name, as mem2reg leaves it.
+SLOT_COUNT = """define i32 @f(i32 %n) {
+entry:
+  %i = alloca i32, align 4
+  store i32 0, ptr %i, align 4
+  br label %head
+
+head:
+  %0 = load i32, ptr %i, align 4
+  %c = icmp ult i32 %0, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %1 = load i32, ptr %i, align 4
+  %2 = add i32 %1, 1
+  store i32 %2, ptr %i, align 4
+  br label %head
+
+exit:
+  %3 = load i32, ptr %i, align 4
+  ret i32 %3
+}
+"""
+
+PHI_COUNT = """define i32 @f(i32 %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %c = icmp ult i32 %i, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %i.next = add i32 %i, 1
+  br label %head
+
+exit:
+  ret i32 %i
+}
+"""
 PARITY_SUB_NUW = PARITY_NUW.replace("%d = sub i32", "%d = sub nuw i32")
 ORDER = [{"op": "ule", "lhs": "!1", "rhs": "!0"}]
 
@@ -560,6 +603,9 @@ class Case(unittest.TestCase):
     inner = {"src": stored(s["callee"]), "tgt": stored(t["callee"])}
     phis = {"src": s["phis"], "tgt": t["phis"]}
     cut = {"kind": "split", "callee": "k", "detach": {"phis": phis, "hypothesis": "k.ih"}}
+    slots = {"src": s.get("slots", []), "tgt": t.get("slots", [])}
+    if slots["src"] or slots["tgt"]:
+      cut["slots"] = slots
     self.built.goal("g1", whole, whole, [], {**cut, "outer": "g2", "inner": "g3"})
     self.built.goal("g2", outer, outer, [], {"kind": "check"})
     self.built.goal("g3", inner, inner, [], {"kind": "check"})
@@ -637,6 +683,16 @@ class TestGolden(Case):
   def test_a_loop_cut_at_its_header_verifies_by_induction(self):
     self.detached(PARITY, PARITY_NUW)
     self.verified(self.built.write())
+
+  def test_a_cut_that_passes_what_a_slot_holds_verifies(self):
+    # The tgt keeps the count in a phi, or in a slot of its own too.
+    pairs = ((PHI_COUNT, {"src": [0], "tgt": []}), (SLOT_COUNT, {"src": [0], "tgt": [0]}))
+    for n, (tgt, slots) in enumerate(pairs):
+      with self.subTest(slots=slots):
+        self.built = Built(self.dir / f"package{n}")
+        self.detached(SLOT_COUNT, tgt)
+        self.assertEqual(self.built.goals["g1"]["discharge"]["slots"], slots)
+        self.verified(self.built.write())
 
   def test_state_only_the_tgt_carries_verifies(self):
     # The tgt keeps a countdown nothing reads, and the src passes poison for it.
@@ -1256,6 +1312,11 @@ class TestTampered(Case):
     )
     self.built.goal("g3", inner, {**inner, "src": claimed}, [], {"kind": "check"})
     self.refused(self.built.write(), "Hypothesis signature")
+
+  def test_a_cut_whose_record_leaves_out_its_slots(self):
+    self.detached(SLOT_COUNT, PHI_COUNT)
+    del self.built.goals["g1"]["discharge"]["slots"]
+    self.refused(self.built.write(), "no block only calls")
 
   def test_a_detached_cut_that_names_no_phis(self):
     self.detached(PARITY, PARITY_NUW)

@@ -122,10 +122,12 @@ export interface OutlineResult {
   result?: { type: string; live: Ref[] };
 }
 
-/** What `detach` answers: an outline, the hypothesis, and which parameters were phis. */
+/** What a cut answers: an outline, the hypothesis, and which parameters were phis or slots. */
 export interface DetachResult extends OutlineResult {
   hypothesis?: string;
   phis?: number[];
+  /** The parameters that carry what a stack slot held. */
+  slots?: number[];
 }
 
 export type AnalyzeKind = "knownbits" | "ranges" | "pointer" | "defined" | "scev";
@@ -368,8 +370,13 @@ export class Llops {
     return this.run("outline", { module, cut: from, to, callee, ...given });
   }
 
-  inline(outer: Module, callee: Module, calleeName: string): Promise<LlopsResult<ModuleResult>> {
-    return this.run("inline", { outer, callee, callee_name: calleeName });
+  inline(
+    outer: Module,
+    callee: Module,
+    calleeName: string,
+    slots: number[] = [],
+  ): Promise<LlopsResult<ModuleResult>> {
+    return this.run("inline", { outer, callee, callee_name: calleeName, slots });
   }
 
   /** Put a detached block back, the calls `detach` made becoming branches again. */
@@ -379,8 +386,9 @@ export class Llops {
     calleeName: string,
     phis: number[],
     hypothesis?: string,
+    slots: number[] = [],
   ): Promise<LlopsResult<ModuleResult>> {
-    const request = { outer, callee, callee_name: calleeName, phis };
+    const request = { outer, callee, callee_name: calleeName, phis, slots };
     return this.run("reattach", hypothesis ? { ...request, hypothesis } : request);
   }
 

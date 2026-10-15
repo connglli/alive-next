@@ -29,7 +29,7 @@ import {
 import type { Ref } from "../refs.ts";
 import { type GoalId, head, interposed, nextGoalIds, type Tree, workable } from "./goals.ts";
 import type { Store } from "./store.ts";
-import type { Detach, Effect } from "./trajectory.ts";
+import type { Detach, Effect, Slots } from "./trajectory.ts";
 
 export type SplitPreviewResult =
   | {
@@ -41,6 +41,8 @@ export type SplitPreviewResult =
       callee: string;
       /** Present when the cut detaches a block and value_map was provided. */
       detach?: Detach;
+      /** Present when either side passes what a stack slot held. */
+      slots?: Slots;
       /** Outlined programs if value_map was provided and valid. */
       programs?: {
         outerSrc: string;
@@ -144,12 +146,14 @@ export class Splits {
       if (message) return { kind: "refused", side, code: "invalid", message };
     }
 
+    const slots = slotsOf(src, tgt);
     return {
       kind: "preview",
       // The tgt's params are the same, and name the tgt value behind each poison.
       params: tgt.params,
       callee,
       ...(atBlock ? { detach: detachOf(src, tgt) } : {}),
+      ...(slots ? { slots } : {}),
       programs: {
         outerSrc: src.outer,
         outerTgt: tgt.outer,
@@ -207,6 +211,7 @@ export class Splits {
           outer: { gid: children.outer, src: outerSrcHash, tgt: outerTgtHash },
           callee: { gid: children.callee, src: calleeSrcHash, tgt: calleeTgtHash },
           ...(preview.detach ? { detach: preview.detach } : {}),
+          ...(preview.slots ? { slots: preview.slots } : {}),
         },
       ],
     };
@@ -219,9 +224,10 @@ export class Splits {
     callee: string,
     detached: boolean,
   ): Promise<string | undefined> {
+    const { outer, callee: body, phis, hypothesis, slots } = half;
     const back = detached
-      ? await this.llops.reattach(half.outer, half.callee, callee, half.phis ?? [], half.hypothesis)
-      : await this.llops.inline(half.outer, half.callee, callee);
+      ? await this.llops.reattach(outer, body, callee, phis ?? [], hypothesis, slots)
+      : await this.llops.inline(outer, body, callee, slots);
     if (!back.ok) return `the halves do not go back together: ${back.message}`;
     const same = await this.llops.canon(back.module);
     if (!same.ok || same.module !== whole) return "the halves go back together as another program";
@@ -242,6 +248,12 @@ export class Splits {
 function detachOf(src: DetachResult, tgt: DetachResult): Detach {
   const phis = { src: src.phis ?? [], tgt: tgt.phis ?? [] };
   return src.hypothesis ? { phis, hypothesis: src.hypothesis } : { phis };
+}
+
+/** Which parameters carry what a stack slot held on each side, or nothing when none does. */
+function slotsOf(src: DetachResult, tgt: DetachResult): Slots | undefined {
+  const slots = { src: src.slots ?? [], tgt: tgt.slots ?? [] };
+  return slots.src.length || slots.tgt.length ? slots : undefined;
 }
 
 /** Whether a reference names one of the module's blocks, whose label starts a line. */

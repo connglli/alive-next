@@ -37,7 +37,7 @@ The framework proves that one LLVM function refines another, or refutes it, unde
 **Loops**: a loop is proved by induction once cut at its header, and alive2 is never asked about a loop as a whole. Both sides have to reach the header in lockstep, one call of the hypothesis per iteration, and a fact over the callee's parameters relates them there. One side's iteration may be unfolded to match an unroll by a power of two, and its first iterations to match a peel. That leaves out of reach:
 
 * A variable the tgt dropped, such as `%i` after linear function test replacement: the tgt would have to pass the shared hypothesis a value refining the src's.
-* Loop state the src keeps in stack slots and the tgt in values, as at `-O0` against an optimized tgt: the src passes a slot's address where the tgt passes a value. Such a src is paired after `mem2reg`.
+* Loop state the src keeps in a stack slot whose address escapes, or in a struct or an array, and the tgt in values: the src passes an address where the tgt passes a value.
 * Unrolling by a factor that is not a power of two, unrolling with a remainder loop, a loop replaced by a call such as `memset`, and a deleted loop: no call of the tgt pairs with each call of the src's hypothesis.
 * Reordering transformations (interchange, fusion, fission, tiling, reversal): the two sides agree on memory only at the end, which takes a quantified invariant.
 * An irreducible loop, whose second entry breaks the single entry a split at a block needs.
@@ -91,6 +91,8 @@ Two alive2 checks replace the one big check:
 The declared `g` must have one signature shared by both sides. The signature is determined by the src side's live values at the cut, and the agent must supply a value map saying which tgt value corresponds to each src live value. Whether the map is *correct* is not trusted: alive2's outer check verifies that corresponding arguments refine each other. When the tgt needs a value that has no src counterpart at the cut, the map lists it under a key that is not a src value, and the src passes `poison` in its place, which any value refines.
 
 The only trusted glue is that outlining is faithful: the outer calling the callee runs as the original program does. That is mechanical, since no code is moved that depends on its frame or on its function's attributes, such as `memory(none)`.
+
+A stack slot that only loads and stores of its type use crosses a cut as what it holds: the outer loads it right before the call, and the callee stores it in a slot of its own. No other code sees either slot and the outer returns right after the call, so the copy holds what the slot would, and `inline` and `reattach` put the slot back in its place.
 
 A split at a block detaches it instead: the block and every block it reaches become `g`, and each branch to the block becomes a call of `g`. At a loop header, the back edge calls a declared hypothesis `g.ih` in place of `g`, so the callee is one iteration and does not loop. Proving that pair, with `g.ih` an unknown function both sides share, proves the loop by induction: each side calls `g.ih` where it would go around again, so a tgt cannot stop where the src goes on. The glue a checker trusts is `reattach`, the inverse of detaching, as `inline` is of outlining.
 

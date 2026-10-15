@@ -1131,6 +1131,7 @@ class Check:
       raise Refused(f"{gid} detached a block without naming the parameters that were its phis")
     hypothesis = detach.get("hypothesis") if detach else None
     rebuild = "reattach" if detach else "inline"
+    slots = discharge.get("slots")
 
     for side in ("src", "tgt"):
       started = time.monotonic()
@@ -1143,6 +1144,8 @@ class Check:
         request["hypothesis"] = hypothesis
       if detach:
         request["phis"] = detach["phis"].get(side)
+      if slots:
+        request["slots"] = slots[side]
       back = self.package.run_llops(rebuild, request)["module"]
       same = self.package.run_llops("canon", {"module": back})["module"]
       whole = self.package.program(goal["end"][side])

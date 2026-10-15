@@ -9,7 +9,7 @@
 // log is the only thing that has to be right, and a reader that replays it
 // sees exactly what the run saw. That also makes this file pure: no disk, no
 // clock, no processes.
-import type { Detach, Effect, Entry, Hash } from "./trajectory.ts";
+import type { Detach, Effect, Entry, Hash, Slots } from "./trajectory.ts";
 
 export type GoalId = string;
 export type ProgramId = string;
@@ -36,6 +36,8 @@ export interface Goal {
   callee?: string;
   /** Present on both children when the cut detached a block. */
   detach?: Detach;
+  /** Present on both children when the cut passed what a stack slot held. */
+  slots?: Slots;
   src: SideHistory;
   tgt: SideHistory;
   status: Status;
@@ -182,8 +184,8 @@ function apply(tree: Tree, effect: Effect): void {
     }
     case "split": {
       const parent = editable(tree, effect.gid);
-      const { name: callee, detach } = effect;
-      const made = { callee, ...(detach ? { detach } : {}) };
+      const { name: callee, detach, slots } = effect;
+      const made = { callee, ...(detach ? { detach } : {}), ...(slots ? { slots } : {}) };
       opened(tree, parent, effect.outer, "outer", made);
       opened(tree, parent, effect.callee, "callee", made);
       // The parent's heads freeze here: it is proved through its children now.
@@ -247,7 +249,7 @@ function opened(
   parent: Goal,
   half: { gid: GoalId; src: Hash; tgt: Hash },
   role: Role,
-  made: Pick<Goal, "callee" | "detach"> = {},
+  made: Pick<Goal, "callee" | "detach" | "slots"> = {},
 ): void {
   if (tree.goals.has(half.gid)) throw new DerivationError(`${half.gid} already exists`);
   tree.goals.set(half.gid, {

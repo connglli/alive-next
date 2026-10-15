@@ -27,6 +27,12 @@ export interface Detach {
   hypothesis?: string;
 }
 
+/** Which callee parameters carry what a stack slot held, on each side of a cut. */
+export interface Slots {
+  src: number[];
+  tgt: number[];
+}
+
 /** A certified step in a goal's chain, named by the program it produced. */
 export interface StepRef {
   gid: string;
@@ -123,6 +129,8 @@ export type Effect =
       callee: { gid: string; src: Hash; tgt: Hash };
       /** Present when a block was detached rather than a suffix outlined. */
       detach?: Detach;
+      /** Present when either side passes what a stack slot held. */
+      slots?: Slots;
     }
   /**
    * Both sides of a callee goal gained a strengthened interface contract

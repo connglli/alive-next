@@ -635,6 +635,16 @@ bool privateSlot(const llvm::AllocaInst &slot) {
   });
 }
 
+llvm::AllocaInst *heldSlot(llvm::Value &v) {
+  auto *slot = llvm::dyn_cast<llvm::AllocaInst>(&v);
+  return slot && privateSlot(*slot) ? slot : nullptr;
+}
+
+llvm::Type *passedType(llvm::Value &v) {
+  llvm::AllocaInst *slot = heldSlot(v);
+  return slot ? slot->getAllocatedType() : v.getType();
+}
+
 std::optional<std::vector<unsigned>> slotParams(const llvm::json::Object &args, unsigned count) {
   std::vector<unsigned> slots;
   const llvm::json::Value *given = args.get("slots");
@@ -760,10 +770,10 @@ llvm::Value *mappedParam(const llvm::json::Value &entry, const llvm::json::Objec
     err = errResponse("bad_request", "params: '" + type->str() + "' is not a type");
     return nullptr;
   }
-  if (tgtVal->getType() != want) {
+  if (passedType(*tgtVal) != want) {
     std::string got;
     llvm::raw_string_ostream os(got);
-    tgtVal->getType()->print(os);
+    passedType(*tgtVal)->print(os);
     err = errResponse("type_mismatch", "value_map: '" + mapped->str() + "' has type " + got +
                                            " but the signature expects " + type->str());
     return nullptr;

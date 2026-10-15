@@ -1652,6 +1652,7 @@ class TestDetach(Case):
   def reattaches(self, whole, half, callee):
     request = {"outer": half["outer"], "callee": half["callee"], "callee_name": callee}
     request["phis"] = half["phis"]
+    request["slots"] = half.get("slots", [])
     if "hypothesis" in half:
       request["hypothesis"] = half["hypothesis"]
     back = self.good(run("reattach", request))["module"]
@@ -2148,9 +2149,8 @@ entry:
 class TestInline(Case):
   def roundtrip(self, module, cut, callee="g"):
     out = self.good(run("outline", {"module": module, "side": "src", "cut": cut, "callee": callee}))
-    back = self.good(
-      run("inline", {"outer": out["outer"], "callee": out["callee"], "callee_name": callee})
-    )
+    request = {"outer": out["outer"], "callee": out["callee"], "callee_name": callee}
+    back = self.good(run("inline", {**request, "slots": out.get("slots", [])}))
     return out, back
 
   def test_roundtrip_reproduces_the_original(self):
@@ -2411,6 +2411,27 @@ exit:
 declare i32 @k.ih(i32, i32, i32)
 """
 
+# SLOT_LOOP after mem2reg, as an optimizing tgt keeps its state.
+SLOT_LOOP_PROMOTED = """define i32 @f(i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %s.0 = phi i32 [ 0, %entry ], [ %s.next, %body ]
+  %i.0 = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %c = icmp slt i32 %i.0, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %s.next = add nsw i32 %s.0, %i.0
+  %i.next = add nsw i32 %i.0, 1
+  br label %loop
+
+exit:
+  ret i32 %s.0
+}
+"""
+
 SLOT_F = """define i32 @f(i32 %x) {
 entry:
   %s = alloca i32, align 4
@@ -2533,6 +2554,44 @@ class TestSlots(Case):
   def test_a_window_holds_no_slot(self):
     outer = SLOT_F_OUTER.replace("  ret i32 %1", "  %2 = add i32 %1, 0\n  ret i32 %2")
     self.bad(self.inline(outer), "frame_dependent")
+
+  def test_a_cut_passes_what_a_private_slot_holds(self):
+    request = {"module": SLOT_LOOP, "side": "src", "block": "%loop", "callee": "k"}
+    half = self.good(run("detach", request))
+    self.assertEqual([p["type"] for p in half["params"]], ["i32", "i32", "i32"])
+    self.assertEqual(half["slots"], [0, 1])
+    self.assertEqual(self.canon(half["outer"]), self.canon(SLOT_LOOP_OUTER))
+    self.assertEqual(self.canon(half["callee"]), self.canon(SLOT_LOOP_CALLEE))
+    out = self.good(run("outline", {"module": SLOT_F, "side": "src", "cut": "%b", "callee": "g"}))
+    self.assertEqual(out["slots"], [0])
+    self.assertEqual(self.canon(out["outer"]), self.canon(SLOT_F_OUTER))
+    self.assertEqual(self.canon(out["callee"]), self.canon(SLOT_F_CALLEE))
+
+  def test_a_value_of_the_tgt_stands_for_a_slot_of_the_src(self):
+    src = self.good(
+      run("detach", {"module": SLOT_LOOP, "side": "src", "block": "%loop", "callee": "k"})
+    )
+    value_map = {"%i": "%i.0", "%s": "%s.0", "%n": "%n"}
+    request = {"module": SLOT_LOOP_PROMOTED, "side": "tgt", "block": "%loop", "callee": "k"}
+    tgt = self.good(run("detach", {**request, "params": src["params"], "value_map": value_map}))
+    self.assertNotIn("slots", tgt)
+    # mem2reg put the sum's phi first, while the signature starts with the count.
+    self.assertEqual(tgt["phis"], [1, 0])
+    back = self.good(self.reattach(tgt["outer"], tgt["callee"], slots=(), phis=tgt["phis"]))
+    self.assertEqual(self.canon(back["module"]), self.canon(SLOT_LOOP_PROMOTED))
+
+  def test_a_slot_whose_address_escapes_crosses_as_its_address(self):
+    jump = "  br label %loop\n\nloop:"
+    escaping = SLOT_LOOP.replace(jump, "  call void @use(ptr %i)\n" + jump)
+    escaping += "\ndeclare void @use(ptr)\n"
+    request = {"module": escaping, "side": "src", "block": "%loop", "callee": "k"}
+    half = self.good(run("detach", request))
+    self.assertEqual([p["type"] for p in half["params"]], ["ptr", "i32", "i32"])
+    self.assertEqual(half["slots"], [1])
+    back = self.good(
+      self.reattach(half["outer"], half["callee"], slots=half["slots"]),
+    )["module"]
+    self.assertEqual(self.canon(back), self.canon(escaping))
 
 
 class TestHarness(Case):

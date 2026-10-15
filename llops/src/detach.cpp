@@ -8,6 +8,7 @@
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/SourceMgr.h"
@@ -110,10 +111,10 @@ std::vector<llvm::Value *> needed(llvm::Function &F, const Region &region) {
   return params;
 }
 
-std::string typeText(const llvm::Value &v) {
+std::string typeText(llvm::Value &v) {
   std::string out;
   llvm::raw_string_ostream os(out);
-  v.getType()->print(os);
+  passedType(v)->print(os);
   return out;
 }
 
@@ -214,7 +215,7 @@ bool srcParams(const llvm::json::Array &spec, llvm::Function &F, ValueRefs &refs
       err = errResponse("invalid", "params: '" + live->str() + "' is not a value the src passes");
       return false;
     }
-    if (v->getType() != ty) {
+    if (passedType(*v) != ty) {
       err = errResponse("type_mismatch", "params: '" + live->str() + "' is not " + type->str());
       return false;
     }
@@ -241,23 +242,46 @@ std::vector<Edge> edgesInto(llvm::Function &F, llvm::BasicBlock *B) {
 
 // Route edge `e` into a fresh block that calls `target` and returns what it answers.
 llvm::BasicBlock *callInstead(Edge e, llvm::BasicBlock *B, llvm::Function *target,
-                              llvm::ArrayRef<llvm::Value *> params, llvm::Function *k) {
+                              llvm::ArrayRef<llvm::Value *> params, llvm::Function *k,
+                              llvm::ArrayRef<llvm::AllocaInst *> copies) {
+  llvm::Function *F = e.from->getParent();
+  auto *Q = llvm::BasicBlock::Create(F->getContext(), "", F);
+  llvm::IRBuilder<> at(Q);
   std::vector<llvm::Value *> args;
   for (unsigned i = 0; i < params.size(); ++i) {
     auto *phi = llvm::dyn_cast<llvm::PHINode>(params[i]);
-    if (phi && phi->getParent() == B)
+    // A slot is loaded right before the call: the callee's copy at a back edge.
+    auto *slot = copies[i] && !k ? llvm::cast<llvm::AllocaInst>(params[i]) : copies[i];
+    if (slot)
+      args.push_back(at.CreateAlignedLoad(slot->getAllocatedType(), slot, slot->getAlign()));
+    else if (phi && phi->getParent() == B)
       args.push_back(phi->getIncomingValueForBlock(e.from));
     else if (llvm::isa<llvm::PoisonValue>(params[i]))
       args.push_back(params[i]);
     else
       args.push_back(k ? k->getArg(i) : params[i]);
   }
-  llvm::Function *F = e.from->getParent();
-  auto *Q = llvm::BasicBlock::Create(F->getContext(), "", F);
   auto *call = llvm::CallInst::Create(target, args, "", Q);
   llvm::ReturnInst::Create(F->getContext(), call->getType()->isVoidTy() ? nullptr : call, Q);
   e.from->getTerminator()->setSuccessor(e.index, Q);
   return Q;
+}
+
+// The callee's copies, at the start of `B`, of the private slots among `params`.
+std::vector<llvm::AllocaInst *> copiesOf(llvm::BasicBlock &B, llvm::ArrayRef<llvm::Value *> params,
+                                         llvm::Function &k) {
+  std::vector<llvm::AllocaInst *> copies(params.size(), nullptr);
+  llvm::IRBuilder<> at(&B, B.getFirstNonPHIIt());
+  for (unsigned i = 0; i < params.size(); ++i)
+    if (llvm::AllocaInst *slot = heldSlot(*params[i])) {
+      copies[i] = at.CreateAlloca(slot->getAllocatedType(), slot->getAddressSpace(), nullptr,
+                                  slot->getName());
+      copies[i]->setAlignment(slot->getAlign());
+    }
+  for (unsigned i = 0; i < params.size(); ++i)
+    if (copies[i])
+      at.CreateAlignedStore(k.getArg(i), copies[i], copies[i]->getAlign());
+  return copies;
 }
 
 // Move the region into `name`; edges from outside call it, back edges call `hypothesis`.
@@ -267,9 +291,10 @@ llvm::Function *cutOut(llvm::Module &M, llvm::Function &F, const Region &region,
   llvm::BasicBlock *B = region.front();
   std::vector<llvm::Type *> types;
   for (llvm::Value *p : params)
-    types.push_back(p->getType());
+    types.push_back(passedType(*p));
   auto *type = llvm::FunctionType::get(F.getReturnType(), types, /*isVarArg=*/false);
   auto *k = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, &M);
+  std::vector<llvm::AllocaInst *> copies = copiesOf(*B, params, *k);
   llvm::Function *ih = nullptr;
 
   Region moving = region;
@@ -277,7 +302,7 @@ llvm::Function *cutOut(llvm::Module &M, llvm::Function &F, const Region &region,
     bool back = region.contains(e.from);
     if (back && !ih)
       ih = llvm::Function::Create(type, llvm::Function::ExternalLinkage, hypothesis, &M);
-    llvm::BasicBlock *Q = callInstead(e, B, back ? ih : k, params, back ? k : nullptr);
+    llvm::BasicBlock *Q = callInstead(e, B, back ? ih : k, params, back ? k : nullptr, copies);
     if (back)
       moving.insert(Q);
   }
@@ -289,7 +314,9 @@ llvm::Function *cutOut(llvm::Module &M, llvm::Function &F, const Region &region,
   }
   llvm::DenseMap<llvm::Value *, llvm::Value *> toParam;
   for (unsigned i = 0; i < params.size(); ++i)
-    if (!llvm::isa<llvm::PoisonValue>(params[i]))
+    if (copies[i])
+      toParam[params[i]] = copies[i];
+    else if (!llvm::isa<llvm::PoisonValue>(params[i]))
       toParam[params[i]] = k->getArg(i);
   for (auto &I : llvm::instructions(*k))
     for (llvm::Use &U : I.operands())
@@ -374,6 +401,10 @@ llvm::json::Object moveRegion(llvm::json::Object &args, llvm::Module &M, llvm::F
   }
 
   auto phis = phiPositions(params, region.front());
+  llvm::json::Array slots;
+  for (unsigned i = 0; i < params.size(); ++i)
+    if (heldSlot(*params[i]))
+      slots.push_back(i);
   std::string hypothesis = name.str() + ".ih";
   bool recurses = false;
   llvm::Function *k = cutOut(M, F, region, params, name, hypothesis, recurses);
@@ -395,6 +426,8 @@ llvm::json::Object moveRegion(llvm::json::Object &args, llvm::Module &M, llvm::F
   resp["outer"] = printModule(*outer);
   resp["callee"] = printModule(*callee);
   resp["params"] = std::move(paramInfo);
+  if (!slots.empty())
+    resp["slots"] = std::move(slots);
   if (!joined)
     resp["phis"] = std::move(phis);
   if (recurses)

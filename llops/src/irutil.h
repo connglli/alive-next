@@ -142,6 +142,12 @@ bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F
 // Whether a slot is a one-value entry-block alloca only simple loads and stores of it use.
 bool privateSlot(const llvm::AllocaInst &slot);
 
+// The private slot `v` is, which a cut passes by what it holds, or nullptr.
+llvm::AllocaInst *heldSlot(llvm::Value &v);
+
+// The type a cut passes `v` as: what it holds when it is a private slot.
+llvm::Type *passedType(llvm::Value &v);
+
 // The ascending positions a request's `slots` names among `count` parameters, or nothing.
 std::optional<std::vector<unsigned>> slotParams(const llvm::json::Object &args, unsigned count);
 

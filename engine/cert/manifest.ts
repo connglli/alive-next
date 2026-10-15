@@ -22,6 +22,7 @@ import type {
   Entry,
   FrameworkEvent,
   Hash,
+  Slots,
   StepRef,
   ToolResultEvent,
 } from "../core/state/trajectory.ts";
@@ -121,6 +122,7 @@ export type Discharge =
       outer: string;
       inner: string;
       detach?: Detach;
+      slots?: Slots;
     };
 
 /** One goal in a proof, from the pair it started with to the one it proved. */
@@ -316,6 +318,7 @@ function include(
       outer: outer.id,
       inner: inner.id,
       ...(outer.detach ? { detach: outer.detach } : {}),
+      ...(outer.slots ? { slots: outer.slots } : {}),
     },
   };
   include(tree, outer, effects, goals, programs);
