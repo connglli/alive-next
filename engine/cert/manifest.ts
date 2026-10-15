@@ -325,10 +325,11 @@ function include(
  * The moves along a goal's surviving chain, in the order they happened.
  *
  * The log holds every move the run made, the abandoned ones included, and the
- * goal holds the pairs that survived. Walking the log and taking each move
- * that lands on the next surviving pair is what leaves the path.
+ * goal holds the pairs that survived. Replaying the goal's moves as `derive`
+ * does, reverts included, says which move made each program it holds.
  */
 function chainOf(goal: Goal, effects: Effect[]): Step[] {
+  const made = madeBy(goal, effects);
   const steps: Step[] = [];
   const src = goal.src.history;
   const tgt = goal.tgt.history;
@@ -336,7 +337,7 @@ function chainOf(goal: Goal, effects: Effect[]): Step[] {
   let ti = 1;
   for (const effect of effects) {
     if (effect.gid !== goal.id) continue;
-    if (effect.effect === "step" && effect.to === goal[effect.side].history[side(effect, si, ti)]) {
+    if (effect.effect === "step" && made[effect.side][side(effect, si, ti)] === effect) {
       const from = goal[effect.side].history[side(effect, si, ti) - 1] as Hash;
       // TODO: Support tgt->src rewrites (some kind of anti-optimizations).
       if (effect.how === "rewrite") {
@@ -382,7 +383,11 @@ function chainOf(goal: Goal, effects: Effect[]): Step[] {
       }
       if (effect.side === "src") si += 1;
       else ti += 1;
-    } else if (effect.effect === "strengthen" && effect.src === src[si] && effect.tgt === tgt[ti]) {
+    } else if (
+      effect.effect === "strengthen" &&
+      made.src[si] === effect &&
+      made.tgt[ti] === effect
+    ) {
       steps.push({
         kind: "strengthen",
         from: { src: src[si - 1] as Hash, tgt: tgt[ti - 1] as Hash },
@@ -400,6 +405,33 @@ function chainOf(goal: Goal, effects: Effect[]): Step[] {
     throw new NotCertifiable(`nothing in the log accounts for every pair ${goal.id} held`);
   }
   return steps;
+}
+
+/** The move that made each program a goal's side holds, by its place in the side's history. */
+function madeBy(goal: Goal, effects: Effect[]): Record<"src" | "tgt", (Effect | undefined)[]> {
+  const held = { src: [first(goal, "src")], tgt: [first(goal, "tgt")] };
+  const made: Record<"src" | "tgt", (Effect | undefined)[]> = {
+    src: [undefined],
+    tgt: [undefined],
+  };
+  const push = (side: "src" | "tgt", hash: Hash, effect: Effect) => {
+    held[side].push(hash);
+    made[side].push(effect);
+  };
+  for (const effect of effects) {
+    if (effect.gid !== goal.id) continue;
+    if (effect.effect === "step") push(effect.side, effect.to, effect);
+    else if (effect.effect === "strengthen") {
+      push("src", effect.src, effect);
+      push("tgt", effect.tgt, effect);
+    } else if (effect.effect === "revert") {
+      // As `derive` reverts: back to the last time the side held that program.
+      const kept = held[effect.side].lastIndexOf(effect.to) + 1;
+      held[effect.side].length = kept;
+      made[effect.side].length = kept;
+    }
+  }
+  return made;
 }
 
 /** Who checked a leaf's pair: the last proof of it, since a later step reopens the goal. */

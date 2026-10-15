@@ -19,7 +19,7 @@ import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { derive } from "../core/state/goals.ts";
 import type { Checker } from "../core/state/steps.ts";
-import { parse } from "../core/state/trajectory.ts";
+import { type Effect, parse } from "../core/state/trajectory.ts";
 import { cut } from "../examples/cut.ts";
 import { loop } from "../examples/loop.ts";
 import { miscompile } from "../examples/miscompile.ts";
@@ -353,6 +353,46 @@ describe.skipIf(!built)("the manifest", () => {
 
     const [only] = manifestFrom(session.dir).goals.g1?.steps ?? [];
     expect(only).toMatchObject({ kind: "check", side: "src", to: step.hash, by: "reshaped" });
+  });
+
+  test("keeps the step that made a program, not an abandoned one that made it too", async () => {
+    // The src reaches the same program twice: through a middle program that a
+    // revert abandons, and then straight from where it started.
+    const body = (shift: string, double: string) =>
+      `  %h = ${shift}\n  %g = add i32 %h, %1\n  %s = ${double}\n  %t = add i32 %s, 1\n  ret i32 %t\n`;
+    const session = await Session.start({
+      dir: join(dir, "revisited"),
+      src: WIDE,
+      tgt: WIDE,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    const step = async (shift: string, double: string) => {
+      await session.begin("g1", "src");
+      await session.edit({ op: "set_body", body: body(shift, double) });
+      const landed = await session.commit();
+      if (landed.kind !== "certified") throw new Error("expected the step to land");
+      return landed;
+    };
+    const start = (await session.show("g1")).src;
+    await step("lshr i32 %0, 4", "shl i32 %g, 1");
+    const abandoned = await step("udiv i32 %0, 16", "shl i32 %g, 1");
+    await session.revert("g1", "src", start.id);
+    const kept = await step("udiv i32 %0, 16", "shl i32 %g, 1");
+    expect(kept.hash).toBe(abandoned.hash);
+    expect(session.finish()).toBe("verified");
+
+    const window = (landed: typeof kept) =>
+      (landed.effects[0] as Extract<Effect, { effect: "step" }>).window;
+    const narrowed = window(kept);
+    if (!narrowed) throw new Error("expected the step to be narrowed");
+    expect(narrowed).not.toEqual(window(abandoned));
+    const steps = manifestFrom(session.dir).goals.g1?.steps ?? [];
+    expect(steps).toEqual([
+      { kind: "window", side: "src", from: start.hash, to: kept.hash, window: narrowed },
+    ]);
   });
 
   test("records a step that only dropped attributes the tgt respects", async () => {
