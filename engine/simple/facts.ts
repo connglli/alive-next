@@ -1,11 +1,11 @@
 // What the analyses know about the inputs of a window or a cut, as
 // preconditions a commit can ask for or candidates to strengthen a cut with.
 // A window proves its facts by assuming them, and an assumption about a poison
-// value is undefined behavior, so only values the analyses find noundef get
-// facts there. A cut proves its facts by putting them on the declaration of
-// the function it calls. There a value outside a range becomes poison rather
-// than undefined behavior, so a cut also gives a value that may be poison its
-// range.
+// value is undefined behavior, so only values the analyses show cannot be
+// poison get facts there. A cut proves its facts by putting them on the
+// declaration of the function it calls. There a value outside a range becomes
+// poison rather than undefined behavior, so a cut also gives a value that may
+// be poison its range.
 import type {
   AnalyzeKind,
   Attrs,
@@ -32,7 +32,7 @@ export async function factsAt(
   const about = await analyses(llops, module, point, ["defined", "ranges", "pointer"]);
   const out: Preconditions = {};
   for (const value of values) {
-    if (!about("defined", value)?.noundef) continue;
+    if (!about("defined", value)?.not_poison) continue;
     const range = rangeOf(about("ranges", value));
     const pointer = pointerAttrs(about("pointer", value));
     out[value] = { noundef: true, ...(range ? { range } : {}), ...pointer };
@@ -57,7 +57,7 @@ export async function cutFacts(
   const predicates: Predicate[] = [];
   lives.forEach((live, k) => {
     const defined = about("defined", live);
-    if (defined?.noundef) {
+    if (defined?.not_poison) {
       param_attrs[k] = { noundef: true, ...pointerAttrs(about("pointer", live)) };
       predicates.push(
         ...boundsOf(k, about("ranges", live)),
