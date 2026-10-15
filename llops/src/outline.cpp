@@ -7,6 +7,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/SourceMgr.h"
@@ -90,6 +91,42 @@ llvm::Function *moveOut(llvm::Module &M, llvm::BasicBlock &BB,
   return callee;
 }
 
+// A window's given signature: values in scope where the window starts, so that
+// the windows of two programs that read different values can share one.
+bool windowParams(const llvm::json::Array &spec, llvm::Function &F, ValueRefs &refs,
+                  llvm::Instruction *start, std::vector<llvm::Value *> &params,
+                  llvm::json::Object &err) {
+  llvm::DominatorTree DT(F);
+  for (const auto &entry : spec) {
+    const auto *obj = entry.getAsObject();
+    auto live = obj ? obj->getString("live") : std::nullopt;
+    auto type = obj ? obj->getString("type") : std::nullopt;
+    if (!live || !type) {
+      err = errResponse("bad_request", "each params entry needs 'live' and 'type'");
+      return false;
+    }
+    llvm::Value *v = refs.resolve(*live);
+    auto *I = llvm::dyn_cast_or_null<llvm::Instruction>(v);
+    if (!llvm::isa_and_nonnull<llvm::Argument>(v) && !(I && DT.dominates(I, start))) {
+      err = errResponse("invalid", "params: '" + live->str() +
+                                       "' is not a value in scope where the window starts");
+      return false;
+    }
+    llvm::SMDiagnostic smd;
+    if (llvm::parseType(*type, smd, *F.getParent()) != v->getType()) {
+      err = errResponse("type_mismatch",
+                        "params: '" + live->str() + "' is not of type " + type->str());
+      return false;
+    }
+    if (llvm::is_contained(params, v)) {
+      err = errResponse("invalid", "params: '" + live->str() + "' is named twice");
+      return false;
+    }
+    params.push_back(v);
+  }
+  return true;
+}
+
 // Print the module with one function reduced to a declaration. The outer and
 // the callee are two views of the same module, so the two programs agree on
 // everything except which of the two functions has a body.
@@ -156,9 +193,9 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
   // none of what says how two of them line up.
   if (!to && (!side || (*side != "src" && *side != "tgt")))
     return errResponse("bad_request", "a cut needs 'side' (src|tgt)");
-  if (to && (side || args.get("params") || args.get("value_map")))
+  if (to && (side || args.get("value_map")))
     return errResponse("bad_request", "a window is outlined the same way whichever side it is on, "
-                                      "so it takes no 'side', 'params' or 'value_map'");
+                                      "so it takes no 'side' or 'value_map'");
 
   std::string parseErr;
   auto mwc = parseModule(*text, &parseErr);
@@ -192,6 +229,16 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
   std::vector<llvm::Instruction *> out = liveOutOf(*F, window, inside);
 
   std::vector<llvm::Value *> params = liveInto(*F, inside);
+  if (const auto *given = args.getArray("params")) {
+    std::vector<llvm::Value *> chosen;
+    if (!windowParams(*given, *F, refs, window.front(), chosen, err))
+      return err;
+    for (auto *v : params)
+      if (!llvm::is_contained(chosen, v))
+        return errResponse("invalid",
+                           "params leave out '" + refs.print(*v) + "', which the window reads");
+    params = std::move(chosen);
+  }
   llvm::json::Array paramInfo;
   for (auto *v : params) {
     llvm::json::Object p;

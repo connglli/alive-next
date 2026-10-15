@@ -148,7 +148,7 @@ The response carries the two modules and the signature:
   "params": [ { "param": "%p0", "type": "i32", "live": "%3" } ] }
 ```
 
-The signature is the src side's live-in set, the values the moved instructions use from before them: instructions in the order they are printed, then arguments.
+The signature is the values the moved instructions use from before them, instructions in the order they are printed and then arguments, or a window's given `params`, which cover those and name only values in scope at the cut.
 
 The tgt side is cut against that same signature, with a value map naming the tgt value that stands in for each src live value:
 

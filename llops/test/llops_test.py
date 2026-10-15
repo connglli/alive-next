@@ -1946,6 +1946,36 @@ entry:
       )
       self.assertEqual(self.canon(back["module"]), self.canon(whole))
 
+  def test_two_bodies_whose_windows_read_different_values_share_an_outer_over_both(self):
+    # The edit makes the window read %y where it read %x, so each window's own
+    # signature gives its outer a different call; over both, the outers agree.
+    src = "define i32 @f(i32 %a, i32 %b) {\nentry:\n  %x = add i32 %a, 1\n  %y = add i32 %b, 1\n"
+    before = src + "  %r = mul i32 %x, 3\n  ret i32 %r\n}\n"
+    after = src + "  %r = mul i32 %y, 3\n  ret i32 %r\n}\n"
+    both = [{"type": "i32", "live": "%x"}, {"type": "i32", "live": "%y"}]
+    halves = [
+      self.good(run("outline", {"module": m, "cut": "r", "to": "r", "callee": "w", "params": both}))
+      for m in (before, after)
+    ]
+    self.assertEqual(self.canon(halves[0]["outer"]), self.canon(halves[1]["outer"]))
+    self.assertEqual([p["live"] for p in halves[0]["params"]], ["%x", "%y"])
+    for r, whole in zip(halves, (before, after), strict=True):
+      back = self.good(
+        run("inline", {"outer": r["outer"], "callee": r["callee"], "callee_name": "w"})
+      )
+      self.assertEqual(self.canon(back["module"]), self.canon(whole))
+
+  def test_a_window_signature_covers_what_it_reads_and_only_what_is_in_scope(self):
+    request = {"module": F_SIMPLE, "cut": "m", "to": "m", "callee": "r"}
+    x, y = {"type": "i32", "live": "%x"}, {"type": "i32", "live": "%y"}
+    self.bad(run("outline", {**request, "params": [x]}), "invalid")
+    # %s is defined after the window, so the call could not pass it.
+    later = {"type": "i32", "live": "%s"}
+    self.bad(run("outline", {**request, "params": [x, y, later]}), "invalid")
+    self.bad(
+      run("outline", {**request, "params": [x, {"type": "i64", "live": "%y"}]}), "type_mismatch"
+    )
+
   def test_a_window_nothing_uses_answers_with_nothing(self):
     r = self.window(module=F_TWO_ADDS, frm="b", to="b")
     self.assertEqual(
