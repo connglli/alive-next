@@ -1,8 +1,8 @@
-// Refutes a run with an input to the original programs, read off a
-// counterexample whose inputs are the root's arguments: an unrolled check of a
-// root that loops, or a refuted goal whose src is still the root's function.
-// The report asks alive2 about the original pair at the input, unrolled as far
-// as the check was, and only a refutation ends the run.
+// Refutes a run: by an unrolled check of a root that loops, which refutes it
+// by itself, or by an input to the original programs, read off the
+// counterexample of a refuted goal whose src is still the root's function.
+// The report asks alive2 about the original pair at that input, and only a
+// refutation ends the run.
 import type { InputArg, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { headers } from "./regions.ts";
@@ -31,15 +31,14 @@ export function inputsOf(detail: string): Input[] {
   return inputs;
 }
 
-/** Unrolls a root that loops twice as far each time within `ms`, to find an input. */
+/** Checks a root that loops, unrolled twice as far each time within `ms`. */
 export async function unrolling(session: Session, llops: Llops, root: string, ms: number) {
   const [src, tgt] = await bodies(session, llops, root);
   if (headers(src).length + headers(tgt).length === 0) return;
   for (let factor = 2, left = ms; left > 0; factor *= 2) {
     const started = Date.now();
-    const { outcome, check } = await session.check(root, left, factor);
+    const { check } = await session.check(root, left, factor);
     left -= Date.now() - started;
-    if (outcome === "refuted" && check) await refuteWith(session, check.detail, factor);
     if (check?.outcome !== "correct") return;
   }
 }
@@ -55,8 +54,8 @@ export async function refuteFrom(session: Session, gid: string, detail: string) 
   return refuteWith(session, detail);
 }
 
-/** Reports counterexample `detail`'s integer or poison inputs, unrolled `unroll` times. */
-async function refuteWith(session: Session, detail: string, unroll?: number) {
+/** Reports counterexample `detail`'s integer or poison inputs. */
+async function refuteWith(session: Session, detail: string) {
   if (!detail.includes("Example:")) return false;
   const args: InputArg[] = [];
   for (const input of [...inputsOf(detail)]) {
@@ -65,5 +64,5 @@ async function refuteWith(session: Session, detail: string, unroll?: number) {
       args.push({ kind: "int", value: `0x${input.value.toString(16)}` });
     else return false;
   }
-  return (await session.reportCex(args, unroll)).kind === "refuted";
+  return (await session.reportCex(args)).kind === "refuted";
 }

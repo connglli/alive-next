@@ -515,11 +515,11 @@ exit:
   }, 120_000);
 
   test.skipIf(!running)(
-    "refutes a loop by an input an unrolled check finds",
+    "refutes a loop by an unrolled check, which needs no report",
     async () => {
       const session = await start(unroll.src, unroll.tgt, aliveTv);
       expect(await search(session, llops, limits)).toBe("counterexample");
-      expect(moves(session)).toContain("report_cex");
+      expect(moves(session)).not.toContain("report_cex");
     },
     60_000,
   );
