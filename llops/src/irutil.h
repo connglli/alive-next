@@ -134,9 +134,28 @@ bool plainCall(const llvm::CallInst &call);
 // runs, so in one an alloca counts too.
 std::optional<Diag> frameDependence(const llvm::Function &callee, bool window);
 
-// Put a callee of several blocks back at a call used only by the ret after it.
+// Put a callee of several blocks but `skip` back at a call used only by the ret after it.
 bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F,
-                 llvm::ValueToValueMapTy &vmap);
+                 llvm::ValueToValueMapTy &vmap,
+                 const llvm::SmallPtrSetImpl<llvm::Instruction *> *skip = nullptr);
+
+// Whether a slot is a one-value entry-block alloca only simple loads and stores of it use.
+bool privateSlot(const llvm::AllocaInst &slot);
+
+// The ascending positions a request's `slots` names among `count` parameters, or nothing.
+std::optional<std::vector<unsigned>> slotParams(const llvm::json::Object &args, unsigned count);
+
+// The loads right before a call that pass it private slots' contents at `slots`.
+std::optional<std::vector<llvm::LoadInst *>> slotLoads(llvm::CallInst &call,
+                                                       llvm::ArrayRef<unsigned> slots);
+
+// The stores that open a callee by copying its `slots` parameters into private slots.
+std::optional<std::vector<llvm::StoreInst *>> slotCopies(llvm::Function &callee,
+                                                         llvm::ArrayRef<unsigned> slots);
+
+// Each copy mapped back to its slot and skipped with its store, unless the two differ.
+bool slotsBack(llvm::ArrayRef<llvm::LoadInst *> loads, llvm::ArrayRef<llvm::StoreInst *> stores,
+               llvm::ValueToValueMapTy &vmap, llvm::SmallPtrSetImpl<llvm::Instruction *> &skip);
 
 // Render diagnostics into a response object under "diagnostics".
 void addDiagnostics(llvm::json::Object &O, llvm::ArrayRef<Diag> diags);

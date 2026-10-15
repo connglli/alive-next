@@ -2316,6 +2316,213 @@ entry:
     self.assertIn("outer", r["error"]["message"])
 
 
+# A loop that keeps its counter and its sum in stack slots, as -O0 code does.
+SLOT_LOOP = """define i32 @f(i32 %n) {
+entry:
+  %i = alloca i32, align 4
+  %s = alloca i32, align 4
+  store i32 0, ptr %i, align 4
+  store i32 0, ptr %s, align 4
+  br label %loop
+
+loop:
+  %0 = load i32, ptr %i, align 4
+  %c = icmp slt i32 %0, %n
+  br i1 %c, label %body, label %exit
+
+body:
+  %1 = load i32, ptr %s, align 4
+  %2 = load i32, ptr %i, align 4
+  %3 = add nsw i32 %1, %2
+  store i32 %3, ptr %s, align 4
+  %4 = add nsw i32 %2, 1
+  store i32 %4, ptr %i, align 4
+  br label %loop
+
+exit:
+  %5 = load i32, ptr %s, align 4
+  ret i32 %5
+}
+"""
+
+# SLOT_LOOP detached at %loop with what both slots hold passed by value.
+SLOT_LOOP_OUTER = """define i32 @f(i32 %n) {
+entry:
+  %i = alloca i32, align 4
+  %s = alloca i32, align 4
+  store i32 0, ptr %i, align 4
+  store i32 0, ptr %s, align 4
+  br label %0
+
+0:
+  %1 = load i32, ptr %i, align 4
+  %2 = load i32, ptr %s, align 4
+  %3 = call i32 @k(i32 %1, i32 %2, i32 %n)
+  ret i32 %3
+}
+
+declare i32 @k(i32, i32, i32)
+"""
+
+SLOT_LOOP_CALLEE = """declare i32 @f(i32)
+
+define i32 @k(i32 %p0, i32 %p1, i32 %p2) {
+loop:
+  %i = alloca i32, align 4
+  %s = alloca i32, align 4
+  store i32 %p0, ptr %i, align 4
+  store i32 %p1, ptr %s, align 4
+  %0 = load i32, ptr %i, align 4
+  %c = icmp slt i32 %0, %p2
+  br i1 %c, label %body, label %exit
+
+body:
+  %1 = load i32, ptr %s, align 4
+  %2 = load i32, ptr %i, align 4
+  %3 = add nsw i32 %1, %2
+  store i32 %3, ptr %s, align 4
+  %4 = add nsw i32 %2, 1
+  store i32 %4, ptr %i, align 4
+  br label %6
+
+exit:
+  %5 = load i32, ptr %s, align 4
+  ret i32 %5
+
+6:
+  %7 = load i32, ptr %i, align 4
+  %8 = load i32, ptr %s, align 4
+  %9 = call i32 @k.ih(i32 %7, i32 %8, i32 %p2)
+  ret i32 %9
+}
+
+declare i32 @k.ih(i32, i32, i32)
+"""
+
+SLOT_F = """define i32 @f(i32 %x) {
+entry:
+  %s = alloca i32, align 4
+  store i32 %x, ptr %s, align 4
+  %a = load i32, ptr %s, align 4
+  %b = add i32 %a, 1
+  store i32 %b, ptr %s, align 4
+  %c = load i32, ptr %s, align 4
+  ret i32 %c
+}
+"""
+
+# SLOT_F cut at %b with what %s holds passed by value.
+SLOT_F_OUTER = """define i32 @f(i32 %x) {
+entry:
+  %s = alloca i32, align 4
+  store i32 %x, ptr %s, align 4
+  %a = load i32, ptr %s, align 4
+  %0 = load i32, ptr %s, align 4
+  %1 = call i32 @g(i32 %0, i32 %a)
+  ret i32 %1
+}
+
+declare i32 @g(i32, i32)
+"""
+
+SLOT_F_CALLEE = """declare i32 @f(i32)
+
+define i32 @g(i32 %p0, i32 %p1) {
+entry:
+  %s = alloca i32, align 4
+  store i32 %p0, ptr %s, align 4
+  %b = add i32 %p1, 1
+  store i32 %b, ptr %s, align 4
+  %c = load i32, ptr %s, align 4
+  ret i32 %c
+}
+"""
+
+
+class TestSlots(Case):
+  def reattach(self, outer=SLOT_LOOP_OUTER, callee=SLOT_LOOP_CALLEE, slots=(0, 1), phis=()):
+    request = {"outer": outer, "callee": callee, "callee_name": "k", "hypothesis": "k.ih"}
+    return run("reattach", {**request, "phis": list(phis), "slots": list(slots)})
+
+  def inline(self, outer=SLOT_F_OUTER, callee=SLOT_F_CALLEE, slots=(0,)):
+    request = {"outer": outer, "callee": callee, "callee_name": "g", "slots": list(slots)}
+    return run("inline", request)
+
+  def test_a_loop_whose_slots_a_cut_passes_by_value_reattaches(self):
+    back = self.good(self.reattach())["module"]
+    self.assertEqual(self.canon(back), self.canon(SLOT_LOOP))
+
+  def test_a_cut_whose_slot_is_passed_by_value_inlines(self):
+    back = self.good(self.inline())["module"]
+    self.assertEqual(self.canon(back), self.canon(SLOT_F))
+
+  def test_slots_the_request_leaves_out_are_not_put_back(self):
+    self.bad(self.reattach(slots=()), "not_found")
+    self.bad(self.reattach(slots=(1,)), "invalid")
+    # The callee's copy and the outer's load stay, so the module is not SLOT_F.
+    back = self.good(self.inline(slots=()))["module"]
+    self.assertNotEqual(self.canon(back), self.canon(SLOT_F))
+
+  def test_a_list_that_is_no_set_of_parameters_is_a_bad_request(self):
+    for slots in ((1, 0), (0, 0), (3,), (-1,)):
+      with self.subTest(slots=slots):
+        self.bad(self.reattach(slots=slots), "bad_request")
+        self.bad(self.inline(slots=slots), "bad_request")
+    self.bad(self.reattach(slots=(0, 1), phis=(0,)), "bad_request")
+
+  def test_a_parameter_that_does_not_carry_a_slot_as_a_cut_passes_one_is_refused(self):
+    load = "  %a = load i32, ptr %s, align 4\n"
+    store = "  store i32 %p0, ptr %s, align 4\n"
+    for outer, callee in (
+      # The outer's slot escapes, so other code may change it while the copy stays.
+      (
+        SLOT_F_OUTER.replace(load, "  call void @use(ptr %s)\n" + load)
+        + "\ndeclare void @use(ptr)\n",
+        SLOT_F_CALLEE,
+      ),
+      # The copy is aligned differently from the slot it stands for.
+      (SLOT_F_OUTER, SLOT_F_CALLEE.replace("alloca i32, align 4", "alloca i32, align 8")),
+      # The callee reads its copy before the parameter is stored in it.
+      (SLOT_F_OUTER, SLOT_F_CALLEE.replace(store, "  %z = load i32, ptr %s, align 4\n" + store)),
+      # The parameter is read where the copy stands for it.
+      (SLOT_F_OUTER, SLOT_F_CALLEE.replace("add i32 %p1, 1", "add i32 %p0, 1")),
+      # A load or a store of the cut's own aligned past its slot would be UB
+      # the program did not have.
+      (
+        SLOT_F_OUTER.replace("%0 = load i32, ptr %s, align 4", "%0 = load i32, ptr %s, align 8"),
+        SLOT_F_CALLEE,
+      ),
+      (SLOT_F_OUTER, SLOT_F_CALLEE.replace(store, store.replace("align 4", "align 8"))),
+      # A slot allocated outside the entry may be freed before the call.
+      (SLOT_F_OUTER.replace("entry:\n", "entry:\n  br label %next\n\nnext:\n"), SLOT_F_CALLEE),
+    ):
+      with self.subTest(outer=outer, callee=callee):
+        self.bad(self.inline(outer, callee), "invalid")
+    # Parameter 1 is a load of %s, but not the one right before the call.
+    self.bad(self.inline(slots=(1,)), "invalid")
+
+  def test_two_copies_of_one_slot_are_refused(self):
+    outer = SLOT_F_OUTER.replace("i32 %a)", "i32 %t)").replace(
+      "  %1 = call", "  %t = load i32, ptr %s, align 4\n  %1 = call"
+    )
+    callee = SLOT_F_CALLEE.replace(
+      "  store i32 %p0", "  %u = alloca i32, align 4\n  store i32 %p0"
+    ).replace("  %b = add i32 %p1, 1\n", "  store i32 %p1, ptr %u, align 4\n  %b = add i32 1, 1\n")
+    back = self.good(self.inline(outer, callee, slots=()))["module"]
+    self.assertIn("alloca", back)
+    self.bad(self.inline(outer, callee, slots=(0, 1)), "invalid")
+
+  def test_a_call_of_the_hypothesis_that_does_not_load_the_copies_is_refused(self):
+    passed = "  %7 = load i32, ptr %i, align 4\n  %8 = load i32, ptr %s, align 4\n"
+    callee = SLOT_LOOP_CALLEE.replace(passed, "").replace("(i32 %7, i32 %8,", "(i32 %4, i32 %3,")
+    self.assertNotEqual(callee, SLOT_LOOP_CALLEE)
+    self.bad(self.reattach(callee=callee), "invalid")
+
+  def test_a_window_holds_no_slot(self):
+    outer = SLOT_F_OUTER.replace("  ret i32 %1", "  %2 = add i32 %1, 0\n  ret i32 %2")
+    self.bad(self.inline(outer), "frame_dependent")
+
+
 class TestHarness(Case):
   F = """define i32 @f(i32 %x, ptr %p) {
 entry:

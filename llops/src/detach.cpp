@@ -315,13 +315,14 @@ std::unique_ptr<llvm::Module> half(llvm::Module &M, llvm::StringRef bodyless,
   return clone;
 }
 
-// A block that only calls one of `targets` and returns its answer, which nothing else uses.
-llvm::CallInst *onlyCalls(llvm::BasicBlock &Q, llvm::ArrayRef<llvm::Function *> targets) {
-  if (Q.size() != 2)
+// A block that only loads `loads` values, calls one of `targets` and returns its answer.
+llvm::CallInst *onlyCalls(llvm::BasicBlock &Q, llvm::ArrayRef<llvm::Function *> targets,
+                          unsigned loads = 0) {
+  auto *ret = llvm::dyn_cast_or_null<llvm::ReturnInst>(Q.getTerminator());
+  if (Q.size() != loads + 2 || !ret)
     return nullptr;
-  auto *call = llvm::dyn_cast<llvm::CallInst>(&Q.front());
-  auto *ret = llvm::dyn_cast<llvm::ReturnInst>(Q.getTerminator());
-  if (!call || !ret || !llvm::is_contained(targets, call->getCalledFunction()))
+  auto *call = llvm::dyn_cast<llvm::CallInst>(ret->getPrevNode());
+  if (!call || !llvm::is_contained(targets, call->getCalledFunction()))
     return nullptr;
   if (ret->getReturnValue() != (call->getType()->isVoidTy() ? nullptr : call) ||
       call->getNumUses() > 1)
@@ -489,6 +490,10 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
   auto isPhi = phiParams(*phiList, K->arg_size());
   if (!isPhi)
     return errResponse("bad_request", "'phis' names a parameter the callee does not have");
+  auto slots = slotParams(args, K->arg_size());
+  if (!slots || llvm::any_of(*slots, [&](unsigned i) { return (*isPhi)[i]; }))
+    return errResponse("bad_request",
+                       "'slots' lists parameters of the callee that are not phis, ascending");
 
   llvm::ValueToValueMapTy vmap;
   llvm::json::Object err;
@@ -500,6 +505,23 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
   if (ih && ih->getFunctionType() != K->getFunctionType())
     return errResponse("type_mismatch", "'@" + hypothesis->str() + "' is not declared as '@" +
                                             name->str() + "' is defined");
+
+  // The outer's slots take the place of the callee's copies of what they held.
+  llvm::SmallPtrSet<llvm::Instruction *, 8> copies;
+  std::vector<llvm::Value *> outerSlots;
+  if (!slots->empty()) {
+    llvm::CallInst *first = nullptr;
+    for (auto &Q : *F)
+      if ((first = onlyCalls(Q, {decl}, slots->size())))
+        break;
+    auto loads = first ? slotLoads(*first, *slots) : std::nullopt;
+    auto stores = slotCopies(*K, *slots);
+    if (!loads || !stores || !slotsBack(*loads, *stores, vmap, copies))
+      return errResponse("invalid", "'slots' names a parameter that does not carry a slot "
+                                    "as a cut passes one");
+    for (auto *load : *loads)
+      outerSlots.push_back(load->getPointerOperand());
+  }
 
   // The callee's blocks come back, its entry first, with its parameters as
   // phis there that the calls below fill in.
@@ -520,6 +542,8 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
   unsigned b = 0;
   for (auto &B : *K) {
     for (auto &I : B) {
+      if (copies.contains(&I))
+        continue;
       auto *clone = I.clone();
       clone->setName(I.getName());
       clone->insertInto(blocks[b], blocks[b]->end());
@@ -539,7 +563,7 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
   if (ih)
     targets.push_back(ih);
   for (auto &Q : *F)
-    if (onlyCalls(Q, targets))
+    if (onlyCalls(Q, targets, slots->size()))
       calls.push_back(&Q);
   if (calls.empty())
     return errResponse("not_found", "no block only calls '@" + name->str() + "'");
@@ -547,22 +571,35 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
     if (Q == &F->getEntryBlock())
       return errResponse("invalid", "the outer's entry only calls '@" + name->str() +
                                         "', which is outline's suffix, not a detached block");
-    llvm::CallInst *call = onlyCalls(*Q, targets);
+    llvm::CallInst *call = onlyCalls(*Q, targets, slots->size());
     if (!plainCall(*call))
       return errResponse("invalid", "the call of '@" + call->getCalledFunction()->getName().str() +
                                         "' is not a plain call");
+    // A call of the hypothesis loads the callee's copies, which the outer's slots replaced.
+    auto loads = slotLoads(*call, *slots);
+    for (unsigned k = 0; loads && k < loads->size(); ++k)
+      if ((*loads)[k]->getPointerOperand() != outerSlots[k])
+        loads = std::nullopt;
+    if (!loads)
+      return errResponse("invalid", "the call of '@" + call->getCalledFunction()->getName().str() +
+                                        "' does not pass the slots as a cut passes them");
     for (Edge e : edgesInto(*F, Q)) {
       e.from->getTerminator()->setSuccessor(e.index, entry);
       for (unsigned i = 0; i < phis.size(); ++i)
-        phis[i]->addIncoming(call->getArgOperand(i), e.from);
+        if (!llvm::is_contained(*slots, i))
+          phis[i]->addIncoming(call->getArgOperand(i), e.from);
     }
   }
   for (llvm::BasicBlock *Q : calls)
     Q->eraseFromParent();
 
-  // A parameter that was not one of the block's phis was a value from
-  // outside, which every edge passes as that value or as itself.
+  // A parameter that was neither one of the block's phis nor a slot was a value
+  // from outside, which every edge passes as that value or as itself.
   for (unsigned i = 0; i < phis.size(); ++i) {
+    if (llvm::is_contained(*slots, i)) {
+      phis[i]->eraseFromParent();
+      continue;
+    }
     if ((*isPhi)[i] || phis[i]->getNumIncomingValues() == 0)
       continue;
     llvm::Value *same = phis[i]->hasConstantValue();

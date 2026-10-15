@@ -590,7 +590,8 @@ std::optional<Diag> frameDependence(const llvm::Function &callee, bool window) {
 }
 
 bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F,
-                 llvm::ValueToValueMapTy &vmap) {
+                 llvm::ValueToValueMapTy &vmap,
+                 const llvm::SmallPtrSetImpl<llvm::Instruction *> *skip) {
   auto *ret = llvm::dyn_cast_or_null<llvm::ReturnInst>(call.getNextNode());
   if (!ret || ret->getReturnValue() != (call.getType()->isVoidTy() ? nullptr : &call) ||
       call.getNumUses() > 1)
@@ -605,6 +606,8 @@ bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F
                                  : llvm::BasicBlock::Create(F.getContext(), B.getName(), &F);
     vmap[&B] = into;
     for (auto &I : B) {
+      if (skip && skip->contains(&I))
+        continue;
       auto *clone = I.clone();
       clone->setName(I.getName());
       clone->insertInto(into, into->end());
@@ -615,6 +618,94 @@ bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F
   for (auto *clone : clones)
     llvm::RemapInstruction(clone, vmap,
                            llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs);
+  return true;
+}
+
+bool privateSlot(const llvm::AllocaInst &slot) {
+  llvm::Type *type = slot.getAllocatedType();
+  if (!type->isSingleValueType() || !slot.isStaticAlloca() || slot.isArrayAllocation() ||
+      slot.isSwiftError())
+    return false;
+  return llvm::all_of(slot.uses(), [&](const llvm::Use &use) {
+    if (auto *load = llvm::dyn_cast<llvm::LoadInst>(use.getUser()))
+      return load->isSimple() && load->getType() == type;
+    auto *store = llvm::dyn_cast<llvm::StoreInst>(use.getUser());
+    return store && store->isSimple() && use.getOperandNo() == store->getPointerOperandIndex() &&
+           store->getValueOperand()->getType() == type;
+  });
+}
+
+std::optional<std::vector<unsigned>> slotParams(const llvm::json::Object &args, unsigned count) {
+  std::vector<unsigned> slots;
+  const llvm::json::Value *given = args.get("slots");
+  if (!given)
+    return slots;
+  const llvm::json::Array *list = given->getAsArray();
+  if (!list)
+    return std::nullopt;
+  for (const auto &entry : *list) {
+    auto i = entry.getAsInteger();
+    if (!i || *i < 0 || *i >= count || (!slots.empty() && *i <= slots.back()))
+      return std::nullopt;
+    slots.push_back(*i);
+  }
+  return slots;
+}
+
+std::optional<std::vector<llvm::LoadInst *>> slotLoads(llvm::CallInst &call,
+                                                       llvm::ArrayRef<unsigned> slots) {
+  std::vector<llvm::LoadInst *> loads(slots.size(), nullptr);
+  llvm::Instruction *at = &call;
+  for (unsigned k = slots.size(); k-- > 0;) {
+    auto *load = llvm::dyn_cast_or_null<llvm::LoadInst>(at->getPrevNode());
+    auto *slot = load ? llvm::dyn_cast<llvm::AllocaInst>(load->getPointerOperand()) : nullptr;
+    if (!slot || !load->hasOneUse() || call.getArgOperand(slots[k]) != load ||
+        !privateSlot(*slot) || load->getAlign() > slot->getAlign())
+      return std::nullopt;
+    loads[k] = load;
+    at = load;
+  }
+  return loads;
+}
+
+std::optional<std::vector<llvm::StoreInst *>> slotCopies(llvm::Function &callee,
+                                                         llvm::ArrayRef<unsigned> slots) {
+  llvm::BasicBlock &entry = callee.getEntryBlock();
+  auto at = entry.begin();
+  std::vector<llvm::AllocaInst *> own;
+  for (unsigned k = 0; k < slots.size(); ++k, ++at) {
+    auto *slot = at == entry.end() ? nullptr : llvm::dyn_cast<llvm::AllocaInst>(&*at);
+    if (!slot || !privateSlot(*slot))
+      return std::nullopt;
+    own.push_back(slot);
+  }
+  std::vector<llvm::StoreInst *> stores;
+  for (unsigned k = 0; k < slots.size(); ++k, ++at) {
+    auto *store = at == entry.end() ? nullptr : llvm::dyn_cast<llvm::StoreInst>(&*at);
+    llvm::Argument *param = callee.getArg(slots[k]);
+    if (!store || store->getPointerOperand() != own[k] || store->getValueOperand() != param ||
+        !param->hasOneUse() || store->getAlign() > own[k]->getAlign())
+      return std::nullopt;
+    stores.push_back(store);
+  }
+  return stores;
+}
+
+bool slotsBack(llvm::ArrayRef<llvm::LoadInst *> loads, llvm::ArrayRef<llvm::StoreInst *> stores,
+               llvm::ValueToValueMapTy &vmap, llvm::SmallPtrSetImpl<llvm::Instruction *> &skip) {
+  llvm::SmallPtrSet<llvm::Value *, 8> taken;
+  for (unsigned k = 0; k < loads.size(); ++k) {
+    auto *slot = llvm::cast<llvm::AllocaInst>(loads[k]->getPointerOperand());
+    auto *copy = llvm::cast<llvm::AllocaInst>(stores[k]->getPointerOperand());
+    bool same = slot->getAllocatedType() == copy->getAllocatedType() &&
+                slot->getAlign() == copy->getAlign() &&
+                slot->getAddressSpace() == copy->getAddressSpace();
+    if (!same || !taken.insert(slot).second)
+      return false;
+    vmap[copy] = slot;
+    skip.insert(copy);
+    skip.insert(stores[k]);
+  }
   return true;
 }
 

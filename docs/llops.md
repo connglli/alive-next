@@ -186,9 +186,9 @@ A window may hold memory. Its pair is then asked about an arbitrary entry state,
 
 ## inline
 
-Request `{ "outer": ..., "callee": ..., "callee_name": "g" }`, response `{ "ok": true, "module": ... }`.
+Request `{ "outer": ..., "callee": ..., "callee_name": "g" }`, optionally with `"slots": [ 0 ]`, response `{ "ok": true, "module": ... }`.
 
-The call is replaced by the callee's body, and the declaration, which nothing else may use, is dropped. When the callee answers with a struct, each part goes back to its uses. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, and so are halves that declare a shared symbol differently. In both cases the rebuilt module would differ from what the halves were checked as. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was.
+The call is replaced by the callee's body, and the declaration, which nothing else may use, is dropped. When the callee answers with a struct, each part goes back to its uses. Each parameter `slots` names carries what a private stack slot of the outer (an entry-block `alloca` used only as the address of simple loads and stores of its type) holds, loaded right before the call and stored by the callee's entry into a copy of the same kind, and the outer's slot takes the copy's place while the loads and the store go. A call that carries anything of its own, such as an attribute, metadata or a tail marker, is refused with `invalid`, and so are halves that declare a shared symbol differently or pass a slot otherwise. In each case the rebuilt module would not mean what the halves were checked as. So `outline`, then `inline`, then `canon` reproduces the module the outline started from, byte for byte, whatever the window was.
 
 ## detach
 
@@ -200,9 +200,9 @@ The signature is the block's phis, then the values the moved blocks use from out
 
 ## reattach
 
-Request `{ "outer": ..., "callee": ..., "callee_name": "k", "phis": [ 0, 1 ], "hypothesis": "k.ih" }`, response `{ "ok": true, "module": ... }`.
+Request `{ "outer": ..., "callee": ..., "callee_name": "k", "phis": [ 0, 1 ], "hypothesis": "k.ih" }`, optionally with `"slots": [ 2 ]`, response `{ "ok": true, "module": ... }`.
 
-The inverse of `detach`. It refuses what `inline` refuses, and any use of the callee or its hypothesis other than a block that only calls it. Every block that only calls the callee or its hypothesis and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there. The parameters `phis` names stay phis. Every other parameter must be passed one value on every edge, or itself, and becomes that value. `canon` of the result is `canon` of the module `detach` started from.
+The inverse of `detach`. It refuses what `inline` refuses, and any use of the callee or its hypothesis other than a block that only calls it. Every block that only loads the slots `slots` names, calls the callee or its hypothesis and returns what it answers is removed, its predecessors branch to the callee's entry instead, and the callee's parameters become phis there. The parameters `phis` names stay phis, and those `slots` names give way to the outer's slots as in `inline`. Every other parameter must be passed one value on every edge, or itself, and becomes that value. `canon` of the result is `canon` of the module `detach` started from.
 
 ## unfold
 

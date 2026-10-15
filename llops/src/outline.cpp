@@ -330,6 +330,9 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   bool window = !llvm::isa<llvm::ReturnInst>(call->getNextNode());
   if (auto d = frameDependence(*callee, window))
     return errResponse(d->code, d->message);
+  auto slots = slotParams(args, callee->arg_size());
+  if (!slots)
+    return errResponse("bad_request", "'slots' lists parameters of the callee, ascending");
 
   // The map covers both halves of the move: the callee's parameters become
   // the call's arguments, and every symbol the callee body names is redirected
@@ -343,11 +346,24 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
     return adoptErr;
   if (!adoptSymbols(*calleeMwc->mod, outerM, callee, vmap, adoptErr))
     return adoptErr;
+  // The outer's slots take the place of the callee's copies of what they held.
+  llvm::SmallPtrSet<llvm::Instruction *, 8> copies;
+  std::vector<llvm::LoadInst *> passed;
+  if (!slots->empty()) {
+    auto loads = slotLoads(*call, *slots);
+    auto stores = slotCopies(*callee, *slots);
+    if (window || !loads || !stores || !slotsBack(*loads, *stores, vmap, copies))
+      return errResponse("invalid", "'slots' names a parameter that does not carry a slot "
+                                    "as a cut passes one");
+    passed = std::move(*loads);
+  }
 
   if (callee->size() > 1) {
-    if (!putBackRest(*call, *callee, *F, vmap))
+    if (!putBackRest(*call, *callee, *F, vmap, &copies))
       return errResponse("invalid", "a callee of several blocks goes back only at a call "
                                     "followed by a ret of its result, and used by nothing else");
+    for (auto *load : passed)
+      load->eraseFromParent();
     return inlined(outerM, *decl);
   }
 
@@ -357,7 +373,7 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   llvm::BasicBlock *calleeBB = &callee->getEntryBlock();
   std::vector<llvm::Instruction *> clones;
   for (auto &I : *calleeBB) {
-    if (llvm::isa<llvm::ReturnInst>(&I))
+    if (llvm::isa<llvm::ReturnInst>(&I) || copies.contains(&I))
       continue;
     auto *clone = I.clone();
     clone->setName(I.getName());
@@ -388,6 +404,8 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   if (!call->getType()->isVoidTy())
     call->replaceAllUsesWith(retVal);
   call->eraseFromParent();
+  for (auto *load : passed)
+    load->eraseFromParent();
   if (auto *built = llvm::dyn_cast_or_null<llvm::Instruction>(retVal))
     llvm::RecursivelyDeleteTriviallyDeadInstructions(built);
   return inlined(outerM, *decl);
