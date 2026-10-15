@@ -303,6 +303,29 @@ describe.skipIf(!built)("reading a session", () => {
     expect(refused.message).toContain("a transaction is open");
   });
 
+  test("revert refuses to undo part of a strengthen, on either half", async () => {
+    const run = await session();
+    const split = await run.split("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
+    if (split.kind !== "split") throw new Error(split.message);
+    const { outer, callee } = split.children;
+    const starts = { [outer]: await run.show(outer), [callee]: await run.show(callee) };
+    const landed = await run.strengthen("g1", { param_attrs: { 0: { noundef: true } } });
+    expect(landed.kind).toBe("strengthened");
+
+    for (const gid of [outer, callee]) {
+      const refused = await run.revert(gid, "src", starts[gid]?.src.id ?? "");
+      expect(refused).toMatchObject({ kind: "refused" });
+      if (refused.kind !== "refused") throw new Error("unreachable");
+      expect(refused.message).toContain("would undo part of a strengthen of g1");
+    }
+    // Going back to what the strengthen made is still a revert like any other.
+    const strengthened = (await run.show(callee)).src;
+    await run.begin(callee, "src");
+    await run.edit({ op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
+    expect((await run.commit()).kind).toBe("certified");
+    expect((await run.revert(callee, "src", strengthened.id)).kind).toBe("reverted");
+  });
+
   test("rewrite refuses while its side is being edited", async () => {
     const run = await session();
     const before = await run.show("g1");

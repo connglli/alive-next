@@ -68,7 +68,7 @@ Reading is a move like any other. `status` answers with the tree, each goal's st
 
 A program's value references are the program's own, so a caller reads a side before addressing anything in it: `begin` answers with the body it opened on, an applied edit with the body as it now stands, and a refused edit with the body it refused, where the reference it could not find was meant to point.
 
-`revert` moves a side's head back to a program that side has been. The later steps stay in the log, unused, and any proof they carried is undone with them. It refuses a program the side has never been, the head itself, and a side with a transaction open on it.
+`revert` moves a side's head back to a program that side has been. The later steps stay in the log, unused, and any proof they carried is undone with them. It refuses a program the side has never been, the head itself, a side with a transaction open on it, and a program older than one a strengthen put there.
 
 ## trajectory.jsonl
 

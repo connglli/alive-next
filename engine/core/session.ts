@@ -375,12 +375,34 @@ export class Session {
       if (head(goal, side) === target.hash) {
         return { kind: "refused", message: `${gid} ${side} is already ${target.id}` };
       }
+      // A certificate needs every program a strengthen landed, on both halves of the cut.
+      const at = goal[side].history.lastIndexOf(target.hash);
+      const landed = this.strengthened(gid, side);
+      if (landed.some((hash) => goal[side].history.lastIndexOf(hash) > at)) {
+        const cut = goal.parent;
+        const why = `going back to ${target.id} would undo part of a strengthen of ${cut}`;
+        return { kind: "refused", message: `${why}; unsplit ${cut} to undo all of it` };
+      }
       return {
         kind: "reverted",
         effects: [{ effect: "revert", gid, side, to: target.hash }],
         to: target,
       };
     });
+  }
+
+  /** The programs strengthens landed on one side of goal `gid`. */
+  private strengthened(gid: string, side: Side): Hash[] {
+    const onSide = (effect: Effect): Hash[] => {
+      if (effect.gid !== gid) return [];
+      if (effect.effect === "strengthen") return [effect[side]];
+      return effect.effect === "step" && effect.side === side ? [effect.to] : [];
+    };
+    return this.entries.flatMap((entry) =>
+      entry.kind === "tool_result" && entry.tool === "strengthen"
+        ? (entry.effects ?? []).flatMap(onSide)
+        : [],
+    );
   }
 
   /**
