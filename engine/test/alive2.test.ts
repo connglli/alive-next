@@ -174,6 +174,17 @@ describe("running alive-tv", () => {
     }
   });
 
+  test("writes the two programs where it is told", async () => {
+    const { dir, path } = stub(CORRECT);
+    const tmp = join(dir, "run");
+    try {
+      await new AliveTv(path, 5000, tmp).check("a", "b");
+      expect(await Bun.file(join(dir, "argv")).text()).toContain(`${tmp}/`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("believes the summary over the exit code", async () => {
     const { dir, path } = stub(INCORRECT, 0);
     try {

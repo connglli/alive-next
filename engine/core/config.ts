@@ -18,6 +18,7 @@ export interface TimeoutConfig {
   checkDefaultMs?: number;
   checkCapMs?: number;
   eagerCheckMs?: number;
+  llopsMs?: number;
   llubiMs?: number;
   llrwtMs?: number;
 }
@@ -112,6 +113,7 @@ const TIMEOUT_KEYS: Record<string, keyof TimeoutConfig> = {
   check_default_ms: "checkDefaultMs",
   check_cap_ms: "checkCapMs",
   eager_check_ms: "eagerCheckMs",
+  llops_ms: "llopsMs",
   llubi_ms: "llubiMs",
   llrwt_ms: "llrwtMs",
 };

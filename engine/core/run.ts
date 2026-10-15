@@ -30,18 +30,21 @@ export async function startRun(options: RunOptions) {
   const timeouts = options.timeouts ?? timeoutsFrom(config.timeouts);
   const toolchain = new Toolchain(config.toolchain);
   const built = await toolchain.insist();
-  const llops = new Llops(toolchain.path("llops"));
+  const llops = new Llops(toolchain.path("llops"), config.timeouts.llopsMs);
+  // Checker input files go in the run's directory, which the agent's shell cannot write.
+  const tmp = join(options.dir, "tmp");
+  const translators = {
+    mlirTranslate: toolchain.mlir("mlir-translate"),
+    mlirOpt: toolchain.mlir("mlir-opt"),
+  };
   const session = await Session.start({
     dir: options.dir,
     src: options.src,
     tgt: options.tgt,
     llops,
-    checker: new AliveTv(toolchain.path("alive-tv"), timeouts.checkDefaultMs),
+    checker: new AliveTv(toolchain.path("alive-tv"), timeouts.checkDefaultMs, tmp),
     interp: new Llubi(toolchain.path("llubi"), config.timeouts.llubiMs),
-    rewriter: new Llrwt(toolchain.path("llrwt"), timeouts.llrwtMs, {
-      mlirTranslate: toolchain.mlir("mlir-translate"),
-      mlirOpt: toolchain.mlir("mlir-opt"),
-    }),
+    rewriter: new Llrwt(toolchain.path("llrwt"), timeouts.llrwtMs, translators, tmp),
     timeouts,
     config,
     toolchain: built,

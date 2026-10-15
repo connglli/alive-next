@@ -21,6 +21,8 @@
     // "check_cap_ms": 60000,
     // The check that follows every certified step.
     // "eager_check_ms": 3000,
+    // How long one llops call may take before it is killed.
+    // "llops_ms": 300000,
     // What one verified-rewriter run may take before it is killed.
     // "llrwt_ms": 30000,
     // How long one llubi run may take before it is killed.

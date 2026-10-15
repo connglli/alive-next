@@ -256,6 +256,14 @@ sandboxed("bash", () => {
     ).rejects.toThrow(/exited with code/);
   });
 
+  test("cannot write what a checker reads, though the run sits under /tmp", async () => {
+    mkdirSync(join(run, "tmp"), { recursive: true });
+    const planted = join(run, "tmp", "src.ll");
+    const writing = call(tools().bash, { command: `echo forged > ${planted}` });
+    await expect(writing).rejects.toThrow(/exited with code/);
+    expect(existsSync(planted)).toBe(false);
+  });
+
   test("carries the host's environment", async () => {
     process.env.ALIVE_MARKER = "visible-here";
     try {

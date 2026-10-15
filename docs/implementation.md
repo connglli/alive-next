@@ -59,9 +59,10 @@ sessions/<id>/
   trajectory.jsonl      append-only source of truth
   store/<sha256>.ll     content-addressed programs, canonical text
   certificate/          produced only on a verdict
+  tmp/                  the files a checker reads while it runs
 ```
 
-- **Store**: every program version is canonical text (as printed by `llops canon`) stored under its sha256. Filename equals hash, so integrity verification on load is free. This is the isolation guarantee from design.md: agent `bash`/`python` scratch work runs in a separate working directory under a bubblewrap sandbox ([agent.md](./agent.md) has the confinement), so the store cannot be written from it; a store that is tampered with anyway is detected on the next load.
+- **Store**: every program version is canonical text (as printed by `llops canon`) stored under its sha256. Filename equals hash, so integrity verification on load is free. This is the isolation guarantee from design.md: agent `bash`/`python` scratch work runs in a separate working directory under a bubblewrap sandbox ([agent.md](./agent.md) has the confinement), so neither the store nor `tmp/` can be written from it; a store that is tampered with anyway is detected on the next load.
 - **Goal tree**: not stored separately; it is derived state, rebuilt by replaying the trajectory. One source of truth, nothing to drift.
 
 Reading is a move like any other. `status` answers with the tree, each goal's status and heads, the transaction if one is open, and the budgets the run resolved to, and names no program text. The agent reads those budgets rather than finding them by running out of one, and `start` records them beside the configuration they came from, since a configuration that names no timeout still produces the ones a run spends. A check reports the budget it ran on, and says so when the cap cut down what was asked for. `show` answers with one goal and the text of both sides, each side also listing every program it has been. `program` answers with any of those, by the name the tree gave it or by its hash.

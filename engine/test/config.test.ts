@@ -96,6 +96,12 @@ describe("loadConfig", () => {
     });
   });
 
+  test("reads how long one llops call may take", () => {
+    withFile("llops", '{ "timeouts": { "llops_ms": 600000 } }', (path) => {
+      expect(loadConfig(path).timeouts).toEqual({ llopsMs: 600_000 });
+    });
+  });
+
   test("reports where a file stops parsing", () => {
     withFile("broken", '{ "toolchain": "deps", \n', (path) => {
       expect(() => loadConfig(path)).toThrow(/does not parse/);

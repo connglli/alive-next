@@ -9,7 +9,7 @@
 // names the toolchain's own pair explicitly.
 //
 // The refusal codes below are read off free-text stderr, and are the contract.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -72,6 +72,8 @@ export class Llrwt {
     private readonly path: string = "llrwt",
     private readonly defaultTimeoutMs: number = 30_000,
     translators: { mlirTranslate?: string; mlirOpt?: string } = {},
+    /** Where llrwt's input file goes; a run passes one its agent cannot write. */
+    private readonly tmp: string = tmpdir(),
   ) {
     this.mlirTranslate = translators.mlirTranslate;
     this.mlirOpt = translators.mlirOpt;
@@ -126,9 +128,7 @@ export class Llrwt {
 
   /**
    * Rewrite `module` with the named rules to fixpoint. The input travels on a
-   * file because that is the shape llrwt takes; the store never sees the
-   * scratch directory, so an agent that can write beside it still cannot reach
-   * the programs.
+   * file because that is the shape llrwt takes, written where no agent may write.
    */
   async apply(
     module: Module,
@@ -151,7 +151,8 @@ export class Llrwt {
       ...(this.mlirOpt ? ["--mlir-opt", this.mlirOpt] : []),
     ];
 
-    const dir = mkdtempSync(join(tmpdir(), "alive-next-llrwt-"));
+    mkdirSync(this.tmp, { recursive: true });
+    const dir = mkdtempSync(join(this.tmp, "alive-next-llrwt-"));
     const inPath = join(dir, "in.ll");
     writeFileSync(inPath, module, "utf8");
     try {

@@ -4,6 +4,8 @@
 // a stub: these tests run the thing the agent will run. They skip when it is
 // not built, which keeps the suite green on a machine without LLVM.
 import { describe, expect, test } from "bun:test";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { repoRoot } from "../core/config.ts";
 import { Llops, LlopsCrash } from "../core/drivers/llops.ts";
@@ -401,5 +403,22 @@ describe("a binary that is not there", () => {
   test("throws rather than answering", async () => {
     const missing = new Llops(join(repoRoot(), "no", "such", "llops"));
     await expect(missing.canon(F)).rejects.toBeInstanceOf(LlopsCrash);
+  });
+});
+
+describe("a binary that does not answer", () => {
+  test("is refused once its time is up, rather than waited for", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "alive-next-llops-stub-"));
+    const path = join(dir, "llops");
+    writeFileSync(path, "#!/usr/bin/env bash\nexec sleep 30\n");
+    chmodSync(path, 0o755);
+    try {
+      const result = await new Llops(path, 200).canon(F);
+      if (result.ok) throw new Error("expected a refusal");
+      expect(result.code).toBe("timeout");
+      expect(result.message).toBe("llops canon did not answer in 200ms");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

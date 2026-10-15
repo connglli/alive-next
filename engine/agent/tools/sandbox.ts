@@ -173,7 +173,8 @@ function sandboxedShell(workdir: string, toolchain: string): BashOperations {
         filesystem: {
           denyRead: [...record, getAgentDir()],
           allowWrite: [workdir, "/tmp"],
-          denyWrite: [],
+          // What a checker reads stays out of reach even for a run kept under /tmp.
+          denyWrite: [join(dirname(workdir), "tmp")],
         },
       });
       await ready;

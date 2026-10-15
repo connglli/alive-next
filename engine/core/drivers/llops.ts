@@ -256,8 +256,14 @@ export class LlopsCrash extends Error {
   }
 }
 
+/** How long one call may run; most take milliseconds, a large pipeline seconds. */
+const TIMEOUT_MS = 300_000;
+
 export class Llops {
-  constructor(private readonly path: string = "llops") {}
+  constructor(
+    private readonly path: string = "llops",
+    private readonly timeoutMs: number = TIMEOUT_MS,
+  ) {}
 
   validate(module: Module): Promise<LlopsResult<ValidateResult>> {
     return this.run("validate", { module });
@@ -476,11 +482,23 @@ export class Llops {
       throw new LlopsCrash(subcommand, `cannot run ${this.path}: ${(error as Error).message}`);
     }
 
+    // A call that does not answer in time is refused like any other, so a
+    // program llops is slow on costs one move rather than the run.
+    let killed = false;
+    const killer = setTimeout(() => {
+      killed = true;
+      child.kill();
+    }, this.timeoutMs);
     const [out, err] = await Promise.all([
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
       child.exited,
     ]);
+    clearTimeout(killer);
+    if (killed) {
+      const message = `llops ${subcommand} did not answer in ${this.timeoutMs}ms`;
+      return { ok: false, code: "timeout", message };
+    }
 
     let parsed: unknown;
     try {

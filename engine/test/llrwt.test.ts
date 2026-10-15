@@ -106,6 +106,17 @@ describe("llrwt apply", () => {
     }
   });
 
+  test("writes its input where it is told", async () => {
+    const { dir, path } = stub(F);
+    const tmp = join(dir, "run");
+    try {
+      await new Llrwt(path, 30_000, {}, tmp).apply(F, ["add_zero"]);
+      expect(await argv(dir)).toContain(`${tmp}/`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("an unknown rule is a refusal, on either exit code", async () => {
     for (const exitCode of [1, 2]) {
       const { dir, path } = stub("", exitCode, "Unknown rewrite rule: 'frobnicate'");

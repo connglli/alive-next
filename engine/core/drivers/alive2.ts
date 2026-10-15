@@ -13,7 +13,7 @@
 // The flags come from the caller and are passed on verbatim: this driver
 // decides nothing about what a check is asked. What the framework asks is
 // documented in docs/implementation.md.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -82,6 +82,8 @@ export class AliveTv {
   constructor(
     private readonly path: string = "alive-tv",
     private readonly defaultTimeoutMs: number = 120_000,
+    /** Where alive-tv's input files go; a run passes one its agent cannot write. */
+    private readonly tmp: string = tmpdir(),
   ) {}
 
   async version(): Promise<string> {
@@ -102,7 +104,8 @@ export class AliveTv {
     const flags = [`--smt-to=${timeoutMs}`, ...(options.flags ?? [])];
     const invocation: Invocation = { binary: this.path, flags, timeoutMs };
 
-    const dir = mkdtempSync(join(tmpdir(), "alive-next-tv-"));
+    mkdirSync(this.tmp, { recursive: true });
+    const dir = mkdtempSync(join(this.tmp, "alive-next-tv-"));
     const srcPath = join(dir, "src.ll");
     const tgtPath = join(dir, "tgt.ll");
     writeFileSync(srcPath, src, "utf8");
