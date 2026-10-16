@@ -604,6 +604,43 @@ INVERTED = FROZEN.replace(
   "icmp ne i32 %i, %n\n  br i1 %done, label %body, label %exit",
 )
 
+
+# Nor does any step above follow a branch on a constant. Here each iteration
+# branches on one, and the step goes the way it takes and drops the other.
+CONSTANT = """define i32 @f(i32 %x, i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %next, %join ]
+  %s = phi i32 [ 0, %entry ], [ %t, %join ]
+  %done = icmp eq i32 %i, %n
+  br i1 %done, label %exit, label %body
+
+body:
+  br i1 true, label %add, label %sub
+
+add:
+  %a = add i32 %s, %x
+  br label %join
+
+sub:
+  %b = sub i32 %s, %x
+  br label %join
+
+join:
+  %t = phi i32 [ %a, %add ], [ %b, %sub ]
+  %next = add i32 %i, 1
+  br label %loop
+
+exit:
+  ret i32 %s
+}
+"""
+TAKEN = CONSTANT.replace("br i1 true, label %add, label %sub", "br label %add")
+TAKEN = TAKEN.replace("sub:\n  %b = sub i32 %s, %x\n  br label %join\n\n", "")
+TAKEN = TAKEN.replace("[ %a, %add ], [ %b, %sub ]", "[ %a, %add ]")
+
 INVERSE = dict(eq="ne", ne="eq", slt="sge", sge="slt", sgt="sle", sle="sgt")
 INVERSE |= dict(ult="uge", uge="ult", ugt="ule", ule="ugt")
 SWAPPED = dict(slt="sgt", sgt="slt", sle="sge", sge="sle")
@@ -647,8 +684,10 @@ class TestReshaped(Case):
     # The steps are reshapings LLVM made. A mutant changes one line of a step
     # `reshaped` accepts, on either side, so most are wrong and must be refused.
     frozen = (canonical(FROZEN), canonical(INVERTED))
-    steps = accepted(reshaped, [*stage_pairs(), frozen])
+    taken = (canonical(CONSTANT), canonical(TAKEN))
+    steps = accepted(reshaped, [*stage_pairs(), frozen, taken])
     self.assertIn(frozen, steps)
+    self.assertIn(taken, steps)
     mutants = [(changed, after) for before, after in steps for changed in edited(before)]
     mutants += [(before, changed) for before, after in steps for changed in edited(after)]
     self.assertProved(steps + accepted(reshaped, mutants))

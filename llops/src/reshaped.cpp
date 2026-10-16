@@ -189,12 +189,27 @@ bool sameAttached(const Attached &x, const llvm::Module *mx, const Attached &y,
   return true;
 }
 
+// Where `end` goes whatever the values hold: an unconditional branch, and a
+// branch or a switch on a constant, go one way. Nothing for the rest.
+Block *oneWay(llvm::Instruction &end) {
+  if (auto *br = llvm::dyn_cast<llvm::BranchInst>(&end)) {
+    if (!br->isConditional())
+      return br->getSuccessor(0);
+    auto *c = llvm::dyn_cast<llvm::ConstantInt>(br->getCondition());
+    return c ? br->getSuccessor(c->isOne() ? 0 : 1) : nullptr;
+  }
+  if (auto *sw = llvm::dyn_cast<llvm::SwitchInst>(&end))
+    if (auto *c = llvm::dyn_cast<llvm::ConstantInt>(sw->getCondition()))
+      return sw->findCaseValue(c)->getCaseSuccessor();
+  return nullptr;
+}
+
 // The segment run on entering `to` from `from`, nothing for the entry block.
 Why segmentOf(Block *from, Block *to, Segment &seg) {
   llvm::SmallPtrSet<Block *, 8> seen;
   for (;;) {
     if (!seen.insert(to).second)
-      return std::string("unconditional branches loop without a condition");
+      return std::string("branches that go one way loop without a condition");
     Moves moves;
     for (const llvm::PHINode &phi : to->phis()) {
       // A move copies a value, so a phi that could make it poison is not followed.
@@ -214,14 +229,14 @@ Why segmentOf(Block *from, Block *to, Segment &seg) {
     llvm::Instruction *end = to->getTerminator();
     if (!readOf(*end).empty())
       return std::string("a terminator carries metadata alive2 reads");
-    auto *br = llvm::dyn_cast<llvm::BranchInst>(end);
-    if (!br || br->isConditional()) {
+    Block *next = oneWay(*end);
+    if (!next) {
       seg.end = end;
       seg.last = to;
       return std::nullopt;
     }
     from = to;
-    to = br->getSuccessor(0);
+    to = next;
   }
 }
 

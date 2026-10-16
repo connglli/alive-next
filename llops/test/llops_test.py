@@ -3624,6 +3624,66 @@ d:
     reordered = switch.replace(cases, "    i32 2, label %b\n    i32 1, label %a\n")
     self.assertTrue(self.reshaped(switch, reordered))
 
+  def test_a_branch_on_a_constant_goes_the_way_it_takes(self):
+    constant = """define i32 @f(i32 %x) {
+entry:
+  br i1 true, label %a, label %b
+
+a:
+  %y = add i32 %x, 1
+  br label %join
+
+b:
+  %z = mul i32 %x, 3
+  br label %join
+
+join:
+  %r = phi i32 [ %y, %a ], [ %z, %b ]
+  ret i32 %r
+}
+"""
+    taken = """define i32 @f(i32 %x) {
+entry:
+  br label %a
+
+a:
+  %y = add i32 %x, 1
+  br label %join
+
+join:
+  %r = phi i32 [ %y, %a ]
+  ret i32 %r
+}
+"""
+    self.assertTrue(self.reshaped(constant, taken))
+    self.assertTrue(self.reshaped(taken, constant))
+    self.assertFalse(self.reshaped(constant.replace("i1 true", "i1 false"), taken))
+    # A branch on poison is undefined behavior, not a way to go.
+    self.assertFalse(self.reshaped(constant.replace("i1 true", "i1 poison"), taken))
+
+  def test_a_switch_on_a_constant_goes_the_way_it_takes(self):
+    constant = """define i32 @f(i32 %x) {
+entry:
+  switch i32 2, label %d [
+    i32 1, label %a
+    i32 2, label %b
+  ]
+
+a:
+  ret i32 10
+
+b:
+  %y = add i32 %x, 20
+  ret i32 %y
+
+d:
+  ret i32 0
+}
+"""
+    taken = "define i32 @f(i32 %x) {\nentry:\n  %y = add i32 %x, 20\n  ret i32 %y\n}\n"
+    self.assertTrue(self.reshaped(constant, taken))
+    self.assertFalse(self.reshaped(constant.replace("switch i32 2", "switch i32 3"), taken))
+
   def test_swapped_successors_are_no_reshaping(self):
     swapped = TOP_TEST.replace("label %body, label %exit", "label %exit, label %body")
     self.assertFalse(self.reshaped(TOP_TEST, swapped))
