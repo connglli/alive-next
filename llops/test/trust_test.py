@@ -984,6 +984,60 @@ class TestPoisonInput(unittest.TestCase):
     self.assertEqual(false, [])
 
 
+# Bodies that read a parameter %x, of several types, in each way a value can be read.
+POISONED_BODIES = [
+  ("i32", "  %a = add i32 %x, 1\n  %b = mul i32 %a, %x\n  ret i32 %b"),
+  ("i32", "  %c = icmp eq i32 %x, 0\n  %r = select i1 %c, i32 1, i32 %x\n  ret i32 %r"),
+  ("ptr", "  %v = load i32, ptr %x, align 4\n  ret i32 %v"),
+  ("float", "  %f = fadd float %x, 1.0\n  %r = fptosi float %f to i32\n  ret i32 %r"),
+  ("i32", "  br label %next\n\nnext:\n  %p = phi i32 [ %x, %entry ]\n  ret i32 %p"),
+  ("i1", "  br i1 %x, label %a, label %b\n\na:\n  ret i32 1\n\nb:\n  ret i32 2"),
+]
+
+
+def with_param(ty: str, body: str) -> str:
+  return f"define i32 @f({ty} %x) {{\nentry:\n{body}\n}}\n"
+
+
+def poison_agrees(ty: str, body: str) -> tuple[str, str]:
+  """What alive2 says, each way, between the function `poison` makes of %x
+  and the function with %x written as poison in its text, which puts poison in
+  place of each use by other means."""
+  made = run("poison", {"module": with_param(ty, body), "param": 0})["module"]
+  written = with_param(ty, re.sub(r"%x\b", "poison", body))
+  return alive2(made, written), alive2(written, made)
+
+
+def undefined_at_poison(pair: tuple[str, str]) -> tuple[bool, str] | None:
+  """Whether `poison` makes the src undefined from its start, and whether
+  alive2 proves the pair, which differs only where %x is poison."""
+  answer = run("poison", {"module": pair[0], "param": 0})
+  if not answer.get("ok"):
+    return None
+  return "unreachable" in answer["module"], alive2(*pair)
+
+
+class TestPoisonParam(unittest.TestCase):
+  def test_poison_puts_poison_where_each_use_was(self):
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+      said = list(pool.map(lambda case: poison_agrees(*case), POISONED_BODIES))
+    for case, answers in zip(POISONED_BODIES, said, strict=True):
+      with self.subTest(case=case):
+        self.assertEqual(answers, ("correct", "correct"))
+
+  @unittest.skipUnless(os.path.exists(ATTRIBUTES), "needs the toolchain's LLVM build")
+  def test_poison_makes_undefined_only_what_alive2_does(self):
+    # A body undefined from its start is sound only where alive2 makes a poison
+    # argument undefined behavior, which it shows by proving the pair.
+    cases = [case for case in attributes() if case[1] == "param"]
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+      pairs = [pair for pair in pool.map(lambda case: poisoned(*case), cases) if pair]
+      answers = [answer for answer in pool.map(undefined_at_poison, pairs) if answer]
+    undefined = [said for at_once, said in answers if at_once]
+    self.assertGreater(len(undefined), 0)
+    self.assertEqual(set(undefined), {"correct"})
+
+
 # A cut whose outer passes poison for a slot, naming it by the load before the call.
 DEAD_OUTER = """define i32 @f(i32 %x, i1 %c) {
 entry:

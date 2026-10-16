@@ -14,6 +14,7 @@
 #include "number.h"
 #include "opt.h"
 #include "outline.h"
+#include "poison.h"
 #include "reshaped.h"
 #include "respected.h"
 #include "validate.h"
@@ -45,6 +46,7 @@ const char *kUsage = "usage: llops <subcommand> < request.json > response.json\n
                      "  instantiate put a counterexample's input into both programs of a pair\n"
                      "  attrs       put attributes on a function or a parameter\n"
                      "  assume      state a fact about a value before an instruction\n"
+                     "  poison      make one parameter of a function poison\n"
                      "  version     print the version\n"
                      "\n"
                      "Exit status is 0 when the response says ok, 1 when it does not, and\n"
@@ -121,6 +123,8 @@ int main(int argc, char **argv) {
     return respond(llops::attrsCmd(*args));
   if (cmd == "assume")
     return respond(llops::assumeCmd(*args));
+  if (cmd == "poison")
+    return respond(llops::poisonCmd(*args));
 
   llvm::errs() << "llops: unknown subcommand '" << cmd << "'\n" << kUsage;
   return 2;

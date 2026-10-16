@@ -288,6 +288,12 @@ Request `{ "module": ..., "fn": "<name>", "param": n, "attrs": { ... } }`, respo
 
 On a parameter it accepts `noundef`, `nonnull`, `noalias`, `align`, `dereferenceable` and `range`. The last two carry a byte count and a `{ "min": n, "max": m }` pair, the range being the half-open interval `[min, max)`. On a function it accepts `nounwind`, `nofree`, `nosync`, `willreturn`, `norecurse`, `mustprogress` (each boolean `true`), and `memory` (a string such as `"none"`, `"read"`, `"write"`, or `"argmem: readwrite"`).
 
+## poison
+
+Makes one parameter of a function poison. A proof by cases uses the result as its case for the inputs that pass poison to that parameter.
+
+Request `{ "module": ..., "param": N }`, response `{ "ok": true, "module": ... }`. Each use of parameter `N` reads `poison` in its place, and the parameter stays in the signature. Where an attribute of the parameter makes a poison argument undefined behavior to alive2, such as `noundef`, the body is one block that is `unreachable`, since such a call is undefined from its start. A vector or an aggregate may be poison in part, which neither case of a proof covers, so a parameter of such a type is refused. So is a parameter that `allocsize` names, whose poison is undefined behavior only where the function returns.
+
 ## assume
 
 Adds an assumption to a function: an `llvm.assume` before an instruction, stating a fact about a value or a condition written in IR. Inserting an assumption that can be false adds UB the program did not have, so alive2 refuses the change; an insertion alive2 accepts therefore shows the assumption always holds there.

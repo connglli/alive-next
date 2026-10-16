@@ -43,6 +43,7 @@ set(LLOPS_SOURCES
   src/input.cpp
   src/harness.cpp
   src/instantiate.cpp
+  src/poison.cpp
   src/assume.cpp
   src/analyze.cpp
   src/main.cpp

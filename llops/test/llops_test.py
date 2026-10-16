@@ -4183,6 +4183,38 @@ declare i32 @h(i32)
     self.good(run("unfold", unfold))
 
 
+class TestPoison(Case):
+  F = """define i32 @f(i32 %x, i32 noundef %y) {
+entry:
+  %a = add i32 %x, %y
+  ret i32 %a
+}
+"""
+
+  def poison(self, module, param):
+    return run("poison", {"module": module, "param": param})
+
+  def test_each_use_of_the_parameter_reads_poison(self):
+    module = self.good(self.poison(self.F, 0))["module"]
+    self.assertIn("add i32 poison, %y", module)
+    self.assertIn("define i32 @f(i32 %x, i32 noundef %y)", module)
+
+  def test_a_noundef_parameter_makes_poison_undefined_at_once(self):
+    module = self.good(self.poison(self.F, 1))["module"]
+    self.assertEqual(self.body(module), ["unreachable"])
+
+  def test_a_parameter_that_may_be_poison_in_part_is_refused(self):
+    lanes = "define i32 @f(<2 x i32> %v) {\nentry:\n  ret i32 0\n}\n"
+    self.bad(self.poison(lanes, 0), "invalid")
+
+  def test_a_parameter_allocsize_names_is_refused(self):
+    sized = "define ptr @f(i64 %n) allocsize(0) {\nentry:\n  ret ptr null\n}\n"
+    self.bad(self.poison(sized, 0), "invalid")
+
+  def test_a_parameter_that_is_not_there(self):
+    self.bad(self.poison(self.F, 2), "not_found")
+
+
 class TestAssume(Case):
   F = """define i32 @f(i32 %n) {
 entry:
