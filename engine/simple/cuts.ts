@@ -14,7 +14,7 @@ import { cutFacts, passedOn, predicatesAt, strengthenCut, union } from "./facts.
 import { fillCut } from "./fill.ts";
 import type { Limits } from "./limits.ts";
 import { guessInvariants, loopCut, strengthenLoop, unfoldToMatch } from "./loops.ts";
-import { diff, dominates, headers, successors } from "./regions.ts";
+import { diff, dominates, headers, storedAt, successors } from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
 import { bodies, partners } from "./windows.ts";
 
@@ -152,7 +152,7 @@ function valueMap(
   return map;
 }
 
-/** A load of what stack slot `slot` holds at the cut, with its tgt partner, or poison. */
+/** The value stack slot `slot` holds at the cut, with its tgt partner, or poison. */
 function heldAt(
   src: Instruction[],
   tgt: Instruction[],
@@ -178,6 +178,10 @@ function heldAt(
     }
     return fits(pairs.get(read)) ? pairs.get(read) : undefined;
   };
+  // A slot holds what the store that comes last on every path to the cut put there.
+  const stored = storedAt(src, slot, Number(pointOf(src, cut).slice(1)), type ?? "");
+  const partner = stored && (src.some((i) => i.value === stored) ? pairs.get(stored) : stored);
+  if (stored && fits(partner)) return { read: stored, partner };
   const paired = reads.map((read) => ({ read, partner: readBy(read) }));
   return paired.find(({ partner }) => partner) ?? { read: reads[0] ?? "poison" };
 }

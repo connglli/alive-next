@@ -35,7 +35,9 @@ export function distance(src: Instruction[], tgt: Instruction[]): number {
 }
 
 /** The regions, and for each src block and value, the tgt one it is matched with. */
-export function diff(src: Instruction[], tgt: Instruction[]) {
+export function diff(srcBody: Instruction[], tgtBody: Instruction[]) {
+  // A load or a store of a stack slot matches only one of a slot, never one of memory.
+  const [src, tgt] = [slotsMarked(srcBody), slotsMarked(tgtBody)];
   const [a, b] = [blocksOf(src), blocksOf(tgt)];
   const content = (body: Instruction[], block: number[] = []) =>
     block.map((i) => body[i]?.form).join("\n");
@@ -187,12 +189,14 @@ function pairing(
   const agree = ({ move }: Step) => !mine.has(move.src) && !theirs.has(move.tgt);
   const matched = [...loops, ...steps.filter((step) => step.inside && agree(step))];
   matched.forEach(add);
+  const loads = storedLoads(src);
   // Blocks paired through what matched instructions read are matched inside too.
   for (;;) {
     throughOperands(src, tgt, matched, pairs);
+    const loaded = throughSlots(src, loads, pairs);
     const done = new Set(matched.map((step) => step.move.src));
     const more = [...pairs].flatMap(([s, t]) => (done.has(at.get(s)) ? [] : stepOf(s, t)));
-    if (more.length === 0) return pairs;
+    if (more.length === 0 && !loaded) return pairs;
     more.forEach(add);
     matched.push(...more);
   }
@@ -221,9 +225,7 @@ function loopsPaired(src: Instruction[], tgt: Instruction[]): [string, string][]
 /** Each loop of `body`, outermost first: its header and the blocks it leaves to. */
 function loopsOf(body: Instruction[]) {
   const next = successors(body);
-  const before = new Map<string, string[]>();
-  for (const [from, tos] of next)
-    for (const to of tos) before.set(to, [...(before.get(to) ?? []), from]);
+  const before = predecessors(body);
   return headers(body).flatMap((header) => {
     // The loop is what reaches a branch back to its header without passing the header,
     // which holds only when the header dominates those branches, as in LLVM's loops.
@@ -281,6 +283,14 @@ export function successors(body: Instruction[]): Map<string, string[]> {
   return next;
 }
 
+/** Each block's predecessors: the blocks that name it. */
+function predecessors(body: Instruction[]): Map<string, string[]> {
+  const before = new Map<string, string[]>();
+  for (const [from, tos] of successors(body))
+    for (const to of tos) before.set(to, [...(before.get(to) ?? []), from]);
+  return before;
+}
+
 /** Each block's position among the blocks of `body`, by name. */
 function indexOf(body: Instruction[], blocks: number[][]): Map<string, number> {
   return new Map(blocks.map((block, k) => [body[block[0] ?? -1]?.block ?? "", k]));
@@ -313,6 +323,87 @@ function throughOperands(
         });
       }
   }
+}
+
+/** Pairs each load that `loads` lists with the partner of the value it reads. */
+function throughSlots(src: Instruction[], loads: Map<string, string>, pairs: Map<string, string>) {
+  const mine = ownOf(src);
+  let grown = false;
+  for (const [load, value] of loads) {
+    const partner = mine.has(value) ? pairs.get(value) : value;
+    if (pairs.has(load) || !partner?.startsWith("%")) continue;
+    pairs.set(load, partner);
+    grown = true;
+  }
+  return grown;
+}
+
+/** What each load of a stack slot reads, where one store into the slot says which. */
+function storedLoads(body: Instruction[]): Map<string, string> {
+  const slots = slotsOf(body);
+  const loads = new Map<string, string>();
+  for (const [k, i] of body.entries()) {
+    const slot = i.opcode === "load" ? (i.operands[0] ?? "") : "";
+    const value = slots.has(slot) ? storedAt(body, slot, k, i.type) : undefined;
+    if (i.value && value) loads.set(i.value, value);
+  }
+  return loads;
+}
+
+/** `body` with a mark on the forms of the loads and stores of its stack slots. */
+function slotsMarked(body: Instruction[]): Instruction[] {
+  const slots = slotsOf(body);
+  const marked = (i: Instruction) =>
+    (i.opcode === "load" && slots.has(i.operands[0] ?? "")) ||
+    (i.opcode === "store" && slots.has(i.operands[1] ?? ""));
+  return body.map((i) => (marked(i) ? { ...i, form: `${i.form} ; slot` } : i));
+}
+
+/** The allocas of the entry block that only loads and stores into them use. */
+function slotsOf(body: Instruction[]): Set<string> {
+  const entry = body[0]?.block;
+  const slots = new Set(
+    body.flatMap((i) => (i.opcode === "alloca" && i.block === entry && i.value ? [i.value] : [])),
+  );
+  // A slot that anything but a load or a store into it uses may be written unseen.
+  for (const i of body)
+    i.operands.forEach((x, k) => {
+      if (!(i.opcode === "load" && k === 0) && !(i.opcode === "store" && k === 1)) slots.delete(x);
+    });
+  return slots;
+}
+
+/**
+ * What stack slot `slot` holds before instruction `k`, where one store of a
+ * `type` into it comes last on every path there, as long as nothing but loads
+ * and stores uses the slot.
+ */
+export function storedAt(body: Instruction[], slot: string, k: number, type: string) {
+  const before = predecessors(body);
+  // Each block's last instruction, since a map keeps the last value set for a key.
+  const ends = new Map(body.map((i, j) => [i.block, j]));
+  // The last store into the slot from `end` back to the block's start, or -1 at the entry.
+  const lastIn = (block: string, end: number) => {
+    for (let j = end; j >= 0 && body[j]?.block === block; j--)
+      if (body[j]?.opcode === "store" && body[j]?.operands[1] === slot) return j;
+    return before.get(block)?.length ? undefined : -1;
+  };
+  const found = new Set<number>();
+  const entered = new Set<string>();
+  const todo: [string, number][] = [[body[k]?.block ?? "", k - 1]];
+  for (let next = todo.pop(); next; next = todo.pop()) {
+    const [block, end] = next;
+    const last = lastIn(block, end);
+    if (last !== undefined) found.add(last);
+    else
+      for (const from of before.get(block) ?? [])
+        if (!entered.has(from)) {
+          entered.add(from);
+          todo.push([from, ends.get(from) ?? -1]);
+        }
+  }
+  const store = found.size === 1 ? body[[...found][0] ?? -1] : undefined;
+  return store?.form.startsWith(`store ${type} `) ? store.operands[0] : undefined;
 }
 
 /** Whether two instructions read the same values and blocks, in order or swapped. */
