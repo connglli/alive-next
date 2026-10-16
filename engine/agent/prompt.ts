@@ -24,7 +24,7 @@ There are two ways to change a goal:
 
 1. **Perform a certified step:** Replace either \`src\` or \`tgt\` with a modified version. This helps you find fine-grained refinement steps. A step is certified either by the verified rewriter applying pre-proved peephole rules, with no solver run of its own, or by alive2 confirming that the refinement claim still holds at each *small* step.
 
-2. **Perform a program cut:** Split the goal into two new goals: an outer goal and a callee goal. Both programs in the outer goal call an outlined function. The callee goal contains the outlined function bodies. Proving both new goals proves the original goal.
+2. **Perform a program cut:** Split the goal into two new goals: an outer goal and a callee goal, or two cases of its inputs. The outer goal's programs call an outlined function, whose bodies the callee goal contains. Proving both new goals proves the original goal.
 
 ## How to use certified steps
 

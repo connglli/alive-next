@@ -13,6 +13,7 @@ import type { Session } from "../../core/session.ts";
 import { createAbortTool } from "./abort.ts";
 import { createAnalyzeTool } from "./analyze.ts";
 import { createBeginTool } from "./begin.ts";
+import { createCaseTool } from "./case.ts";
 import { createCheckTool } from "./check.ts";
 import { createCommitTool } from "./commit.ts";
 import { createEditTool } from "./edit.ts";
@@ -32,6 +33,7 @@ import { createSplitPreviewTool } from "./split-preview.ts";
 import { createStatusTool } from "./status.ts";
 import { createStrengthenTool } from "./strengthen.ts";
 import { createStrengthenPreviewTool } from "./strengthen-preview.ts";
+import { createUncaseTool } from "./uncase.ts";
 import { createUnfoldTool } from "./unfold.ts";
 import { createUninterposeTool } from "./uninterpose.ts";
 import { createUnsplitTool } from "./unsplit.ts";
@@ -71,6 +73,8 @@ export function createProofAssistantTools(
     createUnsplitTool(session),
     createInterposeTool(session),
     createUninterposeTool(session),
+    createCaseTool(session),
+    createUncaseTool(session),
     createStrengthenPreviewTool(session),
     createStrengthenTool(session),
     createReportCexTool(session),

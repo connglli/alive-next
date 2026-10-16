@@ -448,6 +448,21 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(await call("tree_interpose", { gid: "g1" })).toContain("no transaction is open on g1");
   });
 
+  test("a goal is cut by cases, on poison and then on a comparison, and back", async () => {
+    const poison = await call("tree_case", { gid: "g1", on: { defined: "!0" } });
+    expect(poison).toStartWith("SUCCESS");
+    expect(poison).toContain("g1 is cut by cases: holds g2, fails g3");
+    const below = await call("tree_case", { gid: "g2", on: { op: "ult", lhs: "!0", rhs: 3 } });
+    expect(below).toContain("g2 is cut by cases: holds g4, fails g5");
+    expect(await call("tree_uncase", { gid: "g1" })).toContain("g1 is open again");
+  });
+
+  test("a case on something other than a parameter says why it is refused", async () => {
+    const refused = await call("tree_case", { gid: "g1", on: { op: "eq", lhs: "!5", rhs: 0 } });
+    expect(refused).toStartWith("FAILURE");
+    expect(refused).toContain("!5 is not a parameter");
+  });
+
   test("a step can be walked back", async () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     await call("tx_edit", { op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });

@@ -14,13 +14,16 @@ export const ParamAttrs = Type.Optional(
   }),
 );
 
+/** A comparison of two values, or of a value and an integer, as one icmp. */
+export const ComparisonShape = Type.Object({
+  op: Type.String(),
+  lhs: Type.Union([Type.String(), Type.Number()]),
+  rhs: Type.Union([Type.String(), Type.Number()]),
+});
+
 /** One predicate: a comparison, or lines of IR whose last line defines an i1. */
 export const PredicateShape = Type.Union([
-  Type.Object({
-    op: Type.String(),
-    lhs: Type.Union([Type.String(), Type.Number()]),
-    rhs: Type.Union([Type.String(), Type.Number()]),
-  }),
+  ComparisonShape,
   Type.Object({ insts: Type.Array(Type.String()) }),
 ]);
 
