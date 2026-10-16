@@ -1,5 +1,11 @@
-// `assume`: state a fact about a value, where the evidence for it lives. The
-// fact vocabulary and the request are in docs/llops.md.
+// The `assume` subcommand.
+#pragma once
+
+#include "llvm/Support/JSON.h"
+
+namespace llops {
+
+// State a fact about a value, where the evidence for it lives.
 //
 // This is the first half of interface strengthening. An attribute on an
 // outlined callee's parameter is an assumption its caller has to honour, so it
@@ -11,12 +17,6 @@
 // The same vocabulary serves both halves, so what is proved here and what is
 // attributed by `attrs` cannot drift apart. A fact whose attribute has no
 // assume form is refused rather than quietly skipped.
-#pragma once
-
-#include "llvm/Support/JSON.h"
-
-namespace llops {
-
 llvm::json::Object assumeCmd(llvm::json::Object &args);
 
 } // namespace llops

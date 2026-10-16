@@ -1,5 +1,11 @@
-// `harness`: wrap a function in a main that llubi can run. The argument kinds
-// and what comes back are in docs/llops.md.
+// The `harness` subcommand.
+#pragma once
+
+#include "llvm/Support/JSON.h"
+
+namespace llops {
+
+// Wrap a function in a main that llubi can run.
 //
 // llubi runs `@main` and nothing else, its signature has to be
 // `i32 @main(i32, ptr)`, and no command line sets an argument. So replaying a
@@ -12,12 +18,6 @@
 // value truncated to eight bits. The return value goes through memory for the
 // same reason the final bytes do, so that every observation is one line of the
 // shape `%obs.something = load ... -> value`.
-#pragma once
-
-#include "llvm/Support/JSON.h"
-
-namespace llops {
-
 llvm::json::Object harnessCmd(llvm::json::Object &args);
 
 } // namespace llops

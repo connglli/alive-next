@@ -1,11 +1,4 @@
 // Snippets: instruction text written by a caller, parsed against a function.
-//
-// `edit replace` and `edit insert` take instruction text, and so do the
-// predicates `assume` puts in. The text is parsed inside a throwaway function
-// whose parameters stand for the values the snippet uses from the real
-// function, so the snippet is type-checked by the same parser alive-tv uses.
-// The parsed instructions are then cloned with those parameters replaced by
-// the real values. docs/llops.md says what each command accepts.
 #pragma once
 
 #include "irutil.h"
@@ -52,9 +45,16 @@ struct SnippetScope {
   const std::vector<llvm::Value *> *args = nullptr;
 };
 
-// Parse `text` against the values of F. `replacing`, when set, is the
-// definition the caller is about to erase: the snippet may take its name back
-// but may not use it, which would turn the replacement into a use of itself.
+// Parse `text` against the values of F. `edit replace` and `edit insert` take
+// such text, and so do the predicates `assume` puts in. The text is parsed
+// inside a throwaway function whose parameters stand for the values the snippet
+// uses from the real function, so the snippet is type-checked by the same
+// parser alive-tv uses. The parsed instructions are then cloned with those
+// parameters replaced by the real values.
+//
+// `replacing`, when set, is the definition the caller is about to erase: the
+// snippet may take its name back but may not use it, which would turn the
+// replacement into a use of itself.
 bool parseSnippet(llvm::Function &F, ValueRefs &refs, llvm::StringRef text, llvm::Value *replacing,
                   const SnippetScope &scope, Snippet &out, llvm::json::Object &err);
 

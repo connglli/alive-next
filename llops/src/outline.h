@@ -1,9 +1,14 @@
-// `outline` and `inline`: the split transformation and its inverse.
-//
-// outline cuts one side of a goal at a cut point: the instructions before the
-// cut stay in the outer function, which gains a call, and the instructions
-// from the cut onwards become the body of a fresh function `g`. The cut
-// instruction itself is the first instruction of the callee.
+// The `outline` and `inline` subcommands.
+#pragma once
+
+#include "llvm/Support/JSON.h"
+
+namespace llops {
+
+// Cut one side of a goal at a cut point: the instructions before the cut stay
+// in the outer function, which gains a call, and the instructions from the cut
+// onwards become the body of a fresh function `g`. The cut instruction itself
+// is the first instruction of the callee.
 //
 // The callee signature is the src side's live-in set, the values the suffix
 // uses from the prefix or from the arguments, in the order they are defined.
@@ -23,19 +28,11 @@
 // the same outer and two small functions, and the small pair is then the whole
 // question. A window is one program's own business, so it takes no side and no
 // value map: what says the two line up is their outers coming out the same.
-//
-// The faithfulness of both transformations is mechanical: `inline` substitutes
-// the callee body back at the call site and drops the declaration that
-// carried it, so the certificate checker can compare the canonical text
-// against the original. See docs/llops.md for the request and response.
-#pragma once
-
-#include "llvm/Support/JSON.h"
-
-namespace llops {
-
 llvm::json::Object outlineCmd(llvm::json::Object &args);
 
+// Substitute the callee body back at the call site and drop the declaration
+// that carried it, so the certificate checker can compare the canonical text
+// against the original, which makes the faithfulness of `outline` mechanical.
 llvm::json::Object inlineCmd(llvm::json::Object &args);
 
 } // namespace llops

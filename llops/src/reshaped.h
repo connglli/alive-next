@@ -1,6 +1,13 @@
-// `reshaped`: whether one function is another with its control flow reshaped
-// and nothing else, so that every run of it is a run of the other, step for
-// step, and a step between them needs no solver.
+// The `reshaped` subcommand.
+#pragma once
+
+#include "llvm/Support/JSON.h"
+
+namespace llops {
+
+// Whether one function is another with its control flow reshaped and nothing
+// else, so that every run of it is a run of the other, step for step, and a
+// step between them needs no solver.
 //
 // Rotating a loop, merging or splitting blocks, dropping an empty one, adding
 // an LCSSA phi or inverting a branch changes what the function looks like but
@@ -18,14 +25,7 @@
 // walk intersects until nothing changes, which settles loops. Each run of
 // `after` is then a run of `before` with the same instructions on the same
 // values, so it has the same behavior, undefined behavior included. The rest
-// of the two modules must be the same. See docs/llops.md for the request and
-// response.
-#pragma once
-
-#include "llvm/Support/JSON.h"
-
-namespace llops {
-
+// of the two modules must be the same.
 llvm::json::Object reshapedCmd(llvm::json::Object &args);
 
 } // namespace llops

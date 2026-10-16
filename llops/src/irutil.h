@@ -1,6 +1,5 @@
 // Shared IR plumbing: parsing, printing, canonicalization, value references
-// and the program shape checks. Stateless helpers only;
-// docs/implementation.md holds the tool contract.
+// and the program shape checks.
 #pragma once
 
 #include "llvm/ADT/ArrayRef.h"
@@ -94,7 +93,7 @@ const llvm::User *escapingUse(const llvm::Value &v);
 // Values are referenced by the token that names them in printed IR, so the
 // agent can quote back what it reads: "%3" for a slot, "%x" for a name and
 // "#7" for the instruction at index 7, which is the only form that reaches
-// an instruction defining no value. docs/llops.md states the contract.
+// an instruction defining no value.
 //
 // A ValueRefs is a snapshot of one function's slots and instruction order:
 // slot numbers come from the same tracker the printer uses, so resolving and
