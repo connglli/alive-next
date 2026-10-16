@@ -143,6 +143,45 @@ entry:
     expect(await diff(src, tgt)).toEqual([{ src: [0], tgt: [], window: true }]);
   });
 
+  test("a load of a stack slot pairs with what the store that comes last put there", async () => {
+    const src = `define double @f(i1 %c, double %x, double %y) {
+entry:
+  %a = alloca double, align 8
+  %b = alloca double, align 8
+  store double %x, ptr %a, align 8
+  store double %y, ptr %b, align 8
+  br i1 %c, label %then, label %join
+
+then:
+  store double %x, ptr %b, align 8
+  br label %join
+
+join:
+  %l = load double, ptr %a, align 8
+  %m = load double, ptr %b, align 8
+  %r = fadd double %l, %m
+  ret double %r
+}
+`;
+    const tgt = `define double @f(i1 %c, double %x, double %y) {
+entry:
+  br i1 %c, label %then, label %join
+
+then:
+  br label %join
+
+join:
+  %m = phi double [ %y, %entry ], [ %x, %then ]
+  %r = fadd double %x, %m
+  ret double %r
+}
+`;
+    // The add's operands may be swapped, so only the load of %a, which one store
+    // fills, decides which is which; %b's load then pairs with the phi.
+    const { pairs } = match(await body(src), await body(tgt));
+    expect([pairs.get("%5"), pairs.get("%6")]).toEqual(["%1", "%3"]);
+  });
+
   test("a reshaped loop pairs its phis and exits, not its body with an exit", async () => {
     // The tgt if-converts the body and branches to the exit on another test.
     const { pairs } = match(await body(countdown.src), await body(countdown.tgt));
