@@ -82,7 +82,13 @@ export async function cut(
   const preview = await session.splitPreview(gid, srcCut, tgtCut);
   if (preview.kind !== "preview") return undefined;
   const [src, tgt] = await bodies(session, llops, gid);
-  const map = valueMap(preview.params, preview.tgtParams ?? [], src, tgt, tgtCut);
+  const { pairs } = diff(src, tgt);
+  const slots = new Set(preview.slots?.src ?? []);
+  const held = preview.params.map(({ live }, k) =>
+    slots.has(k) ? heldAt(src, tgt, pairs, live, srcCut) : undefined,
+  );
+  const partners = held.map((slot) => slot?.partner);
+  const map = valueMap(preview.params, partners, preview.tgtParams ?? [], pairs, src, tgt, tgtCut);
   if (!map) return undefined;
   const split = await session.split(gid, srcCut, tgtCut, map);
   if (split.kind !== "split") return undefined;
@@ -91,7 +97,7 @@ export async function cut(
     return undefined;
   }
   const view = await session.show(gid);
-  const lives = split.params.map((param) => param.live);
+  const lives = split.params.map(({ live }, k) => held[k]?.read ?? live);
   const images = split.params.map(({ live, tgt }) => (live === "poison" ? tgt : map[live]));
   const [srcLoop, tgtLoop] = split.detach?.hypothesis ? [srcCut, tgtCut] : [];
   const sides: [Side, Side] = [
@@ -117,12 +123,13 @@ export async function cut(
  */
 function valueMap(
   params: OutlineParam[],
+  held: (string | undefined)[],
   tgtParams: OutlineParam[],
+  pairs: Map<string, string>,
   src: Instruction[],
   tgt: Instruction[],
   tgtCut: string,
 ) {
-  const { pairs } = diff(src, tgt);
   const own = new Set(src.flatMap((i) => (i.value ? [i.value] : [])));
   const blockOf = new Map<string, string>();
   for (const i of tgt) if (i.value) blockOf.set(i.value, i.block);
@@ -134,14 +141,71 @@ function valueMap(
     return phi?.value;
   };
   const map: Record<string, string> = {};
-  for (const { live } of params) {
-    const partner = own.has(live) ? pairs.get(live) : live;
+  for (const [k, { live }] of params.entries()) {
+    // A slot pairs with the tgt's own slot, or else with what the tgt holds in it.
+    const partner = (own.has(live) ? pairs.get(live) : live) ?? held[k];
     if (!partner) return undefined;
-    map[live] = at(partner) ?? partner;
+    map[live] = partner === "poison" ? partner : (at(partner) ?? partner);
   }
   const passed = new Set(Object.values(map));
   for (const { live } of tgtParams) if (!passed.has(live)) map[`tgt${live}`] = live;
   return map;
+}
+
+/** A load of what stack slot `slot` holds at the cut, with its tgt partner, or poison. */
+function heldAt(
+  src: Instruction[],
+  tgt: Instruction[],
+  pairs: Map<string, string>,
+  slot: string,
+  cut: string,
+): { read: string; partner?: string } {
+  const reads = readsAt(src, slot, cut);
+  if (reads.length === 0) return { read: "poison", partner: "poison" };
+  const theirs = new Map(tgt.flatMap((i) => (i.value ? [[i.value, i] as const] : [])));
+  const type = src.find((i) => i.value === reads[0])?.type;
+  // A partner holds a value of the load's type, where the tgt says which type.
+  const fits = (it?: string) => it?.startsWith("%") && (theirs.get(it)?.type ?? type) === type;
+  // A matched user of the load reads its partner at the same place in the tgt.
+  const readBy = (read: string) => {
+    for (const user of src) {
+      const k = user.operands.indexOf(read);
+      const other = k >= 0 && user.value ? theirs.get(pairs.get(user.value) ?? "") : undefined;
+      if (!other || other.opcode !== user.opcode) continue;
+      const agree = (x: string, j: number) => j === k || (pairs.get(x) ?? x) === other.operands[j];
+      const it = !user.commutative || user.operands.every(agree) ? other.operands[k] : undefined;
+      if (fits(it)) return it;
+    }
+    return fits(pairs.get(read)) ? pairs.get(read) : undefined;
+  };
+  const paired = reads.map((read) => ({ read, partner: readBy(read) }));
+  return paired.find(({ partner }) => partner) ?? { read: reads[0] ?? "poison" };
+}
+
+/** The loads of stack slot `slot` a path from `cut` uses before it stores into the slot. */
+function readsAt(src: Instruction[], slot: string, cut: string): string[] {
+  const used = new Set(src.flatMap((i) => i.operands));
+  const next = successors(src);
+  const first = (block: string) => src.findIndex((i) => i.block === block);
+  const entered = new Set<string>();
+  const reads: string[] = [];
+  const todo = [cut.startsWith("#") ? Number(cut.slice(1)) : first(cut)];
+  for (let k = todo.pop(); k !== undefined; k = todo.pop()) {
+    const block = src[k]?.block;
+    let stored = false;
+    for (; !stored && block !== undefined && src[k]?.block === block; k++) {
+      const i = src[k] as Instruction;
+      const read = i.opcode === "load" && i.operands[0] === slot && i.value;
+      if (read && used.has(read)) reads.push(read);
+      stored = i.opcode === "store" && i.operands[1] === slot;
+    }
+    for (const to of stored || !block ? [] : (next.get(block) ?? []))
+      if (!entered.has(to)) {
+        entered.add(to);
+        todo.push(first(to));
+      }
+  }
+  return reads;
 }
 
 /** Strengthens `split` with what its goal, the analyses, relations and guesses offer. */
@@ -153,7 +217,7 @@ async function strengthenSplit(
   [mine, theirs]: [Side, Side],
   inherited: Predicate[],
 ) {
-  const lives = split.params.map((param) => param.live);
+  const lives = mine.values.map((value = "") => value);
   const facts = await cutFacts(llops, mine.module, mine.point, lives);
   const types = split.params.map((param) => param.type);
   const relations = { predicates: await relationsAt(llops, [mine, theirs], types) };

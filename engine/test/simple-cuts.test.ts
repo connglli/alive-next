@@ -15,6 +15,7 @@ import { countdown } from "../examples/countdown.ts";
 import { loop } from "../examples/loop.ts";
 import { rotated } from "../examples/rotated.ts";
 import { scenario } from "../examples/scenarios.ts";
+import { slots } from "../examples/slots.ts";
 import { strchr } from "../examples/strchr.ts";
 import { unfold } from "../examples/unfold.ts";
 import { balancedPoints, beforePoints, cut, cutLoop } from "../simple/cuts.ts";
@@ -478,6 +479,15 @@ exit:
     const header = await cutLoop(session, llops, exit.outer, DEFAULT_LIMITS);
     if (!header) throw new Error("expected a cut at the header");
     expect((await session.check(header.callee)).outcome).toBe("proved");
+  }, 120_000);
+
+  test("a loop that keeps its state in stack slots is cut by what they hold", async () => {
+    // The tgt is the src after mem2reg. The counter and the sum pair with its phis
+    // through loads that read them, and the slot stored before it is read with poison.
+    const session = await solved("slots", slots.src, slots.tgt);
+    const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    if (!halves) throw new Error("expected a cut");
+    expect(statuses(session, [halves.outer, halves.callee])).toEqual(["proved", "proved"]);
   }, 120_000);
 
   test("a loop cut keeps a comparison with zero that each iteration keeps", async () => {
