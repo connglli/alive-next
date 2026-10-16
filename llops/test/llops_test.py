@@ -3723,6 +3723,29 @@ other:
     )
     self.assertFalse(self.reshaped(moved, moved.replace(branch, "br label %zero")))
 
+  def test_a_samesign_branch_is_not_decided_by_the_comparison_assumed(self):
+    # Where %a and %b differ in sign, the assume holds and the branch is on poison.
+    after = """declare void @llvm.assume(i1)
+
+define i32 @f(i32 %a, i32 %b) {
+entry:
+  %u = icmp ult i32 %a, %b
+  call void @llvm.assume(i1 %u)
+  %c = icmp samesign ult i32 %a, %b
+  br i1 %c, label %t, label %e
+
+t:
+  ret i32 1
+
+e:
+  ret i32 2
+}
+"""
+    branch = "br i1 %c, label %t, label %e"
+    self.assertFalse(self.reshaped(after.replace(branch, "br label %t"), after))
+    plain = after.replace("icmp samesign ult", "icmp ult")
+    self.assertTrue(self.reshaped(plain.replace(branch, "br label %t"), plain))
+
   def test_swapped_successors_are_no_reshaping(self):
     swapped = TOP_TEST.replace("label %body, label %exit", "label %exit, label %body")
     self.assertFalse(self.reshaped(TOP_TEST, swapped))

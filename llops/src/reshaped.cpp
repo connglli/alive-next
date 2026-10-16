@@ -224,9 +224,12 @@ Decided decidedIn(llvm::Function &F) {
     auto *br = llvm::dyn_cast<llvm::BranchInst>(B.getTerminator());
     auto *cmp =
         br && br->isConditional() ? llvm::dyn_cast<llvm::ICmpInst>(br->getCondition()) : nullptr;
-    if (!cmp || !fixed(cmp->getOperand(0)) || !fixed(cmp->getOperand(1)))
+    // `samesign` may make the comparison poison although the assumed one holds.
+    if (!cmp || cmp->hasSameSign())
       continue;
     const llvm::Value *lhs = cmp->getOperand(0), *rhs = cmp->getOperand(1);
+    if (!fixed(lhs) || !fixed(rhs))
+      continue;
     if (holds(cmp->getPredicate(), lhs, rhs))
       decided[br] = br->getSuccessor(0);
     else if (holds(cmp->getInversePredicate(), lhs, rhs))
