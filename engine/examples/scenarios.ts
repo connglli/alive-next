@@ -35,6 +35,7 @@ import { rewrite } from "./rewrite.ts";
 import { rotated } from "./rotated.ts";
 import { rule } from "./rule.ts";
 import { slots } from "./slots.ts";
+import { specialize } from "./specialize.ts";
 import { strchr } from "./strchr.ts";
 import { strengthReduce } from "./strength-reduce.ts";
 import { strengthen } from "./strengthen.ts";
@@ -74,6 +75,7 @@ export const scenarios: Scenario[] = [
   memloop,
   slots,
   unswitch,
+  specialize,
   digits,
   loopstep,
   carry,
