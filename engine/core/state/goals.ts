@@ -14,7 +14,7 @@ import type { Detach, Effect, Entry, Hash, Slots } from "./trajectory.ts";
 export type GoalId = string;
 export type ProgramId = string;
 export type Side = "src" | "tgt";
-export type Role = "outer" | "callee" | "lhs" | "rhs";
+export type Role = "outer" | "callee" | "lhs" | "rhs" | "holds" | "fails";
 
 /** open until it is discharged, split once it has children, or settled. */
 export type Status = "open" | "proved" | "split" | "refuted";
@@ -28,8 +28,8 @@ export interface Goal {
   id: GoalId;
   parent?: GoalId;
   /**
-   * Which child of its parent this is: a split's outer or callee, or an
-   * interpose's lhs or rhs.
+   * Which child of its parent this is: a split's outer or callee, an
+   * interpose's lhs or rhs, or a case's holds or fails.
    */
   role?: Role;
   /** The outlined function this cut made, on both of its children. */
@@ -109,6 +109,11 @@ export function workable(tree: Tree, id: GoalId): Goal {
 /** Whether `goal` has the two children an interpose leaves, rather than a split's. */
 export function interposed(tree: Tree, goal: Goal): boolean {
   return goal.children.some((id) => tree.goals.get(id)?.role === "lhs");
+}
+
+/** Whether `goal` has the two children a cut by cases leaves. */
+export function cased(tree: Tree, goal: Goal): boolean {
+  return goal.children.some((id) => tree.goals.get(id)?.role === "holds");
 }
 
 /** The half of `parent`'s cut that plays `role`. */
@@ -204,6 +209,14 @@ function apply(tree: Tree, effect: Effect): void {
       parent.status = "split";
       return;
     }
+    case "case": {
+      const parent = editable(tree, effect.gid);
+      // Both cases are about the parent's own pair, restricted the same way on each side.
+      opened(tree, parent, effect.holds, "holds");
+      opened(tree, parent, effect.fails, "fails");
+      parent.status = "split";
+      return;
+    }
     case "strengthen": {
       // Both sides move together, because the attribute is one claim about
       // the goal rather than a step on either side of it.
@@ -216,7 +229,7 @@ function apply(tree: Tree, effect: Effect): void {
     }
     case "unsplit": {
       const parent = get(tree, effect.gid);
-      if (parent.status !== "split" || interposed(tree, parent))
+      if (parent.status !== "split" || interposed(tree, parent) || cased(tree, parent))
         throw new DerivationError(`${parent.id} is not split`);
       reopen(tree, parent);
       return;
@@ -225,6 +238,13 @@ function apply(tree: Tree, effect: Effect): void {
       const parent = get(tree, effect.gid);
       if (parent.status !== "split" || !interposed(tree, parent))
         throw new DerivationError(`${parent.id} is not interposed`);
+      reopen(tree, parent);
+      return;
+    }
+    case "uncase": {
+      const parent = get(tree, effect.gid);
+      if (parent.status !== "split" || !cased(tree, parent))
+        throw new DerivationError(`${parent.id} is not cut by cases`);
       reopen(tree, parent);
       return;
     }

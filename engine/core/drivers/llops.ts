@@ -462,6 +462,15 @@ export class Llops {
     return this.run("harness", { module, entry, args });
   }
 
+  /**
+   * Make parameter `param` of the function poison: each use reads poison, or
+   * the body is undefined from its start where an attribute makes a poison
+   * argument undefined behavior.
+   */
+  poison(module: Module, param: number): Promise<LlopsResult<ModuleResult>> {
+    return this.run("poison", { module, param });
+  }
+
   /** Assume an input at the entry of both programs of a pair. */
   instantiate(
     src: Module,

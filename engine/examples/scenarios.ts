@@ -40,6 +40,7 @@ import { strengthReduce } from "./strength-reduce.ts";
 import { strengthen } from "./strengthen.ts";
 import { unfold } from "./unfold.ts";
 import { unroll } from "./unroll.ts";
+import { unswitch } from "./unswitch.ts";
 import { vectorize } from "./vectorize.ts";
 import { widen } from "./widen.ts";
 
@@ -72,6 +73,7 @@ export const scenarios: Scenario[] = [
   loopfreeze,
   memloop,
   slots,
+  unswitch,
   digits,
   loopstep,
   carry,

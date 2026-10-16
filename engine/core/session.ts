@@ -29,6 +29,7 @@ import {
 } from "./drivers/llops.ts";
 import type { Llrwt, RuleInfo } from "./drivers/llrwt.ts";
 import type { Ref } from "./refs.ts";
+import { type CaseResult, cases, uncase } from "./state/cases.ts";
 import { Counterexamples, type Interpreter, type ReportResult } from "./state/counterexamples.ts";
 import {
   derive,
@@ -63,6 +64,7 @@ import {
   type StrengthenResult,
 } from "./state/strengthen.ts";
 import {
+  type CaseOn,
   type Effect,
   type Entry,
   type Event,
@@ -106,9 +108,13 @@ export type UnsplitResult = { kind: "unsplit"; effects: Effect[] } | EditingRefu
 
 export type UninterposeResult = { kind: "uninterposed"; effects: Effect[] } | EditingRefusal;
 
+export type UncaseResult = { kind: "uncased"; effects: Effect[] } | EditingRefusal;
+
 export type SessionSplitResult = SplitResult | EditingRefusal;
 
 export type SessionInterposeResult = InterposeResult | EditingRefusal;
+
+export type SessionCaseResult = CaseResult | EditingRefusal;
 
 export type SessionStrengthenResult = StrengthenResult | EditingRefusal;
 
@@ -604,6 +610,32 @@ export class Session {
         return { kind: "editing", message: openMessage(editing) };
       }
       return { kind: "uninterposed", effects: uninterpose(tree, gid) };
+    });
+  }
+
+  /**
+   * Cut a goal by cases on whether a parameter is poison, or on a comparison
+   * of its parameters, into the case where that holds and the case where it
+   * does not.
+   */
+  case(gid: string, on: CaseOn): Promise<SessionCaseResult> {
+    return this.act("case", { gid, on }, async (tree): Promise<SessionCaseResult> => {
+      const editing = this.editing.open();
+      if (editing && this.editing.isEditing(gid)) {
+        return { kind: "editing", message: openMessage(editing) };
+      }
+      return cases(this.store, this.llops, tree, gid, on);
+    });
+  }
+
+  /** Undo a cut by cases, which discards the two children and their subtrees. */
+  uncase(gid: string): Promise<UncaseResult> {
+    return this.act("uncase", { gid }, async (tree) => {
+      const editing = this.editing.open();
+      if (editing && this.editing.isEditingBelow(tree, gid)) {
+        return { kind: "editing", message: openMessage(editing) };
+      }
+      return { kind: "uncased", effects: uncase(tree, gid) };
     });
   }
 

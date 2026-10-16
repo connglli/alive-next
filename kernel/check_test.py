@@ -523,6 +523,64 @@ class Case(unittest.TestCase):
     self.built.goal("g3", rhs, rhs, [], {"kind": "check"})
     return self.built.write()
 
+  def cased(self, src: str = SRC, tgt: str = TGT, fails: str = "sge", recorded=None) -> Path:
+    """A root cut by cases on its parameter's sign, each case checked by
+    alive2: g2 assumes `!0 slt 0`, and g3 assumes `fails` in its place."""
+    predicate = {"op": "slt", "lhs": "!0", "rhs": 0}
+    pair = {"src": self.built.program(canonical(src)), "tgt": self.built.program(canonical(tgt))}
+    discharge = {"kind": "case", "on": recorded or predicate, "holds": "g2", "fails": "g3"}
+    self.built.goal("g1", pair, pair, [], discharge)
+    for gid, op in (("g2", "slt"), ("g3", fails)):
+      anchor = {"at": "start", "fn": "f"}
+      assumed = [{**predicate, "op": op}]
+      case = {
+        side: self.built.program(
+          canonical(
+            llops("assume", {"module": text, "anchor": anchor, "assertions": assumed})["module"]
+          )
+        )
+        for side, text in (("src", src), ("tgt", tgt))
+      }
+      self.built.goal(gid, case, case, [], {"kind": "check"})
+    return self.built.write()
+
+  def poison_cased(self, src: str, tgt: str, fails: str = "poison") -> Path:
+    """A root whose parameter may be poison, cut by cases on whether it is
+    (g2 makes it noundef, g3 puts poison in its place), and g2 cut again on
+    its sign, each leaf checked by alive2."""
+    pair = {"src": self.built.program(canonical(src)), "tgt": self.built.program(canonical(tgt))}
+    texts = {"src": canonical(src), "tgt": canonical(tgt)}
+    made = {
+      gid: {
+        side: canonical(llops(cmd, {"module": texts[side], **request})["module"]) for side in texts
+      }
+      for gid, cmd, request in (
+        ("g2", "attrs", {"fn": "f", "param": 0, "attrs": {"noundef": True}}),
+        ("g3", "poison", {"param": 0})
+        if fails == "poison"
+        else ("g3", "attrs", {"fn": "f", "param": 0, "attrs": {"noundef": True}}),
+      )
+    }
+    on = {"defined": "!0"}
+    self.built.goal("g1", pair, pair, [], {"kind": "case", "on": on, "holds": "g2", "fails": "g3"})
+    sign = {"op": "slt", "lhs": "!0", "rhs": 0}
+    defined = {side: self.built.program(made["g2"][side]) for side in texts}
+    discharge = {"kind": "case", "on": sign, "holds": "g4", "fails": "g5"}
+    self.built.goal("g2", defined, defined, [], discharge)
+    poisoned = {side: self.built.program(made["g3"][side]) for side in texts}
+    self.built.goal("g3", poisoned, poisoned, [], {"kind": "check"})
+    start = {"at": "start", "fn": "f"}
+    for gid, op in (("g4", "slt"), ("g5", "sge")):
+      assumed = {"anchor": start, "assertions": [{**sign, "op": op}]}
+      case = {
+        side: self.built.program(
+          canonical(llops("assume", {"module": made["g2"][side], **assumed})["module"])
+        )
+        for side in texts
+      }
+      self.built.goal(gid, case, case, [], {"kind": "check"})
+    return self.built.write()
+
   def windowed(self, was: str = "", now: str = "", at: str = "#0", to: str = "") -> dict:
     """A goal whose one step was narrowed to the window it changed.
 
@@ -760,6 +818,64 @@ class TestGolden(Case):
 
   def test_a_goal_proved_through_an_interposed_program_verifies(self):
     self.verified(self.interposed())
+
+  def test_a_goal_proved_by_cases_verifies(self):
+    self.verified(self.cased())
+
+  def test_cases_that_leave_inputs_out_fail(self):
+    # Both cases assume `!0 slt 0`, so an input where it fails lies in neither.
+    done = run(self.cased(fails="slt"), "--alive-tv", ALIVE_TV, "--llops", LLOPS)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("Case reconstruction", done.stdout)
+
+  def test_cases_on_a_parameter_that_may_be_poison_fail(self):
+    # The tgt's x - x is poison where x is, and the src's 0 is not, so the pair
+    # is refuted at x = poison; each case assumes a comparison of x, which a
+    # poison x makes undefined, so both cases verify and only coverage fails.
+    head = "define i32 @f(i32 %0) {\nentry:\n"
+    zero = f"{head}  ret i32 0\n}}\n"
+    cancelled = f"{head}  %1 = sub i32 %0, %0\n  ret i32 %1\n}}\n"
+    done = run(self.cased(zero, cancelled), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("!0 may be poison, which lies in no case", done.stdout)
+    rows = done.stdout.splitlines()
+    proved = [row for row in rows if row.startswith("OK") and "Final refinement" in row]
+    self.assertEqual(len(proved), 2, done.stdout)
+
+  def test_cases_on_poison_and_then_a_comparison_verify(self):
+    # Doubling and shifting agree on a poison x too, so all three leaves hold.
+    loose = [text.replace("i32 noundef %0", "i32 %0") for text in (SRC, TGT)]
+    done = run(self.poison_cased(*loose), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertIn("!0 is poison or not", done.stdout)
+    self.assertIn("VERIFIED - root", done.stdout)
+
+  def test_the_case_where_a_parameter_is_poison_is_checked(self):
+    # 0 against x - x holds wherever x is not poison, and the poison case refutes it.
+    head = "define i32 @f(i32 %0) {\nentry:\n"
+    zero = f"{head}  ret i32 0\n}}\n"
+    cancelled = f"{head}  %1 = sub i32 %0, %0\n  ret i32 %1\n}}\n"
+    done = run(self.poison_cased(zero, cancelled), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    rows = done.stdout.splitlines()
+    self.assertTrue(any(row.startswith("FAIL") and " g3 " in row for row in rows), done.stdout)
+
+  def test_a_poison_case_that_is_not_the_parameter_poison_fails(self):
+    # Both cases make %0 noundef, so a poison argument lies in neither.
+    loose = [text.replace("i32 noundef %0", "i32 %0") for text in (SRC, TGT)]
+    done = run(
+      self.poison_cased(*loose, fails="noundef"), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v"
+    )
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    rows = done.stdout.splitlines()
+    failed = [row for row in rows if row.startswith("FAIL") and "Case reconstruction" in row]
+    self.assertTrue(failed and all(" g3 " in row for row in failed), done.stdout)
+
+  def test_cases_on_no_comparison_of_parameters_are_refused(self):
+    package = self.cased(recorded={"op": "eq", "lhs": 0, "rhs": 0})
+    done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS)
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("cut by cases on no comparison", done.stdout + done.stderr)
 
   def test_a_goal_whose_tgt_only_adds_attributes_its_body_respects_verifies(self):
     marked = READ.replace("(ptr %p) {", "(ptr readonly %p) memory(argmem: read) {")

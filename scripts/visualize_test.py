@@ -266,6 +266,19 @@ class TestFold(Case):
     self.assertEqual((halves["g2"]["parent"], halves["g3"]["parent"]), ("g1", "g1"))
     self.assertEqual(data["snapshots"][-1]["g1"]["status"], "proved")
 
+  def test_a_cut_by_cases_opens_two_cases_that_prove_the_goal(self):
+    holds = {"gid": "g2", "src": self.src, "tgt": self.tgt}
+    fails = {"gid": "g3", "src": self.src, "tgt": self.tgt}
+    on = {"op": "slt", "lhs": "!0", "rhs": 0}
+    effect = {"effect": "case", "gid": "g1", "on": on, "holds": holds, "fails": fails}
+    self.session.result("case", effect)
+    self.session.result("check", {"effect": "proved", "gid": "g2"})
+    self.session.result("check", {"effect": "proved", "gid": "g3"})
+    data = self.data()
+    cases = data["snapshots"][1]
+    self.assertEqual((cases["g2"]["parent"], cases["g3"]["parent"]), ("g1", "g1"))
+    self.assertEqual(data["snapshots"][-1]["g1"]["status"], "proved")
+
   def test_a_detached_loop_names_its_hypothesis_and_the_proofs_of_its_contract(self):
     self.session.result(
       "split",

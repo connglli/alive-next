@@ -14,7 +14,7 @@
 // a verdict rests on replaying the certificate rather than on this file.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Attrs, Predicate } from "../drivers/llops.ts";
+import type { Attrs, Comparison, Name, Predicate } from "../drivers/llops.ts";
 import type { LlrwtInvocation } from "../drivers/llrwt.ts";
 import { sha256 } from "./hash.ts";
 
@@ -32,6 +32,12 @@ export interface Slots {
   src: number[];
   tgt: number[];
 }
+
+/**
+ * What a cut by cases splits a goal's inputs on: a comparison of its
+ * parameters, or whether parameter `defined` (`!N`) is poison.
+ */
+export type CaseOn = Comparison | { defined: Name };
 
 /** A certified step in a goal's chain, named by the program it produced. */
 export interface StepRef {
@@ -119,6 +125,18 @@ export type Effect =
       lhs: { gid: string; src: Hash; tgt: Hash };
       rhs: { gid: string; src: Hash; tgt: Hash };
     }
+  /**
+   * A goal was cut by cases on `on`: child `holds` is the pair where it
+   * holds, and child `fails` where it does not, and both proved prove the
+   * goal, since every input the src does not make undefined lies in one.
+   */
+  | {
+      effect: "case";
+      gid: string;
+      on: CaseOn;
+      holds: { gid: string; src: Hash; tgt: Hash };
+      fails: { gid: string; src: Hash; tgt: Hash };
+    }
   /** A goal was cut in two; the children arrive with their initial pairs. */
   | {
       effect: "split";
@@ -155,6 +173,8 @@ export type Effect =
   | { effect: "unsplit"; gid: string }
   /** An interpose was undone, discarding both children and their subtrees. */
   | { effect: "uninterpose"; gid: string }
+  /** A cut by cases was undone, discarding both children and their subtrees. */
+  | { effect: "uncase"; gid: string }
   /** A side went back to an earlier program of its own history. */
   | { effect: "revert"; gid: string; side: "src" | "tgt"; to: Hash }
   /** A goal was discharged by checking its pair; `by` says who checked it, as on a step. */

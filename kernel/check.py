@@ -403,6 +403,10 @@ def summary(stdout: str) -> str:
 
 # --- signatures --------------------------------------------------------------
 
+# Each comparison's inverse, which holds exactly where it fails on values that are not poison.
+INVERSE = dict(eq="ne", ne="eq", slt="sge", sge="slt", sgt="sle", sle="sgt")
+INVERSE |= dict(ult="uge", uge="ult", ugt="ule", ule="ugt")
+
 
 def signature(package: Package, module: str, name: str) -> str:
   """The types and every attribute a function is declared or defined with.
@@ -659,6 +663,8 @@ class Check:
       self.split(gid, goal, discharge)
     elif discharge["kind"] == "interpose":
       self.interpose(goal, discharge)
+    elif discharge["kind"] == "case":
+      self.case(gid, goal, discharge)
     else:
       self.fail(
         gid,
@@ -1116,6 +1122,90 @@ class Check:
       )
     for half, _ in halves:
       self.goal(half)
+
+  def case(self, gid: str, goal: dict, discharge: dict) -> None:
+    """A goal holds when it holds in both of the cases it was cut into.
+
+    A cut on whether a parameter is poison makes it noundef in one case and
+    puts poison in its place in the other, and a scalar argument is one or
+    the other. A cut on a comparison of parameters assumes it at the start of
+    both programs in one case and its inverse in the other, which cover every
+    input on which it is true or false; each parameter it compares has to be
+    noundef in the src, where a poison argument is undefined behavior already,
+    so no input the src defines lies in neither. Both cases are rebuilt here
+    from the goal's end pair and what it was cut on, and each is a goal of its
+    own with no role and no loop, as an interposed goal's halves.
+    """
+    on = discharge.get("on")
+    src = self.package.program(goal["end"]["src"])
+    name = entry(self.package, src)
+    if isinstance(on, dict) and set(on) == {"defined"}:
+      makes = self.poison_cases(gid, name, on)
+    else:
+      makes = self.comparison_cases(gid, src, name, on)
+    for child, (subcommand, request, said) in zip(
+      (discharge["holds"], discharge["fails"]), makes, strict=True
+    ):
+      start = self.package.goal(child)["start"]
+      for side in ("src", "tgt"):
+        started = time.monotonic()
+        module = self.package.program(goal["end"][side])
+        made = self.package.run_llops(subcommand, {"module": module, **request})
+        same = self.package.run_llops("canon", {"module": made["module"]})["module"]
+        matches = same == self.package.program(start[side])
+        self.compared(
+          child, side, "llops", "Case reconstruction", said, matches, elapsed_ms(started)
+        )
+    self.goal(discharge["holds"])
+    self.goal(discharge["fails"])
+
+  def poison_cases(self, gid: str, name: str, on: dict) -> list:
+    """The two cases of a cut on whether a parameter is poison, as llops makes them."""
+    named = on["defined"]
+    if not isinstance(named, str) or not re.fullmatch(r"!(?:0|[1-9]\d*)", named):
+      raise Refused(f"{gid} is cut by cases on whether {named!r} is poison, which is no parameter")
+    # `llops poison` refuses a parameter that may be poison in part, which
+    # neither case would cover.
+    self.report(
+      result="OK",
+      gid=gid,
+      side="pair",
+      tool="kernel",
+      check="Case coverage",
+      notes=f"{named} is poison or not",
+    )
+    param = int(named[1:])
+    return [
+      ("attrs", {"fn": name, "param": param, "attrs": {"noundef": True}}, f"{named} noundef"),
+      ("poison", {"param": param}, f"{named} poison"),
+    ]
+
+  def comparison_cases(self, gid: str, src: str, name: str, on) -> list:
+    """The two cases of a cut on a comparison of parameters, as llops makes them."""
+    operands = [on.get("lhs"), on.get("rhs")] if isinstance(on, dict) else []
+    named = [x for x in operands if isinstance(x, str) and re.fullmatch(r"!(?:0|[1-9]\d*)", x)]
+    numbers = [x for x in operands if isinstance(x, int) and not isinstance(x, bool)]
+    shaped = isinstance(on, dict) and on.get("op") in INVERSE
+    if not shaped or not named or len(named) + len(numbers) != 2:
+      raise Refused(f"{gid} is cut by cases on no comparison of its parameters")
+    params = function(self.package, src, name)["params"]
+    for x in named:
+      param = params[int(x[1:])] if int(x[1:]) < len(params) else None
+      defined = param is not None and param.get("attrs", {}).get("noundef") is True
+      self.report(
+        result="OK" if defined else "FAIL",
+        gid=gid,
+        side="src",
+        tool="llops",
+        check="Case coverage",
+        notes=f"{x} is noundef" if defined else f"{x} may be poison, which lies in no case",
+      )
+    start = {"at": "start", "fn": name}
+    inverse = {**on, "op": INVERSE[on["op"]]}
+    return [
+      ("assume", {"anchor": start, "assertions": [c]}, f"{c['lhs']} {c['op']} {c['rhs']} assumed")
+      for c in (on, inverse)
+    ]
 
   def split(self, gid: str, goal: dict, discharge: dict) -> None:
     """A cut holds when it inlines, or reattaches, back to the pair it was made on."""

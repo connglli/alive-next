@@ -27,7 +27,7 @@ import {
   unoutlinable,
 } from "../drivers/llops.ts";
 import type { Ref } from "../refs.ts";
-import { type GoalId, head, interposed, nextGoalIds, type Tree, workable } from "./goals.ts";
+import { cased, type GoalId, head, interposed, nextGoalIds, type Tree, workable } from "./goals.ts";
 import type { Store } from "./store.ts";
 import type { Detach, Effect, Slots } from "./trajectory.ts";
 
@@ -242,6 +242,7 @@ export class Splits {
     if (!goal) throw new Error(`no goal ${gid}`);
     if (goal.status !== "split") throw new Error(`${gid} is ${goal.status}, not split`);
     if (interposed(tree, goal)) throw new Error(`${gid} was interposed, not split`);
+    if (cased(tree, goal)) throw new Error(`${gid} was cut by cases, not split`);
     return [{ effect: "unsplit", gid }];
   }
 }

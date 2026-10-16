@@ -14,9 +14,10 @@
 import type { Attrs, InputArg, Predicate } from "../core/drivers/llops.ts";
 import type { LlrwtInvocation } from "../core/drivers/llrwt.ts";
 import type { ReportResult } from "../core/state/counterexamples.ts";
-import { type Goal, head, interposed, type Role, type Tree } from "../core/state/goals.ts";
+import { cased, type Goal, head, interposed, type Role, type Tree } from "../core/state/goals.ts";
 import type { CheckGoalResult } from "../core/state/steps.ts";
 import type {
+  CaseOn,
   Detach,
   Effect,
   Entry,
@@ -116,6 +117,12 @@ export type Discharge =
    * both start there and verify, since refinement is transitive.
    */
   | { kind: "interpose"; program: Hash; lhs: string; rhs: string }
+  /**
+   * The pair was cut by cases on `on`: goal `holds` is the pair where it
+   * holds and goal `fails` where it does not, and a checker rebuilds both from
+   * the pair and checks that both verify.
+   */
+  | { kind: "case"; on: CaseOn; holds: string; fails: string }
   | {
       kind: "split";
       callee: string;
@@ -303,6 +310,24 @@ function include(
     include(tree, rhs, effects, goals, programs);
     return;
   }
+  if (cased(tree, goal)) {
+    const holds = childOf(tree, goal, "holds");
+    const fails = childOf(tree, goal, "fails");
+    goals[goal.id] = {
+      start,
+      steps,
+      end,
+      discharge: {
+        kind: "case",
+        on: casedOn(goal, effects),
+        holds: holds.id,
+        fails: fails.id,
+      },
+    };
+    include(tree, holds, effects, goals, programs);
+    include(tree, fails, effects, goals, programs);
+    return;
+  }
   const outer = childOf(tree, goal, "outer");
   const inner = childOf(tree, goal, "callee");
   if (!goal.callee && !outer.callee) {
@@ -444,6 +469,15 @@ function provedBy(goal: Goal, effects: Effect[]): "alive2" | "reshaped" | "respe
   for (const effect of effects)
     if (effect.effect === "proved" && effect.gid === goal.id) by = effect.by ?? "alive2";
   return by;
+}
+
+/** What the latest cut of `goal` by cases was on, the cut its two children come from. */
+function casedOn(goal: Goal, effects: Effect[]): CaseOn {
+  let on: CaseOn | undefined;
+  for (const effect of effects)
+    if (effect.effect === "case" && effect.gid === goal.id) on = effect.on;
+  if (!on) throw new NotCertifiable(`${goal.id} was cut by cases the log does not record`);
+  return on;
 }
 
 /** Which index a step is a candidate for, on the side it moves. */
