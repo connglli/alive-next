@@ -3684,6 +3684,45 @@ d:
     self.assertTrue(self.reshaped(constant, taken))
     self.assertFalse(self.reshaped(constant.replace("switch i32 2", "switch i32 3"), taken))
 
+  def test_a_branch_the_entry_block_assumes_goes_the_way_it_decides(self):
+    zero = """declare void @llvm.assume(i1)
+
+define i32 @f(i32 %x, i32 %m) {
+entry:
+  %a = icmp eq i32 %m, 0
+  call void @llvm.assume(i1 %a)
+  br label %test
+
+test:
+  %c = icmp eq i32 %m, 0
+  br i1 %c, label %zero, label %other
+
+zero:
+  %y = add i32 %x, 1
+  ret i32 %y
+
+other:
+  %z = mul i32 %x, 3
+  ret i32 %z
+}
+"""
+    branch = "br i1 %c, label %zero, label %other"
+    self.assertTrue(self.reshaped(zero, zero.replace(branch, "br label %zero")))
+    self.assertFalse(self.reshaped(zero, zero.replace(branch, "br label %other")))
+    # Assuming the inverse comparison decides the branch the other way.
+    other = zero.replace("%a = icmp eq", "%a = icmp ne")
+    self.assertTrue(self.reshaped(other, other.replace(branch, "br label %other")))
+    # An assume past the entry block, or of a value other than an argument, decides nothing.
+    late = zero.replace(
+      "  call void @llvm.assume(i1 %a)\n  br label %test\n\ntest:\n",
+      "  br label %test\n\ntest:\n  call void @llvm.assume(i1 %a)\n",
+    )
+    self.assertFalse(self.reshaped(late, late.replace(branch, "br label %zero")))
+    moved = zero.replace("icmp eq i32 %m, 0", "icmp eq i32 %n, 0").replace(
+      "entry:\n", "entry:\n  %n = add i32 %m, 0\n"
+    )
+    self.assertFalse(self.reshaped(moved, moved.replace(branch, "br label %zero")))
+
   def test_swapped_successors_are_no_reshaping(self):
     swapped = TOP_TEST.replace("label %body, label %exit", "label %exit, label %body")
     self.assertFalse(self.reshaped(TOP_TEST, swapped))

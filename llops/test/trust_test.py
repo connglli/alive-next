@@ -640,6 +640,17 @@ exit:
 TAKEN = CONSTANT.replace("br i1 true, label %add, label %sub", "br label %add")
 TAKEN = TAKEN.replace("sub:\n  %b = sub i32 %s, %x\n  br label %join\n\n", "")
 TAKEN = TAKEN.replace("[ %a, %add ], [ %b, %sub ]", "[ %a, %add ]")
+# The same, with the branch on a comparison of an argument that the entry
+# block assumes false.
+ASSUMED = "declare void @llvm.assume(i1)\n\n" + CONSTANT.replace(
+  "entry:\n", "entry:\n  %m = icmp ne i32 %x, 0\n  call void @llvm.assume(i1 %m)\n"
+).replace(
+  "  br i1 true, label %add, label %sub",
+  "  %z = icmp eq i32 %x, 0\n  br i1 %z, label %add, label %sub",
+)
+DECIDED = ASSUMED.replace("br i1 %z, label %add, label %sub", "br label %sub")
+DECIDED = DECIDED.replace("add:\n  %a = add i32 %s, %x\n  br label %join\n\n", "")
+DECIDED = DECIDED.replace("[ %a, %add ], [ %b, %sub ]", "[ %b, %sub ]")
 
 INVERSE = dict(eq="ne", ne="eq", slt="sge", sge="slt", sgt="sle", sle="sgt")
 INVERSE |= dict(ult="uge", uge="ult", ugt="ule", ule="ugt")
@@ -685,9 +696,11 @@ class TestReshaped(Case):
     # `reshaped` accepts, on either side, so most are wrong and must be refused.
     frozen = (canonical(FROZEN), canonical(INVERTED))
     taken = (canonical(CONSTANT), canonical(TAKEN))
-    steps = accepted(reshaped, [*stage_pairs(), frozen, taken])
+    decided = (canonical(ASSUMED), canonical(DECIDED))
+    steps = accepted(reshaped, [*stage_pairs(), frozen, taken, decided])
     self.assertIn(frozen, steps)
     self.assertIn(taken, steps)
+    self.assertIn(decided, steps)
     mutants = [(changed, after) for before, after in steps for changed in edited(before)]
     mutants += [(before, changed) for before, after in steps for changed in edited(after)]
     self.assertProved(steps + accepted(reshaped, mutants))

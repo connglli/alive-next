@@ -7,6 +7,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/ModuleSlotTracker.h"
@@ -189,9 +190,57 @@ bool sameAttached(const Attached &x, const llvm::Module *mx, const Attached &y,
   return true;
 }
 
-// Where `end` goes whatever the values hold: an unconditional branch, and a
-// branch or a switch on a constant, go one way. Nothing for the rest.
-Block *oneWay(llvm::Instruction &end) {
+// The branches of a function that an assume decides, with where each goes.
+using Decided = std::map<const llvm::Instruction *, Block *>;
+
+// Whether `cond`, once assumed, makes `pred(lhs, rhs)` true: it is that
+// comparison, or an `and` that has it on one side.
+bool implies(const llvm::Value *cond, Predicate pred, const llvm::Value *lhs,
+             const llvm::Value *rhs) {
+  if (auto *cmp = llvm::dyn_cast<llvm::ICmpInst>(cond))
+    return cmp->getPredicate() == pred && cmp->getOperand(0) == lhs && cmp->getOperand(1) == rhs;
+  auto *conj = llvm::dyn_cast<llvm::BinaryOperator>(cond);
+  if (!conj || conj->getOpcode() != llvm::Instruction::And)
+    return false;
+  return implies(conj->getOperand(0), pred, lhs, rhs) ||
+         implies(conj->getOperand(1), pred, lhs, rhs);
+}
+
+// The branches on a comparison of arguments or integers that an assume in the
+// entry block makes true or false. The entry block runs whole before any other
+// block, and these values keep theirs for the whole call, so on every run that
+// gets past the assume the branch goes the way it decides.
+Decided decidedIn(llvm::Function &F) {
+  std::vector<const llvm::Value *> assumed;
+  for (const llvm::Instruction &I : F.getEntryBlock())
+    if (auto *assume = llvm::dyn_cast<llvm::AssumeInst>(&I))
+      assumed.push_back(assume->getArgOperand(0));
+  auto holds = [&](Predicate pred, const llvm::Value *lhs, const llvm::Value *rhs) {
+    return llvm::any_of(assumed, [&](const llvm::Value *c) { return implies(c, pred, lhs, rhs); });
+  };
+  auto fixed = [](const llvm::Value *v) { return llvm::isa<llvm::Argument, llvm::ConstantInt>(v); };
+  Decided decided;
+  for (Block &B : F) {
+    auto *br = llvm::dyn_cast<llvm::BranchInst>(B.getTerminator());
+    auto *cmp =
+        br && br->isConditional() ? llvm::dyn_cast<llvm::ICmpInst>(br->getCondition()) : nullptr;
+    if (!cmp || !fixed(cmp->getOperand(0)) || !fixed(cmp->getOperand(1)))
+      continue;
+    const llvm::Value *lhs = cmp->getOperand(0), *rhs = cmp->getOperand(1);
+    if (holds(cmp->getPredicate(), lhs, rhs))
+      decided[br] = br->getSuccessor(0);
+    else if (holds(cmp->getInversePredicate(), lhs, rhs))
+      decided[br] = br->getSuccessor(1);
+  }
+  return decided;
+}
+
+// Where `end` goes whatever the values hold: an unconditional branch, a branch
+// or a switch on a constant, and a branch an assume decides go one way.
+// Nothing for the rest.
+Block *oneWay(llvm::Instruction &end, const Decided &decided) {
+  if (auto it = decided.find(&end); it != decided.end())
+    return it->second;
   if (auto *br = llvm::dyn_cast<llvm::BranchInst>(&end)) {
     if (!br->isConditional())
       return br->getSuccessor(0);
@@ -205,7 +254,7 @@ Block *oneWay(llvm::Instruction &end) {
 }
 
 // The segment run on entering `to` from `from`, nothing for the entry block.
-Why segmentOf(Block *from, Block *to, Segment &seg) {
+Why segmentOf(Block *from, Block *to, Segment &seg, const Decided &decided) {
   llvm::SmallPtrSet<Block *, 8> seen;
   for (;;) {
     if (!seen.insert(to).second)
@@ -229,7 +278,7 @@ Why segmentOf(Block *from, Block *to, Segment &seg) {
     llvm::Instruction *end = to->getTerminator();
     if (!readOf(*end).empty())
       return std::string("a terminator carries metadata alive2 reads");
-    Block *next = oneWay(*end);
+    Block *next = oneWay(*end, decided);
     if (!next) {
       seg.end = end;
       seg.last = to;
@@ -252,7 +301,8 @@ std::string lineOf(const llvm::Instruction &I) {
 class Walk {
 public:
   Walk(llvm::Function &a, llvm::Function &b)
-      : after(a), before(b), slotsA(a.getParent()), slotsB(b.getParent()) {}
+      : after(a), before(b), slotsA(a.getParent()), slotsB(b.getParent()), decidedA(decidedIn(a)),
+        decidedB(decidedIn(b)) {}
 
   // Why some run of `after` is not a run of `before`, or nothing.
   Why run();
@@ -264,6 +314,9 @@ private:
   llvm::ModuleSlotTracker slotsA;
   llvm::ModuleSlotTracker slotsB;
   std::map<const llvm::Instruction *, std::string> shapes;
+  // The branches each function's entry block decides.
+  Decided decidedA;
+  Decided decidedB;
 
   std::string shapeOf(llvm::Instruction &I, std::optional<Predicate> as = {});
   Held heldBy(const Relation &r, const llvm::Value *a) const;
@@ -504,9 +557,9 @@ Why Walk::run() {
     Segment a, b;
     auto *fromA = const_cast<Block *>(key[0]);
     auto *fromB = const_cast<Block *>(key[2]);
-    if (auto why = segmentOf(fromA, const_cast<Block *>(key[1]), a))
+    if (auto why = segmentOf(fromA, const_cast<Block *>(key[1]), a, decidedA))
       return "after: " + *why;
-    if (auto why = segmentOf(fromB, const_cast<Block *>(key[3]), b))
+    if (auto why = segmentOf(fromB, const_cast<Block *>(key[3]), b, decidedB))
       return "before: " + *why;
     Flip flip{nullptr, nullptr};
     if (auto why = pair(r, a, b, flip))
