@@ -9,7 +9,7 @@ A proof has three parts, and the searcher searches for each: a rewrite path, the
 | Part | The framework allows | The searcher tries | It does not try |
 | --- | --- | --- | --- |
 | Rewrite path | steps on either side, by transactions or rules, intermediate programs, and reverts | src steps through the optimizer's stages to the tgt, region by region, and by the rules, a stage no step reaches as a goal of its own | tgt steps, reverts |
-| Cuts and preconditions | cuts wherever both sides agree, with facts or predicates on the new parameters | a loop header, an expensive operation, a region's boundaries, balanced points; the analyses' facts on the inputs of a window or a cut | relations that are not linear |
+| Cuts and preconditions | cuts wherever both sides agree, or splits by cases, with facts or predicates on the new parameters | a loop header, an expensive operation, a region's boundaries, balanced points, a tested comparison; the analyses' facts on the inputs of a window or a cut | relations that are not linear |
 | Loops and invariants | cuts at a header or an exit, unfolding, invariants | the first header, where the diff matched one; invariants by Houdini | invariants of other forms |
 
 The searcher first checks the root's original pair on a short budget, unrolled when it loops, and a proof or a refutation, of the pair or at an input, ends the run. Otherwise it drops from the tgt the attributes `llops respected` shows its instructions keep, steps the root's src along a rewrite path and checks each goal: identical sides, or a tgt that only reshapes the src's control flow, are proved at once, other sides are asked of alive2 briefly before a cut and on the largest budget when none lands, and alive2 proves no pair that loops. A goal that does not close is cut while cuts remain, and the goals a cut leaves are searched in the same way, the cut undone when they do not all close. A search that ends with open goals gives up and names them.
@@ -28,12 +28,13 @@ Every step is on the src side, since putting the tgt's region into the src asks 
 
 ## Cuts and preconditions
 
-A goal that does not close is cut at the first of these that the framework accepts:
+A goal that does not close is split at the first of these that the framework accepts:
 
 * Its first loop header, as the next section says.
 * Just before one of the last three expensive operations both sides apply, latest first, so that it reads the same operands on both: a multiplication of two variables, a division, a remainder, floating-point arithmetic, a load, or a store. Calls do not count, since every cut adds one.
 * Around the first region its steps left, whether no window could hold the region or alive2 refused its windows. The goal is cut after the region and then at its head, or at its block when it starts with a phi, so that the region stands in a goal of its own. That goal is not cut around a region again.
 * Where both sides agree and its expensive operations split most evenly between the two halves, trying the three most even points.
+* By cases on a comparison of its parameters, or of a parameter and an integer, that its branches test: first one that both sides test, and a later branch before an earlier one. A parameter that may be poison is first split on whether it is poison. The cases stay only when a short check closes one of them at once. Each case assumes the comparison or its inverse, tries next only the comparisons after it, and does not count as a cut.
 
 A cut passes each crossing value as its tgt partner, and a tgt value the src lacks rebuilt from partners; one it cannot pass makes the cut fail. A refuted goal is never cut further, which cannot prove it: its cut takes the comparisons its counterexample breaks where they hold, or gives way to the next cut point.
 
