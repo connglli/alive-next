@@ -7,7 +7,7 @@
 // left is inductive, and the strengthen proves it.
 import type { Instruction, Llops, OutlineParam } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
-import type { SplitResult } from "../core/state/splits.ts";
+import type { CutResult } from "../core/state/cuts.ts";
 import type { StrengthenContract } from "../core/state/strengthen.ts";
 import { comparisons, noundefLost, size } from "./facts.ts";
 import { diff, headers, successors } from "./regions.ts";
@@ -27,17 +27,17 @@ export function loopCut(src: Instruction[], tgt: Instruction[]) {
   return mine ? ([mine, first] as const) : undefined;
 }
 
-/** Unfolds loop cut `split` up to `budget` times where its counters say one side lags. */
+/** Unfolds loop cut `made` up to `budget` times where its counters say one side lags. */
 export async function unfoldToMatch(
   session: Session,
   llops: Llops,
-  split: Extract<SplitResult, { kind: "split" }>,
+  made: Extract<CutResult, { kind: "cut" }>,
   sides: Side[],
   budget: number,
 ) {
   const counters = await Promise.all(sides.map((side) => countersAt(llops, side)));
   const [mine = [], theirs = []] = counters;
-  const { outer, callee } = split.children;
+  const { outer, callee } = made.children;
   // Each unfold of an iteration doubles what it runs, so only a power of two matches.
   const [r = 0, ...ratios] = agreeing(mine, theirs, (a, b) => ratio(a.step, b.step));
   const doublings = ratios.length === 0 ? Math.log2(Math.abs(r)) : NaN;

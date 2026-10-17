@@ -2,7 +2,7 @@
 // made in a fixed order (the optimizer's stages on the root, a stage of a looping
 // program that its windows leave interposed as a goal of its own, windows and
 // rules toward the tgt, a check, then a cut at a loop, before an expensive
-// operation, around a region left, or where the expensive operations split
+// operation, around a region left, or where the expensive operations divide
 // evenly, then a split by cases) until one proves it or splits it, and the
 // goals a split leaves are searched before the next. Every move is a session move, so
 // whatever it proves, the kernel replays.
@@ -42,7 +42,7 @@ interface Goal {
   gid: string;
   moves: AsyncGenerator<Move>;
   cuts: Cuts;
-  undo?: "unsplit" | "uninterpose" | "uncase";
+  undo?: "uncut" | "uninterpose" | "uncase";
   /** The goal whose split left this one. */
   parent?: Goal;
 }
@@ -63,7 +63,7 @@ const PROVED: Answer = { kind: "proved" };
 const NONE: Answer = { kind: "none" };
 
 /** What undoes each split a move makes. */
-const UNDO = { cut: "unsplit", interposed: "uninterpose", cased: "uncase" } as const;
+const UNDO = { cut: "uncut", interposed: "uninterpose", cased: "uncase" } as const;
 
 /** Searches for a proof of the root goal, giving up with the goals left open if it finds none. */
 export async function search(session: Session, llops: Llops, limits: Limits) {
@@ -174,7 +174,7 @@ async function undone(run: Run, g: Goal): Promise<boolean> {
   if (g.undo === "uninterpose")
     return (await run.session.uninterpose(g.gid)).kind === "uninterposed";
   if (g.undo === "uncase") return (await run.session.uncase(g.gid)).kind === "uncased";
-  return (await run.session.unsplit(g.gid)).kind === "unsplit";
+  return (await run.session.uncut(g.gid)).kind === "uncut";
 }
 
 /** What a goal starts with: its cuts, the stages left to walk, and what it skips. */

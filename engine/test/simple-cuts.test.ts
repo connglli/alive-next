@@ -1,5 +1,5 @@
 // Tests cutting goals: peeling a region that no window can hold into a goal of
-// its own, cutting where a goal's expensive operations split evenly, and
+// its own, cutting where a goal's expensive operations divide evenly, and
 // strengthening a cut with what the analyses know or a loop's invariants.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -195,7 +195,7 @@ more:
     expect(points.length).toBeGreaterThan(0);
   });
 
-  test("a balanced cut splits the multiplies evenly", async () => {
+  test("a balanced cut divides the multiplies evenly", async () => {
     const src = `define i32 @f(i32 %x, i32 %y) {
 entry:
   %a = mul i32 %x, %y
@@ -250,7 +250,7 @@ entry:
     const bare = await cut(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false }, "#1", "#1");
     if (!bare) throw new Error("expected a cut");
     expect((await session.check(bare.callee)).outcome).toBe("refuted");
-    await session.unsplit("g1");
+    await session.uncut("g1");
     const halves = await cut(session, llops, "g1", DEFAULT_LIMITS, "#1", "#1");
     if (!halves) throw new Error("expected a cut");
     expect(statuses(session, [halves.outer, halves.callee])).toEqual(["proved", "proved"]);
@@ -281,7 +281,7 @@ entry:
     const bare = await cutLoop(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false });
     if (!bare) throw new Error("expected a cut");
     expect((await session.check(bare.callee)).outcome).toBe("refuted");
-    await session.unsplit("g1");
+    await session.uncut("g1");
     const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
     if (!halves) throw new Error("expected a cut");
     expect(statuses(session, [halves.callee])).toEqual(["proved"]);
