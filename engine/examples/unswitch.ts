@@ -3,7 +3,7 @@
 // The tgt is the src after `-O3`'s loop unswitching, with its empty blocks
 // merged and its values named: it tests `mode` once before the loop and keeps
 // a version of the loop for each answer. One loop
-// against two lines up under no cut, so the goal is cut by cases on `mode`:
+// against two lines up under no cut, so the goal is split by cases on `mode`:
 // each case assumes its answer at the start of both programs, which decides
 // every branch on `mode`, and `reshaped` proves each case with no step.
 import { expect, type Scenario } from "../core/scenario.ts";
@@ -101,7 +101,7 @@ end:
   async prove(session) {
     // `mode` is parameter 3, which the src makes noundef.
     const split = await session.case("g1", { op: "eq", lhs: "!3", rhs: 0 });
-    expect("cut by cases on mode", split.kind === "cased", split);
+    expect("split by cases on mode", split.kind === "cased", split);
     if (split.kind !== "cased") return;
 
     for (const gid of [split.children.holds, split.children.fails]) {

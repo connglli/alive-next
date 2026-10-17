@@ -60,15 +60,13 @@ exit:
 
   async prove(session) {
     // n (`%1`) and the sum (`%2`) cross.
-    const split = await session.split("g1", "%bb1", "%bb1", { "%1": "%1", "%2": "%2" });
-    expect("detach the header", split.kind === "split", split);
-    if (split.kind !== "split") return;
+    const cut = await session.cut("g1", "%bb1", "%bb1", { "%1": "%1", "%2": "%2" });
+    expect("detach the header", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
 
-    const rewritten = await session.rewrite(split.children.callee, "src", [
-      "subi-sdiv-mul-to-srem",
-    ]);
+    const rewritten = await session.rewrite(cut.children.callee, "src", ["subi-sdiv-mul-to-srem"]);
     expect("the rule makes one iteration the tgt's", rewritten.kind === "certified", rewritten);
-    const outer = await session.check(split.children.outer);
+    const outer = await session.check(cut.children.outer);
     expect("the loop is entered the same way", outer.outcome === "proved", outer);
   },
 };

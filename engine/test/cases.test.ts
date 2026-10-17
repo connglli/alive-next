@@ -1,7 +1,7 @@
 // Proving a goal by cases on a comparison of its parameters.
 //
 // llops builds both cases, as it would for a run; no solver is involved,
-// because the two goals a cut by cases leaves are proved afterwards. Skips
+// because the two goals a split by cases leaves are proved afterwards. Skips
 // when llops is not built.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -9,8 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Llops } from "../core/drivers/llops.ts";
 import { cases, uncase } from "../core/state/cases.ts";
+import { Cuts } from "../core/state/cuts.ts";
 import { derive, type Goal, head, type Tree } from "../core/state/goals.ts";
-import { Splits } from "../core/state/splits.ts";
 import { Store } from "../core/state/store.ts";
 import type { Effect, Entry, Event } from "../core/state/trajectory.ts";
 import { toolchain } from "./toolchain-under-test.ts";
@@ -139,16 +139,16 @@ entry:
     expect(after.goals.has("g2")).toBe(false);
   });
 
-  test("is not undone by unsplit, which undoes splits alone", async () => {
+  test("is not undone by uncut, which undoes cuts alone", async () => {
     const result = await cases(store, llops, await start(), "g1", BELOW_ZERO);
     if (result.kind !== "cased") throw new Error(result.message);
     const tree = replay(...result.effects);
-    const unsplit = () => new Splits(store, llops).unsplit(tree, "g1");
-    expect(unsplit).toThrow(/cut by cases, not split/);
+    const uncut = () => new Cuts(store, llops).uncut(tree, "g1");
+    expect(uncut).toThrow(/split by cases, not cut/);
   });
 
-  test("uncase refuses a goal that was not cut by cases", async () => {
+  test("uncase refuses a goal that was not split by cases", async () => {
     const tree = await start();
-    expect(() => uncase(tree, "g1")).toThrow(/g1 is open, not cut by cases/);
+    expect(() => uncase(tree, "g1")).toThrow(/g1 is open, not split by cases/);
   });
 });

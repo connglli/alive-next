@@ -55,14 +55,14 @@ exit:
 
   async prove(session) {
     // i (`%1`), the phi (`%2`) that the tgt reads as n (`%0`), s and n.
-    const split = await session.split("g1", "%bb1", "%bb1", {
+    const cut = await session.cut("g1", "%bb1", "%bb1", {
       "%1": "%1",
       "%2": "%0",
       "%3": "%2",
       "%0": "%0",
     });
-    expect("detach the header", split.kind === "split", split);
-    if (split.kind !== "split") return;
+    expect("detach the header", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
 
     // The phi equals n, parameter 1 against parameter 3.
     const kept = await session.strengthen("g1", {

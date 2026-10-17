@@ -79,14 +79,14 @@ entry:
     // first division: `%6` opens the suffix on both sides, and four values
     // cross — the parameters `%1` and `%2`, the shift `%3`, and the division
     // `%5`.
-    const first = await session.split("g1", "%6", "%6", {
+    const first = await session.cut("g1", "%6", "%6", {
       "%1": "%1",
       "%2": "%2",
       "%3": "%3",
       "%5": "%5",
     });
-    expect("cut after the first division", first.kind === "split", first);
-    if (first.kind !== "split") return;
+    expect("cut after the first division", first.kind === "cut", first);
+    if (first.kind !== "cut") return;
 
     // Phase 4: the four values crossing the cut are computed from defined
     // parameters by instructions that cannot make poison (now that the `nsw`
@@ -149,9 +149,9 @@ entry:
     // Phase 6: both tails need only the total and `p1` now, so the second
     // division and everything after it is cut off. The src subtracts at `%8`
     // and the tgt at `%7`, and the totals they consume are `%7` and `%6`.
-    const second = await session.split(callee, "%8", "%7", { "%2": "%2", "%7": "%6" });
-    expect("cut at the second division", second.kind === "split", second);
-    if (second.kind !== "split") return;
+    const second = await session.cut(callee, "%8", "%7", { "%2": "%2", "%7": "%6" });
+    expect("cut at the second division", second.kind === "cut", second);
+    if (second.kind !== "cut") return;
 
     // Again the interface is defined once nothing before it can make poison.
     const secondStronger = await session.strengthen(callee, {

@@ -4,7 +4,7 @@
 // The tgt is the src after `-O3`, without the attributes it infers. As in
 // `unswitch`, it tests `mode` once before the loop and keeps a version of the
 // loop for each answer, and in the version for mode = 0 it folds `x + mode`
-// to `x`. The goal is cut by cases on mode. Where mode is not 0, `reshaped`
+// to `x`. The goal is split by cases on mode. Where mode is not 0, `reshaped`
 // proves the case with no step. Where mode is 0, a step on each side drops
 // the code the case never reaches, and the loops that are left are cut at
 // their exits and then at their headers, as in `rotated`. The fold holds only
@@ -93,7 +93,7 @@ end:
   async prove(session) {
     // `mode` is parameter 2, which the src makes noundef.
     const split = await session.case("g1", { op: "eq", lhs: "!2", rhs: 0 });
-    expect("cut by cases on mode", split.kind === "cased", split);
+    expect("split by cases on mode", split.kind === "cased", split);
     if (split.kind !== "cased") return;
     const { holds, fails } = split.children;
 
@@ -172,13 +172,13 @@ end:
     expect("where mode is 0, the tgt never divides", tgt.kind === "certified", tgt);
 
     // The exits are the src's `%bb5` and the tgt's `%bb3`, and nothing crosses.
-    const exit = await session.split(holds, "%bb5", "%bb3", {});
-    expect("detach the exit", exit.kind === "split", exit);
-    if (exit.kind !== "split") return;
+    const exit = await session.cut(holds, "%bb5", "%bb3", {});
+    expect("detach the exit", exit.kind === "cut", exit);
+    if (exit.kind !== "cut") return;
 
     // In the outer, the headers are `%bb3` on both sides: i (`%6`), a, n and
     // mode cross.
-    const header = await session.split(exit.children.outer, "%bb3", "%bb3", {
+    const header = await session.cut(exit.children.outer, "%bb3", "%bb3", {
       "%6": "%6",
       "%0": "%0",
       "%1": "%1",
@@ -186,10 +186,10 @@ end:
     });
     expect(
       "detach the header",
-      header.kind === "split" && header.detach?.hypothesis !== undefined,
+      header.kind === "cut" && header.detach?.hypothesis !== undefined,
       header,
     );
-    if (header.kind !== "split") return;
+    if (header.kind !== "cut") return;
 
     // mode is parameter 3 of the loop.
     const kept = await session.strengthen(exit.children.outer, {

@@ -42,13 +42,13 @@ entry:
     // `%1` is `%f = freeze i32 %0` (guaranteed not poison)
     // `%2` is `%a = add i32 %1, 1` (guaranteed not poison)
     // `%3` is `%b = mul i32 %2, 8` (cut point)
-    const split = await session.split("g1", "%3", "%3", { "%1": "%1", "%2": "%2" });
-    expect("cut at the multiply", split.kind === "split", split);
-    if (split.kind !== "split") return;
+    const cut = await session.cut("g1", "%3", "%3", { "%1": "%1", "%2": "%2" });
+    expect("cut at the multiply", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
 
     // Although the root parameter `%0` may be poison, the values crossing the
     // cut (`%1` and `%2`) are derived from a frozen value and cannot be poison.
-    const facts = await session.analyze(split.children.outer, "src", "defined");
+    const facts = await session.analyze(cut.children.outer, "src", "defined");
     expect("ask what the caller has", facts.ok, facts);
     if (!facts.ok) return;
 
@@ -58,16 +58,16 @@ entry:
 
     // Strengthen the callee interface with noundef for each non-poison live-in.
     const wanted: Record<number, Attrs> = {};
-    for (const [param, entry] of split.params.entries()) {
+    for (const [param, entry] of cut.params.entries()) {
       expect(`${entry.live} is not poison`, defined.has(entry.live), facts);
       wanted[param] = { noundef: true };
     }
     const proved = await session.strengthen("g1", { param_attrs: wanted });
     expect("prove the callee interface noundef", proved.kind === "strengthened", proved);
 
-    const outer = await session.check(split.children.outer);
-    expect(`check ${split.children.outer}`, outer.outcome === "proved", outer);
-    const callee = await session.check(split.children.callee);
-    expect(`check ${split.children.callee}`, callee.outcome === "proved", callee);
+    const outer = await session.check(cut.children.outer);
+    expect(`check ${cut.children.outer}`, outer.outcome === "proved", outer);
+    const callee = await session.check(cut.children.callee);
+    expect(`check ${cut.children.callee}`, callee.outcome === "proved", callee);
   },
 };

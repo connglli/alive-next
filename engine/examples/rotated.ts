@@ -53,22 +53,22 @@ exit:
 
   async prove(session) {
     // `%bb2` is the exit, and its phi `%7` crosses.
-    const exit = await session.split("g1", "%bb2", "%bb2", { "%7": "%7" });
-    expect("detach the exit", exit.kind === "split", exit);
-    if (exit.kind !== "split") return;
+    const exit = await session.cut("g1", "%bb2", "%bb2", { "%7": "%7" });
+    expect("detach the exit", exit.kind === "cut", exit);
+    if (exit.kind !== "cut") return;
 
     // In the outer, `%bb1` is the header: i (`%2`), acc (`%3`) and n (`%0`) cross.
-    const header = await session.split(exit.children.outer, "%bb1", "%bb1", {
+    const header = await session.cut(exit.children.outer, "%bb1", "%bb1", {
       "%2": "%2",
       "%3": "%3",
       "%0": "%0",
     });
     expect(
       "detach the header",
-      header.kind === "split" && header.detach?.hypothesis !== undefined,
+      header.kind === "cut" && header.detach?.hypothesis !== undefined,
       header,
     );
-    if (header.kind !== "split") return;
+    if (header.kind !== "cut") return;
 
     // i <u n, parameter 0 against parameter 2.
     const kept = await session.strengthen(exit.children.outer, {

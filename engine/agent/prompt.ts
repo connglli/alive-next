@@ -24,15 +24,15 @@ There are two ways to change a goal:
 
 1. **Perform a certified step:** Replace either \`src\` or \`tgt\` with a modified version. This helps you find fine-grained refinement steps. A step is certified either by the verified rewriter applying pre-proved peephole rules, with no solver run of its own, or by alive2 confirming that the refinement claim still holds at each *small* step.
 
-2. **Perform a program cut:** Split the goal into two new goals: an outer goal and a callee goal, or two cases of its inputs. The outer goal's programs call an outlined function, whose bodies the callee goal contains. Proving both new goals proves the original goal.
+2. **Perform a split:** Split the goal into two new goals, either by a cut into an outer goal and a callee goal, or by cases of its inputs. The outer goal's programs call an outlined function, whose bodies the callee goal contains. Proving both new goals proves the original goal.
 
 ## How to use certified steps
 
-Optimization opportunities in the \`src\` side or anti-optimization opportunities in the \`tgt\` side help find certified steps. Prefer the verified rewriter for optimizations on the \`src\` side where its integer arithmetic and bitwise peephole rules apply: it is cheap and needs no solver. Its rules do not cover floating point, vectors, memory operations or calls; on those, the program is left unchanged or the rewrite is refused with a reason. Otherwise, or when transforming the \`tgt\` side, find small changes so that alive2 can verify them. Wrap a chain of changes in a transaction which, when committed, will verify the change, even inside a loop. Instead of committing a change too large for one check, such as one that changes a loop's shape, interpose the edited program between \`src\` and \`tgt\`. This splits the goal into one goal between \`src\` and that program and one between that program and \`tgt\`, which can each be cut and proved on its own.
+Optimization opportunities in the \`src\` side or anti-optimization opportunities in the \`tgt\` side help find certified steps. Prefer the verified rewriter for optimizations on the \`src\` side where its integer arithmetic and bitwise peephole rules apply: it is cheap and needs no solver. Its rules do not cover floating point, vectors, memory operations or calls; on those, the program is left unchanged or the rewrite is refused with a reason. Otherwise, or when transforming the \`tgt\` side, find small changes so that alive2 can verify them. Wrap a chain of changes in a transaction which, when committed, will verify the change, even inside a loop. Instead of committing a change too large for one check, such as one that changes a loop's shape, interpose the edited program between \`src\` and \`tgt\`. This turns the goal into one goal between \`src\` and that program and one between that program and \`tgt\`, which can each be cut and proved on its own.
 
 The framework chooses the refinement direction of every check and passes \`--disable-undef-input\` to alive2, so you specify neither.
 
-## How to use program cuts
+## How to use splits
 
 Cuts make large program pairs manageable, since alive2 may fail to return when one query covers too much computation. A useful cut separates what is hard. It can move a difficult computation into a function both outer programs call in the same way, so the outer treats it as a call. Or, where the two sides compute a value differently and then use it, for example as an address to read, it can cut between computing and using, so one goal shows the two values equal and the other uses one shared value.
 
@@ -41,6 +41,8 @@ A cut is made at an instruction or at a block. At an instruction, the callee is 
 A cut creates fresh callee parameters, which may be poison or hold any value of their type. alive2 cannot prove the callee goal until the facts it needs about them, such as that a parameter is not poison, are proved. Prove those facts in the outer, where the actual arguments are known. Only then is it useful to check the callee goal.
 
 A loop is proved by induction: cut at its header, and the callee is one iteration that calls a hypothesis, standing for the rest of the loop, where it would branch back. A fact that iteration needs about its parameters, such as \`j <= i\` for a \`sub nuw i32 %i, %j\` after the loop, is proved like any other fact, and holds only if the loop's entry establishes it and every iteration keeps it.
+
+Split by cases where the two sides line up only once a condition on the inputs is fixed, as when one side tests a parameter inside a loop and the other tests it once before the loop. In each case every branch on that condition goes one way, and a cut inside the case can be strengthened with it.
 
 ## Interpreting failures
 

@@ -76,20 +76,16 @@ exit:
     // `%bb1` is the header. Its phis `%1` (i) and `%2` (j) and the bound `%0`
     // (n) cross, and so does the tgt's phi `%3` (left), under a key that is
     // not a src value.
-    const split = await session.split("g1", "%bb1", "%bb1", {
+    const cut = await session.cut("g1", "%bb1", "%bb1", {
       "%1": "%1",
       "%2": "%2",
       "%0": "%0",
       left: "%3",
     });
-    expect(
-      "detach the header",
-      split.kind === "split" && split.detach?.hypothesis !== undefined,
-      split,
-    );
-    if (split.kind !== "split" || split.detach?.hypothesis === undefined) return;
-    const { callee } = split;
-    const { hypothesis } = split.detach;
+    expect("detach the header", cut.kind === "cut" && cut.detach?.hypothesis !== undefined, cut);
+    if (cut.kind !== "cut" || cut.detach?.hypothesis === undefined) return;
+    const { callee } = cut;
+    const { hypothesis } = cut.detach;
 
     // The outer's src calls the loop as `%1`, passing poison for left.
     await session.begin("g2", "src");

@@ -28,7 +28,7 @@ export interface Goal {
   id: GoalId;
   parent?: GoalId;
   /**
-   * Which child of its parent this is: a split's outer or callee, an
+   * Which child of its parent this is: a cut's outer or callee, an
    * interpose's lhs or rhs, or a case's holds or fails.
    */
   role?: Role;
@@ -51,8 +51,8 @@ export interface Tree {
   programs: Map<Hash, ProgramId>;
   /**
    * The number the next goal will take. It counts goals ever made rather than
-   * goals alive, so an unsplit does not hand its children's names to the next
-   * cut and a trajectory names one goal one thing.
+   * goals alive, so a split that is undone does not hand its children's names
+   * to the next split and a trajectory names one goal one thing.
    */
   nextGoal: number;
 }
@@ -106,12 +106,12 @@ export function workable(tree: Tree, id: GoalId): Goal {
   return goal;
 }
 
-/** Whether `goal` has the two children an interpose leaves, rather than a split's. */
+/** Whether `goal` has the two children an interpose leaves, rather than a cut's or a case's. */
 export function interposed(tree: Tree, goal: Goal): boolean {
   return goal.children.some((id) => tree.goals.get(id)?.role === "lhs");
 }
 
-/** Whether `goal` has the two children a cut by cases leaves. */
+/** Whether `goal` has the two children a split by cases leaves. */
 export function cased(tree: Tree, goal: Goal): boolean {
   return goal.children.some((id) => tree.goals.get(id)?.role === "holds");
 }
@@ -187,7 +187,7 @@ function apply(tree: Tree, effect: Effect): void {
       goal[effect.side].history = goal[effect.side].history.slice(0, at + 1);
       return;
     }
-    case "split": {
+    case "cut": {
       const parent = editable(tree, effect.gid);
       const { name: callee, detach, slots } = effect;
       const made = { callee, ...(detach ? { detach } : {}), ...(slots ? { slots } : {}) };
@@ -227,10 +227,10 @@ function apply(tree: Tree, effect: Effect): void {
       name(tree, effect.tgt);
       return;
     }
-    case "unsplit": {
+    case "uncut": {
       const parent = get(tree, effect.gid);
       if (parent.status !== "split" || interposed(tree, parent) || cased(tree, parent))
-        throw new DerivationError(`${parent.id} is not split`);
+        throw new DerivationError(`${parent.id} is not cut`);
       reopen(tree, parent);
       return;
     }
@@ -244,7 +244,7 @@ function apply(tree: Tree, effect: Effect): void {
     case "uncase": {
       const parent = get(tree, effect.gid);
       if (parent.status !== "split" || !cased(tree, parent))
-        throw new DerivationError(`${parent.id} is not cut by cases`);
+        throw new DerivationError(`${parent.id} is not split by cases`);
       reopen(tree, parent);
       return;
     }

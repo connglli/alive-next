@@ -82,11 +82,11 @@ export async function cases(
   };
 }
 
-/** Undo a cut by cases, discarding its two goals and whatever was proved under them. */
+/** Undo a split by cases, discarding its two goals and whatever was proved under them. */
 export function uncase(tree: Tree, gid: string): Effect[] {
   const goal = tree.goals.get(gid);
   if (!goal) throw new Error(`no goal ${gid}`);
-  if (!cased(tree, goal)) throw new Error(`${gid} is ${goal.status}, not cut by cases`);
+  if (!cased(tree, goal)) throw new Error(`${gid} is ${goal.status}, not split by cases`);
   return [{ effect: "uncase", gid }];
 }
 

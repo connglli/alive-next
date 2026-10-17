@@ -39,13 +39,13 @@ entry:
 
   async prove(session) {
     // `%2` is the multiply on both sides, and the masked value `%1` crosses.
-    const split = await session.split("g1", "%2", "%2", { "%1": "%1" });
-    expect("cut at the multiply", split.kind === "split", split);
-    if (split.kind !== "split") return;
+    const cut = await session.cut("g1", "%2", "%2", { "%1": "%1" });
+    expect("cut at the multiply", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
 
     // A local counterexample is a hint, so this leaves the goal open and the
     // script goes on to supply what the callee is missing.
-    await session.check(split.children.callee);
+    await session.check(cut.children.callee);
 
     const stronger = await session.strengthen("g1", {
       param_attrs: { 0: { range: { min: 0, max: 256 } } },

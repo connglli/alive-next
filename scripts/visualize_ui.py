@@ -1156,8 +1156,8 @@ function currentSnapshot() {
 
 /*
  * Follow actual node ancestry, not all nodes with the same gid.
- * This avoids mixing separate incarnations if an unsplit removes children
- * and a later split reuses their goal IDs.
+ * This avoids mixing separate incarnations if an undone split removes
+ * children and a later split reuses their goal IDs.
  */
 function historyFor(nodeId) {
   const result = [];

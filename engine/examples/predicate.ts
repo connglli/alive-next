@@ -68,17 +68,17 @@ entry:
   async prove(session) {
     // Cut before the scale computation (%7 in canonical slot naming).
     // Live values crossing the cut: %lo (%3), %limit (%6), and %y (%1).
-    const split = await session.split("g1", "%7", "%7", {
+    const cut = await session.cut("g1", "%7", "%7", {
       "%3": "%3",
       "%6": "%6",
       "%1": "%1",
     });
-    expect("cut before the scale computation", split.kind === "split", split);
-    if (split.kind !== "split") return;
+    expect("cut before the scale computation", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
 
     // Checking the unstrengthened callee reveals why interface strengthening is necessary:
     // without the relation %lo < %limit, target's `sub nuw` is more poisonous than source.
-    const unstrengthened = await session.check(split.children.callee);
+    const unstrengthened = await session.check(cut.children.callee);
     if (unstrengthened.check?.outcome === "incorrect") {
       expect(
         "unstrengthened callee is refuted",

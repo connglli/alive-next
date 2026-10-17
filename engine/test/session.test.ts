@@ -24,7 +24,7 @@ const built = await llops
   .then(() => true)
   .catch(() => false);
 
-/** A checker that agrees, so a split is all these tests need to set up. */
+/** A checker that agrees, so a cut is all these tests need to set up. */
 class YesMan implements Checker {
   calls = 0;
   async check(): Promise<CheckResult> {
@@ -154,10 +154,10 @@ describe.skipIf(!built)("reading a session", () => {
 
   test("show says which half of a cut a goal is, and of what", async () => {
     const run = await session();
-    const split = await run.split("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
-    if (split.kind !== "split") throw new Error(split.message);
+    const cut = await run.cut("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
+    if (cut.kind !== "cut") throw new Error(cut.message);
 
-    const callee = await run.show(split.children.callee);
+    const callee = await run.show(cut.children.callee);
     expect(callee).toMatchObject({ role: "callee", parent: "g1", callee: "outlined_g3" });
     expect(callee.src.text).toContain("define i32 @outlined_g3");
   });
@@ -194,9 +194,9 @@ describe.skipIf(!built)("reading a session", () => {
 
   test("status is the tree, with the transaction when one is open", async () => {
     const run = await session();
-    const split = await run.split("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
-    if (split.kind !== "split") throw new Error(split.message);
-    await run.begin(split.children.callee, "src");
+    const cut = await run.cut("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
+    if (cut.kind !== "cut") throw new Error(cut.message);
+    await run.begin(cut.children.callee, "src");
 
     const standing = await run.status();
     expect(standing.root).toBe("g1");
@@ -305,9 +305,9 @@ describe.skipIf(!built)("reading a session", () => {
 
   test("revert refuses to undo part of a strengthen, on either half", async () => {
     const run = await session();
-    const split = await run.split("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
-    if (split.kind !== "split") throw new Error(split.message);
-    const { outer, callee } = split.children;
+    const cut = await run.cut("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
+    if (cut.kind !== "cut") throw new Error(cut.message);
+    const { outer, callee } = cut.children;
     const starts = { [outer]: await run.show(outer), [callee]: await run.show(callee) };
     const landed = await run.strengthen("g1", { param_attrs: { 0: { noundef: true } } });
     expect(landed.kind).toBe("strengthened");
@@ -345,12 +345,12 @@ describe.skipIf(!built)("reading a session", () => {
     expect(refused).toMatchObject({ kind: "refused", code: "side_unsupported" });
   });
 
-  test("split refuses while the goal is being edited", async () => {
+  test("cut refuses while the goal is being edited", async () => {
     const run = await session();
     await run.begin("g1", "src");
     await run.edit({ op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
 
-    const refused = await run.split("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
+    const refused = await run.cut("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
     expect(refused).toMatchObject({ kind: "editing" });
     if (refused.kind !== "editing") throw new Error("unreachable");
     expect(refused.message).toContain("a transaction is open on g1 src");
@@ -358,48 +358,48 @@ describe.skipIf(!built)("reading a session", () => {
     expect((await run.status()).editing).toMatchObject({ gid: "g1", side: "src", ops: 1 });
 
     const results = log(run).filter((entry) => entry.kind === "tool_result");
-    const splitResult = [...results].reverse().find((entry) => entry.tool === "split");
-    expect(splitResult).toMatchObject({ tool: "split", result: refused, effects: [] });
+    const cutResult = [...results].reverse().find((entry) => entry.tool === "cut");
+    expect(cutResult).toMatchObject({ tool: "cut", result: refused, effects: [] });
   });
 
-  test("unsplit refuses while it would discard an edited child", async () => {
+  test("uncut refuses while it would discard an edited child", async () => {
     const run = await session();
-    const split = await run.split("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
-    if (split.kind !== "split") throw new Error(split.message);
-    await run.begin(split.children.callee, "tgt");
+    const cut = await run.cut("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
+    if (cut.kind !== "cut") throw new Error(cut.message);
+    await run.begin(cut.children.callee, "tgt");
 
-    const refused = await run.unsplit("g1");
+    const refused = await run.uncut("g1");
     expect(refused).toMatchObject({ kind: "editing" });
     if (refused.kind !== "editing") throw new Error("unreachable");
-    expect(refused.message).toContain(`a transaction is open on ${split.children.callee} tgt`);
+    expect(refused.message).toContain(`a transaction is open on ${cut.children.callee} tgt`);
     expect(run.tree.goals.get("g1")?.status).toBe("split");
-    expect(run.tree.goals.has(split.children.callee)).toBe(true);
+    expect(run.tree.goals.has(cut.children.callee)).toBe(true);
   });
 
   test("strengthen refuses while it would move an edited child", async () => {
     const run = await session();
-    const split = await run.split("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
-    if (split.kind !== "split") throw new Error(split.message);
-    const before = await run.show(split.children.outer);
-    await run.begin(split.children.outer, "src");
+    const cut = await run.cut("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
+    if (cut.kind !== "cut") throw new Error(cut.message);
+    const before = await run.show(cut.children.outer);
+    await run.begin(cut.children.outer, "src");
 
     const refused = await run.strengthen("g1", { param_attrs: { 0: { noundef: true } } });
     expect(refused).toMatchObject({ kind: "editing" });
     if (refused.kind !== "editing") throw new Error("unreachable");
-    expect(refused.message).toContain(`a transaction is open on ${split.children.outer} src`);
-    expect((await run.show(split.children.outer)).src.hash).toBe(before.src.hash);
-    expect((await run.status()).editing).toMatchObject({ gid: split.children.outer, side: "src" });
+    expect(refused.message).toContain(`a transaction is open on ${cut.children.outer} src`);
+    expect((await run.show(cut.children.outer)).src.hash).toBe(before.src.hash);
+    expect((await run.status()).editing).toMatchObject({ gid: cut.children.outer, side: "src" });
   });
 
-  test("a split preview logs what it found, not the programs it outlined", async () => {
+  test("a cut preview logs what it found, not the programs it outlined", async () => {
     const run = await session();
-    const preview = await run.splitPreview("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
+    const preview = await run.cutPreview("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
     if (preview.kind !== "preview") throw new Error(preview.message);
 
     const results = log(run).filter((entry) => entry.kind === "tool_result");
-    const previewResult = [...results].reverse().find((entry) => entry.tool === "split_preview");
+    const previewResult = [...results].reverse().find((entry) => entry.tool === "cut_preview");
     expect(previewResult).toBeDefined();
-    if (!previewResult) throw new Error("no split_preview was logged");
+    if (!previewResult) throw new Error("no cut_preview was logged");
     const kept = previewResult.result as Record<string, unknown>;
     expect(kept.kind).toBe("preview");
     expect(kept.callee).toBe(preview.callee);

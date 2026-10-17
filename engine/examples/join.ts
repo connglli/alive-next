@@ -52,9 +52,9 @@ join:
 
   async prove(session) {
     // `%bb3` is the join; its phi `%4` is the one value that crosses.
-    const split = await session.split("g1", "%bb3", "%bb3", { "%4": "%4" });
-    expect("detach the join", split.kind === "split", split);
-    if (split.kind !== "split") return;
+    const cut = await session.cut("g1", "%bb3", "%bb3", { "%4": "%4" });
+    expect("detach the join", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
 
     const bounded = await session.strengthen("g1", {
       param_attrs: { 0: { range: { min: 0, max: 256 } } },

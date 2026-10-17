@@ -1,7 +1,7 @@
 // Proving a goal through a program between its two sides.
 //
 // A goal claims that its tgt refines its src, and refinement is transitive,
-// so any program between them splits the claim in two: the program refines
+// so any program between them turns the claim into two: the program refines
 // the src, and the tgt refines the program. This rewrites the goal rather than
 // decomposing it. No program is taken apart: the rewrite path gains a program,
 // and the step to it, which one query may not certify, becomes a goal of its

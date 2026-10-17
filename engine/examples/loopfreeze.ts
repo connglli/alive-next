@@ -54,14 +54,14 @@ exit:
 
   async prove(session) {
     // i (`%2`), s (`%3`), n (`%0`) and x (`%1`) cross.
-    const split = await session.split("g1", "%bb1", "%bb1", {
+    const cut = await session.cut("g1", "%bb1", "%bb1", {
       "%2": "%2",
       "%3": "%3",
       "%0": "%0",
       "%1": "%1",
     });
-    expect("detach the header", split.kind === "split", split);
-    if (split.kind !== "split") return;
+    expect("detach the header", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
 
     const kept = await session.strengthen("g1", { param_attrs: { 3: { noundef: true } } });
     expect("x is noundef on entry and on each iteration", kept.kind === "strengthened", kept);

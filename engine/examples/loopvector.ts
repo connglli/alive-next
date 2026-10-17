@@ -80,7 +80,7 @@ exit:
 
   async prove(session) {
     // i (`%4`), s (`%5`), n, a, b and c (`%0` to `%3`) cross.
-    const split = await session.split("g1", "%bb1", "%bb1", {
+    const cut = await session.cut("g1", "%bb1", "%bb1", {
       "%4": "%4",
       "%5": "%5",
       "%0": "%0",
@@ -88,9 +88,9 @@ exit:
       "%2": "%2",
       "%3": "%3",
     });
-    expect("detach the header", split.kind === "split", split);
-    if (split.kind !== "split") return;
-    const callee = split.children.callee;
+    expect("detach the header", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
+    const callee = cut.children.callee;
 
     // In the callee `%7` is the tgt's field, `%11` its lane-two insert, and
     // `%13` the vector `and` that masks it; `%12` is the vector before it.
@@ -122,7 +122,7 @@ exit:
     const masked = await session.commit();
     expect("mask the src field the same way", masked.kind === "certified", masked);
 
-    const outer = await session.check(split.children.outer);
+    const outer = await session.check(cut.children.outer);
     expect("the loop is entered the same way", outer.outcome === "proved", outer);
   },
 };

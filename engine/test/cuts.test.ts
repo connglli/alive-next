@@ -8,9 +8,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Llops } from "../core/drivers/llops.ts";
+import { Cuts } from "../core/state/cuts.ts";
 import type { Goal } from "../core/state/goals.ts";
 import { derive, head, type Tree } from "../core/state/goals.ts";
-import { Splits } from "../core/state/splits.ts";
 import { Store } from "../core/state/store.ts";
 import type { Effect, Entry, Event } from "../core/state/trajectory.ts";
 import { toolchain } from "./toolchain-under-test.ts";
@@ -34,7 +34,7 @@ let store: Store;
 let events: Event[];
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "alive-next-split-"));
+  dir = mkdtempSync(join(tmpdir(), "alive-next-cut-"));
   store = new Store(join(dir, "store"), async (text) => {
     const result = await llops.canon(text);
     if (!result.ok) throw new Error(result.message);
@@ -61,7 +61,7 @@ function replay(): Tree {
 
 /** Record effects the way the tool wrapper will, then re-derive. */
 function record(effects: Effect[]): Tree {
-  events.push({ kind: "tool_result", id: "1", tool: "split", effects, result: null, ms: 1 });
+  events.push({ kind: "tool_result", id: "1", tool: "cut", effects, result: null, ms: 1 });
   return replay();
 }
 
@@ -94,12 +94,12 @@ async function start(program = PROGRAM, other = program) {
   return replay();
 }
 
-describe.skipIf(!built)("splitting", () => {
+describe.skipIf(!built)("cutting", () => {
   test("cuts both sides and opens two children", async () => {
-    const splits = new Splits(store, llops);
-    const result = await splits.split(await start(), "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(), "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
 
-    if (result.kind !== "split") throw new Error(result.message);
+    if (result.kind !== "cut") throw new Error(result.message);
     expect(result.children).toEqual({ outer: "g2", callee: "g3" });
     expect(result.callee).toBe("outlined_g3");
     expect(result.params.map((param) => param.live)).toEqual(["%2", "%0"]);
@@ -111,9 +111,9 @@ describe.skipIf(!built)("splitting", () => {
   });
 
   test("the outer calls what the callee defines, under one name", async () => {
-    const splits = new Splits(store, llops);
-    const result = await splits.split(await start(), "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
-    if (result.kind !== "split") throw new Error(result.message);
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(), "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
+    if (result.kind !== "cut") throw new Error(result.message);
 
     const tree = record(result.effects);
     const outer = store.get(head(goal(tree, "g2"), "src"));
@@ -124,11 +124,11 @@ describe.skipIf(!built)("splitting", () => {
   });
 
   test("what it cut can be put back together", async () => {
-    const splits = new Splits(store, llops);
+    const cuts = new Cuts(store, llops);
     const tree0 = await start();
     const before = store.get(head(goal(tree0, "g1"), "src"));
-    const result = await splits.split(tree0, "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
-    if (result.kind !== "split") throw new Error(result.message);
+    const result = await cuts.cut(tree0, "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
+    if (result.kind !== "cut") throw new Error(result.message);
 
     const tree = record(result.effects);
     const back = await llops.inline(
@@ -143,12 +143,12 @@ describe.skipIf(!built)("splitting", () => {
   });
 
   test("naming a block detaches it, and a loop's back edge calls the hypothesis", async () => {
-    const splits = new Splits(store, llops);
-    const result = await splits.split(await start(LOOP), "g1", "%bb1", "%bb1", {
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(LOOP), "g1", "%bb1", "%bb1", {
       "%1": "%1",
       "%0": "%0",
     });
-    if (result.kind !== "split") throw new Error(result.message);
+    if (result.kind !== "cut") throw new Error(result.message);
     expect(result.detach?.hypothesis).toBe("outlined_g3.ih");
 
     const tree = record(result.effects);
@@ -174,9 +174,9 @@ join:
   ret i32 %a
 }
 `;
-    const splits = new Splits(store, llops);
-    const result = await splits.split(await start(branching), "g1", "%1", "%1", { "%0": "%0" });
-    if (result.kind !== "split") throw new Error(result.message);
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(branching), "g1", "%1", "%1", { "%0": "%0" });
+    if (result.kind !== "cut") throw new Error(result.message);
     const tree = record(result.effects);
     expect(store.get(head(goal(tree, "g2"), "src"))).toContain("call i32 @outlined_g3(i32 %0)");
     expect(store.get(head(goal(tree, "g3"), "src"))).toContain("br i1");
@@ -188,8 +188,8 @@ join:
       "br i1 %c, label %loop, label %exit",
       "br label %exit",
     );
-    const splits = new Splits(store, llops);
-    const result = await splits.split(await start(LOOP, once), "g1", "%bb1", "%bb1", {
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(LOOP, once), "g1", "%bb1", "%bb1", {
       "%1": "%1",
       "%0": "%0",
     });
@@ -199,13 +199,13 @@ join:
 
   test("carries state only the tgt has, which the src passes as poison", async () => {
     // The tgt's `%2` is a counter the src lacks, so it goes under the new key `k`.
-    const splits = new Splits(store, llops);
-    const result = await splits.split(await start(LOOP, COUNTED), "g1", "%bb1", "%bb1", {
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(LOOP, COUNTED), "g1", "%bb1", "%bb1", {
       "%1": "%1",
       "%0": "%0",
       k: "%2",
     });
-    if (result.kind !== "split") throw new Error(result.message);
+    if (result.kind !== "cut") throw new Error(result.message);
     expect(result.params.map((param) => param.live)).toEqual(["%1", "%0", "poison"]);
     const tree = record(result.effects);
     expect(store.get(head(goal(tree, "g2"), "src"))).toContain("i32 poison)");
@@ -213,7 +213,7 @@ join:
   });
 
   test("a preview lists the tgt's values at its cut, the src's among them or not", async () => {
-    const preview = await new Splits(store, llops).preview(
+    const preview = await new Cuts(store, llops).preview(
       await start(LOOP, COUNTED),
       "g1",
       "%bb1",
@@ -242,8 +242,8 @@ exit:
   ret i32 %0
 }
 `;
-    const splits = new Splits(store, llops);
-    const preview = await splits.preview(await start(slotted, LOOP), "g1", "%bb1", "%bb1");
+    const cuts = new Cuts(store, llops);
+    const preview = await cuts.preview(await start(slotted, LOOP), "g1", "%bb1", "%bb1");
     if (preview.kind !== "preview") throw new Error(preview.message);
     expect(preview.slots).toEqual({ src: [0], tgt: [] });
   });
@@ -256,8 +256,8 @@ exit:
       "  %j = phi i32 [ 0, %entry ], [ %j.next, %loop ]\n  %i.next = add i32 %i, 1\n  %j.next = add i32 %j, 1\n",
     ).replace("  ret i32 %i\n", "  %r = add i32 %i, %j\n  ret i32 %r\n");
     const single = LOOP.replace("  ret i32 %i\n", "  %r = add i32 %i, %i\n  ret i32 %r\n");
-    const splits = new Splits(store, llops);
-    const result = await splits.split(await start(twin, single), "g1", "%bb1", "%bb1", {
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(twin, single), "g1", "%bb1", "%bb1", {
       "%1": "%1",
       "%2": "%1",
       "%0": "%0",
@@ -267,32 +267,32 @@ exit:
   });
 
   test("reads a block off the program's labels", async () => {
-    const splits = new Splits(store, llops);
-    const result = await splits.split(await start(LOOP), "g1", "%entry", "%entry", {});
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(LOOP), "g1", "%entry", "%entry", {});
     expect(result).toMatchObject({ kind: "refused", side: "src", code: "invalid" });
     if (result.kind === "refused") expect(result.message).toContain("entry block");
   });
 
   test("refuses a block on one side and a value on the other", async () => {
-    const splits = new Splits(store, llops);
-    const result = await splits.split(await start(LOOP), "g1", "%bb1", "%2", { "%1": "%1" });
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(LOOP), "g1", "%bb1", "%2", { "%1": "%1" });
     expect(result).toMatchObject({ kind: "refused", code: "invalid" });
   });
 
   test("refuses a cut point that is not there, naming the side", async () => {
-    const splits = new Splits(store, llops);
-    const result = await splits.split(await start(), "g1", "%nope", "%3", {});
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(), "g1", "%nope", "%3", {});
     expect(result).toMatchObject({ kind: "refused", side: "src", code: "not_found" });
   });
 
   test("refuses a side whose attributes change what its instructions may do", async () => {
     const held = PROGRAM.replace("%y) {", "%y) nofree memory(none) {");
-    const [splits, map] = [new Splits(store, llops), { "%2": "%2", "%0": "%0" }];
+    const [cuts, map] = [new Cuts(store, llops), { "%2": "%2", "%0": "%0" }];
     for (const [side, pair] of [
       ["tgt", [PROGRAM, held]],
       ["src", [held, PROGRAM]],
     ] as const) {
-      const result = await splits.split(await start(...pair), "g1", "%3", "%3", map);
+      const result = await cuts.cut(await start(...pair), "g1", "%3", "%3", map);
       expect(result).toMatchObject({ kind: "refused", side, code: "invalid" });
       expect(result.kind === "refused" && result.message).toContain("nofree, memory(none)");
       expect(result.kind === "refused" && result.message).toContain("until the drop_attrs edit");
@@ -303,7 +303,7 @@ exit:
   test("names the attributes no edit removes", async () => {
     const held = PROGRAM.replace("%y) {", "%y) nofree null_pointer_is_valid {");
     const map = { "%2": "%2", "%0": "%0" };
-    const result = await new Splits(store, llops).split(
+    const result = await new Cuts(store, llops).cut(
       await start(PROGRAM, held),
       "g1",
       "%3",
@@ -316,60 +316,60 @@ exit:
   });
 
   test("refuses a map that leaves a live value uncovered", async () => {
-    const splits = new Splits(store, llops);
-    const result = await splits.split(await start(), "g1", "%3", "%3", { "%2": "%2" });
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(), "g1", "%3", "%3", { "%2": "%2" });
     // The cut points do not line up yet, which is the agent's signal to
     // rewrite a side before cutting.
     expect(result).toMatchObject({ kind: "refused", side: "tgt" });
   });
 
   test("stores nothing when a side refuses", async () => {
-    const splits = new Splits(store, llops);
+    const cuts = new Cuts(store, llops);
     const tree = await start();
     const before = store.hashes().length;
-    await splits.split(tree, "g1", "%3", "%nope", { "%2": "%2", "%0": "%0" });
+    await cuts.cut(tree, "g1", "%3", "%nope", { "%2": "%2", "%0": "%0" });
     expect(store.hashes()).toHaveLength(before);
   });
 
   test("refuses to cut a goal that is not open", async () => {
-    const splits = new Splits(store, llops);
-    const result = await splits.split(await start(), "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
-    if (result.kind !== "split") throw new Error(result.message);
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(), "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
+    if (result.kind !== "cut") throw new Error(result.message);
     const tree = record(result.effects);
-    await expect(splits.split(tree, "g1", "%3", "%3", {})).rejects.toThrow(/g1 is split/);
+    await expect(cuts.cut(tree, "g1", "%3", "%3", {})).rejects.toThrow(/g1 is split/);
   });
 });
 
-describe.skipIf(!built)("unsplitting", () => {
+describe.skipIf(!built)("uncutting", () => {
   test("discards the children and reopens the parent", async () => {
-    const splits = new Splits(store, llops);
-    const result = await splits.split(await start(), "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
-    if (result.kind !== "split") throw new Error(result.message);
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(), "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
+    if (result.kind !== "cut") throw new Error(result.message);
 
     const tree = record(result.effects);
-    const after = record(splits.unsplit(tree, "g1"));
+    const after = record(cuts.uncut(tree, "g1"));
     expect(after.goals.get("g1")?.status).toBe("open");
     expect(after.goals.has("g2")).toBe(false);
   });
 
   test("the next cut gets fresh names, not the discarded ones", async () => {
-    const splits = new Splits(store, llops);
+    const cuts = new Cuts(store, llops);
     let tree = await start();
-    const first = await splits.split(tree, "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
-    if (first.kind !== "split") throw new Error(first.message);
+    const first = await cuts.cut(tree, "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
+    if (first.kind !== "cut") throw new Error(first.message);
     tree = record(first.effects);
-    tree = record(splits.unsplit(tree, "g1"));
+    tree = record(cuts.uncut(tree, "g1"));
 
-    const second = await splits.split(tree, "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
-    if (second.kind !== "split") throw new Error(second.message);
+    const second = await cuts.cut(tree, "g1", "%3", "%3", { "%2": "%2", "%0": "%0" });
+    if (second.kind !== "cut") throw new Error(second.message);
     // g2 and g3 were used once and are not handed out again, so a trajectory
     // names one goal one thing.
     expect(second.children).toEqual({ outer: "g4", callee: "g5" });
   });
 
   test("refuses a goal that was never cut", async () => {
-    const splits = new Splits(store, llops);
+    const cuts = new Cuts(store, llops);
     const tree = await start();
-    expect(() => splits.unsplit(tree, "g1")).toThrow(/g1 is open, not split/);
+    expect(() => cuts.uncut(tree, "g1")).toThrow(/g1 is open, not cut/);
   });
 });

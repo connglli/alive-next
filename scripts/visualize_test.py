@@ -87,11 +87,11 @@ class TestFold(Case):
       {"g1": {"status": "proved", "node": "n0", "role": None, "parent": None}},
     )
 
-  def test_a_split_is_proved_through_its_children(self):
+  def test_a_cut_is_proved_through_its_children(self):
     self.session.result(
-      "split",
+      "cut",
       {
-        "effect": "split",
+        "effect": "cut",
         "gid": "g1",
         "name": "outlined_g3",
         "outer": {"gid": "g2", "src": self.src, "tgt": self.tgt},
@@ -114,7 +114,7 @@ class TestFold(Case):
     outer, callee = data["nodes"][1], data["nodes"][2]
     self.assertEqual((outer["gid"], outer["parent"], outer["side"]), ("g2", "n0", None))
     self.assertEqual(
-      (callee["gid"], callee["parent"], callee["tool"]), ("g3", "n0", "split(outline) callee")
+      (callee["gid"], callee["parent"], callee["tool"]), ("g3", "n0", "cut(outline) callee")
     )
     self.assertEqual(nodes["n0"]["gid"], "g1")
 
@@ -238,9 +238,9 @@ class TestFold(Case):
 
   def test_a_split_birth_has_no_before_to_diff_against(self):
     self.session.result(
-      "split",
+      "cut",
       {
-        "effect": "split",
+        "effect": "cut",
         "gid": "g1",
         "name": "outlined_g3",
         "outer": {"gid": "g2", "src": self.src, "tgt": self.tgt},
@@ -281,9 +281,9 @@ class TestFold(Case):
 
   def test_a_detached_loop_names_its_hypothesis_and_the_proofs_of_its_contract(self):
     self.session.result(
-      "split",
+      "cut",
       {
-        "effect": "split",
+        "effect": "cut",
         "gid": "g1",
         "name": "k",
         "outer": {"gid": "g2", "src": self.src, "tgt": self.tgt},
@@ -307,8 +307,8 @@ class TestFold(Case):
       {"effect": "step", "gid": "g3", "side": "src", "to": kept, "how": "check"},
     )
     notes = {(node["gid"], node["tool"]): node["note"] for node in self.data()["nodes"]}
-    self.assertIsNone(notes[("g2", "split(detach) outer")])
-    self.assertEqual(notes[("g3", "split(detach) callee")], "hypothesis @k.ih")
+    self.assertIsNone(notes[("g2", "cut(detach) outer")])
+    self.assertEqual(notes[("g3", "cut(detach) callee")], "hypothesis @k.ih")
     self.assertEqual(notes[("g2", "strengthen")], "contract before @k")
     self.assertEqual(
       [n["note"] for n in self.data()["nodes"] if n["gid"] == "g3" and n["side"] == "src"],

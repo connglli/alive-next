@@ -30,7 +30,7 @@ export function createCaseTool(session: Session) {
       return toolResultFrom(
         session,
         true,
-        `${gid} is cut by cases: holds ${holds}, fails ${fails}`,
+        `${gid} is split by cases: holds ${holds}, fails ${fails}`,
         cut,
       );
     },

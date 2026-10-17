@@ -11,7 +11,7 @@ export function createUncaseTool(session: Session) {
     description:
       "Undo tree_case: discard both cases and everything under them, and reopen the goal.",
     parameters: Type.Object({
-      gid: Type.String({ description: "The goal that was cut by cases." }),
+      gid: Type.String({ description: "The goal that was split by cases." }),
     }),
     execute: async (_id, { gid }) => {
       const undone = await session.uncase(gid);

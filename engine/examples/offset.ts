@@ -73,7 +73,7 @@ exit:
   async prove(session) {
     // `%bb1` is the header. i (`%3`), c (`%4`), a, n and t cross, and so does
     // the tgt's offset (`%5`), which the src does not have.
-    const header = await session.split("g1", "%bb1", "%bb1", {
+    const header = await session.cut("g1", "%bb1", "%bb1", {
       "%3": "%3",
       "%4": "%4",
       "%0": "%0",
@@ -81,8 +81,8 @@ exit:
       "%2": "%2",
       off: "%5",
     });
-    expect("detach the header", header.kind === "split", header);
-    if (header.kind !== "split" || header.detach?.hypothesis === undefined) return;
+    expect("detach the header", header.kind === "cut", header);
+    if (header.kind !== "cut" || header.detach?.hypothesis === undefined) return;
     const loop = header.children.callee;
 
     // The src passes poison for the offset: 0 where the outer calls the loop
@@ -124,7 +124,7 @@ exit:
 
     // Cut the body at the load, the src's `%12` and the tgt's `%11`: the
     // address crosses (`%11` and `%10`), and the tgt's offset with it.
-    const cut = await session.split(loop, "%12", "%11", {
+    const cut = await session.cut(loop, "%12", "%11", {
       "%11": "%10",
       "%4": "%4",
       "%1": "%1",
@@ -133,8 +133,8 @@ exit:
       "%3": "%3",
       off: "%5",
     });
-    expect("cut the body at the load", cut.kind === "split", cut);
-    if (cut.kind !== "split") return;
+    expect("cut the body at the load", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
 
     // The src passes poison for the offset into the rest (`%12`); it has it as `%5`.
     await session.begin(cut.children.outer, "src");

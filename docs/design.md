@@ -34,13 +34,13 @@ The framework proves that one LLVM function refines another, or refutes it, unde
 
 **Cuts and facts**: code that depends on its frame or on its function's attributes, such as `memory(none)`, is never moved out of its function ([Decomposition = outlining](#decomposition--outlining)); a tgt step drops such attributes where its instructions keep them, except `initializes`. Of a value that may be poison, a fact can state only `range`, `nonnull` or `align` ([Interface facts](#interface-facts-are-proved-where-the-evidence-lives)), so "the low bits are zero" of a sum that may be poison is out of reach.
 
-**Loops**: a loop is proved by induction once cut at its header, and alive2 is never asked about a loop as a whole. Both sides have to reach the header in lockstep, one call of the hypothesis per iteration, and a fact over the callee's parameters relates them there. One side's iteration may be unfolded to match an unroll by a power of two, its first iterations to match a peel, and the goal cut by cases on a comparison of its parameters to match a loop unswitched on it. That leaves out of reach:
+**Loops**: a loop is proved by induction once cut at its header, and alive2 is never asked about a loop as a whole. Both sides have to reach the header in lockstep, one call of the hypothesis per iteration, and a fact over the callee's parameters relates them there. One side's iteration may be unfolded to match an unroll by a power of two, its first iterations to match a peel, and the goal split by cases on a comparison of its parameters to match a loop unswitched on it. That leaves out of reach:
 
 * A variable the tgt dropped, such as `%i` after linear function test replacement: the tgt would have to pass the shared hypothesis a value refining the src's.
 * Loop state the src keeps in a stack slot whose address escapes, or in a struct or an array, and the tgt in values: the src passes an address where the tgt passes a value.
 * Unrolling by a factor that is not a power of two, unrolling with a remainder loop, a loop replaced by a call such as `memset`, and a deleted loop: no call of the tgt pairs with each call of the src's hypothesis.
 * Reordering transformations (interchange, fusion, fission, tiling, reversal): the two sides agree on memory only at the end, which takes a quantified invariant.
-* An irreducible loop, whose second entry breaks the single entry a split at a block needs.
+* An irreducible loop, whose second entry breaks the single entry a cut at a block needs.
 * A pointer carried as loop state: a fact compares addresses, not the objects the pointers may access.
 
 **Counterexamples**: a translation is refuted on its original pair ([Counterexamples](#counterexamples-certified-by-execution-or-by-the-root-refutation)): as a whole, within the iterations alive2 unrolls when it loops, or at an input that gives each parameter an integer, a null pointer, a pointer to given bytes or poison. An input with a floating-point or vector value other than poison is out of reach.
@@ -70,7 +70,7 @@ The framework state has two parts: an immutable **program store** and a **goal t
 
 **Steps.** A step is a certified transition on one side of one goal. A step is certified in one of three ways: by applying a pre-proved rewrite rule (no alive2 run needed), by unfolding a loop cut at its header, which a checker repeats (see "Decomposition = outlining"), or by a check in the side-appropriate direction: by `llops reshaped` or `llops respected` when the step only reshapes control flow or changes attributes (see "Steps checked without a solver"), and otherwise by alive2, of either the before/after pair or the window it differs in, which never loops (see "Narrowing a step to what it changed"). The head of a side is the latest program in its history; all tools operate on heads.
 
-**Intermediate programs.** A goal can be split at a program M between its two sides into (src, M) and (M, tgt): M refining the src and the tgt refining M prove the goal by transitivity, as two steps along a chain do. This rewrites rather than decomposes, since no program is taken apart, and it lets a step that one query cannot certify be proved as a goal of its own.
+**Intermediate programs.** A program M can be interposed between a goal's two sides, leaving (src, M) and (M, tgt): M refining the src and the tgt refining M prove the goal by transitivity, as two steps along a chain do. This rewrites rather than decomposes, since no program is taken apart, and it lets a step that one query cannot certify be proved as a goal of its own.
 
 **Cases.** A goal can be split into two cases of its inputs, both programs restricted the same way in each, and refinement holds input by input, so the two prove the goal. One split is on whether a parameter is poison: one case makes it `noundef`, the other puts poison in its place, and a scalar argument is one or the other. The other is on a comparison of parameters, assumed at the start of both programs in one case and its inverse in the other, which needs each parameter compared `noundef` in the src: a poison argument is undefined behavior there already, and any other input makes the comparison true or false. This decomposes a goal by its inputs, as a cut does by its code.
 
@@ -80,7 +80,7 @@ The framework state has two parts: an immutable **program store** and a **goal t
 
 ## Decomposition = outlining
 
-Cutting a program in two while memory flows across the cut needs a notion of "the state at the cut in RHS refines the state in LHS", including memory. We do not define that ourselves. Instead, `split` outlines everything the cut point reaches:
+Cutting a program in two while memory flows across the cut needs a notion of "the state at the cut in RHS refines the state in LHS", including memory. We do not define that ourselves. Instead, `cut` outlines everything the cut point reaches:
 
 - Outer program: `A; call g(...)`, where `g` is a fresh declared function.
 - Callee: a function `g` whose body is `B`.
@@ -96,7 +96,7 @@ The only trusted glue is that outlining is faithful: the outer calling the calle
 
 A stack slot that only loads and stores of its type use crosses a cut as what it holds, or as `poison` when every path stores into it first, and the callee keeps it in a slot of its own. No other code sees either slot and the outer returns right after the call, so the copy holds what the slot would wherever it is read, and `inline` and `reattach` put the slot back in its place.
 
-A split at a block detaches it instead: the block and every block it reaches become `g`, and each branch to the block becomes a call of `g`. At a loop header, the back edge calls a declared hypothesis `g.ih` in place of `g`, so the callee is one iteration and does not loop. Proving that pair, with `g.ih` an unknown function both sides share, proves the loop by induction: each side calls `g.ih` where it would go around again, so a tgt cannot stop where the src goes on. The glue a checker trusts is `reattach`, the inverse of detaching, as `inline` is of outlining.
+A cut at a block detaches it instead: the block and every block it reaches become `g`, and each branch to the block becomes a call of `g`. At a loop header, the back edge calls a declared hypothesis `g.ih` in place of `g`, so the callee is one iteration and does not loop. Proving that pair, with `g.ih` an unknown function both sides share, proves the loop by induction: each side calls `g.ih` where it would go around again, so a tgt cannot stop where the src goes on. The glue a checker trusts is `reattach`, the inverse of detaching, as `inline` is of outlining.
 
 Unfolding puts the loop's body at a call of `g.ih`, for a loop unrolled by two, or at the outer's call of `g`, for a peeled loop. It is not a refinement, but the loop stays the same, so a checker reruns the unfold instead of asking alive2.
 
@@ -133,7 +133,7 @@ Putting an attribute on `g` is not free. If the fact were false, the annotated o
 
 A detached loop's callee also calls `g.ih`, so phase 1 is also proved at each of those calls in the callee's src, on `g.ih`'s declaration, with the facts assumed at its start: the loop's entry establishes the facts and each iteration keeps them, which makes them invariants. Phase 2 gives the callee's tgt the same facts at its calls of `g.ih`. Such a `g` takes no function attribute, since induction cannot prove `willreturn`.
 
-This is the deepest cost item in the design: a fact assumed by a callee is proved in its outer goal. The cost control is hierarchical splitting, so that each fact is proved inside a chunk-sized goal rather than at the top level. Split placement and fact placement therefore interact, and that interaction is part of the agent's search problem.
+This is the deepest cost item in the design: a fact assumed by a callee is proved in its outer goal. The cost control is hierarchical cutting, so that each fact is proved inside a chunk-sized goal rather than at the top level. Cut placement and fact placement therefore interact, and that interaction is part of the agent's search problem.
 
 ## Analyses are untrusted proposers
 
@@ -170,9 +170,9 @@ A certified step shows the step is valid; it says nothing about whether the path
 
 - Proved: the goal discharges early. In particular, the last step of a successful chain discharges the goal without an explicit `check` call, since identical sides are proved without a solver.
 - Timeout: no information, continue.
-- Refuted with a concrete counterexample: the current pair can never be proved, so the framework marks the path dead, forcing a revert, an unsplit, an uninterpose or an uncase, and returns the counterexample as a hint.
+- Refuted with a concrete counterexample: the current pair can never be proved, so the framework marks the path dead, forcing a revert, an uncut, an uninterpose or an uncase, and returns the counterexample as a hint.
 
-Interpreting a refutation depends on where it happens. On a goal whose sides have been rewritten, it may blame only the path: a valid step can overshoot. Example: S returns `poison`, a valid step refines it to S' returning `0`, and T returns `1`. T refines S, and S' refines S, but T does not refine S'; the translation is fine and only the path is dead. On a callee goal, it may instead mean the interface is too weak (strengthen it) or the cut is misplaced (unsplit and cut elsewhere), since the callee's entry is conservative. None of these refute the translation by themselves.
+Interpreting a refutation depends on where it happens. On a goal whose sides have been rewritten, it may blame only the path: a valid step can overshoot. Example: S returns `poison`, a valid step refines it to S' returning `0`, and T returns `1`. T refines S, and S' refines S, but T does not refine S'; the translation is fine and only the path is dead. On a callee goal, it may instead mean the interface is too weak (strengthen it) or the cut is misplaced (uncut and cut elsewhere), since the callee's entry is conservative. None of these refute the translation by themselves.
 
 A refutation on the root goal, after later steps have replaced its pair, is a counterexample against the replaced pair, not the translation: the goal stays open. Before any step, a check of the root's original pair is a check of the translation, and the certificate replays the checker that refuted it. For callee goals the same applies, and lifting a counterexample there to a root input remains the agent's search problem.
 
@@ -181,8 +181,8 @@ A refutation on the root goal, after later steps have replaced its pair, is a co
 A session looks like this:
 
 1. The framework creates the root goal `(LHS, RHS)`.
-2. The agent inspects (`status`, `show`, `analyze`) and picks a strategy: usually, find aligned cut points and `split`, rewriting one side first when no alignment exists yet.
-3. On each open leaf goal: if it looks small enough, `check` it directly. Otherwise rewrite the src toward the tgt (`rewrite`, transactions), `strengthen` interfaces where the callee lacks facts, and `split` further.
+2. The agent inspects (`status`, `show`, `analyze`) and picks a strategy: usually, find aligned cut points and `cut`, rewriting one side first when no alignment exists yet.
+3. On each open leaf goal: if it looks small enough, `check` it directly. Otherwise rewrite the src toward the tgt (`rewrite`, transactions), `strengthen` interfaces where the callee lacks facts, and `cut` further.
 4. A failed commit, a failed check, or an eager cross-check refutation returns a local counterexample as a hint. The agent either treats it as search feedback (revert, try another path) or investigates it as a possible real miscompilation: use `bash` to hunt for a whole-program input, then `report_cex` to certify it. The exception is the root goal itself: a check on its original pair is a check on the translation, and what it refutes is the run's counterexample.
 5. The session ends when the root goal is proved (verified), the root goal is refuted (counterexample), or the budget runs out (unknown).
 
@@ -197,8 +197,8 @@ Every tool call is logged. Tools that create certified steps record enough to re
 
 ### Splitting
 
-- `split(gid, src_cut, tgt_cut, value_map)`: outlines both sides of an open goal at the given cut points (a cut point names a position in the instruction sequence by the value defined there), or detaches both at a block. The src side's live values at the cut define `g`'s signature; `value_map` gives the corresponding tgt values. Creates two child goals (outer and callee); the parent's status becomes `split` and its heads are frozen. The parent is proved automatically when both children are. Fails structurally if the map is ill-typed or the tgt suffix uses values not covered by the map.
-- `unsplit(gid)`: discards a split goal's children (and their subtrees) and reopens the parent. The way to undo a bad cut.
+- `cut(gid, src_cut, tgt_cut, value_map)`: outlines both sides of an open goal at the given cut points (a cut point names a position in the instruction sequence by the value defined there), or detaches both at a block. The src side's live values at the cut define `g`'s signature; `value_map` gives the corresponding tgt values. Creates two child goals (outer and callee); the parent's status becomes `split` and its heads are frozen. The parent is proved automatically when both children are. Fails structurally if the map is ill-typed or the tgt suffix uses values not covered by the map.
+- `uncut(gid)`: discards a cut goal's children (and their subtrees) and reopens the parent. The way to undo a bad cut.
 - `case(gid, on)`: splits an open goal into two child goals, `holds` where `on` holds and `fails` where it does not. `on` is `{ defined: "!N" }`, whether parameter N is not poison, which `holds` makes `noundef` and `fails` replaces by poison, or a comparison of two parameters, or of one and an integer, which `holds` assumes at the start of both programs and `fails` assumes the inverse of. The parent's status becomes `split`, and it is proved when both children are. Fails if a parameter compared is not `noundef` in the src, or one split on its poison is not a scalar.
 - `uncase(gid)`: discards a goal's two cases (and their subtrees) and reopens it, which undoes a split by cases.
 - `unfold(gid, side)`: before strengthening, unfold the given side of a half of a loop cut at its header. Certified without running alive2.
@@ -224,14 +224,14 @@ Every tool call is logged. Tools that create certified steps record enough to re
 - `commit()`: certify the transaction's before/after pair, by `llops reshaped` or `llops respected` when it only reshapes control flow or changes attributes, and otherwise with alive2, in the side-appropriate direction. Success: one certified step, head advances. Failure: head unchanged, local counterexample returned as a hint.
 - `abort()`: discard the transaction.
 - `revert(gid, side, pid)`: move the head of an open goal's side back to an earlier program in its history. Later steps are abandoned (kept in the log, unused).
-- `interpose(gid, program)`: puts a program that defines the same function between an open goal's two sides, splitting the goal into two child goals, `lhs` holding the src and the program, `rhs` the program and the tgt. The parent's status becomes `split`, and it is proved when both children are. Fails if the program is outside the program shape, defines another function, or is one of the goal's sides.
+- `interpose(gid, program)`: puts a program that defines the same function between an open goal's two sides, turning the goal into two child goals, `lhs` holding the src and the program, `rhs` the program and the tgt. The parent's status becomes `split`, and it is proved when both children are. Fails if the program is outside the program shape, defines another function, or is one of the goal's sides.
 - `uninterpose(gid)`: discards an interposed goal's two children (and their subtrees) and reopens the parent. The way to undo an interpose.
 
 A step may move a goal that has already been proved. The goal reopens, and every discharge that proof carried upwards comes undone with it. The old discharge stays in the log, unused, as abandoned steps do after a revert.
 
 ### Interface strengthening
 
-- `strengthen(gid, contract)`: enrich a split goal's interface with parameter attributes (`param_attrs`), semantic function attributes (`fn_attrs`), and entry preconditions written as IR (`predicates`). Phase 1 proves caller preconditions in `outer.src`, the parameter attributes on the callee's declaration and the predicates as `llvm.assume` assertions before each call, certified by alive2. Phase 2 certifies that `callee.src` keeps the function attributes. Phase 3 gives `outer.tgt` the same contract, the parameter attributes on the declaration and the predicates assumed before each call, and both caller declarations the function attributes, and applies parameter attributes, function attributes, and entry predicates to callee definitions (`callee.src` and `callee.tgt`).
+- `strengthen(gid, contract)`: enrich a cut goal's interface with parameter attributes (`param_attrs`), semantic function attributes (`fn_attrs`), and entry preconditions written as IR (`predicates`). Phase 1 proves caller preconditions in `outer.src`, the parameter attributes on the callee's declaration and the predicates as `llvm.assume` assertions before each call, certified by alive2. Phase 2 certifies that `callee.src` keeps the function attributes. Phase 3 gives `outer.tgt` the same contract, the parameter attributes on the declaration and the predicates assumed before each call, and both caller declarations the function attributes, and applies parameter attributes, function attributes, and entry predicates to callee definitions (`callee.src` and `callee.tgt`).
 
 An interface is strengthened as a whole rather than one attribute at a time, so its solver cost is one set of queries: the caller's steps, the callee's attribute checks, and the eager cross-checks.
 
@@ -255,10 +255,10 @@ Both children are cross-checked once at the end, after phase 3, and not between 
 A "verified" verdict is delivered as a self-contained package that anyone can replay with only alive2, llops, the rule applier, and a scripting runtime; the framework and the agent are not needed. Layout:
 
 - `programs/`: every IR version referenced by the proof, one file per program, named by content hash. Hash naming makes chain connectivity a trivial string comparison.
-- `manifest.json`: the pruned goal tree. Per goal: its initial (src, tgt) hashes, its chain of certified steps, and how it was discharged, with the checker for a checked leaf. Per step: kind (rule, checked, unfold, split, strengthen), side, before/after hashes, for checked steps the checker (alive2, `llops reshaped` or `llops respected`), and for alive2-backed steps the exact invocation (function pair, direction, options, timeout).
+- `manifest.json`: the pruned goal tree. Per goal: its initial (src, tgt) hashes, its chain of certified steps, and how it was discharged, with the checker for a checked leaf. Per step: kind (rule, checked, unfold, strengthen), side, before/after hashes, for checked steps the checker (alive2, `llops reshaped` or `llops respected`), and for alive2-backed steps the exact invocation (function pair, direction, options, timeout).
 - `check.py`: a small standalone script that replays the proof, one step at a time.
 
-The script checks that every chain connects, from the root's two programs on, and reruns the checker, the rule or the unfold behind every step and every leaf. It checks that every cut, put back together, gives the program it was made on, that every interposed program sits between its goal's two sides, and that every pair of cases is its goal's pair on each side of what it was cut on. It verifies the root only when every goal under it passed; [implementation.md](./implementation.md#certificate-package-and-checkpy) lists the replay step by step. Replay timeouts should be more generous than the originals, since solver timing varies across machines.
+The script checks that every chain connects, from the root's two programs on, and reruns the checker, the rule or the unfold behind every step and every leaf. It checks that every cut, put back together, gives the program it was made on, that every interposed program sits between its goal's two sides, and that every pair of cases is its goal's pair on each side of what it was split on. It verifies the root only when every goal under it passed; [implementation.md](./implementation.md#certificate-package-and-checkpy) lists the replay step by step. Replay timeouts should be more generous than the originals, since solver timing varies across machines.
 
 The consequence for trust is significant: the framework is only a search assistant and drops out of the trust base entirely. Anything it gets wrong (bookkeeping, direction, outlining) surfaces as a failed replay. The composition rule and the faithfulness check live in `kernel/check.py`, which is small, standalone, and auditable.
 
@@ -284,7 +284,7 @@ Two tiers, drawn by one criterion: can a bug here cause a wrong verdict to be ac
 - llubi, for a counterexample alive2 does not decide: a llubi bug cannot fake "verified", and a replay is a single concrete input that is easy to cross-check independently.
 - The verified rewriter llrwt (used by `kernel/check.py` to replay rule steps), together with the rules' external proofs and the MLIR translators it runs under.
 - llops, for the subcommands `kernel/check.py` runs and the LLVM they link: `validate`, `canon`, `inline`, `reattach`, `unfold`, `attrs`, `assume`, `poison`, `instantiate` and `harness` rebuild and gate the programs the replay compares, and `reshaped` and `respected` certify the steps that only reshape control flow or change attributes.
-- `kernel/check.py`: the small standalone checker that encodes chain connectivity, split faithfulness, case coverage, tree composition, and the loop rules no solver checks (induction and unfolding).
+- `kernel/check.py`: the small standalone checker that encodes chain connectivity, cut faithfulness, case coverage, tree composition, and the loop rules no solver checks (induction and unfolding).
 
 **Tier 2, success-critical (untrusted for soundness).** The framework, the analyses, the agent, and `bash` scratch work. A bug here can waste time, mislead the search, or end the run at "unknown"; it cannot survive a certificate replay, so it cannot corrupt a verdict. These components are still engineered and tested like normal software, because the tool's success rate depends on them. The framework in particular orchestrates the search and assembles the package, but its mistakes show up as failed replays, not wrong answers.
 

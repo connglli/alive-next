@@ -524,7 +524,7 @@ class Case(unittest.TestCase):
     return self.built.write()
 
   def cased(self, src: str = SRC, tgt: str = TGT, fails: str = "sge", recorded=None) -> Path:
-    """A root cut by cases on its parameter's sign, each case checked by
+    """A root split by cases on its parameter's sign, each case checked by
     alive2: g2 assumes `!0 slt 0`, and g3 assumes `fails` in its place."""
     predicate = {"op": "slt", "lhs": "!0", "rhs": 0}
     pair = {"src": self.built.program(canonical(src)), "tgt": self.built.program(canonical(tgt))}
@@ -545,7 +545,7 @@ class Case(unittest.TestCase):
     return self.built.write()
 
   def poison_cased(self, src: str, tgt: str, fails: str = "poison") -> Path:
-    """A root whose parameter may be poison, cut by cases on whether it is
+    """A root whose parameter may be poison, split by cases on whether it is
     (g2 makes it noundef, g3 puts poison in its place), and g2 cut again on
     its sign, each leaf checked by alive2."""
     pair = {"src": self.built.program(canonical(src)), "tgt": self.built.program(canonical(tgt))}
@@ -669,7 +669,7 @@ class Case(unittest.TestCase):
     outer = {"src": stored(s["outer"]), "tgt": stored(t["outer"])}
     inner = {"src": stored(s["callee"]), "tgt": stored(t["callee"])}
     phis = {"src": s["phis"], "tgt": t["phis"]}
-    cut = {"kind": "split", "callee": "k", "detach": {"phis": phis, "hypothesis": "k.ih"}}
+    cut = {"kind": "cut", "callee": "k", "detach": {"phis": phis, "hypothesis": "k.ih"}}
     slots = {"src": s.get("slots", []), "tgt": t.get("slots", [])}
     if slots["src"] or slots["tgt"]:
       cut["slots"] = slots
@@ -875,7 +875,7 @@ class TestGolden(Case):
     package = self.cased(recorded={"op": "eq", "lhs": 0, "rhs": 0})
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS)
     self.assertNotEqual(done.returncode, 0, done.stdout)
-    self.assertIn("cut by cases on no comparison", done.stdout + done.stderr)
+    self.assertIn("split by cases on no comparison", done.stdout + done.stderr)
 
   def test_a_goal_whose_tgt_only_adds_attributes_its_body_respects_verifies(self):
     marked = READ.replace("(ptr %p) {", "(ptr readonly %p) memory(argmem: read) {")
@@ -965,7 +965,7 @@ class TestGolden(Case):
     whole = {"src": stored(src), "tgt": stored(tgt)}
     outer = {"src": stored(s["outer"]), "tgt": stored(t["outer"])}
     inner = {"src": stored(s["callee"]), "tgt": stored(t["callee"])}
-    cut = {"kind": "split", "callee": "g", "outer": "g2", "inner": "g3"}
+    cut = {"kind": "cut", "callee": "g", "outer": "g2", "inner": "g3"}
     self.built.goal("g1", whole, whole, [], cut)
     self.built.goal("g2", outer, outer, [], {"kind": "check"})
     self.built.goal("g3", inner, inner, [], {"kind": "check"})
@@ -1227,7 +1227,7 @@ class TestGolden(Case):
       "tgt": self.built.program(llops("canon", {"module": tgt["callee"]})["module"]),
     }
     self.built.goal(
-      "g1", whole, whole, [], {"kind": "split", "callee": "g", "outer": "g2", "inner": "g3"}
+      "g1", whole, whole, [], {"kind": "cut", "callee": "g", "outer": "g2", "inner": "g3"}
     )
     self.built.goal("g2", outer, outer, [], {"kind": "check"})
     self.built.goal("g3", inner, inner, [], {"kind": "check"})
@@ -1353,8 +1353,8 @@ class TestTampered(Case):
       inner[side] = self.built.program(canonical(done["callee"]))
       outer_end[side] = self.built.program(marked(canonical(done["outer"])))
       inner_end[side] = self.built.program(marked(canonical(done["callee"])))
-    split = {"kind": "split", "callee": "g", "outer": "g2", "inner": "g3"}
-    self.built.goal("g1", whole, whole, [], split)
+    cut = {"kind": "cut", "callee": "g", "outer": "g2", "inner": "g3"}
+    self.built.goal("g1", whole, whole, [], cut)
     outer_steps = [
       {"kind": "check", "side": side, "from": outer[side], "to": outer_end[side]}
       for side in ("src", "tgt")
@@ -1389,8 +1389,8 @@ class TestTampered(Case):
       inner[side] = self.built.program(canonical(done["callee"]))
       outer_end[side] = declared(canonical(done["outer"]))
       inner_end[side] = declared(canonical(done["callee"]))
-    split = {"kind": "split", "callee": "g", "outer": "g2", "inner": "g3"}
-    self.built.goal("g1", whole, whole, [], split)
+    cut = {"kind": "cut", "callee": "g", "outer": "g2", "inner": "g3"}
+    self.built.goal("g1", whole, whole, [], cut)
     outer_steps = [
       {"kind": "check", "side": side, "from": outer[side], "to": outer_end[side]}
       for side in ("src", "tgt")
@@ -1505,7 +1505,7 @@ b:
       {"src": stored(whole), "tgt": stored(swapped)},
       [],
       {
-        "kind": "split",
+        "kind": "cut",
         "callee": "k",
         "detach": {"phis": {"src": s["phis"], "tgt": t["phis"]}},
         "outer": "g2",
@@ -1574,7 +1574,7 @@ declare i32 @k.ih(i32)
     outer = {"src": stored(s["outer"]), "tgt": stored(s["outer"])}
     inner = {"src": stored(s["callee"]), "tgt": stored(callee)}
     phis = {"src": s["phis"], "tgt": s["phis"]}
-    cut = {"kind": "split", "callee": "k", "detach": {"phis": phis, "hypothesis": "k.ih"}}
+    cut = {"kind": "cut", "callee": "k", "detach": {"phis": phis, "hypothesis": "k.ih"}}
     self.built.goal("g1", whole, whole, [], {**cut, "outer": "g2", "inner": "g3"})
     self.built.goal("g2", outer, outer, [], {"kind": "check"})
     self.built.goal("g3", inner, inner, [], {"kind": "check"})
@@ -1822,7 +1822,7 @@ declare i32 @k.ih(i32)
       whole = {"src": stored(src, False), "tgt": stored(tgt, False)}
       outer = {"src": stored(s["outer"], outer_claims), "tgt": stored(t["outer"], outer_claims)}
       inner = {"src": stored(s["callee"], True), "tgt": stored(t["callee"], True)}
-      cut = {"kind": "split", "callee": "g", "outer": "g2", "inner": "g3"}
+      cut = {"kind": "cut", "callee": "g", "outer": "g2", "inner": "g3"}
       self.built.goal("g1", whole, whole, [], cut)
       self.built.goal("g2", outer, outer, [], {"kind": "check"})
       self.built.goal("g3", inner, inner, [], {"kind": "check"})
@@ -1900,7 +1900,7 @@ declare i32 @k.ih(i32)
       "by": [{"gid": "g2", "hash": outer_end["src"]}],
     }
     self.built.goal(
-      "g1", whole, whole, [], {"kind": "split", "callee": "g", "outer": "g2", "inner": "g3"}
+      "g1", whole, whole, [], {"kind": "cut", "callee": "g", "outer": "g2", "inner": "g3"}
     )
     self.built.goal("g2", outer, outer_end, outer_steps, {"kind": "check"})
     self.built.goal("g3", inner, inner_end, [step], {"kind": "check"})

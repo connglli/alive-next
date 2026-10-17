@@ -16,6 +16,8 @@ import { createBeginTool } from "./begin.ts";
 import { createCaseTool } from "./case.ts";
 import { createCheckTool } from "./check.ts";
 import { createCommitTool } from "./commit.ts";
+import { createCutTool } from "./cut.ts";
+import { createCutPreviewTool } from "./cut-preview.ts";
 import { createEditTool } from "./edit.ts";
 import { toolResultFrom } from "./format.ts";
 import { createGiveUpTool } from "./give-up.ts";
@@ -28,15 +30,13 @@ import { createRewritePreviewTool } from "./rewrite-preview.ts";
 import { createRulesTool } from "./rules.ts";
 import { createSandboxTools, SANDBOX_TOOLS } from "./sandbox.ts";
 import { createShowTool } from "./show.ts";
-import { createSplitTool } from "./split.ts";
-import { createSplitPreviewTool } from "./split-preview.ts";
 import { createStatusTool } from "./status.ts";
 import { createStrengthenTool } from "./strengthen.ts";
 import { createStrengthenPreviewTool } from "./strengthen-preview.ts";
 import { createUncaseTool } from "./uncase.ts";
+import { createUncutTool } from "./uncut.ts";
 import { createUnfoldTool } from "./unfold.ts";
 import { createUninterposeTool } from "./uninterpose.ts";
-import { createUnsplitTool } from "./unsplit.ts";
 
 export { createSandboxTools, SANDBOX_TOOLS };
 
@@ -68,9 +68,9 @@ export function createProofAssistantTools(
     createCommitTool(session),
     createAbortTool(session),
     createRevertTool(session),
-    createSplitPreviewTool(session),
-    createSplitTool(session),
-    createUnsplitTool(session),
+    createCutPreviewTool(session),
+    createCutTool(session),
+    createUncutTool(session),
     createInterposeTool(session),
     createUninterposeTool(session),
     createCaseTool(session),

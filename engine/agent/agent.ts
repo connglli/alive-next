@@ -158,7 +158,7 @@ export async function createProofAssistant(options: ProofAssistantOpts): Promise
   });
   const pi = runtime.session;
 
-  // Our tools mutate one goal tree, so a batch holding a commit and a split
+  // Our tools mutate one goal tree, so a batch holding a commit and a cut
   // would answer differently depending on which ran first.
   pi.agent.toolExecution = "sequential";
 

@@ -111,7 +111,7 @@ export class Strengthen {
   ) {}
 
   /**
-   * Strengthen the interface of the outlined function at split goal `gid`.
+   * Strengthen the interface of the outlined function of the cut at goal `gid`.
    *
    * Proves caller preconditions, certifies callee function attributes, materializes
    * the contract across caller and callee programs, and eagerly cross-checks child goals.
@@ -366,7 +366,7 @@ export class Strengthen {
   }
 
   /**
-   * The part of `contract` that strengthening split goal `gid` would prove:
+   * The part of `contract` that strengthening the cut at goal `gid` would prove:
    * the facts that hold where the outer calls the callee and, for a loop's
    * callee, that one iteration keeps with those facts assumed at its entry.
    * Each parameter's attributes and each predicate is a fact, asked alone, and
@@ -402,16 +402,16 @@ export class Strengthen {
     return facts.filter((_, i) => holds[i]);
   }
 
-  /** The two goals split goal `gid` left, or why its interface can no longer change. */
+  /** The two goals the cut at goal `gid` left, or why its interface can no longer change. */
   private halves(tree: Tree, gid: string): Halves | { reason: string } {
     const parent = tree.goals.get(gid);
     if (!parent) throw new Error(`no goal ${gid}`);
     if (parent.children.length === 0) {
       const cutBy = parent.parent ? `; strengthen ${parent.parent}, which cut it` : "";
-      throw new Error(`${gid} is ${parent.status}, not split${cutBy}`);
+      throw new Error(`${gid} is ${parent.status}, not cut${cutBy}`);
     }
-    if (interposed(tree, parent)) throw new Error(`${gid} was interposed, not split`);
-    if (cased(tree, parent)) throw new Error(`${gid} was cut by cases, not split`);
+    if (interposed(tree, parent)) throw new Error(`${gid} was interposed, not cut`);
+    if (cased(tree, parent)) throw new Error(`${gid} was split by cases, not cut`);
     const outer = child(tree, parent, "outer");
     const callee = child(tree, parent, "callee");
     const name = callee.callee;

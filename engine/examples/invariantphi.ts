@@ -55,16 +55,16 @@ exit:
 
   async prove(session) {
     // i (`%2`), the phi (`%3`) that the tgt reads as x (`%1`), s and n.
-    const split = await session.split("g1", "%bb1", "%bb1", {
+    const cut = await session.cut("g1", "%bb1", "%bb1", {
       "%2": "%2",
       "%3": "%1",
       "%4": "%3",
       "%0": "%0",
     });
-    expect("detach the header", split.kind === "split", split);
-    if (split.kind !== "split") return;
+    expect("detach the header", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
 
-    for (const gid of [split.children.outer, split.children.callee]) {
+    for (const gid of [cut.children.outer, cut.children.callee]) {
       const checked = await session.check(gid);
       expect(`check ${gid}`, checked.outcome === "proved", checked);
     }

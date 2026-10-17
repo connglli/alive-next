@@ -75,26 +75,26 @@ exit:
 
   async prove(session) {
     // `%bb1` is the outer header: j (`%2`), s (`%3`), n (`%0`) and m (`%1`) cross.
-    const outer = await session.split("g1", "%bb1", "%bb1", {
+    const outer = await session.cut("g1", "%bb1", "%bb1", {
       "%2": "%2",
       "%3": "%3",
       "%0": "%0",
       "%1": "%1",
     });
-    expect("detach the outer header", outer.kind === "split", outer);
-    if (outer.kind !== "split") return;
+    expect("detach the outer header", outer.kind === "cut", outer);
+    if (outer.kind !== "cut") return;
 
     // In that callee `%bb2` is the inner header: i (`%5`) and t (`%6`) cross,
     // with j (`%0`), n (`%2`) and m (`%3`).
-    const inner = await session.split(outer.children.callee, "%bb2", "%bb2", {
+    const inner = await session.cut(outer.children.callee, "%bb2", "%bb2", {
       "%5": "%5",
       "%6": "%6",
       "%0": "%0",
       "%2": "%2",
       "%3": "%3",
     });
-    expect("detach the inner header", inner.kind === "split", inner);
-    if (inner.kind !== "split") return;
+    expect("detach the inner header", inner.kind === "cut", inner);
+    if (inner.kind !== "cut") return;
 
     for (const gid of [outer.children.outer, inner.children.outer, inner.children.callee]) {
       const checked = await session.check(gid);

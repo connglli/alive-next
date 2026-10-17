@@ -62,13 +62,9 @@ exit:
   async prove(session) {
     // `%bb1` is the header. Its phis `%2` (i) and `%3` (s) and the bound `%1`
     // (n) cross, in that order.
-    const split = await session.split("g1", "%bb1", "%bb1", { "%2": "%2", "%3": "%3", "%1": "%1" });
-    expect(
-      "detach the header",
-      split.kind === "split" && split.detach?.hypothesis !== undefined,
-      split,
-    );
-    if (split.kind !== "split") return;
+    const cut = await session.cut("g1", "%bb1", "%bb1", { "%2": "%2", "%3": "%3", "%1": "%1" });
+    expect("detach the header", cut.kind === "cut" && cut.detach?.hypothesis !== undefined, cut);
+    if (cut.kind !== "cut") return;
 
     const unfolded = await session.unfold("g3", "src");
     expect("run two iterations of the src per call", unfolded.kind === "certified", unfolded);

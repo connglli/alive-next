@@ -8,9 +8,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Llops } from "../core/drivers/llops.ts";
+import { Cuts } from "../core/state/cuts.ts";
 import { derive, type Goal, head, type Tree } from "../core/state/goals.ts";
 import { interpose, uninterpose } from "../core/state/interpose.ts";
-import { Splits } from "../core/state/splits.ts";
 import { Store } from "../core/state/store.ts";
 import type { Effect, Entry, Event } from "../core/state/trajectory.ts";
 import { toolchain } from "./toolchain-under-test.ts";
@@ -125,12 +125,12 @@ describe.skipIf(!built)("interposing", () => {
     expect(after.goals.has("g2")).toBe(false);
   });
 
-  test("is not undone by unsplit, which undoes splits alone", async () => {
+  test("is not undone by uncut, which undoes cuts alone", async () => {
     const result = await interpose(store, llops, await start(), "g1", MIDDLE);
     if (result.kind !== "interposed") throw new Error(result.message);
     const tree = replay(...result.effects);
-    const unsplit = () => new Splits(store, llops).unsplit(tree, "g1");
-    expect(unsplit).toThrow(/interposed, not split/);
+    const uncut = () => new Cuts(store, llops).uncut(tree, "g1");
+    expect(uncut).toThrow(/interposed, not cut/);
   });
 
   test("uninterpose refuses a goal that was not interposed", async () => {

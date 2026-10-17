@@ -1,15 +1,15 @@
-// tree_split_preview: preview cutting a goal in two without modifying the tree.
+// tree_cut_preview: preview cutting a goal in two without modifying the tree.
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Session } from "../../core/session.ts";
 import { formatParams, formatSection, toolResultFrom } from "./format.ts";
 
-export function createSplitPreviewTool(session: Session) {
+export function createCutPreviewTool(session: Session) {
   return defineTool({
-    name: "tree_split_preview",
-    label: "Split Preview",
+    name: "tree_cut_preview",
+    label: "Cut Preview",
     description:
-      "Preview tree_split at an instruction (`%N` or `#N`) or a block (`%bbN`) on each side without changing the goal tree. Without value_map, it answers with the values that would cross the cut on each side; with one, it says whether the tgt side lines up with the src's.",
+      "Preview tree_cut at an instruction (`%N` or `#N`) or a block (`%bbN`) on each side without changing the goal tree. Without value_map, it answers with the values that would cross the cut on each side; with one, it says whether the tgt side lines up with the src's.",
     parameters: Type.Object({
       gid: Type.String(),
       src_cut: Type.String({
@@ -26,19 +26,19 @@ export function createSplitPreviewTool(session: Session) {
       ),
     }),
     execute: async (_id, { gid, src_cut, tgt_cut, value_map }) => {
-      const preview = await session.splitPreview(gid, src_cut, tgt_cut, value_map);
+      const preview = await session.cutPreview(gid, src_cut, tgt_cut, value_map);
       if (preview.kind === "refused") {
         return toolResultFrom(session, false, `refused: ${preview.message}`, preview);
       }
       const params = formatParams(preview.params, preview.detach?.hypothesis);
       const cutting = `cutting ${gid} at src ${src_cut} and tgt ${tgt_cut} would make @${preview.callee}`;
       if (value_map) {
-        const valid = "The value_map is valid: tree_split with the same arguments makes this cut.";
+        const valid = "The value_map is valid: tree_cut with the same arguments makes this cut.";
         return toolResultFrom(session, true, `${cutting}\n${valid}`, preview, [params]);
       }
       const tgt = (preview.tgtParams ?? []).map((param) => `  ${param.live} ${param.type}`);
       const needs =
-        'tree_split needs a value_map from each src value below to a tgt value, as { "<src_value>": "<tgt_value>" }.';
+        'tree_cut needs a value_map from each src value below to a tgt value, as { "<src_value>": "<tgt_value>" }.';
       return toolResultFrom(session, true, `${cutting}\n${needs}`, preview, [
         params,
         formatSection("tgt values at its cut", tgt.join("\n")),

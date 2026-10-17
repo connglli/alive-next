@@ -67,9 +67,9 @@ exit:
 
   async prove(session) {
     // `%bb1` is the header on both sides; i (`%1`), j (`%2`) and n (`%0`) cross.
-    const split = await session.split("g1", "%bb1", "%bb1", { "%1": "%1", "%2": "%2", "%0": "%0" });
-    expect("detach the header", split.kind === "split", split);
-    if (split.kind !== "split") return;
+    const cut = await session.cut("g1", "%bb1", "%bb1", { "%1": "%1", "%2": "%2", "%0": "%0" });
+    expect("detach the header", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
 
     // j <=u i, parameter 1 against parameter 0.
     const kept = await session.strengthen("g1", {

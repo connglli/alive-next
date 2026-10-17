@@ -17,7 +17,7 @@ import { expect, type Scenario } from "../core/scenario.ts";
 
 export const cut: Scenario = {
   name: "cut",
-  about: "a split, and a check on each half",
+  about: "a cut, and a check on each half",
   verdict: "verified",
 
   src: `define i32 @f(i32 noundef %x) {
@@ -40,15 +40,15 @@ entry:
 
   async prove(session) {
     // The suffix uses the add and the parameter, so both cross the cut.
-    const split = await session.split("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
-    expect("cut at the multiply", split.kind === "split", split);
-    if (split.kind !== "split") return;
+    const made = await session.cut("g1", "%2", "%2", { "%0": "%0", "%1": "%1" });
+    expect("cut at the multiply", made.kind === "cut", made);
+    if (made.kind !== "cut") return;
 
     // Which of the values crossing the cut can be promised to the callee is a
     // question with an answer, so ask it rather than assert it. Both are
     // computed from a defined parameter by instructions that cannot make
     // poison, and the analysis says so.
-    const facts = await session.analyze(split.children.outer, "src", "defined");
+    const facts = await session.analyze(made.children.outer, "src", "defined");
     expect("ask what the caller has", facts.ok, facts);
     if (!facts.ok) return;
     const defined = new Set(
@@ -57,16 +57,16 @@ entry:
 
     // An interface is strengthened as a whole, so the facts go in one call.
     const wanted: Record<number, Attrs> = {};
-    for (const [param, entry] of split.params.entries()) {
+    for (const [param, entry] of made.params.entries()) {
       expect(`${entry.live} is defined`, defined.has(entry.live), facts);
       wanted[param] = { noundef: true };
     }
     const proved = await session.strengthen("g1", { param_attrs: wanted });
     expect("prove the interface defined", proved.kind === "strengthened", proved);
 
-    const outer = await session.check(split.children.outer);
-    expect(`check ${split.children.outer}`, outer.outcome === "proved", outer);
-    const callee = await session.check(split.children.callee);
-    expect(`check ${split.children.callee}`, callee.outcome === "proved", callee);
+    const outer = await session.check(made.children.outer);
+    expect(`check ${made.children.outer}`, outer.outcome === "proved", outer);
+    const callee = await session.check(made.children.callee);
+    expect(`check ${made.children.callee}`, callee.outcome === "proved", callee);
   },
 };

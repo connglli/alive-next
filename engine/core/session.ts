@@ -31,6 +31,7 @@ import type { Llrwt, RuleInfo } from "./drivers/llrwt.ts";
 import type { Ref } from "./refs.ts";
 import { type CaseResult, cases, uncase } from "./state/cases.ts";
 import { Counterexamples, type Interpreter, type ReportResult } from "./state/counterexamples.ts";
+import { type CutPreviewResult, type CutResult, Cuts } from "./state/cuts.ts";
 import {
   derive,
   type Goal,
@@ -44,7 +45,6 @@ import {
   workable,
 } from "./state/goals.ts";
 import { type InterposeResult, interpose, uninterpose } from "./state/interpose.ts";
-import { type SplitPreviewResult, type SplitResult, Splits } from "./state/splits.ts";
 import {
   type Checker,
   type CheckGoalResult,
@@ -104,13 +104,13 @@ export type RevertResult =
   | { kind: "refused"; message: string };
 
 /** The cut was restored, or preserved because an open transaction needs a child. */
-export type UnsplitResult = { kind: "unsplit"; effects: Effect[] } | EditingRefusal;
+export type UncutResult = { kind: "uncut"; effects: Effect[] } | EditingRefusal;
 
 export type UninterposeResult = { kind: "uninterposed"; effects: Effect[] } | EditingRefusal;
 
 export type UncaseResult = { kind: "uncased"; effects: Effect[] } | EditingRefusal;
 
-export type SessionSplitResult = SplitResult | EditingRefusal;
+export type SessionCutResult = CutResult | EditingRefusal;
 
 export type SessionInterposeResult = InterposeResult | EditingRefusal;
 
@@ -188,7 +188,7 @@ export class Session {
   private readonly llops: Llops;
   private readonly log: Trajectory;
   private readonly steps: Steps;
-  private readonly splits: Splits;
+  private readonly cuts: Cuts;
   private readonly strengthening: Strengthen;
   private readonly editing: Transactions;
   private readonly counterexamples: Counterexamples;
@@ -211,7 +211,7 @@ export class Session {
       options.llops,
       options.rewriter,
     );
-    this.splits = new Splits(this.store, options.llops);
+    this.cuts = new Cuts(this.store, options.llops);
     this.strengthening = new Strengthen(this.store, options.llops, this.steps);
     this.editing = new Transactions(this.store, options.llops);
     this.counterexamples = new Counterexamples(
@@ -387,7 +387,7 @@ export class Session {
       if (landed.some((hash) => goal[side].history.lastIndexOf(hash) > at)) {
         const cut = goal.parent;
         const why = `going back to ${target.id} would undo part of a strengthen of ${cut}`;
-        return { kind: "refused", message: `${why}; unsplit ${cut} to undo all of it` };
+        return { kind: "refused", message: `${why}; uncut ${cut} to undo all of it` };
       }
       return {
         kind: "reverted",
@@ -547,44 +547,44 @@ export class Session {
    * If valueMap is omitted, returns the src live-in parameter signature.
    * If valueMap is provided, validates that the tgt cut lines up with that signature.
    */
-  splitPreview(
+  cutPreview(
     gid: string,
     srcCut: Ref,
     tgtCut: Ref,
     valueMap?: Record<Ref, Ref>,
-  ): Promise<SplitPreviewResult> {
+  ): Promise<CutPreviewResult> {
     return this.act(
-      "split_preview",
+      "cut_preview",
       { gid, src_cut: srcCut, tgt_cut: tgtCut, value_map: valueMap },
-      (tree) => this.splits.preview(tree, gid, srcCut, tgtCut, valueMap),
+      (tree) => this.cuts.preview(tree, gid, srcCut, tgtCut, valueMap),
       previewed,
     );
   }
 
   /** Cut a goal in two, which adds the two children to the tree. */
-  split(
+  cut(
     gid: string,
     srcCut: Ref,
     tgtCut: Ref,
     valueMap: Record<Ref, Ref>,
-  ): Promise<SessionSplitResult> {
+  ): Promise<SessionCutResult> {
     return this.act(
-      "split",
+      "cut",
       { gid, src_cut: srcCut, tgt_cut: tgtCut, value_map: valueMap },
-      async (tree): Promise<SessionSplitResult> => {
+      async (tree): Promise<SessionCutResult> => {
         const editing = this.editing.open();
         if (editing && this.editing.isEditing(gid)) {
           return { kind: "editing", message: openMessage(editing) };
         }
-        return this.splits.split(tree, gid, srcCut, tgtCut, valueMap);
+        return this.cuts.cut(tree, gid, srcCut, tgtCut, valueMap);
       },
     );
   }
 
   /**
    * Put a program, by default the open transaction's, between a goal's two
-   * sides, which splits the goal into two: the program refines the src, and
-   * the tgt refines the program.
+   * sides, which leaves two goals: the program refines the src, and the tgt
+   * refines the program.
    */
   interpose(gid: string, program?: string): Promise<SessionInterposeResult> {
     return this.act("interpose", { gid }, async (tree): Promise<SessionInterposeResult> => {
@@ -628,7 +628,7 @@ export class Session {
     });
   }
 
-  /** Undo a cut by cases, which discards the two children and their subtrees. */
+  /** Undo a split by cases, which discards the two children and their subtrees. */
   uncase(gid: string): Promise<UncaseResult> {
     return this.act("uncase", { gid }, async (tree) => {
       const editing = this.editing.open();
@@ -639,14 +639,14 @@ export class Session {
     });
   }
 
-  /** Undo a split, which discards the two children and their subtrees. */
-  unsplit(gid: string): Promise<UnsplitResult> {
-    return this.act("unsplit", { gid }, async (tree) => {
+  /** Undo a cut, which discards the two children and their subtrees. */
+  uncut(gid: string): Promise<UncutResult> {
+    return this.act("uncut", { gid }, async (tree) => {
       const editing = this.editing.open();
       if (editing && this.editing.isEditingBelow(tree, gid)) {
         return { kind: "editing", message: openMessage(editing) };
       }
-      return { kind: "unsplit", effects: this.splits.unsplit(tree, gid) };
+      return { kind: "uncut", effects: this.cuts.uncut(tree, gid) };
     });
   }
 
@@ -844,7 +844,7 @@ function resolved(config: unknown, timeouts: Timeouts): unknown {
  * the log is asked, so a log that repeats them per preview is a log nobody
  * reads.
  */
-function previewed(result: SplitPreviewResult): unknown {
+function previewed(result: CutPreviewResult): unknown {
   if (result.kind === "refused") return result;
   return { kind: result.kind, params: result.params, callee: result.callee };
 }

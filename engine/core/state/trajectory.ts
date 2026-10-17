@@ -34,7 +34,7 @@ export interface Slots {
 }
 
 /**
- * What a cut by cases splits a goal's inputs on: a comparison of its
+ * What a case splits a goal's inputs on: a comparison of its
  * parameters, or whether parameter `defined` (`!N`) is poison.
  */
 export type CaseOn = Comparison | { defined: Name };
@@ -126,7 +126,7 @@ export type Effect =
       rhs: { gid: string; src: Hash; tgt: Hash };
     }
   /**
-   * A goal was cut by cases on `on`: child `holds` is the pair where it
+   * A goal was split by cases on `on`: child `holds` is the pair where it
    * holds, and child `fails` where it does not, and both proved prove the
    * goal, since every input the src does not make undefined lies in one.
    */
@@ -139,7 +139,7 @@ export type Effect =
     }
   /** A goal was cut in two; the children arrive with their initial pairs. */
   | {
-      effect: "split";
+      effect: "cut";
       gid: string;
       /** The outlined function, named here so no reader has to guess it. */
       name: string;
@@ -169,11 +169,11 @@ export type Effect =
       /** The steps proving the contract before each call: one, or two for a loop. */
       by?: StepRef[];
     }
-  /** A split was undone, discarding both children and their subtrees. */
-  | { effect: "unsplit"; gid: string }
+  /** A cut was undone, discarding both children and their subtrees. */
+  | { effect: "uncut"; gid: string }
   /** An interpose was undone, discarding both children and their subtrees. */
   | { effect: "uninterpose"; gid: string }
-  /** A cut by cases was undone, discarding both children and their subtrees. */
+  /** A split by cases was undone, discarding both children and their subtrees. */
   | { effect: "uncase"; gid: string }
   /** A side went back to an earlier program of its own history. */
   | { effect: "revert"; gid: string; side: "src" | "tgt"; to: Hash }
@@ -197,8 +197,8 @@ export interface ToolResultEvent {
   /**
    * What it did to the tree, in order, and empty for a tool that only reads.
    * A list rather than one effect because a tool is one move the agent made:
-   * strengthen lands several records and may discharge two goals, and splitting
-   * that across lines would lose which move they came from.
+   * strengthen lands several records and may discharge two goals, and spreading
+   * that over lines would lose which move they came from.
    */
   effects?: Effect[];
   result: unknown;

@@ -76,9 +76,9 @@ none:
 
   async prove(session) {
     // The pointer (`%3`) and the key (`%1`) cross.
-    const split = await session.split("g1", "%bb1", "%bb1", { "%3": "%3", "%1": "%1" });
-    expect("detach the header", split.kind === "split", split);
-    if (split.kind !== "split") return;
+    const cut = await session.cut("g1", "%bb1", "%bb1", { "%3": "%3", "%1": "%1" });
+    expect("detach the header", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
 
     const kept = await session.strengthen("g1", {
       predicates: [{ op: "ne", lhs: "!1", rhs: 0 }],

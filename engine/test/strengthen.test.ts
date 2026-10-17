@@ -12,10 +12,10 @@ import { join } from "node:path";
 import type { CheckOutcome, CheckResult } from "../core/drivers/alive2.ts";
 import { type Attrs, Llops, type Predicate } from "../core/drivers/llops.ts";
 import type { Llrwt } from "../core/drivers/llrwt.ts";
+import { Cuts } from "../core/state/cuts.ts";
 import type { Goal, Tree } from "../core/state/goals.ts";
 import { applyEffect, derive, head } from "../core/state/goals.ts";
 import { interpose } from "../core/state/interpose.ts";
-import { Splits } from "../core/state/splits.ts";
 import { DEFAULT_TIMEOUTS, Steps } from "../core/state/steps.ts";
 import { Store } from "../core/state/store.ts";
 import { explainCallerRefusal, Strengthen } from "../core/state/strengthen.ts";
@@ -109,7 +109,7 @@ function replay(): Tree {
 }
 
 function record(effects: Effect[]): Tree {
-  events.push({ kind: "tool_result", id: "1", tool: "split", effects, result: null, ms: 1 });
+  events.push({ kind: "tool_result", id: "1", tool: "cut", effects, result: null, ms: 1 });
   return replay();
 }
 
@@ -127,8 +127,8 @@ async function cutting(srcText: string, tgtText: string, map: Record<string, str
   const src = await store.put(srcText);
   const tgt = await store.put(tgtText);
   events.push({ kind: "start", src, tgt, config: {}, versions: {} });
-  const result = await new Splits(store, llops).split(replay(), "g1", "%2", "%2", map);
-  if (result.kind !== "split") throw new Error(result.message);
+  const result = await new Cuts(store, llops).cut(replay(), "g1", "%2", "%2", map);
+  if (result.kind !== "cut") throw new Error(result.message);
   return record(result.effects);
 }
 
@@ -155,8 +155,8 @@ async function detached(): Promise<Tree> {
   const src = await store.put(LOOP);
   events.push({ kind: "start", src, tgt: src, config: {}, versions: {} });
   const map = { "%1": "%1", "%0": "%0" };
-  const result = await new Splits(store, llops).split(replay(), "g1", "%bb1", "%bb1", map);
-  if (result.kind !== "split") throw new Error(result.message);
+  const result = await new Cuts(store, llops).cut(replay(), "g1", "%bb1", "%bb1", map);
+  if (result.kind !== "cut") throw new Error(result.message);
   return record(result.effects);
 }
 
@@ -171,8 +171,8 @@ async function ghosted(): Promise<Tree> {
   );
   events.push({ kind: "start", src, tgt, config: {}, versions: {} });
   const map = { "%1": "%1", "%0": "%0", k: "%2" };
-  const result = await new Splits(store, llops).split(replay(), "g1", "%bb1", "%bb1", map);
-  if (result.kind !== "split") throw new Error(result.message);
+  const result = await new Cuts(store, llops).cut(replay(), "g1", "%bb1", "%bb1", map);
+  if (result.kind !== "cut") throw new Error(result.message);
   return record(result.effects);
 }
 const ABOUT_THE_COUNTER = [{ op: "ule" as const, lhs: "!2", rhs: "!1" }];
@@ -534,8 +534,8 @@ describe.skipIf(!built)("strengthening", () => {
 
   test("refuses a child that has been cut further", async () => {
     const tree = await cut();
-    const inner = await new Splits(store, llops).split(tree, "g3", "%1", "%1", { "%0": "%0" });
-    if (inner.kind !== "split") throw new Error(inner.message);
+    const inner = await new Cuts(store, llops).cut(tree, "g3", "%1", "%1", { "%0": "%0" });
+    if (inner.kind !== "cut") throw new Error(inner.message);
     for (const effect of inner.effects) applyEffect(tree, effect);
 
     const result = await new Strengthen(
@@ -637,14 +637,14 @@ describe.skipIf(!built)("strengthening", () => {
     );
     await expect(
       strengthen.strengthen(replay(), "g1", { param_attrs: { 0: RANGE } }),
-    ).rejects.toThrow(/g1 is open, not split/);
+    ).rejects.toThrow(/g1 is open, not cut/);
   });
 
   test("names the goal that cut a child it is given", async () => {
     const tree = await cut();
     await expect(
       strengthening(new FakeChecker([])).strengthen(tree, "g3", { param_attrs: { 0: RANGE } }),
-    ).rejects.toThrow(/g3 is open, not split; strengthen g1, which cut it/);
+    ).rejects.toThrow(/g3 is open, not cut; strengthen g1, which cut it/);
   });
 
   test("needs a goal that was cut, not interposed", async () => {
@@ -662,7 +662,7 @@ describe.skipIf(!built)("strengthening", () => {
       strengthening(new FakeChecker([])).strengthen(record(result.effects), "g1", {
         param_attrs: { 0: RANGE },
       }),
-    ).rejects.toThrow(/g1 was interposed, not split/);
+    ).rejects.toThrow(/g1 was interposed, not cut/);
   });
 
   test("facts are keyed by parameter position", async () => {

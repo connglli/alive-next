@@ -118,13 +118,13 @@ export type Discharge =
    */
   | { kind: "interpose"; program: Hash; lhs: string; rhs: string }
   /**
-   * The pair was cut by cases on `on`: goal `holds` is the pair where it
+   * The pair was split by cases on `on`: goal `holds` is the pair where it
    * holds and goal `fails` where it does not, and a checker rebuilds both from
    * the pair and checks that both verify.
    */
   | { kind: "case"; on: CaseOn; holds: string; fails: string }
   | {
-      kind: "split";
+      kind: "cut";
       callee: string;
       outer: string;
       inner: string;
@@ -338,7 +338,7 @@ function include(
     steps,
     end,
     discharge: {
-      kind: "split",
+      kind: "cut",
       callee: (outer.callee ?? goal.callee) as string,
       outer: outer.id,
       inner: inner.id,
@@ -476,7 +476,7 @@ function casedOn(goal: Goal, effects: Effect[]): CaseOn {
   let on: CaseOn | undefined;
   for (const effect of effects)
     if (effect.effect === "case" && effect.gid === goal.id) on = effect.on;
-  if (!on) throw new NotCertifiable(`${goal.id} was cut by cases the log does not record`);
+  if (!on) throw new NotCertifiable(`${goal.id} was split by cases the log does not record`);
   return on;
 }
 

@@ -83,14 +83,14 @@ entry:
     // The first three instructions are shared now, so cut after the first
     // division: `%6` opens the suffix on both sides, and four values cross,
     // the parameters `%1` and `%2`, the shift `%3` and the division `%5`.
-    const head = await session.split("g1", "%6", "%6", {
+    const head = await session.cut("g1", "%6", "%6", {
       "%1": "%1",
       "%2": "%2",
       "%3": "%3",
       "%5": "%5",
     });
-    expect("cut after the first division", head.kind === "split", head);
-    if (head.kind !== "split") return;
+    expect("cut after the first division", head.kind === "cut", head);
+    if (head.kind !== "cut") return;
 
     // The four values crossing the cut are computed from defined parameters
     // by instructions that cannot make poison, so the callee can be told so.
@@ -152,9 +152,9 @@ entry:
     // everything after it is cut off into a function the two sides call the
     // same way. The src subtracts at `%8` and the tgt at `%7`, and the totals
     // they consume are `%7` and `%6`.
-    const middle = await session.split(callee, "%8", "%7", { "%2": "%2", "%7": "%6" });
-    expect("cut at the second division", middle.kind === "split", middle);
-    if (middle.kind !== "split") return;
+    const middle = await session.cut(callee, "%8", "%7", { "%2": "%2", "%7": "%6" });
+    expect("cut at the second division", middle.kind === "cut", middle);
+    if (middle.kind !== "cut") return;
 
     // And again the interface, which is defined once nothing before it can
     // make poison.

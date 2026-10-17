@@ -620,7 +620,7 @@ class Check:
   def goal(self, gid: str, role: str | None = None, loop: dict | None = None) -> None:
     """Check one goal: its chain, then how it was discharged.
 
-    `role` identifies the goal's role in a split: None means neither caller
+    `role` identifies the goal's role in a cut: None means neither caller
     nor callee, "outer" means the caller, and any other value is the
     callee's name. `loop`, on a half of a loop cut at its header, names the
     hypothesis, and on the outer also the pair the callee started with.
@@ -659,8 +659,8 @@ class Check:
         goal["end"]["tgt"],
         "tgt refines src",
       )
-    elif discharge["kind"] == "split":
-      self.split(gid, goal, discharge)
+    elif discharge["kind"] == "cut":
+      self.cut(gid, goal, discharge)
     elif discharge["kind"] == "interpose":
       self.interpose(goal, discharge)
     elif discharge["kind"] == "case":
@@ -1124,16 +1124,16 @@ class Check:
       self.goal(half)
 
   def case(self, gid: str, goal: dict, discharge: dict) -> None:
-    """A goal holds when it holds in both of the cases it was cut into.
+    """A goal holds when it holds in both of the cases it was split into.
 
-    A cut on whether a parameter is poison makes it noundef in one case and
+    A split on whether a parameter is poison makes it noundef in one case and
     puts poison in its place in the other, and a scalar argument is one or
-    the other. A cut on a comparison of parameters assumes it at the start of
+    the other. A split on a comparison of parameters assumes it at the start of
     both programs in one case and its inverse in the other, which cover every
     input on which it is true or false; each parameter it compares has to be
     noundef in the src, where a poison argument is undefined behavior already,
     so no input the src defines lies in neither. Both cases are rebuilt here
-    from the goal's end pair and what it was cut on, and each is a goal of its
+    from the goal's end pair and what it was split on, and each is a goal of its
     own with no role and no loop, as an interposed goal's halves.
     """
     on = discharge.get("on")
@@ -1160,10 +1160,12 @@ class Check:
     self.goal(discharge["fails"])
 
   def poison_cases(self, gid: str, name: str, on: dict) -> list:
-    """The two cases of a cut on whether a parameter is poison, as llops makes them."""
+    """The two cases of a split on whether a parameter is poison, as llops makes them."""
     named = on["defined"]
     if not isinstance(named, str) or not re.fullmatch(r"!(?:0|[1-9]\d*)", named):
-      raise Refused(f"{gid} is cut by cases on whether {named!r} is poison, which is no parameter")
+      raise Refused(
+        f"{gid} is split by cases on whether {named!r} is poison, which is no parameter"
+      )
     # `llops poison` refuses a parameter that may be poison in part, which
     # neither case would cover.
     self.report(
@@ -1181,13 +1183,13 @@ class Check:
     ]
 
   def comparison_cases(self, gid: str, src: str, name: str, on) -> list:
-    """The two cases of a cut on a comparison of parameters, as llops makes them."""
+    """The two cases of a split on a comparison of parameters, as llops makes them."""
     operands = [on.get("lhs"), on.get("rhs")] if isinstance(on, dict) else []
     named = [x for x in operands if isinstance(x, str) and re.fullmatch(r"!(?:0|[1-9]\d*)", x)]
     numbers = [x for x in operands if isinstance(x, int) and not isinstance(x, bool)]
     shaped = isinstance(on, dict) and on.get("op") in INVERSE
     if not shaped or not named or len(named) + len(numbers) != 2:
-      raise Refused(f"{gid} is cut by cases on no comparison of its parameters")
+      raise Refused(f"{gid} is split by cases on no comparison of its parameters")
     params = function(self.package, src, name)["params"]
     for x in named:
       param = params[int(x[1:])] if int(x[1:]) < len(params) else None
@@ -1207,7 +1209,7 @@ class Check:
       for c in (on, inverse)
     ]
 
-  def split(self, gid: str, goal: dict, discharge: dict) -> None:
+  def cut(self, gid: str, goal: dict, discharge: dict) -> None:
     """A cut holds when it inlines, or reattaches, back to the pair it was made on."""
     outer = self.package.goal(discharge["outer"])
     inner = self.package.goal(discharge["inner"])
@@ -1245,7 +1247,7 @@ class Check:
         gid,
         side,
         "llops",
-        "Split reconstruction",
+        "Cut reconstruction",
         f"{rebuild} {discharge['outer']} + {discharge['inner']} at parent end",
         matches,
         ms,

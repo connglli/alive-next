@@ -79,14 +79,14 @@ exit:
 
   async prove(session) {
     // i (`%2`), s (`%3`), n (`%0`) and a (`%1`) cross.
-    const loop = await session.split("g1", "%bb1", "%bb1", {
+    const loop = await session.cut("g1", "%bb1", "%bb1", {
       "%2": "%2",
       "%3": "%3",
       "%0": "%0",
       "%1": "%1",
     });
-    expect("detach the header", loop.kind === "split", loop);
-    if (loop.kind !== "split") return;
+    expect("detach the header", loop.kind === "cut", loop);
+    if (loop.kind !== "cut") return;
     const iteration = loop.children.callee;
 
     // The callee takes i, s, n and a as `%0` to `%3`. Its src drops every
@@ -120,7 +120,7 @@ exit:
 
     // Cut after the first division, `%7`: `%8` opens the suffix on both sides,
     // and the parameters, the shift `%5` and the division cross.
-    const head = await session.split(iteration, "%8", "%8", {
+    const head = await session.cut(iteration, "%8", "%8", {
       "%0": "%0",
       "%1": "%1",
       "%2": "%2",
@@ -128,8 +128,8 @@ exit:
       "%5": "%5",
       "%7": "%7",
     });
-    expect("cut after the first division", head.kind === "split", head);
-    if (head.kind !== "split") return;
+    expect("cut after the first division", head.kind === "cut", head);
+    if (head.kind !== "cut") return;
     const first = await session.strengthen(iteration, {
       param_attrs: {
         0: { noundef: true },
@@ -162,14 +162,14 @@ exit:
 
     // Cut at the second division's subtraction, src `%10` and tgt `%9`: i
     // (`%2`), n (`%4`) and a (`%5`) cross, and the total, src `%9` and tgt `%8`.
-    const middle = await session.split(suffix, "%10", "%9", {
+    const middle = await session.cut(suffix, "%10", "%9", {
       "%2": "%2",
       "%4": "%4",
       "%5": "%5",
       "%9": "%8",
     });
-    expect("cut at the second division", middle.kind === "split", middle);
-    if (middle.kind !== "split") return;
+    expect("cut at the second division", middle.kind === "cut", middle);
+    if (middle.kind !== "cut") return;
     const second = await session.strengthen(suffix, {
       param_attrs: {
         0: { noundef: true },

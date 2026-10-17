@@ -68,15 +68,11 @@ exit:
     // The slots of i (`%1`) and s (`%2`) cross by what they hold, paired with
     // the tgt's phis `%2` and `%1`, the doubled counter's (`%3`) as poison.
     const map = { "%1": "%2", "%2": "%1", "%3": "poison", "%0": "%0" };
-    const split = await session.split("g1", "%bb1", "%bb1", map);
-    expect(
-      "detach the header",
-      split.kind === "split" && split.detach?.hypothesis !== undefined,
-      split,
-    );
-    if (split.kind !== "split") return;
+    const cut = await session.cut("g1", "%bb1", "%bb1", map);
+    expect("detach the header", cut.kind === "cut" && cut.detach?.hypothesis !== undefined, cut);
+    if (cut.kind !== "cut") return;
 
-    for (const gid of [split.children.outer, split.children.callee]) {
+    for (const gid of [cut.children.outer, cut.children.callee]) {
       const checked = await session.check(gid);
       expect(`check ${gid}`, checked.outcome === "proved", checked);
     }

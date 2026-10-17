@@ -130,7 +130,7 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(shown).toContain("mul i32");
 
     const cutting = { gid: "g1", src_cut: "%2", tgt_cut: "%2", value_map: SAME };
-    expect(await call("tree_split", cutting)).toContain("cut into @outlined_g3");
+    expect(await call("tree_cut", cutting)).toContain("cut into @outlined_g3");
     expect(await call("goal_show", { ref: "g3" })).toContain("callee of g1");
 
     const facts = await call("goal_analyze", { gid: "g2", side: "src", kind: "defined" });
@@ -160,7 +160,7 @@ describe.skipIf(!built)("the tool layer", () => {
 
   test("a move that changed the tree says how it stands, and one that did not says nothing", async () => {
     // A cut changes it, so the two children arrive with the answer.
-    const split = await call("tree_split", {
+    const cut = await call("tree_cut", {
       gid: "g1",
       src_cut: "%2",
       tgt_cut: "%2",
@@ -168,8 +168,8 @@ describe.skipIf(!built)("the tool layer", () => {
     });
     // A tree line carries both programs, which is what tells it from the
     // heading `goal_show` puts on a goal.
-    expect(split).toContain("g2 outer of g1, open, src");
-    expect(split).toContain("g3 callee of g1, open, src");
+    expect(cut).toContain("g2 outer of g1, open, src");
+    expect(cut).toContain("g3 callee of g1, open, src");
 
     // Reading changes nothing, and neither does opening a transaction or
     // editing inside it, so none of them repeats a picture the caller has.
@@ -187,7 +187,7 @@ describe.skipIf(!built)("the tool layer", () => {
   });
 
   test("a verdict is what tells the loop to stop", async () => {
-    await call("tree_split", { gid: "g1", src_cut: "%2", tgt_cut: "%2", value_map: SAME });
+    await call("tree_cut", { gid: "g1", src_cut: "%2", tgt_cut: "%2", value_map: SAME });
     const tool = surface.find((candidate) => candidate.name === "goal_check");
     if (!tool) throw new Error("no check tool");
 
@@ -436,10 +436,10 @@ describe.skipIf(!built)("the tool layer", () => {
   test("a goal is proved through the program a transaction made", async () => {
     await call("tx_begin", { gid: "g1", side: "src" });
     await call("tx_edit", { op: "commute", v: "%2" });
-    const split = await call("tree_interpose", { gid: "g1" });
-    expect(split).toStartWith("SUCCESS");
-    expect(split).toContain("lhs g2, rhs g3");
-    // The transaction closed when the goal split.
+    const interposed = await call("tree_interpose", { gid: "g1" });
+    expect(interposed).toStartWith("SUCCESS");
+    expect(interposed).toContain("lhs g2, rhs g3");
+    // The transaction closed when the program was interposed.
     expect(await call("run_status", {})).not.toContain("editing:");
     expect(await call("tree_uninterpose", { gid: "g1" })).toContain("g1 is open again");
   });
@@ -448,12 +448,12 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(await call("tree_interpose", { gid: "g1" })).toContain("no transaction is open on g1");
   });
 
-  test("a goal is cut by cases, on poison and then on a comparison, and back", async () => {
+  test("a goal is split by cases, on poison and then on a comparison, and back", async () => {
     const poison = await call("tree_case", { gid: "g1", on: { defined: "!0" } });
     expect(poison).toStartWith("SUCCESS");
-    expect(poison).toContain("g1 is cut by cases: holds g2, fails g3");
+    expect(poison).toContain("g1 is split by cases: holds g2, fails g3");
     const below = await call("tree_case", { gid: "g2", on: { op: "ult", lhs: "!0", rhs: 3 } });
-    expect(below).toContain("g2 is cut by cases: holds g4, fails g5");
+    expect(below).toContain("g2 is split by cases: holds g4, fails g5");
     expect(await call("tree_uncase", { gid: "g1" })).toContain("g1 is open again");
   });
 
@@ -487,7 +487,7 @@ describe.skipIf(!built)("the tool layer", () => {
 
     // A check that does not prove is a failure to advance, whatever it taught.
     expect(
-      await call("tree_split", { gid: "g1", src_cut: "%2", tgt_cut: "%2", value_map: {} }),
+      await call("tree_cut", { gid: "g1", src_cut: "%2", tgt_cut: "%2", value_map: {} }),
     ).toStartWith("FAILURE");
     expect(await call("goal_revert", { gid: "g1", side: "src", to: "p2" })).toStartWith("FAILURE");
   });
@@ -849,7 +849,7 @@ entry:
     await callFrom(rewritingTools, "tx_abort", {});
   });
 
-  test("tree_split and its preview say which parameter the src passes poison for", async () => {
+  test("tree_cut and its preview say which parameter the src passes poison for", async () => {
     const ghosted = await Session.start({
       dir: join(dir, "ghost-session"),
       src: offset.src,
@@ -862,8 +862,8 @@ entry:
     const map = { "%3": "%3", "%4": "%4", "%0": "%0", "%1": "%1", "%2": "%2", off: "%5" };
     const cut = { gid: "g1", src_cut: "%bb1", tgt_cut: "%bb1", value_map: map };
     const ghostTools = createProofAssistantTools(ghosted);
-    const preview = await callFrom(ghostTools, "tree_split_preview", cut);
-    const res = await callFrom(ghostTools, "tree_split", cut);
+    const preview = await callFrom(ghostTools, "tree_cut_preview", cut);
+    const res = await callFrom(ghostTools, "tree_cut", cut);
     const said =
       "The src has no value for parameter 5, so it passes poison. A fact about it helps the callee only once the src passes a real value at the outer's call and at @outlined_g3.ih.";
     for (const answer of [preview, res]) {
@@ -902,7 +902,7 @@ entry:
     expect(root).toContain("FAILURE");
     expect(root).toContain("not a half of a loop cut at its header");
     const map = { "%1": "%1", "%2": "%2", "%0": "%0" };
-    await callFrom(tools, "tree_split", {
+    await callFrom(tools, "tree_cut", {
       gid: "g1",
       src_cut: "%bb1",
       tgt_cut: "%bb1",
@@ -945,7 +945,7 @@ entry:
     expect(res).toContain("llrwt fell over");
   });
 
-  test("tree_split_preview discovers live-ins and validates candidate cuts without mutating tree", async () => {
+  test("tree_cut_preview discovers live-ins and validates candidate cuts without mutating tree", async () => {
     const previewSession = await Session.start({
       dir: join(dir, "preview-session"),
       src: cut.src,
@@ -966,7 +966,7 @@ entry:
     const previewTools = createProofAssistantTools(previewSession);
 
     // 1. Preview without value_map -> discovers signature
-    const sigRes = await callFrom(previewTools, "tree_split_preview", {
+    const sigRes = await callFrom(previewTools, "tree_cut_preview", {
       gid: "g1",
       src_cut: "%2",
       tgt_cut: "%2",
@@ -975,24 +975,24 @@ entry:
     expect(sigRes).toContain("## Parameters\n");
     expect(sigRes).toContain("the src's %1");
     expect(sigRes).toContain("## tgt values at its cut\n  %1 i32\n  %0 i32");
-    expect(sigRes).toContain("tree_split needs a value_map from each src value below");
+    expect(sigRes).toContain("tree_cut needs a value_map from each src value below");
     // Ensure goal tree was NOT modified
     expect(previewSession.tree.goals.get("g1")?.status).toBe("open");
 
     // 2. Preview with valid value_map
-    const validRes = await callFrom(previewTools, "tree_split_preview", {
+    const validRes = await callFrom(previewTools, "tree_cut_preview", {
       gid: "g1",
       src_cut: "%2",
       tgt_cut: "%2",
       value_map: { "%0": "%0", "%1": "%1" },
     });
     expect(validRes).toContain(
-      "The value_map is valid: tree_split with the same arguments makes this cut.",
+      "The value_map is valid: tree_cut with the same arguments makes this cut.",
     );
     expect(previewSession.tree.goals.get("g1")?.status).toBe("open");
 
     // 3. Preview with invalid value_map -> refused
-    const invalidRes = await callFrom(previewTools, "tree_split_preview", {
+    const invalidRes = await callFrom(previewTools, "tree_cut_preview", {
       gid: "g1",
       src_cut: "%2",
       tgt_cut: "%2",

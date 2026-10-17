@@ -208,7 +208,7 @@ class Tree:
         fn = hypothesis if link.get("gid") == goal["id"] else callee
         if fn:
           self.proofs.append((link.get("gid"), link.get("hash"), fn))
-    elif kind == "split":
+    elif kind == "cut":
       parent = self.editable(effect["gid"])
       detach = effect.get("detach")
       how = "detach" if detach else "outline"
@@ -224,7 +224,7 @@ class Tree:
           child["src"],
           child["tgt"],
           at,
-          f"split({how}) {role}",
+          f"cut({how}) {role}",
           None,
           note,
         )
@@ -249,7 +249,7 @@ class Tree:
         )
         parent["children"].append(half["gid"])
       parent["status"] = "split"
-    elif kind in ("unsplit", "uninterpose", "uncase"):
+    elif kind in ("uncut", "uninterpose", "uncase"):
       parent = self.get(effect["gid"])
       if parent["status"] != "split":
         raise Broken(f"{parent['id']} is not split")

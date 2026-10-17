@@ -315,7 +315,7 @@ export class Steps {
         outcome: "unknown",
         by: "alive2",
         check: unasked(
-          `the pair ${free.why}, so a pair that loops is proved by splitting it at its loop header; an unroll factor only searches it for a counterexample`,
+          `the pair ${free.why}, so a pair that loops is proved by cutting it at its loop header; an unroll factor only searches it for a counterexample`,
         ),
         effects: [],
       };

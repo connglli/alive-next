@@ -63,13 +63,13 @@ join:
 
   async prove(session) {
     // `%bb3` is the join on both sides; its phi is `%8` in the src, `%6` in the tgt.
-    const split = await session.split("g1", "%bb3", "%bb3", { "%8": "%6" });
-    expect("detach the join", split.kind === "split", split);
-    if (split.kind !== "split") return;
+    const cut = await session.cut("g1", "%bb3", "%bb3", { "%8": "%6" });
+    expect("detach the join", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
 
-    const outer = await session.check(split.children.outer);
+    const outer = await session.check(cut.children.outer);
     expect("the two sides pass the same value", outer.outcome === "proved", outer);
-    const callee = await session.check(split.children.callee);
+    const callee = await session.check(cut.children.callee);
     expect("the chain after the join is the same", callee.outcome === "proved", callee);
   },
 };

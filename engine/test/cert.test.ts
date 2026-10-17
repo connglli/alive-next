@@ -219,7 +219,7 @@ describe.skipIf(!built)("the manifest", () => {
     expect(Object.keys(manifest.goals).sort()).toEqual(["g1", "g2", "g3"]);
 
     const root = manifest.goals.g1;
-    if (root?.discharge.kind !== "split") throw new Error("the root was cut");
+    if (root?.discharge.kind !== "cut") throw new Error("the root was not cut");
     expect(root.discharge).toMatchObject({ outer: "g2", inner: "g3", callee: "outlined_g3" });
     // The pair a goal proves about is the one it started with, and the chain
     // has to arrive at the one it ended with.
@@ -321,8 +321,8 @@ describe.skipIf(!built)("the manifest", () => {
       interp: noRun,
       rewriter: unrewriting,
     });
-    const split = await session.split("g1", "%bb1", "%bb1", { "%1": "%1", "%2": "%2", "%0": "%0" });
-    if (split.kind !== "split") throw new Error("expected the cut to land");
+    const cut = await session.cut("g1", "%bb1", "%bb1", { "%1": "%1", "%2": "%2", "%0": "%0" });
+    if (cut.kind !== "cut") throw new Error("expected the cut to land");
     const unfolded = await session.unfold("g3", "src");
     if (unfolded.kind !== "certified") throw new Error("expected the unfold to land");
     await session.check("g2");

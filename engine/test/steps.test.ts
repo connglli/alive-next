@@ -142,10 +142,10 @@ function cutG1(src: string, tgt: string): Event {
   return {
     kind: "tool_result",
     id: "1",
-    tool: "split",
+    tool: "cut",
     effects: [
       {
-        effect: "split",
+        effect: "cut",
         gid: "g1",
         name: "outlined_g3",
         outer: { gid: "g2", src, tgt },
@@ -191,10 +191,10 @@ function detachG1(body: string, outer = body): Event {
   return {
     kind: "tool_result",
     id: "1",
-    tool: "split",
+    tool: "cut",
     effects: [
       {
-        effect: "split",
+        effect: "cut",
         gid: "g1",
         name: "k",
         outer: { gid: "g2", src: outer, tgt: outer },
@@ -827,7 +827,7 @@ describe("checking a goal", () => {
     const steps = new Steps(store, checker, DEFAULT_TIMEOUTS, llops, unrewriting);
     const result = await steps.checkGoal(await treeOf(LOOP, LATE), "g1");
     expect(result.outcome).toBe("unknown");
-    expect(result.check?.detail).toContain("proved by splitting it at its loop header");
+    expect(result.check?.detail).toContain("proved by cutting it at its loop header");
     expect(result.check?.detail).toContain("only searches it for a counterexample");
     // Why no check without a solver applies, in words the agent knows.
     expect(result.check?.detail).toContain("does more than reshape control flow");

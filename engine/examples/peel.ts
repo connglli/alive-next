@@ -65,23 +65,23 @@ exit:
   async prove(session) {
     // The exits are the src's `%bb2` and the tgt's `%bb3`. What they return,
     // s (`%3`) and the tgt's phi `%7`, crosses.
-    const exit = await session.split("g1", "%bb2", "%bb3", { "%3": "%7" });
-    expect("detach the exit", exit.kind === "split", exit);
-    if (exit.kind !== "split") return;
+    const exit = await session.cut("g1", "%bb2", "%bb3", { "%3": "%7" });
+    expect("detach the exit", exit.kind === "cut", exit);
+    if (exit.kind !== "cut") return;
 
     // In the outer, the headers are the src's `%bb1` and the tgt's `%bb3`:
     // i (`%2`, `%5`), s (`%3`, `%6`) and n (`%1`) cross.
-    const header = await session.split(exit.children.outer, "%bb1", "%bb3", {
+    const header = await session.cut(exit.children.outer, "%bb1", "%bb3", {
       "%2": "%5",
       "%3": "%6",
       "%1": "%1",
     });
     expect(
       "detach the header",
-      header.kind === "split" && header.detach?.hypothesis !== undefined,
+      header.kind === "cut" && header.detach?.hypothesis !== undefined,
       header,
     );
-    if (header.kind !== "split") return;
+    if (header.kind !== "cut") return;
 
     const peeled = await session.unfold(header.children.outer, "src");
     expect("run the src's first iteration in its outer", peeled.kind === "certified", peeled);

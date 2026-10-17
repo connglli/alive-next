@@ -80,7 +80,7 @@ describe("derive", () => {
     ).toThrow(DerivationError);
   });
 
-  test("a split freezes the parent and opens two children", () => {
+  test("a cut freezes the parent and opens two children", () => {
     const tree = derive(log(run(), did(splitG1())));
     expect(tree.goals.get("g1")?.status).toBe("split");
     expect(tree.goals.get("g1")?.children).toEqual(["g2", "g3"]);
@@ -120,13 +120,13 @@ describe("derive", () => {
     expect(verdict(tree)).toBe("unknown");
   });
 
-  test("unsplitting discards the children and reopens the parent", () => {
+  test("uncutting discards the children and reopens the parent", () => {
     const tree = derive(
       log(
         run(),
         did(splitG1()),
         did({ effect: "proved", gid: "g2" }),
-        did({ effect: "unsplit", gid: "g1" }),
+        did({ effect: "uncut", gid: "g1" }),
       ),
     );
     expect(tree.goals.get("g1")?.status).toBe("open");
@@ -135,19 +135,19 @@ describe("derive", () => {
     expect(tree.goals.has("g3")).toBe(false);
   });
 
-  test("unsplitting takes a whole subtree with it", () => {
+  test("uncutting takes a whole subtree with it", () => {
     const tree = derive(
       log(
         run(),
         did(splitG1()),
         did({
-          effect: "split",
+          effect: "cut",
           gid: "g3",
           name: "outlined_g5",
           outer: { gid: "g4", src: "h4s", tgt: "h4t" },
           callee: { gid: "g5", src: "h5s", tgt: "h5t" },
         }),
-        did({ effect: "unsplit", gid: "g1" }),
+        did({ effect: "uncut", gid: "g1" }),
       ),
     );
     expect([...tree.goals.keys()]).toEqual(["g1"]);
@@ -188,9 +188,9 @@ describe("derive", () => {
   });
 
   test("each undo undoes its own move alone", () => {
-    const unsplit = did({ effect: "unsplit", gid: "g1" });
+    const uncut = did({ effect: "uncut", gid: "g1" });
     const uninterpose = did({ effect: "uninterpose", gid: "g1" });
-    expect(() => derive(log(run(), did(interposeG1()), unsplit))).toThrow(/not split/);
+    expect(() => derive(log(run(), did(interposeG1()), uncut))).toThrow(/not cut/);
     expect(() => derive(log(run(), did(splitG1()), uninterpose))).toThrow(/not interposed/);
   });
 
@@ -201,7 +201,7 @@ describe("derive", () => {
     expect(() => derive(log(run(), did(apart)))).toThrow(/do not meet its pair/);
   });
 
-  test("a split says what it outlined, on both children", () => {
+  test("a cut says what it outlined, on both children", () => {
     const tree = derive(log(run(), did(splitG1())));
     expect(goal(tree, "g2").callee).toBe("outlined_g3");
     expect(goal(tree, "g3").callee).toBe("outlined_g3");
@@ -310,7 +310,7 @@ function interposeG1(): Effect {
 
 function splitG1(): Effect {
   return {
-    effect: "split",
+    effect: "cut",
     gid: "g1",
     name: "outlined_g3",
     outer: { gid: "g2", src: "h2s", tgt: "h2t" },

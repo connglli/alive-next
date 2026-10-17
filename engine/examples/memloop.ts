@@ -53,11 +53,11 @@ exit:
 
   async prove(session) {
     // i (`%2`), p (`%0`) and n (`%1`) cross.
-    const split = await session.split("g1", "%bb1", "%bb1", { "%2": "%2", "%0": "%0", "%1": "%1" });
-    expect("detach the header", split.kind === "split", split);
-    if (split.kind !== "split") return;
+    const cut = await session.cut("g1", "%bb1", "%bb1", { "%2": "%2", "%0": "%0", "%1": "%1" });
+    expect("detach the header", cut.kind === "cut", cut);
+    if (cut.kind !== "cut") return;
 
-    for (const gid of [split.children.outer, split.children.callee]) {
+    for (const gid of [cut.children.outer, cut.children.callee]) {
       const checked = await session.check(gid);
       expect(`check ${gid}`, checked.outcome === "proved", checked);
     }

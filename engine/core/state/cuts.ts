@@ -31,7 +31,7 @@ import { cased, type GoalId, head, interposed, nextGoalIds, type Tree, workable 
 import type { Store } from "./store.ts";
 import type { Detach, Effect, Slots } from "./trajectory.ts";
 
-export type SplitPreviewResult =
+export type CutPreviewResult =
   | {
       kind: "preview";
       /** The signature both sides share if cut. */
@@ -53,9 +53,9 @@ export type SplitPreviewResult =
     }
   | { kind: "refused"; side: "src" | "tgt"; code: string; message: string };
 
-export type SplitResult =
+export type CutResult =
   | {
-      kind: "split";
+      kind: "cut";
       effects: Effect[];
       /** The signature both sides now share. */
       params: OutlineParam[];
@@ -68,7 +68,7 @@ export type SplitResult =
   /** A structural refusal from llops while outlining one side. */
   | { kind: "refused"; side: "src" | "tgt"; code: string; message: string };
 
-export class Splits {
+export class Cuts {
   constructor(
     private readonly store: Store,
     private readonly llops: Llops,
@@ -85,7 +85,7 @@ export class Splits {
     srcCut: Ref,
     tgtCut: Ref,
     valueMap?: Record<Ref, Ref>,
-  ): Promise<SplitPreviewResult> {
+  ): Promise<CutPreviewResult> {
     const goal = workable(tree, gid);
 
     const [, calleeGoal] = nextGoalIds(tree);
@@ -169,13 +169,13 @@ export class Splits {
    * Cut `gid` at `srcCut` on its src side and `tgtCut` on its tgt side, with
    * `valueMap` naming the tgt value that stands in for each src live value.
    */
-  async split(
+  async cut(
     tree: Tree,
     gid: string,
     srcCut: Ref,
     tgtCut: Ref,
     valueMap: Record<Ref, Ref>,
-  ): Promise<SplitResult> {
+  ): Promise<CutResult> {
     const preview = await this.preview(tree, gid, srcCut, tgtCut, valueMap);
     if (preview.kind === "refused") return preview;
     if (!preview.programs) {
@@ -183,7 +183,7 @@ export class Splits {
         kind: "refused",
         side: "tgt",
         code: "missing_programs",
-        message: "split preview produced no programs",
+        message: "cut preview produced no programs",
       };
     }
 
@@ -200,14 +200,14 @@ export class Splits {
     ]);
 
     return {
-      kind: "split",
+      kind: "cut",
       params: preview.params,
       children,
       callee,
       ...(preview.detach ? { detach: preview.detach } : {}),
       effects: [
         {
-          effect: "split",
+          effect: "cut",
           gid,
           name: callee,
           outer: { gid: children.outer, src: outerSrcHash, tgt: outerTgtHash },
@@ -237,13 +237,13 @@ export class Splits {
   }
 
   /** Undo a cut, discarding the children and whatever was proved under them. */
-  unsplit(tree: Tree, gid: string): Effect[] {
+  uncut(tree: Tree, gid: string): Effect[] {
     const goal = tree.goals.get(gid);
     if (!goal) throw new Error(`no goal ${gid}`);
-    if (goal.status !== "split") throw new Error(`${gid} is ${goal.status}, not split`);
-    if (interposed(tree, goal)) throw new Error(`${gid} was interposed, not split`);
-    if (cased(tree, goal)) throw new Error(`${gid} was cut by cases, not split`);
-    return [{ effect: "unsplit", gid }];
+    if (goal.status !== "split") throw new Error(`${gid} is ${goal.status}, not cut`);
+    if (interposed(tree, goal)) throw new Error(`${gid} was interposed, not cut`);
+    if (cased(tree, goal)) throw new Error(`${gid} was split by cases, not cut`);
+    return [{ effect: "uncut", gid }];
   }
 }
 
