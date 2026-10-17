@@ -14,7 +14,9 @@ import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
 import { digits } from "../examples/digits.ts";
 import { induction } from "../examples/induction.ts";
 import { nested } from "../examples/nested.ts";
+import { specialize } from "../examples/specialize.ts";
 import { unroll } from "../examples/unroll.ts";
+import { unswitch } from "../examples/unswitch.ts";
 import { DEFAULT_LIMITS, type Limits } from "../simple/limits.ts";
 import { refuteFrom } from "../simple/refute.ts";
 import { search } from "../simple/search.ts";
@@ -449,6 +451,18 @@ exit:
     },
     60_000,
   );
+
+  test("proves a loop unswitched on a parameter by cases on it", async () => {
+    const session = await start(unswitch.src, unswitch.tgt, aliveTv);
+    expect(await search(session, llops, limits)).toBe("verified");
+    expect(moves(session)).toContain("case");
+  }, 180_000);
+
+  test("splits by cases the stages that unswitch a loop and simplify it", async () => {
+    const session = await start(specialize.src, specialize.tgt, aliveTv);
+    expect(await search(session, llops, { ...limits, stages: true })).toBe("verified");
+    expect(moves(session)).toContain("case");
+  }, 180_000);
 
   test("verifies the paper's straight-line pair by a cut and its facts", async () => {
     const session = await start(PAPER.src, PAPER.tgt, aliveTv);

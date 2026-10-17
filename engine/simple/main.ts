@@ -21,6 +21,7 @@ const USAGE = `usage: bun run simple [options] <src.ll> <tgt.ll> [<directory>]
       --no-windows        check each step on the whole function
       --no-preconditions  give windows and cuts no preconditions
       --no-cuts           do not cut
+      --no-cases          do not split by cases
   -h, --help`;
 
 const started = Date.now();
@@ -78,6 +79,7 @@ function parseArgs(args: string[]): Flags {
     else if (arg === "--no-windows") flags.limits.windows = false;
     else if (arg === "--no-preconditions") flags.limits.facts = false;
     else if (arg === "--no-cuts") flags.limits.cuts = 0;
+    else if (arg === "--no-cases") flags.limits.cases = false;
     else if (arg === "-h" || arg === "--help") flags.help = true;
     else return false;
     return true;

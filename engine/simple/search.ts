@@ -3,11 +3,13 @@
 // program that its windows leave interposed as a goal of its own, windows and
 // rules toward the tgt, a check, then a cut at a loop, before an expensive
 // operation, around a region left, or where the expensive operations split
-// evenly) until one proves it or splits it, and the goals a split leaves are
-// searched before the next. Every move is a session move, so whatever it
-// proves, the kernel replays.
-import type { Instruction, Llops } from "../core/drivers/llops.ts";
+// evenly, then a split by cases) until one proves it or splits it, and the
+// goals a split leaves are searched before the next. Every move is a session move, so
+// whatever it proves, the kernel replays.
+import type { Comparison, Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
+import { INVERSE } from "../core/state/cases.ts";
+import { caseOn, tested } from "./cases.ts";
 import { type Assumed, balancedPoints, beforePoints, cut, cutLoop, quota } from "./cuts.ts";
 import { strengthenAgainst } from "./facts.ts";
 import type { Limits } from "./limits.ts";
@@ -40,7 +42,7 @@ interface Goal {
   gid: string;
   moves: AsyncGenerator<Move>;
   cuts: Cuts;
-  undo?: "unsplit" | "uninterpose";
+  undo?: "unsplit" | "uninterpose" | "uncase";
   /** The goal whose split left this one. */
   parent?: Goal;
 }
@@ -54,10 +56,14 @@ type Answer =
   | { kind: "refuted"; detail: string }
   | { kind: "cut"; goals: Goal[] }
   | { kind: "interposed"; goals: Goal[] }
+  | { kind: "cased"; goals: Goal[] }
   | { kind: "none" };
 
 const PROVED: Answer = { kind: "proved" };
 const NONE: Answer = { kind: "none" };
+
+/** What undoes each split a move makes. */
+const UNDO = { cut: "unsplit", interposed: "uninterpose", cased: "uncase" } as const;
 
 /** Searches for a proof of the root goal, giving up with the goals left open if it finds none. */
 export async function search(session: Session, llops: Llops, limits: Limits) {
@@ -107,9 +113,10 @@ async function learn(run: Run, agenda: Goal[], answer: Answer) {
   const top = agenda[agenda.length - 1] as Goal;
   if (answer.kind === "proved") agenda.pop();
   if (answer.kind === "refuted") await repair(run, agenda, top, answer.detail);
-  if (answer.kind !== "cut" && answer.kind !== "interposed") return;
-  top.undo = answer.kind === "cut" ? "unsplit" : "uninterpose";
-  // An interpose rewrites rather than decomposes, and the stages bound how many there are.
+  if (!("goals" in answer)) return;
+  top.undo = UNDO[answer.kind];
+  // Only a cut spends the quota: the stages bound the interposes, and the
+  // comparisons a goal tests bound its cases.
   if (answer.kind === "cut") top.cuts.left -= 1;
   for (const left of answer.goals) left.parent = top;
   agenda.push(...[...answer.goals].reverse());
@@ -162,10 +169,11 @@ async function undo(run: Run, agenda: Goal[], g: Goal) {
   parent.undo = undefined;
 }
 
-/** Whether the cut or the interpose that split `g` was undone. */
+/** Whether the cut, the cases or the interpose that split `g` was undone. */
 async function undone(run: Run, g: Goal): Promise<boolean> {
   if (g.undo === "uninterpose")
     return (await run.session.uninterpose(g.gid)).kind === "uninterposed";
+  if (g.undo === "uncase") return (await run.session.uncase(g.gid)).kind === "uncased";
   return (await run.session.unsplit(g.gid)).kind === "unsplit";
 }
 
@@ -177,6 +185,8 @@ interface Start {
   peelable?: boolean;
   /** False for a step goal, whose windows the walk has just asked. */
   steps?: boolean;
+  /** For a goal a case left, the comparisons it may still be split by cases on. */
+  comparisons?: Comparison[];
 }
 
 /** Goal `gid` with its moves: stages for the root and what follows a stage interposed. */
@@ -193,7 +203,7 @@ function quotaOf(limits: Limits, [src, tgt]: [Instruction[], Instruction[]]): Cu
 async function* moves(
   run: Run,
   gid: string,
-  { cuts, stages = [], peelable = true, steps = true }: Start,
+  { cuts, stages = [], peelable = true, steps = true, comparisons: left }: Start,
 ) {
   const { session, llops, limits } = run;
   yield* walk(run, gid, stages, cuts);
@@ -215,6 +225,8 @@ async function* moves(
   for (const point of beforePoints(src, tgt)) yield at(point);
   if (peelable) yield peeled(run, gid, cuts);
   for (const point of balancedPoints(src, tgt)) yield at(point);
+  const comparisons = limits.cases ? (left ?? tested(src, tgt, run.assumed.get(gid))) : [];
+  for (const k of comparisons.keys()) yield casing(run, gid, cuts, comparisons.slice(k));
   yield checking(run, gid, run.capMs);
 }
 
@@ -245,6 +257,46 @@ function halves(run: Run, cuts: Cuts, cutting: () => ReturnType<typeof cutLoop>)
       goals: [goal(run, made.outer, { cuts }), goal(run, made.callee, { cuts })],
     };
   };
+}
+
+/** A move that splits goal `gid` by cases on the first of `comparisons`. */
+function casing(run: Run, gid: string, cuts: Cuts, comparisons: Comparison[]): Move {
+  return async () => {
+    const { session, llops } = run;
+    const [on, after] = [comparisons[0] as Comparison, comparisons.slice(1)];
+    const split = await caseOn(llops, (await session.show(gid)).src.text, on);
+    const made = await session.case(gid, split);
+    if (made.kind !== "cased") return NONE;
+    const { holds, fails } = made.children;
+    // A case that closes neither of its goals at once decides nothing worth a search.
+    if (!(await closesOne(run, [holds, fails]))) {
+      await session.uncase(gid);
+      return NONE;
+    }
+    const poison = "defined" in split ? split.defined : undefined;
+    // A cut inside a case takes the comparison the case assumes as a precondition.
+    const inherited = run.assumed.get(gid) ?? [];
+    const inverse: Comparison = { ...on, op: INVERSE[on.op] };
+    run.assumed.set(holds, poison ? inherited : [...inherited, on]);
+    run.assumed.set(fails, poison ? inherited : [...inherited, inverse]);
+    // The cases go on only with the comparisons after `on`, so that no two
+    // orders of the same cases are tried, and where a parameter is poison,
+    // with none that reads it.
+    const next = poison ? [on, ...after] : after;
+    const unread = next.filter((c) => c.lhs !== poison && c.rhs !== poison);
+    const goals = [
+      goal(run, holds, { cuts, comparisons: next }),
+      goal(run, fails, { cuts, comparisons: unread }),
+    ];
+    return { kind: "cased", goals };
+  };
+}
+
+/** Whether a short check proves one of `gids`. */
+async function closesOne(run: Run, gids: string[]) {
+  for (const gid of gids)
+    if ((await run.session.check(gid, run.eagerMs)).outcome === "proved") return true;
+  return false;
 }
 
 /** A move that peels the first region left out of goal `gid`. */

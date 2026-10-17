@@ -26,6 +26,8 @@ export interface Limits {
   windows: boolean;
   /** Whether refused windows and new cuts get preconditions, and loop cuts invariants. */
   facts: boolean;
+  /** Whether a goal its cuts leave open is split by cases on a comparison it tests. */
+  cases: boolean;
 }
 
 export const DEFAULT_LIMITS: Limits = {
@@ -41,4 +43,5 @@ export const DEFAULT_LIMITS: Limits = {
   rules: true,
   windows: true,
   facts: true,
+  cases: true,
 };
