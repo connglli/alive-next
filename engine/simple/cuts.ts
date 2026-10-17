@@ -5,11 +5,11 @@
 // calls the hypothesis, so the goals it leaves prove by induction, and it is
 // strengthened with the invariants Houdini finds among those facts and some
 // guesses. A cut before an expensive operation hands it the same operands on
-// both sides, and a balanced cut splits a goal's expensive operations between
+// both sides, and a balanced cut divides a goal's expensive operations between
 // its halves.
 import type { Instruction, Llops, OutlineParam, Predicate } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
-import type { SplitResult } from "../core/state/splits.ts";
+import type { CutResult } from "../core/state/cuts.ts";
 import { cutFacts, passedOn, predicatesAt, strengthenCut, union } from "./facts.ts";
 import { fillCut } from "./fill.ts";
 import type { Limits } from "./limits.ts";
@@ -79,7 +79,7 @@ export async function cut(
   tgtCut: string,
   assumed: Assumed = new Map(),
 ) {
-  const preview = await session.splitPreview(gid, srcCut, tgtCut);
+  const preview = await session.cutPreview(gid, srcCut, tgtCut);
   if (preview.kind !== "preview") return undefined;
   const [src, tgt] = await bodies(session, llops, gid);
   const { pairs } = diff(src, tgt);
@@ -90,31 +90,31 @@ export async function cut(
   const partners = held.map((slot) => slot?.partner);
   const map = valueMap(preview.params, partners, preview.tgtParams ?? [], pairs, src, tgt, tgtCut);
   if (!map) return undefined;
-  const split = await session.split(gid, srcCut, tgtCut, map);
-  if (split.kind !== "split") return undefined;
-  if (!(await fillCut(session, llops, split))) {
-    await session.unsplit(gid);
+  const made = await session.cut(gid, srcCut, tgtCut, map);
+  if (made.kind !== "cut") return undefined;
+  if (!(await fillCut(session, llops, made))) {
+    await session.uncut(gid);
     return undefined;
   }
   const view = await session.show(gid);
-  const lives = split.params.map(({ live }, k) => held[k]?.read ?? live);
-  const images = split.params.map(({ live, tgt }) => (live === "poison" ? tgt : map[live]));
-  const [srcLoop, tgtLoop] = split.detach?.hypothesis ? [srcCut, tgtCut] : [];
+  const lives = made.params.map(({ live }, k) => held[k]?.read ?? live);
+  const images = made.params.map(({ live, tgt }) => (live === "poison" ? tgt : map[live]));
+  const [srcLoop, tgtLoop] = made.detach?.hypothesis ? [srcCut, tgtCut] : [];
   const sides: [Side, Side] = [
     { module: view.src.text, point: pointOf(src, srcCut), values: lives, loop: srcLoop },
     { module: view.tgt.text, point: pointOf(tgt, tgtCut), values: images, loop: tgtLoop },
   ];
-  if (split.detach?.hypothesis) {
-    await unfoldToMatch(session, llops, split, sides, limits.unfolds);
+  if (made.detach?.hypothesis) {
+    await unfoldToMatch(session, llops, made, sides, limits.unfolds);
   }
   // The outer keeps the goal's entry, so it assumes what the goal assumes.
   const inherited = assumed.get(gid) ?? [];
-  assumed.set(split.children.outer, inherited);
+  assumed.set(made.children.outer, inherited);
   if (limits.facts) {
-    const landed = await strengthenSplit(session, llops, gid, split, sides, inherited);
-    assumed.set(split.children.callee, landed);
+    const landed = await strengthenNewCut(session, llops, gid, made, sides, inherited);
+    assumed.set(made.children.callee, landed);
   }
-  return split.children;
+  return made.children;
 }
 
 /**
@@ -212,23 +212,23 @@ function readsAt(src: Instruction[], slot: string, cut: string): string[] {
   return reads;
 }
 
-/** Strengthens `split` with what its goal, the analyses, relations and guesses offer. */
-async function strengthenSplit(
+/** Strengthens cut `made` with what its goal, the analyses, relations and guesses offer. */
+async function strengthenNewCut(
   session: Session,
   llops: Llops,
   gid: string,
-  split: Extract<SplitResult, { kind: "split" }>,
+  made: Extract<CutResult, { kind: "cut" }>,
   [mine, theirs]: [Side, Side],
   inherited: Predicate[],
 ) {
   const lives = mine.values.map((value = "") => value);
   const facts = await cutFacts(llops, mine.module, mine.point, lives);
-  const types = split.params.map((param) => param.type);
+  const types = made.params.map((param) => param.type);
   const relations = { predicates: await relationsAt(llops, [mine, theirs], types) };
-  const loop = split.detach?.hypothesis !== undefined;
+  const loop = made.detach?.hypothesis !== undefined;
   // At a loop's header, what the tgt knows is a guess the src's iteration may keep too.
   const known = loop ? await predicatesAt(llops, theirs) : [];
-  const guesses = loop ? union(guessInvariants(split.params), { predicates: known }) : {};
+  const guesses = loop ? union(guessInvariants(made.params), { predicates: known }) : {};
   const own = { predicates: passedOn(inherited, lives) };
   const candidates = union(guesses, facts, relations, own);
   if (loop) return strengthenLoop(session, gid, candidates);
@@ -290,7 +290,7 @@ function moved(body: Instruction[], k: number): number {
 }
 
 /**
- * Where both sides agree and their expensive operations split most evenly,
+ * Where both sides agree and their expensive operations divide most evenly,
  * most even first, leaving at least one in each half.
  */
 export function balancedPoints(src: Instruction[], tgt: Instruction[]): [string, string][] {
@@ -299,8 +299,8 @@ export function balancedPoints(src: Instruction[], tgt: Instruction[]): [string,
   const kept = (k: number) => total - moved(src, k);
   return [...partners(src, tgt, regions)]
     .filter(([i, j]) => i > 0 && j >= 0 && !src[i]?.phi && !tgt[j]?.phi)
-    .map(([i, j]) => ({ i, j, gap: Math.abs(total - 2 * kept(i)), split: kept(i) }))
-    .filter((point) => point.split > 0 && point.split < total)
+    .map(([i, j]) => ({ i, j, gap: Math.abs(total - 2 * kept(i)), kept: kept(i) }))
+    .filter((point) => point.kept > 0 && point.kept < total)
     .sort((a, b) => a.gap - b.gap)
     .slice(0, TRIES)
     .map(({ i, j }) => [`#${i}`, `#${j}`]);

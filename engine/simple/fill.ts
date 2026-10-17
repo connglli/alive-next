@@ -5,22 +5,22 @@
 // step is certified because a value refines poison.
 import type { Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
-import type { SplitResult } from "../core/state/splits.ts";
+import type { CutResult } from "../core/state/cuts.ts";
 import { diff } from "./regions.ts";
 import { build } from "./scev.ts";
 import { bodies } from "./windows.ts";
 
-/** Fills what cut `split` left the src passing as poison. */
+/** Fills what cut `made` left the src passing as poison. */
 export async function fillCut(
   session: Session,
   llops: Llops,
-  split: Extract<SplitResult, { kind: "split" }>,
+  made: Extract<CutResult, { kind: "cut" }>,
 ) {
-  if (!split.params.some((param) => param.live === "poison")) return true;
-  const types = split.params.map((param) => param.type);
-  const { outer, callee } = split.children;
-  if (!(await fill(session, llops, outer, split.callee, types))) return false;
-  const hypothesis = split.detach?.hypothesis;
+  if (!made.params.some((param) => param.live === "poison")) return true;
+  const types = made.params.map((param) => param.type);
+  const { outer, callee } = made.children;
+  if (!(await fill(session, llops, outer, made.callee, types))) return false;
+  const hypothesis = made.detach?.hypothesis;
   return !hypothesis || (await fill(session, llops, callee, hypothesis, types));
 }
 

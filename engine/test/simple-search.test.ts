@@ -205,7 +205,7 @@ describe.skipIf(!built)("search", () => {
     );
     // A cut before the multiplication, then two in what precedes it, each undone in turn.
     expect(await search(session, llops, { ...limits, cuts: 3 })).toBe("unknown");
-    expect(moves(session).filter((move) => move === "split")).toHaveLength(3);
+    expect(moves(session).filter((move) => move === "cut")).toHaveLength(3);
     expect(moves(session).at(-1)).toBe("give_up");
   });
 
@@ -220,8 +220,8 @@ describe.skipIf(!built)("search", () => {
     });
     const session = await start(DIVIDES, DIVIDES.replace("add nuw", "add"), checker);
     expect(await search(session, llops, limits)).toBe("verified");
-    expect(moves(session).filter((move) => move === "split")).toHaveLength(2);
-    expect(moves(session)).toContain("unsplit");
+    expect(moves(session).filter((move) => move === "cut")).toHaveLength(2);
+    expect(moves(session)).toContain("uncut");
   });
 
   test("undoes a cut whose goals stay open, so that the default check comes", async () => {
@@ -230,7 +230,7 @@ describe.skipIf(!built)("search", () => {
     const checker = stub((text, _, ms) => whole(text) && ms >= 5_000);
     const session = await start(DIVIDES, DIVIDES.replace("add nuw", "add"), checker);
     expect(await search(session, llops, { ...limits, cuts: 2 })).toBe("verified");
-    expect(moves(session)).toContain("unsplit");
+    expect(moves(session)).toContain("uncut");
   });
 
   test("gives a goal's last check the largest budget", async () => {
@@ -447,7 +447,7 @@ exit:
     async (scenario) => {
       const session = await start(scenario.src, scenario.tgt, aliveTv);
       expect(await search(session, llops, limits)).toBe("verified");
-      expect(moves(session)).toContain("split");
+      expect(moves(session)).toContain("cut");
     },
     60_000,
   );
@@ -490,7 +490,7 @@ exit:
     };
     const session = await start(UMAX, UMAX.replace("sub i32", "sub nuw i32"), large);
     expect(await search(session, llops, limits)).toBe("verified");
-    expect(moves(session)).not.toContain("unsplit");
+    expect(moves(session)).not.toContain("uncut");
   }, 120_000);
 
   test("searches again an outer that strengthening its cut reopened", async () => {

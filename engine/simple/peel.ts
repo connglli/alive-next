@@ -24,16 +24,16 @@ export async function peel(
   const after: string[] = [];
   let at = gid;
   if (src[b + 1]?.block === src[b]?.block && tgt[d + 1]?.block === tgt[d]?.block) {
-    const split = await cut(session, llops, at, limits, `#${b + 1}`, `#${d + 1}`, assumed);
-    if (!split) return none;
-    after.push(split.callee);
-    at = split.outer;
+    const halves = await cut(session, llops, at, limits, `#${b + 1}`, `#${d + 1}`, assumed);
+    if (!halves) return none;
+    after.push(halves.callee);
+    at = halves.outer;
   }
   const first = a <= firstOwn(src) && c <= firstOwn(tgt);
   if (first) return { goals: [at, ...after], region: at };
   const head = src[a]?.phi ? [src[a]?.block, tgt[c]?.block] : [`#${a}`, `#${c}`];
   const [srcHead = "", tgtHead = ""] = head;
-  const split = await cut(session, llops, at, limits, srcHead, tgtHead, assumed);
-  if (!split) return { goals: [at, ...after], region: at };
-  return { goals: [split.outer, split.callee, ...after], region: split.callee };
+  const halves = await cut(session, llops, at, limits, srcHead, tgtHead, assumed);
+  if (!halves) return { goals: [at, ...after], region: at };
+  return { goals: [halves.outer, halves.callee, ...after], region: halves.callee };
 }
