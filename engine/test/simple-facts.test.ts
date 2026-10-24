@@ -77,6 +77,31 @@ exit:
     expect(cut.predicates).toContainEqual({ op: "sge", lhs: "!0", rhs: 0 });
   });
 
+  test("narrow a value by its known bits, which see the branch before it", async () => {
+    // Only the known bits use that %lo <= %hi on the way to %h, so %d >= 0.
+    // The load after makes a poison %d undefined behavior.
+    const module = `define i32 @f(ptr %a, i32 %lo, i32 %hi) {
+entry:
+  %c = icmp sle i32 %lo, %hi
+  br i1 %c, label %then, label %exit
+
+then:
+  %d = sub nsw i32 %hi, %lo
+  %h = sdiv i32 %d, 2
+  %e = sext i32 %h to i64
+  %p = getelementptr inbounds i32, ptr %a, i64 %e
+  %v = load i32, ptr %p
+  ret i32 %v
+
+exit:
+  ret i32 -1
+}
+`;
+    expect(await factsAt(llops, module, "%h", ["%d"])).toEqual({
+      "%d": { noundef: true, range: { min: 0, max: -2147483648 } },
+    });
+  });
+
   test("a range that reaches the top of its type wraps, and one too wide to send is left out", async () => {
     const module = `define i64 @f(i8 noundef %x, i64 noundef %y) {
 entry:

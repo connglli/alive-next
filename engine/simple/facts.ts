@@ -29,11 +29,11 @@ export async function factsAt(
   point: string,
   values: string[],
 ): Promise<Preconditions> {
-  const about = await analyses(llops, module, point, ["defined", "ranges", "pointer"]);
+  const about = await analyses(llops, module, point, ["defined", "ranges", "pointer", "knownbits"]);
   const out: Preconditions = {};
   for (const value of values) {
     if (!about("defined", value)?.not_poison) continue;
-    const range = rangeOf(about("ranges", value));
+    const range = rangeOf(about("ranges", value), about("knownbits", value));
     const pointer = pointerAttrs(about("pointer", value));
     out[value] = { noundef: true, ...(range ? { range } : {}), ...pointer };
   }
