@@ -5,7 +5,7 @@
 // values crossing the cut boundary. As a result, an outlined callee goal may be
 // unprovable on its own without interface facts the caller actually guarantees.
 //
-// Strengthening enriches the cut boundary with three categories of contract facts:
+// Strengthening enriches the cut boundary with four categories of contract facts:
 //
 // 1. Parameter Attributes (`param_attrs`):
 //    Per-argument properties on callee parameters (e.g. `noundef`, `range`,
@@ -19,6 +19,10 @@
 //    Function-level guarantees about the callee's behavior (e.g. `memory(none)`,
 //    `nounwind`, `willreturn`, `nofree`).
 //
+// 4. Return Facts (`ret_attrs`):
+//    `range`, `nonnull` or `align` on the callee's return value, which make a
+//    value outside them poison.
+//
 // Verification proceeds in three certified phases:
 //
 // Phase one (caller preconditions): in `outer.src`, the parameter attributes go on
@@ -31,18 +35,17 @@
 // hold of a value that may be poison, as they do on the callee's parameter.
 // `noalias` is refused, since alive2 ignores it on a declaration and on a parameter.
 //
-// Phase two (callee guarantees): semantic function attributes (`fn_attrs`) are verified
-// on the callee bodies via refinement checks (`unannotated => with_fn_attrs`). Checking
-// both `src` and `tgt` ensures neither side performs behavior forbidden by the attribute
-// (which would introduce UB into `src` and unsoundly validate invalid targets).
+// Phase two (callee guarantees): semantic function attributes (`fn_attrs`) and
+// return facts are verified on the callee's src via refinement checks
+// (`unannotated => annotated`), the return facts in a strengthen of their own.
 //
 // Phase three (contract materialization): `outer.tgt` gains the contract phase
 // one enforced on `outer.src`, so the outer's two sides stay alike, and both
-// caller declarations gain the function attributes. Callee definitions
-// (`callee.src` and `callee.tgt`) gain the parameter attributes, function
-// attributes, and entry predicates. This transition is recorded as an atomic
-// `strengthen` effect linked to the justifying caller step (`by`), and lands
-// with the steps before it only once every one is certified.
+// caller declarations gain the function attributes and return facts. Callee
+// definitions (`callee.src` and `callee.tgt`) gain the parameter attributes,
+// function attributes, entry predicates and return facts. This transition is
+// recorded as an atomic `strengthen` effect linked to the justifying caller
+// step (`by`), and lands with the steps before it only once every one is certified.
 //
 // A callee cut at a loop header also calls itself, through its hypothesis, so
 // its contract is proved there too, as at the outer's calls: one iteration has
@@ -51,6 +54,9 @@
 // with the parameter facts, lands right after the claim; for an iteration
 // that loops, the callee goal is interposed at the program the step would make.
 // The callee takes no function attribute: induction cannot prove willreturn.
+// Its return facts are proved with its hypothesis returning them, which is
+// induction over a contract proved without them, so they come in a strengthen
+// of their own; an iteration that loops takes none, as alive2 is not asked about it.
 import { availableParallelism } from "node:os";
 import { type CheckResult, timedOut } from "../drivers/alive2.ts";
 import type { Assertion, Attrs, Llops, Predicate } from "../drivers/llops.ts";
@@ -82,6 +88,8 @@ export interface StrengthenContract {
   fn_attrs?: Attrs;
   /** Preconditions on the callee's arguments !0, !1, ...: comparisons, or lines of IR ending in an i1. */
   predicates?: Predicate[];
+  /** Facts about the callee's return value: `range`, `nonnull` or `align`. */
+  ret_attrs?: Attrs;
 }
 
 export type StrengthenResult =
@@ -125,13 +133,17 @@ export class Strengthen {
     const rawParamAttrs = contract.param_attrs ?? {};
     const fnAttrs = contract.fn_attrs ?? {};
     const predicates = contract.predicates ?? [];
+    const retAttrs = contract.ret_attrs ?? {};
     const params = paramsOf(rawParamAttrs);
     const hasParamAttrs = params.length > 0;
     const hasFnAttrs = Object.keys(fnAttrs).length > 0;
     const hasPredicates = predicates.length > 0;
+    const hasRetAttrs = Object.keys(retAttrs).length > 0;
 
-    if (!hasParamAttrs && !hasFnAttrs && !hasPredicates) {
-      throw new Error(`there is nothing to add: give param_attrs, fn_attrs or predicates`);
+    if (!hasParamAttrs && !hasFnAttrs && !hasPredicates && !hasRetAttrs) {
+      throw new Error(
+        `there is nothing to add: give param_attrs, fn_attrs, predicates or ret_attrs`,
+      );
     }
 
     const halves = this.halves(tree, gid);
@@ -142,9 +154,31 @@ export class Strengthen {
       const reason = `@${name} calls @${hypothesis}, so it takes no function attributes: induction cannot prove willreturn`;
       return { kind: "refused", phase: "callee_attr", reason, effects: [] };
     }
+    if (!holdsOfPoison(retAttrs)) {
+      const reason = `a return fact is range, nonnull or align, which make a value outside them poison`;
+      return { kind: "refused", phase: "callee_attr", reason, effects: [] };
+    }
+    // A loop's contract is proved at its hypothesis's calls with nothing known
+    // of what the hypothesis returns, since its return facts rest on that contract.
+    if (hasRetAttrs && (hasParamAttrs || hasFnAttrs || hasPredicates)) {
+      const reason = `return facts come in a strengthen of their own, after the facts they rest on`;
+      return { kind: "refused", phase: "callee_attr", reason, effects: [] };
+    }
     const aliasing = noaliasIn(rawParamAttrs);
     if (aliasing !== undefined) {
       const reason = `parameter ${aliasing}: alive2 ignores noalias, so it can be neither proved at a call nor assumed by the callee`;
+      return { kind: "refused", phase: "caller", reason, effects: [] };
+    }
+
+    // Return facts the declaration already has add nothing to prove.
+    const returned = hasRetAttrs
+      ? await this.returning(this.store.get(head(outer, "src")), name, retAttrs)
+      : undefined;
+    if (typeof returned === "object") {
+      return { kind: "refused", phase: "attribute", reason: returned.reason, effects: [] };
+    }
+    if (returned !== undefined && (await this.store.put(returned)) === head(outer, "src")) {
+      const reason = `the declaration of @${name} already has every fact, so there is nothing to add`;
       return { kind: "refused", phase: "caller", reason, effects: [] };
     }
 
@@ -274,6 +308,15 @@ export class Strengthen {
       checks.push(check);
     }
 
+    // Phase 2, for return facts: the callee's src, with its hypothesis
+    // returning them, keeps them on its own return.
+    if (hasRetAttrs) {
+      const keeps = await this.keepsReturn(this.store.get(head(callee, "src")), halves, retAttrs);
+      if ("reason" in keeps)
+        return { kind: "refused", phase: "callee_attr", ...keeps, effects: [] };
+      checks.push(keeps);
+    }
+
     // Phase 3: the outer's tgt takes the contract Phase 1 enforced on its src,
     // so the two sides stay alike and no later step sees an assume on one side
     // alone; on the tgt it only makes the program less defined, which a tgt
@@ -282,8 +325,10 @@ export class Strengthen {
     // the callee's contract only once every step is certified, so the two
     // never say different things.
     for (const side of ["src", "tgt"] as Side[]) {
-      // Phase 1 enforced all but the function attributes on the src.
+      // Phase 1 enforced all but the function attributes on the src, and
+      // return facts alone owe the outer no step.
       if (side === "src" && !hasFnAttrs) continue;
+      if (!hasParamAttrs && !hasPredicates && !hasFnAttrs) continue;
       const owed = side === "src" ? { fn_attrs: fnAttrs } : contract;
       const enforced = await this.enforce(this.store.get(head(now(outer), side)), name, owed);
       if (typeof enforced !== "string")
@@ -308,9 +353,14 @@ export class Strengthen {
     // Both sides advance simultaneously under one atomic `strengthen` effect.
     const srcRes = kept
       ? this.store.get(kept.from)
-      : await this.materialize(this.store.get(head(callee, "src")), name, contract);
+      : await this.materialize(this.store.get(head(callee, "src")), name, contract, hypothesis);
     if (typeof srcRes !== "string") return { ...srcRes, effects: [] };
-    const tgtRes = await this.materialize(this.store.get(head(callee, "tgt")), name, contract);
+    const tgtRes = await this.materialize(
+      this.store.get(head(callee, "tgt")),
+      name,
+      contract,
+      hypothesis,
+    );
     if (typeof tgtRes !== "string") return { ...tgtRes, effects: [] };
     // A loop's tgt takes the contract before its calls of the hypothesis too.
     const tgtClaim = hypothesis ? await this.enforce(tgtRes, hypothesis, contract) : tgtRes;
@@ -326,9 +376,30 @@ export class Strengthen {
         ...(hasParamAttrs ? { param_attrs: rawParamAttrs } : {}),
         ...(hasFnAttrs ? { fn_attrs: fnAttrs } : {}),
         ...(hasPredicates ? { predicates } : {}),
+        ...(hasRetAttrs ? { ret_attrs: retAttrs } : {}),
         ...(by ? { by: kept ? [by, { gid: callee.id, hash: kept.hash }] : [by] } : {}),
       },
     ]);
+
+    // The outer's declarations take the return facts, which Phase 2 showed of
+    // the callee's src. That is no step: on the src they add poison to the
+    // call's result, which only the callee's proof excuses.
+    if (hasRetAttrs) {
+      const returning = await Promise.all(
+        (["src", "tgt"] as Side[]).map((side) =>
+          this.returning(this.store.get(head(now(outer), side)), name, retAttrs),
+        ),
+      );
+      const [src, tgt] = returning;
+      if (typeof src !== "string" || typeof tgt !== "string") {
+        const reason = [src, tgt].find((side) => typeof side !== "string")?.reason ?? "";
+        return { kind: "refused", phase: "attribute", reason, effects: [] };
+      }
+      const said = { src: await this.store.put(src), tgt: await this.store.put(tgt) };
+      const before = now(outer);
+      if (said.src !== head(before, "src") || said.tgt !== head(before, "tgt"))
+        hold([{ effect: "strengthen", gid: outer.id, ...said, ret_attrs: retAttrs }]);
+    }
 
     // Phase 3, for a loop: the step Phase 0 certified lands in the callee's
     // chain on that answer, so the claim never stands without it. For an
@@ -378,8 +449,8 @@ export class Strengthen {
     contract: StrengthenContract,
     unroll?: number,
   ): Promise<StrengthenPreview> {
-    if (Object.keys(contract.fn_attrs ?? {}).length > 0)
-      throw new Error("a preview takes param_attrs and predicates, not fn_attrs");
+    if (Object.keys({ ...contract.fn_attrs, ...contract.ret_attrs }).length > 0)
+      throw new Error("a preview takes param_attrs and predicates, not fn_attrs or ret_attrs");
     const halves = this.halves(tree, gid);
     if ("reason" in halves) return { kind: "refused", reason: halves.reason };
     const { outer, callee, name, hypothesis } = halves;
@@ -443,8 +514,13 @@ export class Strengthen {
     return { outer, callee, name, hypothesis: callee.detach?.hypothesis };
   }
 
-  /** The callee `fn` in `module` with `contract` at its entry, as Phase 3 materializes it. */
-  private async materialize(module: string, fn: string, contract: StrengthenContract) {
+  /** The callee `fn` in `module` with `contract`, as Phase 3 materializes it, `hypothesis` too. */
+  private async materialize(
+    module: string,
+    fn: string,
+    contract: StrengthenContract,
+    hypothesis?: string,
+  ) {
     const paramAttrs = contract.param_attrs ?? {};
     const fnAttrs = contract.fn_attrs ?? {};
     const predicates = contract.predicates ?? [];
@@ -465,7 +541,43 @@ export class Strengthen {
       }
       current = assumeRes.module;
     }
+    const retAttrs = contract.ret_attrs ?? {};
+    for (const returner of Object.keys(retAttrs).length > 0 ? [fn, hypothesis] : []) {
+      const returned = returner ? await this.returning(current, returner, retAttrs) : current;
+      if (typeof returned !== "string")
+        return { kind: "refused" as const, phase: "attribute" as const, reason: returned.reason };
+      current = returned;
+    }
     return current;
+  }
+
+  /** Whether the callee's src `module` keeps `retAttrs`, given them of its hypothesis too. */
+  private async keepsReturn(
+    module: string,
+    { name, hypothesis }: Halves,
+    retAttrs: Attrs,
+  ): Promise<CheckResult | { reason: string; check?: CheckResult }> {
+    const assumed = hypothesis ? await this.returning(module, hypothesis, retAttrs) : module;
+    if (typeof assumed !== "string") return assumed;
+    if (await this.steps.loops(assumed))
+      return {
+        reason: `an iteration of @${name} that loops cannot be asked whether it keeps them`,
+      };
+    const keeps = await this.returning(assumed, name, retAttrs);
+    if (typeof keeps !== "string") return keeps;
+    const check = await this.steps.refinementCheck(assumed, keeps);
+    if (check.outcome === "correct") return check;
+    return { reason: "the callee's src is not shown to keep the return facts", check };
+  }
+
+  /** `module` with `attrs` on the return of `fn`. */
+  private async returning(
+    module: string,
+    fn: string,
+    attrs: Attrs,
+  ): Promise<string | { reason: string }> {
+    const result = await this.llops.attrs(module, fn, attrs, undefined, true);
+    return result.ok ? result.module : { reason: `return facts: ${result.message}` };
   }
 
   /**

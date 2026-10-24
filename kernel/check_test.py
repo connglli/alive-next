@@ -355,6 +355,27 @@ exit:
 NESTED_NNEG = NESTED.replace("sext i32 %i", "zext nneg i32 %i")
 # i >= 0 over the outer loop's i, which is parameter 0 of its iteration k.
 NONNEGATIVE = [{"op": "sge", "lhs": "!0", "rhs": 0}]
+# A count up to n, which the tgt says returns no negative value: that holds
+# because i >= 0 does, by induction.
+COUNT = """define i32 @f(i32 noundef %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %more = icmp slt i32 %i, %n
+  br i1 %more, label %body, label %exit
+
+body:
+  %i.next = add nsw i32 %i, 1
+  br label %head
+
+exit:
+  ret i32 %i
+}
+"""
+COUNT_RANGE = COUNT.replace("define i32 @f", "define range(i32 0, -2147483648) i32 @f")
+NATURAL = {"range": {"min": 0, "max": -2147483648}}
 # What the inner loop l carries for it: i, its parameter 3, is at least 0 and
 # below n, its parameter 4, so that i + 1 neither wraps nor turns negative.
 CARRIED = [{"op": "sge", "lhs": "!3", "rhs": 0}, {"op": "slt", "lhs": "!3", "rhs": "!4"}]
@@ -753,6 +774,59 @@ class Case(unittest.TestCase):
     tgt = self.assumed(self.declared(entered["tgt"], "k.ih", fact), calls, assertions)
     return {"src": entered["src"], "tgt": tgt}
 
+  def returning(self, digest: str, fns: list, facts: dict) -> str:
+    """The program with `facts` on the return of each of `fns`, as a strengthen states them."""
+    text = self.text(digest)
+    for fn in fns:
+      text = llops("attrs", {"module": text, "fn": fn, "return": True, "attrs": facts})["module"]
+    return self.built.program(canonical(text))
+
+  def returned(
+    self, facts: dict = NATURAL, outer_facts: dict | None = None, alone: bool = True
+  ) -> Path:
+    """The count proved to return what the tgt says: i >= 0 assumed at the
+    iteration's entry and proved before each call, then `facts` proved of the
+    iteration's src with k.ih returning them, in a strengthening of their own
+    unless `alone` is false, and put on k's declaration in the outer, or
+    `outer_facts` there instead."""
+    halves = self.detached(COUNT, COUNT_RANGE)
+    outer, inner = halves["outer"], halves["inner"]
+    calls = {"at": "before_calls", "fn": "k"}
+    entered = {side: self.assumed(outer[side], calls, NONNEGATIVE) for side in outer}
+    steps = [
+      {"kind": "check", "side": side, "from": outer[side], "to": entered[side]} for side in outer
+    ]
+    told = outer_facts or facts
+    returns = {side: self.returning(entered[side], ["k"], told) for side in entered}
+    steps.append({"kind": "strengthen", "from": entered, "to": returns, "ret_attrs": told})
+    self.built.goal("g2", outer, returns, steps, {"kind": "check"})
+
+    claim = self.claimed(inner, NONNEGATIVE)
+    calls = {"at": "before_calls", "fn": "k.ih"}
+    if alone:
+      kept = self.assumed(claim["src"], calls, NONNEGATIVE)
+      by = [{"gid": "g2", "hash": entered["src"]}, {"gid": "g3", "hash": kept}]
+      after = {"src": kept, "tgt": claim["tgt"]}
+      strong = {side: self.returning(after[side], ["k", "k.ih"], facts) for side in after}
+      steps = [
+        {"kind": "strengthen", "from": inner, "to": claim, "predicates": NONNEGATIVE, "by": by},
+        {"kind": "check", "side": "src", "from": claim["src"], "to": kept},
+        {"kind": "strengthen", "from": after, "to": strong, "ret_attrs": facts},
+      ]
+      end = strong
+    else:
+      strong = {side: self.returning(claim[side], ["k", "k.ih"], facts) for side in claim}
+      kept = self.assumed(strong["src"], calls, NONNEGATIVE)
+      by = [{"gid": "g2", "hash": entered["src"]}, {"gid": "g3", "hash": kept}]
+      step = {"kind": "strengthen", "from": inner, "to": strong, "predicates": NONNEGATIVE}
+      steps = [
+        {**step, "ret_attrs": facts, "by": by},
+        {"kind": "check", "side": "src", "from": strong["src"], "to": kept},
+      ]
+      end = {"src": kept, "tgt": strong["tgt"]}
+    self.built.goal("g3", inner, end, steps, {"kind": "check"})
+    return self.built.write()
+
   def invariant(self, kept: bool = True, fact: dict | None = None) -> Path:
     """The parity loop proved with j <= i, assumed at the callee's entry and
     proved before each call: the outer's (on entry) and k.ih's (each
@@ -904,6 +978,10 @@ class TestGolden(Case):
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
     self.assertEqual(done.stdout.count("Predicate proof"), 2, done.stdout)
+
+  def test_a_return_fact_that_holds_by_induction_verifies(self):
+    done = self.verified(self.returned())
+    self.assertNotIn("FAIL", done.stdout)
 
   def test_an_invariant_of_a_loop_that_holds_a_loop_verifies(self):
     self.verified(self.nested()["package"])
@@ -1992,6 +2070,20 @@ declare i32 @k.ih(i32)
       self.built.goal("g2", outer, outer, [], {"kind": "check"})
       self.built.goal("g3", inner, inner, [], {"kind": "check"})
       self.refused(self.built.write(), saying)
+
+  def test_a_callee_that_does_not_keep_the_return_facts_it_claims(self):
+    # i reaches n, which may pass 10, so the iteration returns past the range.
+    self.refused(self.returned({"range": {"min": 0, "max": 10}}), "Return facts")
+
+  def test_an_outer_that_takes_return_facts_the_callee_did_not_prove(self):
+    self.refused(self.returned(outer_facts={"range": {"min": 0, "max": 100}}), "Return facts")
+
+  def test_return_facts_that_come_with_the_facts_they_rest_on(self):
+    # Its proof at k.ih's calls would assume the range it is meant to establish.
+    self.refused(self.returned(alone=False), "come with other facts in one strengthening")
+
+  def test_a_return_fact_that_is_not_poison(self):
+    self.refused(self.returned({"noundef": True}), "noundef, not poison")
 
   def test_an_attribute_on_a_goal_that_is_not_a_callee(self):
     pair = {"src": self.src, "tgt": self.tgt}

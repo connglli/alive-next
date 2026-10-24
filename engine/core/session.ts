@@ -714,7 +714,7 @@ export class Session {
     });
   }
 
-  /** Strengthen a cut's interface with parameter attributes, function attributes, or predicates. */
+  /** Strengthen a cut's interface: parameter or function attributes, predicates, return facts. */
   strengthen(gid: string, contract: StrengthenContract): Promise<SessionStrengthenResult> {
     return this.act("strengthen", { gid, ...contract }, async (tree) => {
       const parent = goalOf(tree, gid);

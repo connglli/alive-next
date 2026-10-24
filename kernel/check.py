@@ -439,6 +439,17 @@ def parameter_facts(param_attrs: dict) -> list[tuple[int, dict]]:
   return sorted(facts, key=lambda item: item[0])
 
 
+def return_facts(step: dict) -> dict:
+  """A strengthen step's return facts, only those that make a value outside them poison."""
+  facts = step.get("ret_attrs") or {}
+  if not isinstance(facts, dict):
+    raise Refused("a strengthen step's return facts are not an object")
+  others = sorted(set(facts) - {"range", "nonnull", "align"})
+  if others:
+    raise Refused(f"a strengthen step's return facts name {', '.join(others)}, not poison")
+  return facts
+
+
 def bare(package: Package, module: str, name: str) -> bool:
   """Whether a function is declared or defined without any attribute."""
   return function(package, module, name)["bare"] is True
@@ -617,16 +628,23 @@ class Check:
       ms=ms,
     )
 
-  def goal(self, gid: str, role: str | None = None, loop: dict | None = None) -> None:
+  def goal(
+    self,
+    gid: str,
+    role: str | None = None,
+    loop: dict | None = None,
+    callee: str | None = None,
+  ) -> None:
     """Check one goal: its chain, then how it was discharged.
 
     `role` identifies the goal's role in a cut: None means neither caller
     nor callee, "outer" means the caller, and any other value is the
     callee's name. `loop`, on a half of a loop cut at its header, names the
     hypothesis, and on the outer also the pair the callee started with.
+    `callee`, on the outer, names the function the cut outlined.
     """
     goal = self.package.goal(gid)
-    head = self.chain(gid, goal, role, loop)
+    head = self.chain(gid, goal, role, loop, callee)
     for side in ("src", "tgt"):
       if head[side] != goal["end"][side]:
         self.fail(
@@ -673,7 +691,9 @@ class Check:
         f"{discharge['kind']}, which this does not know",
       )
 
-  def chain(self, gid: str, goal: dict, role: str | None, loop: dict | None) -> dict:
+  def chain(
+    self, gid: str, goal: dict, role: str | None, loop: dict | None, callee: str | None = None
+  ) -> dict:
     """Walk the steps, checking each one in the direction its side implies."""
     head = dict(goal["start"])
     for step in goal["steps"]:
@@ -701,6 +721,8 @@ class Check:
         head[step["side"]] = self.rewrite(gid, step, head)
       elif step["kind"] == "unfold":
         head[step["side"]] = self.unfold(gid, step, head, loop)
+      elif step["kind"] == "strengthen" and role == "outer":
+        self.returns(gid, step, head, callee)
       elif step["kind"] == "strengthen":
         self.strengthen(gid, step, head, role, loop)
       else:
@@ -715,7 +737,7 @@ class Check:
   def strengthen(
     self, gid: str, step: dict, head: dict, role: str | None, loop: dict | None
   ) -> None:
-    """Replay the exact parameter attributes, function attributes, and entry predicates a callee claims to have gained."""
+    """Replay the exact parameter attributes, function attributes, entry predicates, and return facts a callee claims to have gained."""
     if role is None or role == "outer":
       self.fail(
         gid,
@@ -728,13 +750,18 @@ class Check:
     param_attrs = step.get("param_attrs") or {}
     fn_attrs = step.get("fn_attrs") or {}
     predicates = contract_predicates(step)
+    ret_attrs = return_facts(step)
 
-    if not param_attrs and not fn_attrs and not predicates:
+    if not param_attrs and not fn_attrs and not predicates and not ret_attrs:
       raise Refused(
-        "a strengthen step has no parameter attributes, function attributes, or predicates"
+        "a strengthen step has no parameter attributes, function attributes, predicates,"
+        " or return facts"
       )
 
     replayable = parameter_facts(param_attrs)
+    # The callee's own return, and for a loop its hypothesis's, which the
+    # return facts are proved under: induction over the calls of the hypothesis.
+    returners = [role, loop["hypothesis"]] if loop else [role]
 
     # The outer assumes these attributes of the callee, so its src has to keep them.
     if fn_attrs:
@@ -743,10 +770,24 @@ class Check:
       notes = f"@{role} keeps {', '.join(fn_attrs)}"
       self.asked(gid, "src", "Callee attributes", bare, kept["module"], notes)
 
+    # The outer assumes the return facts of the callee's src, which keeps them
+    # when its hypothesis returns them. That is induction over the facts a loop
+    # was given before, whose proof at the hypothesis's calls assumed nothing of
+    # what it returns, so return facts come alone.
+    if ret_attrs and (param_attrs or fn_attrs or predicates):
+      self.fail(gid, "pair", "Return facts", "come with other facts in one strengthening")
+    elif ret_attrs:
+      bare = self.package.program(step["from"]["src"])
+      assumed = self.returning(bare, returners[1:], ret_attrs)
+      kept = self.returning(assumed, [role], ret_attrs)
+      notes = f"@{role} keeps {', '.join(ret_attrs)} on its return"
+      self.asked(gid, "src", "Return facts", assumed, kept, notes)
+
     replayed = ", ".join(
       (["parameter attributes"] if param_attrs else [])
       + (["function attributes"] if fn_attrs else [])
       + (["entry predicates"] if predicates else [])
+      + (["return facts"] if ret_attrs else [])
     )
     for side in ("src", "tgt"):
       if step["from"][side] != head[side]:
@@ -777,6 +818,7 @@ class Check:
             "assertions": predicates,
           },
         )["module"]
+      attributed = self.returning(attributed, returners, ret_attrs)
       # A loop's tgt takes the contract before its calls of the hypothesis too.
       if side == "tgt" and loop:
         attributed = self.enforced(attributed, loop["hypothesis"], replayable, predicates)
@@ -792,6 +834,35 @@ class Check:
         matches,
         ms,
       )
+      head[side] = step["to"][side]
+
+  def returning(self, module: str, fns: list, facts: dict) -> str:
+    """`module` with `facts` on the return of each of `fns`."""
+    for fn in fns if facts else []:
+      request = {"module": module, "fn": fn, "return": True, "attrs": facts}
+      module = self.package.run_llops("attrs", request)["module"]
+    return module
+
+  def returns(self, gid: str, step: dict, head: dict, callee: str | None) -> None:
+    """Replay the return facts an outer's declaration of its callee claims to have gained.
+
+    They are no step: on the src they add poison to the call's result. The cut
+    holds them to what the callee's own strengthening showed its src keeps.
+    """
+    facts = return_facts(step)
+    others = [key for key in ("param_attrs", "fn_attrs", "predicates", "by") if step.get(key)]
+    if callee is None or not facts or others:
+      self.fail(gid, "pair", "Strengthening role", "an outer takes return facts alone")
+      return
+    for side in ("src", "tgt"):
+      if step["from"][side] != head[side]:
+        self.fail(gid, side, "Chain continuity", "strengthening starts away from the head")
+      started = time.monotonic()
+      returned = self.returning(self.package.program(step["from"][side]), [callee], facts)
+      same = self.package.run_llops("canon", {"module": returned})["module"]
+      matches = same == self.package.program(step["to"][side])
+      notes = f"@{callee} returns {', '.join(facts)}"
+      self.compared(gid, side, "llops", "Strengthening replay", notes, matches, elapsed_ms(started))
       head[side] = step["to"][side]
 
   def predicates(
@@ -1361,6 +1432,24 @@ class Check:
       if hypothesis and step.get("fn_attrs"):
         self.fail(discharge["inner"], "pair", "Recursive callee", "takes no function attributes")
 
+    # The outer's declaration takes return facts only as one of the callee's
+    # own strengthenings showed its src keeps them.
+    proved = [step.get("ret_attrs") for step in inner["steps"] if step.get("kind") == "strengthen"]
+    for step in outer["steps"]:
+      if step.get("kind") == "strengthen":
+        facts = step.get("ret_attrs")
+        shown = bool(facts) and facts in proved
+        inner_id = discharge["inner"]
+        who = inner_id if shown else f"no strengthening of {inner_id}"
+        self.report(
+          result="OK" if shown else "FAIL",
+          gid=discharge["outer"],
+          side="pair",
+          tool="kernel",
+          check="Return facts",
+          notes=f"@{name} returns {', '.join(facts or {})}, which {who} showed",
+        )
+
     # The outer half keeps the entry the cut was made in; the callee's
     # parameters are values computed before it, so it is asked about them
     # under no assumption at all.
@@ -1368,6 +1457,7 @@ class Check:
       discharge["outer"],
       "outer",
       {"hypothesis": hypothesis, "callee": inner["start"]} if hypothesis else None,
+      name,
     )
     self.goal(discharge["inner"], name, {"hypothesis": hypothesis} if hypothesis else None)
 

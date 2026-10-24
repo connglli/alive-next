@@ -133,6 +133,8 @@ Putting an attribute on `g` is not free. If the fact were false, the annotated o
 
 A detached loop's callee also calls `g.ih`, so phase 1 is also proved at each of those calls in the callee's src, on `g.ih`'s declaration, with the facts assumed at its start: the loop's entry establishes the facts and each iteration keeps them, which makes them invariants. Phase 2 gives the callee's tgt the same facts at its calls of `g.ih`. Such a `g` takes no function attribute, since induction cannot prove `willreturn`.
 
+The outer goal may need a fact about what `g` returns, such as a range the tgt puts on the function's return. That evidence lives in the callee, so the order turns around: once the facts above are in place, a strengthen of its own has alive2 show that the callee's src keeps the fact on its own return, a loop's `g.ih` returning it too, and then both sides of both goals state it on `g` and on any `g.ih`. It comes alone because the proof of those facts at `g.ih`'s calls must not assume it. Only `range`, `nonnull` and `align` are such facts, since they make a value outside them poison, which on the tgt only makes the program less defined. An iteration that still loops takes none.
+
 This is the deepest cost item in the design: a fact assumed by a callee is proved in its outer goal. The cost control is hierarchical cutting, so that each fact is proved inside a chunk-sized goal rather than at the top level. Cut placement and fact placement therefore interact, and that interaction is part of the agent's search problem.
 
 ## Analyses are untrusted proposers
@@ -231,7 +233,7 @@ A step may move a goal that has already been proved. The goal reopens, and every
 
 ### Interface strengthening
 
-- `strengthen(gid, contract)`: enrich a cut goal's interface with parameter attributes (`param_attrs`), semantic function attributes (`fn_attrs`), and entry preconditions written as IR (`predicates`). Phase 1 proves caller preconditions in `outer.src`, the parameter attributes on the callee's declaration and the predicates as `llvm.assume` assertions before each call, certified by alive2. Phase 2 certifies that `callee.src` keeps the function attributes. Phase 3 gives `outer.tgt` the same contract, the parameter attributes on the declaration and the predicates assumed before each call, and both caller declarations the function attributes, and applies parameter attributes, function attributes, and entry predicates to callee definitions (`callee.src` and `callee.tgt`).
+- `strengthen(gid, contract)`: enrich a cut goal's interface with parameter attributes (`param_attrs`), semantic function attributes (`fn_attrs`), entry preconditions written as IR (`predicates`), and return facts (`ret_attrs`). Phase 1 proves caller preconditions in `outer.src`, the parameter attributes on the callee's declaration and the predicates as `llvm.assume` assertions before each call, certified by alive2. Phase 2 certifies that `callee.src` keeps the function attributes and the return facts. Phase 3 gives `outer.tgt` the same contract, the parameter attributes on the declaration and the predicates assumed before each call, and both caller declarations the function attributes and the return facts, and applies parameter attributes, function attributes, and entry predicates to callee definitions (`callee.src` and `callee.tgt`).
 
 An interface is strengthened as a whole rather than one attribute at a time, so its solver cost is one set of queries: the caller's steps, the callee's attribute checks, and the eager cross-checks.
 

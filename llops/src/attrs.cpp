@@ -138,14 +138,14 @@ void dropIgnoredAttrs(llvm::Module &M) {
 
 namespace {
 
-// Add one parameter attribute described by a JSON entry. Attributes are
-// proposals: an attribute the program does not honour turns into UB, which
-// is what the caller's alive2 check is there to catch.
-bool addParamAttr(llvm::Argument &arg, llvm::StringRef kind, const llvm::json::Value &val,
-                  llvm::json::Object &err) {
-  llvm::LLVMContext &ctx = arg.getContext();
+// Add to `B` one attribute, described by a JSON entry, of a parameter or a
+// return value of type `T`. Attributes are proposals: an attribute the program
+// does not honour turns into UB, which is what the caller's alive2 check is
+// there to catch.
+bool addValueAttr(llvm::AttrBuilder &B, llvm::Type &T, llvm::StringRef kind,
+                  const llvm::json::Value &val, llvm::json::Object &err) {
   auto simple = [&](llvm::Attribute::AttrKind k) {
-    arg.addAttr(llvm::Attribute::get(ctx, k));
+    B.addAttribute(k);
     return true;
   };
   if (kind == "noundef")
@@ -160,7 +160,7 @@ bool addParamAttr(llvm::Argument &arg, llvm::StringRef kind, const llvm::json::V
       err = errResponse("invalid", "align must be a positive power of two");
       return false;
     }
-    arg.addAttr(llvm::Attribute::getWithAlignment(ctx, llvm::Align((uint64_t)*bytes)));
+    B.addAlignmentAttr(llvm::Align((uint64_t)*bytes));
     return true;
   }
   if (kind == "dereferenceable") {
@@ -169,7 +169,7 @@ bool addParamAttr(llvm::Argument &arg, llvm::StringRef kind, const llvm::json::V
       err = errResponse("invalid", "dereferenceable must be a positive byte count");
       return false;
     }
-    arg.addAttr(llvm::Attribute::getWithDereferenceableBytes(ctx, (uint64_t)*bytes));
+    B.addDereferenceableAttr((uint64_t)*bytes);
     return true;
   }
   if (kind == "range") {
@@ -180,13 +180,13 @@ bool addParamAttr(llvm::Argument &arg, llvm::StringRef kind, const llvm::json::V
       err = errResponse("invalid", "range needs {\"min\": n, \"max\": m}");
       return false;
     }
-    if (!arg.getType()->isIntegerTy()) {
-      err = errResponse("invalid", "range applies to integer parameters only");
+    if (!T.isIntegerTy()) {
+      err = errResponse("invalid", "range applies to integer values only");
       return false;
     }
-    unsigned bits = arg.getType()->getIntegerBitWidth();
+    unsigned bits = T.getIntegerBitWidth();
     if (bits < 64 && (!llvm::isIntN(bits, *min) || !llvm::isIntN(bits, *max))) {
-      err = errResponse("invalid", "range bounds do not fit the parameter type");
+      err = errResponse("invalid", "range bounds do not fit the value's type");
       return false;
     }
     // The range is the half-open interval [min, max), so the two bounds being
@@ -195,10 +195,8 @@ bool addParamAttr(llvm::Argument &arg, llvm::StringRef kind, const llvm::json::V
       err = errResponse("invalid", "range must be a non-empty half-open interval");
       return false;
     }
-    llvm::AttrBuilder B(ctx);
     B.addRangeAttr(llvm::ConstantRange(llvm::APInt(bits, (uint64_t)*min, true),
                                        llvm::APInt(bits, (uint64_t)*max, true)));
-    arg.addAttrs(B);
     return true;
   }
   err = errResponse("invalid", "unknown attribute '" + kind.str() + "'");
@@ -275,23 +273,33 @@ llvm::json::Object attrsCmd(llvm::json::Object &args) {
     return shapeErr;
   auto fnName = args.getString("fn");
   auto param = args.getInteger("param");
+  bool ret = args.getBoolean("return").value_or(false);
   auto attrs = args.getObject("attrs");
   if (!fnName || !attrs)
     return errResponse("bad_request", "attrs needs 'fn' and 'attrs'");
   if (args.get("param") && !param)
     return errResponse("bad_request", "attrs: 'param' must be an integer");
+  if (args.get("return") && !args.getBoolean("return"))
+    return errResponse("bad_request", "attrs: 'return' must be a boolean");
+  if (param && ret)
+    return errResponse("bad_request", "attrs takes 'param' or 'return', not both");
   llvm::Function *F = shape.M->getFunction(*fnName);
   if (!F)
     return errResponse("not_found", "attrs: no function named '" + fnName->str() + "'");
-  if (param.has_value()) {
-    if (*param < 0 || (uint64_t)*param >= F->arg_size())
+  if (param.has_value() || ret) {
+    if (param && (*param < 0 || (uint64_t)*param >= F->arg_size()))
       return errResponse("invalid", "attrs: parameter index out of range");
-    llvm::Argument &arg = *std::next(F->arg_begin(), (unsigned)*param);
+    llvm::Type &T = ret ? *F->getReturnType() : *F->getArg((unsigned)*param)->getType();
+    llvm::AttrBuilder B(F->getContext());
     for (const auto &entry : *attrs) {
       llvm::json::Object err;
-      if (!addParamAttr(arg, entry.first, entry.second, err))
+      if (!addValueAttr(B, T, entry.first, entry.second, err))
         return err;
     }
+    if (ret)
+      F->addRetAttrs(B);
+    else
+      F->getArg((unsigned)*param)->addAttrs(B);
   } else {
     for (const auto &entry : *attrs) {
       llvm::json::Object err;

@@ -152,11 +152,12 @@ export type Effect =
     }
   /**
    * Both sides of a callee goal gained a strengthened interface contract
-   * (parameter attributes, function attributes, and/or entry predicates).
-   * This is not a step: adding an assumption/attribute to a definition introduces
-   * UB where the old program was defined, so neither direction of a refinement
-   * check would certify it. What makes it sound is the verified assumption at the
-   * call site (`by`) and/or certified function attribute refinement.
+   * (parameter attributes, function attributes, entry predicates, and/or return
+   * facts), or both sides of an outer goal gained the return facts on the
+   * callee's declaration. This is not a step: adding an assumption/attribute
+   * introduces UB or poison where the old program was defined, so neither
+   * direction of a refinement check would certify it. What makes it sound is the
+   * verified assumption at the call site (`by`) and/or certified callee refinement.
    */
   | {
       effect: "strengthen";
@@ -166,6 +167,7 @@ export type Effect =
       param_attrs?: Record<number, Attrs>;
       fn_attrs?: Attrs;
       predicates?: Predicate[];
+      ret_attrs?: Attrs;
       /** The steps proving the contract before each call: one, or two for a loop. */
       by?: StepRef[];
     }

@@ -1018,3 +1018,107 @@ Target:
     }
   });
 });
+
+describe.skipIf(!built)("return facts", () => {
+  const FEW = { range: { min: 0, max: 100 } };
+
+  test("a loop's are asked with its hypothesis returning them, and land on both goals", async () => {
+    const checker = new FakeChecker(() => "correct");
+    const tree = await detached();
+    const result = await strengthening(checker).strengthen(tree, "g1", { ret_attrs: FEW });
+    if (result.kind !== "strengthened") throw new Error(result.reason);
+
+    // The one question before anything lands: the iteration whose hypothesis
+    // returns the facts keeps them on its own return.
+    const keeps = checker.calls[0];
+    expect(keeps?.src).toContain("declare range(i32 0, 100) i32 @outlined_g3.ih(");
+    expect(keeps?.src).toMatch(/define i32 @outlined_g3\(/);
+    expect(keeps?.tgt).toMatch(/define range\(i32 0, 100\) i32 @outlined_g3\(/);
+
+    const claims = result.effects.filter((effect) => effect.effect === "strengthen");
+    expect(claims.map((effect) => [effect.gid, effect.ret_attrs])).toEqual([
+      ["g3", FEW],
+      ["g2", FEW],
+    ]);
+    const after = replayWith(result.effects);
+    for (const side of ["src", "tgt"] as const) {
+      expect(store.get(head(goal(after, "g2"), side))).toContain(
+        "declare range(i32 0, 100) i32 @outlined_g3(",
+      );
+      const callee = store.get(head(goal(after, "g3"), side));
+      expect(callee).toMatch(/define range\(i32 0, 100\) i32 @outlined_g3\(/);
+      expect(callee).toContain("declare range(i32 0, 100) i32 @outlined_g3.ih(");
+    }
+  });
+
+  test("a loop-free callee's are asked of its src alone", async () => {
+    const checker = new FakeChecker(() => "correct");
+    const tree = await cut();
+    const result = await strengthening(checker).strengthen(tree, "g1", { ret_attrs: FEW });
+    if (result.kind !== "strengthened") throw new Error(result.reason);
+    // Only the tgt narrows the multiply, so neither program of the question is the tgt.
+    const keeps = checker.calls[0];
+    for (const asked of [keeps?.src, keeps?.tgt]) expect(asked).not.toContain("trunc");
+    expect(keeps?.tgt).toMatch(/define range\(i32 0, 100\) i32 @outlined_g3\(/);
+  });
+
+  test("ones the callee's src does not keep land nothing", async () => {
+    const checker = new FakeChecker(["incorrect"]);
+    const tree = await detached();
+    const result = await strengthening(checker).strengthen(tree, "g1", { ret_attrs: FEW });
+    expect(result).toMatchObject({ kind: "refused", phase: "callee_attr", effects: [] });
+    if (result.kind !== "refused") throw new Error("unreachable");
+    expect(result.reason).toBe("the callee's src is not shown to keep the return facts");
+    expect(checker.calls).toHaveLength(1);
+  });
+
+  test("only range, nonnull and align, which make a value outside them poison", async () => {
+    const checker = new FakeChecker([]);
+    const result = await strengthening(checker).strengthen(await detached(), "g1", {
+      ret_attrs: { noundef: true },
+    });
+    expect(result).toMatchObject({ kind: "refused", phase: "callee_attr", effects: [] });
+    expect(checker.calls).toHaveLength(0);
+  });
+
+  test("come alone, since a loop's contract is proved without them", async () => {
+    const checker = new FakeChecker([]);
+    const result = await strengthening(checker).strengthen(await detached(), "g1", {
+      predicates: WITHIN,
+      ret_attrs: FEW,
+    });
+    expect(result).toMatchObject({ kind: "refused", phase: "callee_attr", effects: [] });
+    if (result.kind !== "refused") throw new Error("unreachable");
+    expect(result.reason).toContain("a strengthen of their own");
+    expect(checker.calls).toHaveLength(0);
+  });
+
+  test("an iteration that loops takes none, asking nothing", async () => {
+    const checker = new FakeChecker([]);
+    const result = await strengthening(checker).strengthen(await nestedDetached(), "g1", {
+      ret_attrs: { range: { min: 0, max: 1000 } },
+    });
+    expect(result).toMatchObject({ kind: "refused", phase: "callee_attr", effects: [] });
+    if (result.kind !== "refused") throw new Error("unreachable");
+    expect(result.reason).toContain("that loops cannot be asked");
+    expect(checker.calls).toHaveLength(0);
+  });
+
+  test("ones the declaration already has are refused, saying so", async () => {
+    const strengthen = strengthening(new FakeChecker(() => "correct"));
+    const tree = await detached();
+    const first = await strengthen.strengthen(tree, "g1", { ret_attrs: FEW });
+    if (first.kind !== "strengthened") throw new Error(first.reason);
+    const again = await strengthen.strengthen(tree, "g1", { ret_attrs: FEW });
+    expect(again).toMatchObject({ kind: "refused", phase: "caller", effects: [] });
+    if (again.kind !== "refused") throw new Error("unreachable");
+    expect(again.reason).toContain("already has every fact");
+  });
+
+  test("a preview takes none", async () => {
+    const strengthen = strengthening(new FakeChecker([]));
+    await expect(strengthen.preview(await detached(), "g1", { ret_attrs: FEW })).rejects.toThrow(
+      "not fn_attrs or ret_attrs",
+    );
+  });
+});

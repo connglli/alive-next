@@ -32,6 +32,7 @@ import { pipeline } from "./pipeline.ts";
 import { poison } from "./poison.ts";
 import { predicate } from "./predicate.ts";
 import { reassociate } from "./reassociate.ts";
+import { returnfact } from "./returnfact.ts";
 import { rewrite } from "./rewrite.ts";
 import { rotated } from "./rotated.ts";
 import { rule } from "./rule.ts";
@@ -70,6 +71,7 @@ export const scenarios: Scenario[] = [
   rotated,
   nested,
   nestedinvariant,
+  returnfact,
   invariantphi,
   copiedphi,
   exitcond,

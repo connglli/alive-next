@@ -1052,6 +1052,10 @@ entry:
     self.assertTrue(self.cyclic(r["module"]))
 
 
+# `return` is a Python keyword, so the request names it through a dict.
+RETURN = {"return": True}
+
+
 class TestAttrs(Case):
   DECL = """declare i32 @h(ptr, i32)
 
@@ -1126,6 +1130,44 @@ entry:
   def test_parameter_that_is_not_an_integer(self):
     self.bad(
       self.attrs(module=self.DECL, fn="h", param="0", attrs={"nounwind": True}),
+      "bad_request",
+    )
+
+  def test_return_range(self):
+    r = self.good(
+      self.attrs(module=self.DECL, fn="h", attrs={"range": {"min": 0, "max": 256}}, **RETURN)
+    )
+    self.assertIn("declare range(i32 0, 256) i32 @h(ptr, i32)", r["module"])
+
+  def test_return_pointer_attributes_on_a_definition(self):
+    module = """define ptr @f(ptr %p) {
+entry:
+  ret ptr %p
+}
+"""
+    r = self.good(self.attrs(module=module, fn="f", attrs={"nonnull": True, "align": 8}, **RETURN))
+    self.assertIn("define nonnull align 8 ptr @f(ptr %p)", r["module"])
+
+  def test_return_range_on_a_pointer(self):
+    module = """define ptr @f(ptr %p) {
+entry:
+  ret ptr %p
+}
+"""
+    self.bad(
+      self.attrs(module=module, fn="f", attrs={"range": {"min": 0, "max": 8}}, **RETURN),
+      "invalid",
+    )
+
+  def test_return_and_parameter_together(self):
+    self.bad(
+      self.attrs(module=self.DECL, fn="h", param=0, attrs={"noundef": True}, **RETURN),
+      "bad_request",
+    )
+
+  def test_return_that_is_not_a_boolean(self):
+    self.bad(
+      self.attrs(module=self.DECL, fn="h", attrs={"noundef": True}, **{"return": 1}),
       "bad_request",
     )
 

@@ -285,17 +285,16 @@ export class Llops {
     return this.run("edit", { module, ...op });
   }
 
-  /** Put attributes on the function `fn`, or on its parameter `param` when given. */
+  /** Put attributes on the function `fn`, or on its parameter `param` or its return when `ret`. */
   attrs(
     module: Module,
     fn: string,
     attrs: Attrs,
     param?: number,
+    ret?: boolean,
   ): Promise<LlopsResult<ModuleResult>> {
-    return this.run(
-      "attrs",
-      param === undefined ? { module, fn, attrs } : { module, fn, param, attrs },
-    );
+    const at = { ...(param === undefined ? {} : { param }), ...(ret ? { return: true } : {}) };
+    return this.run("attrs", { module, fn, ...at, attrs });
   }
 
   /** Cut the src side at `cut`, using `params` as the signature if given. */

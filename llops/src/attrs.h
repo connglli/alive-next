@@ -9,7 +9,7 @@
 
 namespace llops {
 
-// Put attributes on a function or a parameter.
+// Put attributes on a function, a parameter or the return value.
 llvm::json::Object attrsCmd(llvm::json::Object &args);
 
 // What an attribute means to alive2 where it sits.

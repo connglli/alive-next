@@ -90,7 +90,8 @@ export type Step =
     }
   /**
    * An interface was strengthened: the callee gained parameter attributes,
-   * function attributes, and/or entry predicates.
+   * function attributes, entry predicates, and/or return facts, or the outer
+   * the return facts on the callee's declaration.
    */
   | {
       kind: "strengthen";
@@ -99,6 +100,7 @@ export type Step =
       param_attrs?: Record<number, Attrs>;
       fn_attrs?: Attrs;
       predicates?: Predicate[];
+      ret_attrs?: Attrs;
       by?: StepRef[];
     };
 
@@ -424,6 +426,7 @@ function chainOf(goal: Goal, effects: Effect[]): Step[] {
         ...(effect.param_attrs ? { param_attrs: effect.param_attrs } : {}),
         ...(effect.fn_attrs ? { fn_attrs: effect.fn_attrs } : {}),
         ...(effect.predicates ? { predicates: effect.predicates } : {}),
+        ...(effect.ret_attrs ? { ret_attrs: effect.ret_attrs } : {}),
         ...(effect.by ? { by: effect.by } : {}),
       });
       si += 1;

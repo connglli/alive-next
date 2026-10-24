@@ -282,11 +282,11 @@ Both programs get the same input, and putting it in only reads memory, so an inp
 
 ## attrs
 
-Puts attributes on a function the module defines or declares, or on one of its parameters.
+Puts attributes on a function the module defines or declares, on one of its parameters, or on its return value.
 
-Request `{ "module": ..., "fn": "<name>", "param": n, "attrs": { ... } }`, response `{ "ok": true, "module": ... }`. The attributes go on parameter `param` when it is given, and on the function itself when it is omitted.
+Request `{ "module": ..., "fn": "<name>", "param": n, "attrs": { ... } }`, response `{ "ok": true, "module": ... }`. The attributes go on parameter `param` when it is given, on the return value when `"return": true` is, and on the function itself when neither is.
 
-On a parameter it accepts `noundef`, `nonnull`, `noalias`, `align`, `dereferenceable` and `range`. The last two carry a byte count and a `{ "min": n, "max": m }` pair, the range being the half-open interval `[min, max)`. On a function it accepts `nounwind`, `nofree`, `nosync`, `willreturn`, `norecurse`, `mustprogress` (each boolean `true`), and `memory` (a string such as `"none"`, `"read"`, `"write"`, or `"argmem: readwrite"`).
+On a parameter or the return value it accepts `noundef`, `nonnull`, `noalias`, `align`, `dereferenceable` and `range`. The last two carry a byte count and a `{ "min": n, "max": m }` pair, the range being the half-open interval `[min, max)`. On a function it accepts `nounwind`, `nofree`, `nosync`, `willreturn`, `norecurse`, `mustprogress` (each boolean `true`), and `memory` (a string such as `"none"`, `"read"`, `"write"`, or `"argmem: readwrite"`).
 
 ## poison
 
