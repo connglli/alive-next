@@ -372,7 +372,12 @@ export class Strengthen {
    * Each parameter's attributes and each predicate is a fact, asked alone, and
    * nothing lands, so only `strengthen` makes one count.
    */
-  async preview(tree: Tree, gid: string, contract: StrengthenContract): Promise<StrengthenPreview> {
+  async preview(
+    tree: Tree,
+    gid: string,
+    contract: StrengthenContract,
+    unroll?: number,
+  ): Promise<StrengthenPreview> {
     if (Object.keys(contract.fn_attrs ?? {}).length > 0)
       throw new Error("a preview takes param_attrs and predicates, not fn_attrs");
     const halves = this.halves(tree, gid);
@@ -388,7 +393,11 @@ export class Strengthen {
       contractOf(entering),
     );
     if (typeof entered !== "string") return { kind: "refused", reason: entered.reason };
-    if (await this.steps.loops(entered)) return { kind: "preview", holds: contractOf(entering) };
+    if (await this.steps.loops(entered)) {
+      if (unroll === undefined) return { kind: "preview", holds: contractOf(entering) };
+      const unbroken = await this.unbroken(entered, hypothesis, entering, unroll);
+      return { kind: "preview", holds: contractOf(unbroken) };
+    }
     const kept = await this.holding(entered, hypothesis, entering);
     return { kind: "preview", holds: contractOf(kept) };
   }
@@ -401,6 +410,17 @@ export class Strengthen {
   private async holding(module: string, fn: string, facts: Assertion[]) {
     const holds = await concurrently(facts, (fact) => this.holdsAt(module, fn, fact));
     return facts.filter((_, i) => holds[i]);
+  }
+
+  /** The `facts` no run of `unroll` iterations breaks at the calls of `fn` in `module`. */
+  private async unbroken(module: string, fn: string, facts: Assertion[], unroll: number) {
+    const broken = await concurrently(facts, async (fact) => {
+      const enforced = await this.enforce(module, fn, contractOf([fact]));
+      if (typeof enforced !== "string") return true;
+      const check = await this.steps.refinementCheck(module, enforced, undefined, unroll);
+      return check.outcome === "incorrect";
+    });
+    return facts.filter((_, i) => !broken[i]);
   }
 
   /** The two goals the cut at goal `gid` left, or why its interface can no longer change. */

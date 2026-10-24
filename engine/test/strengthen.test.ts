@@ -369,6 +369,18 @@ describe.skipIf(!built)("strengthening a loop that holds a loop", () => {
     expect(result).toEqual({ kind: "preview", holds: { predicates: NONNEGATIVE } });
     expect(checker.calls).toHaveLength(1);
   });
+
+  test("a preview with an unroll factor drops a fact a bounded run breaks", async () => {
+    // i <=u m holds on entry, where both may be 0, and the iteration then makes i 1.
+    const belowM = { op: "ule" as const, lhs: "!0", rhs: "!3" };
+    const checker = new FakeChecker((src, tgt) =>
+      atHypothesis(tgt) && enforces("icmp ule", src, tgt) ? "incorrect" : "correct",
+    );
+    const tree = await nestedDetached();
+    const contract = { predicates: [...NONNEGATIVE, belowM] };
+    const result = await strengthening(checker).preview(tree, "g1", contract, 4);
+    expect(result).toEqual({ kind: "preview", holds: { predicates: NONNEGATIVE } });
+  });
 });
 
 /** That i is 0, which holds where the loop is entered and no iteration keeps. */

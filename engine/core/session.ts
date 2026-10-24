@@ -688,13 +688,17 @@ export class Session {
   }
 
   /**
-   * Preview strengthening a cut without modifying the goal tree or store: the
-   * part of the contract that holds where the outer calls the callee and, for
-   * a loop, that one iteration keeps.
+   * Preview strengthening a cut, landing nothing: the part of the contract that
+   * holds where the outer calls the callee and, for a loop, that one iteration
+   * keeps, or does not break within `unroll` iterations if it loops.
    */
-  strengthenPreview(gid: string, contract: StrengthenContract): Promise<StrengthenPreview> {
-    return this.act("strengthen_preview", { gid, ...contract }, async (tree) =>
-      this.strengthening.preview(tree, gid, contract),
+  strengthenPreview(
+    gid: string,
+    contract: StrengthenContract,
+    unroll?: number,
+  ): Promise<StrengthenPreview> {
+    return this.act("strengthen_preview", { gid, ...contract, unroll }, async (tree) =>
+      this.strengthening.preview(tree, gid, contract, unroll),
     );
   }
 
