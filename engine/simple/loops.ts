@@ -27,14 +27,17 @@ export function loopCut(src: Instruction[], tgt: Instruction[]) {
   return mine ? ([mine, first] as const) : undefined;
 }
 
-/** Unfolds loop cut `made` up to `budget` times where its counters say one side lags. */
+/**
+ * Unfolds loop cut `made` up to `budget` times where its counters say one side
+ * lags, and answers whether it unfolded the src.
+ */
 export async function unfoldToMatch(
   session: Session,
   llops: Llops,
   made: Extract<CutResult, { kind: "cut" }>,
   sides: Side[],
   budget: number,
-) {
+): Promise<boolean> {
   const counters = await Promise.all(sides.map((side) => countersAt(llops, side)));
   const [mine = [], theirs = []] = counters;
   const { outer, callee } = made.children;
@@ -43,12 +46,14 @@ export async function unfoldToMatch(
   const doublings = ratios.length === 0 ? Math.log2(Math.abs(r)) : NaN;
   const unrolls = Number.isInteger(doublings) && doublings <= budget ? doublings : 0;
   for (let n = 0; n < unrolls; n++)
-    if (!(await unfolded(session, callee, r > 0 ? "src" : "tgt"))) return;
+    if (!(await unfolded(session, callee, r > 0 ? "src" : "tgt"))) return r > 0;
+  const src = unrolls > 0 && r > 0;
   // Each unfold of an outer runs one more iteration before the loop, as peeling does.
   const [d = 0, ...gaps] = agreeing(mine, theirs, behind);
   const peels = gaps.length === 0 && Math.abs(d) <= budget - unrolls ? Math.abs(d) : 0;
   for (let n = 0; n < peels; n++)
-    if (!(await unfolded(session, outer, d > 0 ? "src" : "tgt"))) return;
+    if (!(await unfolded(session, outer, d > 0 ? "src" : "tgt"))) return src || d > 0;
+  return src || (peels > 0 && d > 0);
 }
 
 /** How far an iteration that loops is run to break a candidate. */

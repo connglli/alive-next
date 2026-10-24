@@ -16,6 +16,7 @@ import type { Limits } from "./limits.ts";
 import { guessInvariants, loopCut, strengthenLoop, unfoldToMatch } from "./loops.ts";
 import { diff, dominates, headers, storedAt, successors } from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
+import { unbrokenByRuns } from "./runs.ts";
 import { bodies, partners } from "./windows.ts";
 
 /**
@@ -104,14 +105,14 @@ export async function cut(
     { module: view.src.text, point: pointOf(src, srcCut), values: lives, loop: srcLoop },
     { module: view.tgt.text, point: pointOf(tgt, tgtCut), values: images, loop: tgtLoop },
   ];
-  if (made.detach?.hypothesis) {
-    await unfoldToMatch(session, llops, made, sides, limits.unfolds);
-  }
+  const unfolded = made.detach?.hypothesis
+    ? await unfoldToMatch(session, llops, made, sides, limits.unfolds)
+    : false;
   // The outer keeps the goal's entry, so it assumes what the goal assumes.
   const inherited = assumed.get(gid) ?? [];
   assumed.set(made.children.outer, inherited);
   if (limits.facts) {
-    const landed = await strengthenNewCut(session, llops, gid, made, sides, inherited);
+    const landed = await strengthenNewCut(session, llops, gid, made, sides, inherited, unfolded);
     assumed.set(made.children.callee, landed);
   }
   return made.children;
@@ -220,6 +221,7 @@ async function strengthenNewCut(
   made: Extract<CutResult, { kind: "cut" }>,
   [mine, theirs]: [Side, Side],
   inherited: Predicate[],
+  unfolded: boolean,
 ) {
   const lives = mine.values.map((value = "") => value);
   const facts = await cutFacts(llops, mine.module, mine.point, lives);
@@ -231,8 +233,15 @@ async function strengthenNewCut(
   const guesses = loop ? union(guessInvariants(made.params), { predicates: known }) : {};
   const own = { predicates: passedOn(inherited, lives) };
   const candidates = union(guesses, facts, relations, own);
-  if (loop) return strengthenLoop(session, gid, candidates);
-  return strengthenCut(session, gid, candidates);
+  if (!loop) return strengthenCut(session, gid, candidates);
+  // Runs serve only an iteration that loops, since its preview reaches four inner
+  // iterations, and not an unfolded src, whose callee is entered at fewer visits.
+  const iteration = await llops.validate((await session.show(made.children.callee)).src.text);
+  const unbroken =
+    iteration.ok && iteration.cyclic && !unfolded && mine.loop
+      ? await unbrokenByRuns(session, llops, gid, mine.loop, made.params, candidates)
+      : candidates;
+  return strengthenLoop(session, gid, unbroken);
 }
 
 /**

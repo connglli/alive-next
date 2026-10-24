@@ -155,7 +155,7 @@ export function violated(detail: string): Comparison[] {
 }
 
 /** Whether `comparison` holds of `inputs`, or nothing when it reads a poison one. */
-function holdsOn({ op, lhs, rhs }: Comparison, inputs: Input[]): boolean | undefined {
+export function holdsOn({ op, lhs, rhs }: Comparison, inputs: Input[]): boolean | undefined {
   const read = (x: string | number) =>
     typeof x === "number" ? BigInt(x) : inputs[Number(x.slice(1))]?.value;
   const type = inputs[Number(String(lhs).slice(1))]?.type ?? "";

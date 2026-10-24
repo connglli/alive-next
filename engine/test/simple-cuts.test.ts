@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { AliveTv, type CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
 import type { Llrwt } from "../core/drivers/llrwt.ts";
+import { Llubi } from "../core/drivers/llubi.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { timeoutsFrom } from "../core/state/steps.ts";
@@ -39,6 +40,12 @@ const solving =
     .version()
     .then(() => true)
     .catch(() => false));
+// A loop cut runs the goal under llubi before it asks alive2 about its candidates.
+const llubi = new Llubi(toolchain.path("llubi"));
+const running = await llubi
+  .version()
+  .then((line) => line.length > 0)
+  .catch(() => false);
 
 let dir: string;
 beforeEach(() => {
@@ -224,7 +231,7 @@ function solved(name: string, src: string, tgt: string) {
     tgt,
     llops,
     checker: aliveTv,
-    interp: {} as Interpreter,
+    interp: llubi,
     rewriter: {} as Llrwt,
     timeouts: timeoutsFrom({ checkDefaultMs: 5_000 }),
   });
@@ -235,7 +242,7 @@ function statuses(session: Session, goals: string[]) {
   return goals.map((gid) => session.tree.goals.get(gid)?.status);
 }
 
-describe.skipIf(!solving)("cuts with alive-tv", () => {
+describe.skipIf(!solving || !running)("cuts with alive-tv", () => {
   test("a cut passes what the analyses know to its callee", async () => {
     // The tgt's callee adds nuw nsw to the value it is passed, which is safe
     // only in the range that the outer's mask leaves.
