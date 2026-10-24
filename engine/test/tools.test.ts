@@ -158,6 +158,21 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(session.verdict).toBe("verified");
   });
 
+  test("tree_strengthen takes facts about what the callee returns, alone", async () => {
+    const cutting = { gid: "g1", src_cut: "%2", tgt_cut: "%2", value_map: SAME };
+    await call("tree_cut", cutting);
+    const returns = { range: { min: 0, max: 512 } };
+    const mixed = await call("tree_strengthen", {
+      gid: "g1",
+      param_attrs: { "0": { noundef: true } },
+      ret_attrs: returns,
+    });
+    expect(mixed).toContain("refused: return facts come in a strengthen of their own");
+    const alone = await call("tree_strengthen", { gid: "g1", ret_attrs: returns });
+    expect(alone).toContain("strengthened the interface of g1");
+    expect(await call("goal_show", { ref: "g2" })).toContain("declare range(i32 0, 512) i32");
+  });
+
   test("a move that changed the tree says how it stands, and one that did not says nothing", async () => {
     // A cut changes it, so the two children arrive with the answer.
     const cut = await call("tree_cut", {

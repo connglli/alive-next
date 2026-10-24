@@ -40,7 +40,7 @@ export function createStrengthenTool(session: Session) {
     name: "tree_strengthen",
     label: "Strengthen",
     description:
-      "Add facts to the interface of the function a goal was cut into. Parameter attributes (param_attrs) and preconditions (predicates) are proved where the outer program calls the function, and for a loop also where one iteration calls the hypothesis; only then may the callee assume them. Function attributes (fn_attrs) are first proved on the callee; only then may the outer program assume them.",
+      "Add facts to the interface of the function a goal was cut into. Parameter attributes (param_attrs) and preconditions (predicates) are proved where the outer program calls the function, and for a loop also where one iteration calls the hypothesis; only then may the callee assume them. Function attributes (fn_attrs) and facts about what the function returns (ret_attrs) are first proved on the callee; only then may the outer program assume them.",
     parameters: Type.Object({
       gid: Type.String({ description: "The goal that was cut, not one of its children." }),
       param_attrs: ParamAttrs,
@@ -51,12 +51,19 @@ export function createStrengthenTool(session: Session) {
         }),
       ),
       predicates: Predicates,
+      ret_attrs: Type.Optional(
+        Type.Record(Type.String(), Type.Unknown(), {
+          description:
+            'Facts about the return value: range, nonnull or align, e.g. {"range": {"min": 0, "max": 100}}. Give them alone, after the facts they rest on.',
+        }),
+      ),
     }),
-    execute: async (_id, { gid, param_attrs, fn_attrs, predicates }) => {
+    execute: async (_id, { gid, param_attrs, fn_attrs, predicates, ret_attrs }) => {
       const contract: StrengthenContract = {
         ...(param_attrs ? { param_attrs: param_attrs as Record<number, Attrs> } : {}),
         ...(fn_attrs ? { fn_attrs } : {}),
         ...(predicates ? { predicates: predicates as Predicate[] } : {}),
+        ...(ret_attrs ? { ret_attrs } : {}),
       };
       const stronger = await session.strengthen(gid, contract);
       if (stronger.kind === "editing") {
