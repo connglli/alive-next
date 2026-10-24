@@ -14,6 +14,7 @@ import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
 import { digits } from "../examples/digits.ts";
 import { induction } from "../examples/induction.ts";
 import { nested } from "../examples/nested.ts";
+import { nestedinvariant } from "../examples/nestedinvariant.ts";
 import { specialize } from "../examples/specialize.ts";
 import { unroll } from "../examples/unroll.ts";
 import { unswitch } from "../examples/unswitch.ts";
@@ -442,7 +443,7 @@ exit:
     expect(await run("e4")).toBe("unknown");
   }, 120_000);
 
-  test.each([induction, nested])(
+  test.each([induction, nested, nestedinvariant])(
     "cuts the loops of $name at their headers and proves them by induction",
     async (scenario) => {
       const session = await start(scenario.src, scenario.tgt, aliveTv);

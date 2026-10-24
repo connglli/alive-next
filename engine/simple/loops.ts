@@ -3,8 +3,8 @@
 // enters it, as a rotated loop's guard enters its exit. The cut's candidates
 // include guessed invariants, and Houdini narrows them: each round previews the
 // strengthen and keeps what holds where the loop is entered and what one
-// iteration keeps with the rest assumed. When a round drops nothing, what is
-// left is inductive, and the strengthen proves it.
+// iteration keeps with the rest assumed. When a round drops nothing, the
+// strengthen proves that what is left is inductive.
 import type { Instruction, Llops, OutlineParam } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { CutResult } from "../core/state/cuts.ts";
@@ -51,6 +51,9 @@ export async function unfoldToMatch(
     if (!(await unfolded(session, outer, d > 0 ? "src" : "tgt"))) return;
 }
 
+/** How far an iteration that loops is run to break a candidate. */
+const UNROLL = 4;
+
 /** Strengthens loop cut `gid` with the inductive part of `candidates`. */
 export async function strengthenLoop(
   session: Session,
@@ -59,7 +62,7 @@ export async function strengthenLoop(
 ) {
   let kept = candidates;
   while (size(kept) > 0) {
-    const preview = await session.strengthenPreview(gid, kept);
+    const preview = await session.strengthenPreview(gid, kept, UNROLL);
     if (preview.kind !== "preview") return [];
     if (size(preview.holds) === size(kept)) break;
     const lost = noundefLost(kept, preview.holds);

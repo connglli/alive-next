@@ -118,8 +118,18 @@ async function learn(run: Run, agenda: Goal[], answer: Answer) {
   // Only a cut spends the quota: the stages bound the interposes, and the
   // comparisons a goal tests bound its cases.
   if (answer.kind === "cut") top.cuts.left -= 1;
-  for (const left of answer.goals) left.parent = top;
-  agenda.push(...[...answer.goals].reverse());
+  const goals = (await Promise.all(answer.goals.map((g) => interposedInto(run, g)))).flat();
+  for (const left of goals) left.parent = top;
+  agenda.push(...[...goals].reverse());
+}
+
+/** `g`, or the two goals the strengthen of its cut interposed it into. */
+async function interposedInto(run: Run, g: Goal): Promise<Goal[]> {
+  const { status, children } = await run.session.show(g.gid);
+  if (status !== "split") return [g];
+  const assumed = run.assumed.get(g.gid) ?? [];
+  for (const gid of children) run.assumed.set(gid, assumed);
+  return children.map((gid) => goal(run, gid, { cuts: g.cuts }));
 }
 
 /** Refutes the run with `g`'s counterexample, else strengthens or undoes its cut. */
