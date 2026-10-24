@@ -26,6 +26,7 @@ import type { Checker } from "../core/state/steps.ts";
 import { cut } from "../examples/cut.ts";
 import { loop } from "../examples/loop.ts";
 import { offset } from "../examples/offset.ts";
+import { rotated } from "../examples/rotated.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 const llops = new Llops(toolchain.path("llops"));
@@ -156,6 +157,28 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(last).toContain("g3 proved");
     expect(last).toContain("the root is verified");
     expect(session.verdict).toBe("verified");
+  });
+
+  test("tx_edit gives the guard of a rotated loop its own copy of the exit", async () => {
+    const looping = await Session.start({
+      dir: join(dir, "rotated"),
+      src: rotated.src,
+      tgt: rotated.tgt,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    const tools = createProofAssistantTools(looping);
+    await callFrom(tools, "tx_begin", { gid: "g1", side: "src" });
+    const copied = await callFrom(tools, "tx_edit", {
+      op: "copy_block",
+      block: "%bb2",
+      preds: ["%entry"],
+    });
+    expect(copied).toContain("applied, 1 edit so far");
+    expect(copied).toContain("phi i32 [ %4, %bb1 ]");
+    expect(copied).toContain("phi i32 [ 0, %entry ]");
   });
 
   test("tree_strengthen takes facts about what the callee returns, alone", async () => {

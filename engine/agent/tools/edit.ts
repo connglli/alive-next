@@ -46,6 +46,17 @@ export const Op = Type.Union(
     }),
     Type.Object({ op: Type.Literal("dedup"), a: Ref, b: Ref }),
     Type.Object(
+      {
+        op: Type.Literal("copy_block"),
+        block: Type.String({ description: "A block, such as %bb2." }),
+        preds: Type.Array(Type.String(), { description: "Blocks that branch to it." }),
+      },
+      {
+        description:
+          "Send the edges from `preds` to a copy of `block`. A loop's exit that the code before the loop also enters, copied for that code, becomes the loop's alone, so the loop's header can be cut.",
+      },
+    ),
+    Type.Object(
       { op: Type.Literal("set_body"), body: Body },
       {
         description:
