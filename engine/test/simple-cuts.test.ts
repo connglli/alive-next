@@ -459,11 +459,9 @@ exit:
     // The tgt runs the first iteration behind a guard that also enters the exit.
     const peeled = scenario("peel");
     const session = await solved("peeled", peeled.src, peeled.tgt);
-    const exit = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
-    if (!exit) throw new Error("expected a cut at the exits");
-    const header = await cutLoop(session, llops, exit.outer, DEFAULT_LIMITS);
+    const header = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
     if (!header) throw new Error("expected a cut at the headers");
-    const halves = [exit.callee, header.outer, header.callee];
+    const halves = [header.outer, header.callee];
     for (const gid of halves) expect((await session.check(gid)).outcome).toBe("proved");
   }, 120_000);
 
@@ -480,9 +478,8 @@ exit:
     ] as const) {
       const session = await solved(`budget${unfolds}`, src, peeled.tgt);
       const limits = { ...DEFAULT_LIMITS, unfolds };
-      const exit = await cutLoop(session, llops, "g1", limits);
-      const header = exit && (await cutLoop(session, llops, exit.outer, limits));
-      if (!header) throw new Error("expected cuts at the exits and the headers");
+      const header = await cutLoop(session, llops, "g1", limits);
+      if (!header) throw new Error("expected a cut at the headers");
       expect((await session.check(header.outer)).outcome).toBe(outcome);
     }
   }, 240_000);
@@ -500,11 +497,20 @@ exit:
       expect((await session.check(gid)).outcome).toBe("proved");
   }, 240_000);
 
-  test("a rotated loop is cut at its exit, then at its header", async () => {
+  test("a rotated loop's guard gets its own copy of the exit, and the header is cut", async () => {
     const session = await solved("rotated", rotated.src, rotated.tgt);
-    const exit = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    const header = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    if (!header) throw new Error("expected a cut at the header");
+    expect(session.tree.goals.get(header.callee)?.detach?.hypothesis).toBeDefined();
+    expect((await session.check(header.callee)).outcome).toBe("proved");
+  }, 120_000);
+
+  test("a rotated loop is cut at its exit, then at its header, with no steps", async () => {
+    const session = await solved("rotated", rotated.src, rotated.tgt);
+    const cutting = { ...DEFAULT_LIMITS, steps: false };
+    const exit = await cutLoop(session, llops, "g1", cutting);
     if (!exit) throw new Error("expected a cut at the exit");
-    const header = await cutLoop(session, llops, exit.outer, DEFAULT_LIMITS);
+    const header = await cutLoop(session, llops, exit.outer, cutting);
     if (!header) throw new Error("expected a cut at the header");
     expect((await session.check(header.callee)).outcome).toBe("proved");
   }, 120_000);

@@ -1,10 +1,10 @@
 // Loops: where a goal that loops is cut, and the invariants that cut keeps. It
-// is cut at its first header, or first where code outside the header's reach
-// enters it, as a rotated loop's guard enters its exit. The cut's candidates
-// include guessed invariants, and Houdini narrows them: each round previews the
-// strengthen and keeps what holds where the loop is entered and what one
-// iteration keeps with the rest assumed. When a round drops nothing, the
-// strengthen proves that what is left is inductive.
+// is cut at its first header once code outside the header's reach has its own
+// copy of each block it enters, as a rotated loop's guard enters its exit. The
+// cut's candidates include guessed invariants, and Houdini narrows them: each
+// round previews the strengthen and keeps what holds where the loop is entered
+// and what one iteration keeps with the rest assumed. When a round drops
+// nothing, the strengthen proves that what is left is inductive.
 import type { Instruction, Llops, OutlineParam } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { CutResult } from "../core/state/cuts.ts";
@@ -12,6 +12,50 @@ import type { StrengthenContract } from "../core/state/strengthen.ts";
 import { comparisons, noundefLost, size } from "./facts.ts";
 import { diff, headers, successors } from "./regions.ts";
 import { expressionsAt, type Side } from "./relations.ts";
+import { bodies } from "./windows.ts";
+
+/** Gives code outside each side's first loop its own copy of each block it enters there. */
+export async function copyShared(session: Session, llops: Llops, gid: string): Promise<void> {
+  for (const k of [0, 1] as const) {
+    const side = k === 0 ? "src" : "tgt";
+    const blocks = new Set((await bodies(session, llops, gid))[k].map((i) => i.block));
+    for (let left = blocks.size; left > 0; left--) {
+      const body = (await bodies(session, llops, gid))[k];
+      const header = headers(body)[0];
+      const shared = header && sharedWith(body, header);
+      if (!shared || !(await copied(session, gid, side, shared))) break;
+    }
+  }
+}
+
+/** A block the loop at `header` reaches that blocks outside its reach enter too, with those. */
+function sharedWith(body: Instruction[], header: string) {
+  const next = successors(body);
+  const reached = new Set([header]);
+  for (const from of reached) for (const to of next.get(from) ?? []) reached.add(to);
+  for (const block of reached) {
+    const preds = [...next].flatMap(([from, tos]) =>
+      !reached.has(from) && tos.includes(block) ? [from] : [],
+    );
+    if (block !== header && preds.length > 0) return { block, preds };
+  }
+  return undefined;
+}
+
+/** Whether copying `block` for `preds` on `side` of goal `gid` is certified. */
+async function copied(
+  session: Session,
+  gid: string,
+  side: "src" | "tgt",
+  { block, preds }: { block: string; preds: string[] },
+) {
+  await session.begin(gid, side);
+  if ((await session.edit({ op: "copy_block", block, preds })).kind !== "applied") {
+    await session.abort();
+    return false;
+  }
+  return (await session.commit({ narrow: false, eager: false })).kind === "certified";
+}
 
 /** Where to cut a goal that loops, as a src block and its tgt partner. */
 export function loopCut(src: Instruction[], tgt: Instruction[]) {

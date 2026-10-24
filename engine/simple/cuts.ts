@@ -13,7 +13,7 @@ import type { CutResult } from "../core/state/cuts.ts";
 import { cutFacts, passedOn, predicatesAt, strengthenCut, union } from "./facts.ts";
 import { fillCut } from "./fill.ts";
 import type { Limits } from "./limits.ts";
-import { guessInvariants, loopCut, strengthenLoop, unfoldToMatch } from "./loops.ts";
+import { copyShared, guessInvariants, loopCut, strengthenLoop, unfoldToMatch } from "./loops.ts";
 import { diff, dominates, headers, storedAt, successors } from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
 import { unbrokenByRuns } from "./runs.ts";
@@ -295,6 +295,7 @@ export async function cutLoop(
   limits: Limits,
   assumed?: Assumed,
 ) {
+  if (limits.steps) await copyShared(session, llops, gid);
   const at = loopCut(...(await bodies(session, llops, gid)));
   return at ? cut(session, llops, gid, limits, ...at, assumed) : undefined;
 }
