@@ -7,7 +7,7 @@
 // guesses. A cut before an expensive operation hands it the same operands on
 // both sides, and a balanced cut divides a goal's expensive operations between
 // its halves.
-import type { Instruction, Llops, OutlineParam, Predicate } from "../core/drivers/llops.ts";
+import type { Attrs, Instruction, Llops, OutlineParam, Predicate } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { CutResult } from "../core/state/cuts.ts";
 import { cutFacts, passedOn, predicatesAt, strengthenCut, union } from "./facts.ts";
@@ -114,8 +114,42 @@ export async function cut(
   if (limits.facts) {
     const landed = await strengthenNewCut(session, llops, gid, made, sides, inherited, unfolded);
     assumed.set(made.children.callee, landed);
+    await strengthenReturns(session, llops, gid, sides);
   }
   return made.children;
+}
+
+/** Strengthens the cut at `gid` with what the tgt's return states and the src's does not. */
+async function strengthenReturns(
+  session: Session,
+  llops: Llops,
+  gid: string,
+  [src, tgt]: [Side, Side],
+) {
+  const [mine, theirs] = await Promise.all([
+    returnFacts(llops, src.module),
+    returnFacts(llops, tgt.module),
+  ]);
+  const owed = Object.entries(theirs).filter(
+    ([name, fact]) => JSON.stringify(mine[name]) !== JSON.stringify(fact),
+  );
+  if (owed.length > 0) await session.strengthen(gid, { ret_attrs: Object.fromEntries(owed) });
+}
+
+/** The facts on the return of `module`'s function that make a value outside them poison. */
+export async function returnFacts(llops: Llops, module: string): Promise<Attrs> {
+  const shape = await llops.validate(module);
+  const fn = Object.values((shape.ok && shape.functions) || {}).find((f) => f.defined);
+  // The signature spells the return's attributes before its type.
+  const said = fn?.signature.slice(0, fn.signature.indexOf(`${fn.return_type}(`)) ?? "";
+  const [min, max] = (said.match(/range\(i\d+ (-?\d+), (-?\d+)\)/) ?? []).slice(1).map(Number);
+  const align = Number(said.match(/\balign (\d+)/)?.[1]);
+  const exact = [min, max].every((bound) => Number.isSafeInteger(bound));
+  return {
+    ...(exact ? { range: { min, max } } : {}),
+    ...(/\bnonnull\b/.test(said) ? { nonnull: true } : {}),
+    ...(align ? { align } : {}),
+  };
 }
 
 /**

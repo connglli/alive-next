@@ -19,7 +19,7 @@ import { scenario } from "../examples/scenarios.ts";
 import { slots } from "../examples/slots.ts";
 import { strchr } from "../examples/strchr.ts";
 import { unfold } from "../examples/unfold.ts";
-import { balancedPoints, beforePoints, cut, cutLoop } from "../simple/cuts.ts";
+import { balancedPoints, beforePoints, cut, cutLoop, returnFacts } from "../simple/cuts.ts";
 import { strengthenCut } from "../simple/facts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { strengthenLoop } from "../simple/loops.ts";
@@ -223,6 +223,17 @@ entry:
   });
 });
 
+describe.skipIf(!built)("return facts", () => {
+  test("are read off the function's return, those that make a value outside it poison", async () => {
+    const ranged = "define noundef range(i32 -1, -2147483648) i32 @f(i32 %x) {\n  ret i32 %x\n}\n";
+    expect(await returnFacts(llops, ranged)).toEqual({ range: { min: -1, max: -2147483648 } });
+    const pointer = "define nonnull align 8 ptr @f(ptr %p) {\n  ret ptr %p\n}\n";
+    expect(await returnFacts(llops, pointer)).toEqual({ nonnull: true, align: 8 });
+    const plain = ranged.replace("noundef range(i32 -1, -2147483648) ", "");
+    expect(await returnFacts(llops, plain)).toEqual({});
+  });
+});
+
 /** A session whose checks alive-tv answers. */
 function solved(name: string, src: string, tgt: string) {
   return Session.start({
@@ -421,6 +432,16 @@ exit:
   test("a loop cut keeps the relation two counters of the loop keep", async () => {
     // The tgt stops when left reaches 0, which is i reaching n only while left is n - i.
     const session = await solved("counters", countdown.src, countdown.tgt);
+    const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    if (!halves) throw new Error("expected a cut");
+    expect(statuses(session, [halves.outer, halves.callee])).toEqual(["proved", "proved"]);
+  }, 120_000);
+
+  test("a loop cut gives its callee what the tgt says of its return", async () => {
+    // The tgt says the count is never negative, which the outer holds only
+    // once the loop is shown to return no other.
+    const counted = scenario("returnfact");
+    const session = await solved("returns", counted.src, counted.tgt);
     const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
     if (!halves) throw new Error("expected a cut");
     expect(statuses(session, [halves.outer, halves.callee])).toEqual(["proved", "proved"]);
