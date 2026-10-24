@@ -199,6 +199,7 @@ export type EditOp =
   | { op: "commute"; v: Ref }
   | { op: "retype"; v: Ref; ty: string; ext?: "zext" | "sext" }
   | { op: "dedup"; a: Ref; b: Ref }
+  | { op: "copy_block"; block: Ref; preds: Ref[] }
   | { op: "set_body"; body: string }
   | { op: "drop_attrs" }
   | { op: "flags"; v: Ref; flags: Record<string, boolean> }

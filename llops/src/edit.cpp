@@ -16,7 +16,9 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 #include <string>
 #include <vector>
 
@@ -479,6 +481,74 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
                                           "'");
     bi->replaceAllUsesWith(ai);
     bi->eraseFromParent();
+    return checkedResponse(*M);
+  }
+
+  if (*op == "copy_block") {
+    auto block = args.getString("block");
+    auto preds = args.getArray("preds");
+    if (!block || !preds || preds->empty())
+      return missing("'block' and 'preds'");
+    auto named = [&](llvm::StringRef ref) -> llvm::BasicBlock * {
+      for (llvm::BasicBlock &B : *F)
+        if (refs.print(B) == ref.trim())
+          return &B;
+      return nullptr;
+    };
+    llvm::BasicBlock *B = named(*block);
+    if (!B)
+      return errResponse("not_found", "copy_block: unknown block '" + block->str() + "'");
+    llvm::SmallPtrSet<llvm::BasicBlock *, 4> from;
+    for (const llvm::json::Value &pred : *preds) {
+      auto ref = pred.getAsString();
+      llvm::BasicBlock *P = ref ? named(*ref) : nullptr;
+      if (!P || !llvm::is_contained(llvm::predecessors(B), P))
+        return errResponse("invalid", "copy_block: '" + (ref ? ref->str() : std::string("?")) +
+                                          "' does not branch to the block");
+      from.insert(P);
+    }
+    if (llvm::all_of(llvm::predecessors(B), [&](llvm::BasicBlock *P) { return from.contains(P); }))
+      return errResponse("invalid", "copy_block: the copy would take every edge into the block");
+    // Outside the block only a phi on an edge from it may use what it defines,
+    // since such a phi can take the copy's value from the copy; any other use
+    // would need a phi of its own.
+    for (llvm::Instruction &I : *B)
+      for (llvm::Use &U : I.uses()) {
+        auto *user = llvm::cast<llvm::Instruction>(U.getUser());
+        auto *phi = llvm::dyn_cast<llvm::PHINode>(user);
+        if (user->getParent() != B && !(phi && phi->getIncomingBlock(U) == B))
+          return errResponse("invalid",
+                             "copy_block: '" + refs.print(I) + "' is used after the block");
+      }
+    llvm::ValueToValueMapTy vmap;
+    llvm::BasicBlock *copy = llvm::CloneBasicBlock(B, vmap, "", F);
+    // A phi takes its values along the edges into the block, so they stay the block's.
+    for (llvm::Instruction &I : *copy)
+      if (!llvm::isa<llvm::PHINode>(I))
+        llvm::RemapInstruction(&I, vmap, llvm::RF_IgnoreMissingLocals);
+    for (llvm::BasicBlock *P : from)
+      P->getTerminator()->replaceSuccessorWith(B, copy);
+    // Each successor once: its phis hold an entry for each edge from the block, which
+    // the copy repeats, read before the block's own phis drop theirs.
+    llvm::SmallPtrSet<llvm::BasicBlock *, 4> after(llvm::succ_begin(copy), llvm::succ_end(copy));
+    for (llvm::BasicBlock *S : after)
+      for (llvm::PHINode &phi : S->phis())
+        for (unsigned k = 0, n = phi.getNumIncomingValues(); k < n; ++k)
+          if (phi.getIncomingBlock(k) == B) {
+            llvm::Value *v = phi.getIncomingValue(k);
+            llvm::Value *mapped = vmap.lookup(v);
+            phi.addIncoming(mapped ? mapped : v, copy);
+          }
+    // Each phi of the block keeps the edges that still enter it, and its copy the others.
+    auto entering = [&](llvm::PHINode &phi, bool copied) {
+      phi.removeIncomingValueIf(
+          [&](unsigned k) { return from.contains(phi.getIncomingBlock(k)) != copied; },
+          /*DeletePHIIfEmpty=*/false);
+    };
+    for (llvm::PHINode &phi : B->phis())
+      entering(phi, false);
+    for (llvm::PHINode &phi : copy->phis())
+      entering(phi, true);
     return checkedResponse(*M);
   }
 

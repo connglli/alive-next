@@ -769,6 +769,95 @@ entry:
     self.bad(self.edit("erase", v="#2"), "invalid")
 
 
+# A rotated loop: its exit is entered from the guard before the loop too.
+F_SHARED_EXIT = """define i32 @f(i32 %n) {
+entry:
+  %g = icmp slt i32 %n, 1
+  br i1 %g, label %exit, label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %i.next = add i32 %i, 1
+  %c = icmp slt i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  %r = phi i32 [ -1, %entry ], [ %i, %loop ]
+  ret i32 %r
+}
+"""
+# A block both arms of a branch reach, whose value a phi after it takes.
+F_JOINED = """define i32 @f(i1 %c, i32 %x) {
+entry:
+  br i1 %c, label %a, label %b
+
+a:
+  br label %mid
+
+b:
+  br label %mid
+
+mid:
+  %v = add i32 %x, 1
+  br label %join
+
+join:
+  %w = phi i32 [ %v, %mid ]
+  ret i32 %w
+}
+"""
+
+
+class TestEditCopyBlock(Case):
+  def test_some_predecessors_get_their_own_copy(self):
+    r = self.good(self.edit("copy_block", module=F_SHARED_EXIT, block="%exit", preds=["%entry"]))
+    self.assertIn("%r = phi i32 [ %i, %loop ]", r["module"])
+    self.assertIn("phi i32 [ -1, %entry ]", r["module"])
+    self.assertNotIn("label %exit, label %loop", r["module"])
+    self.assertTrue(
+      self.good(run("reshaped", {"before": F_SHARED_EXIT, "after": r["module"]}))["reshaped"]
+    )
+
+  def test_a_phi_after_the_block_takes_the_copy_s_value_from_the_copy(self):
+    r = self.good(self.edit("copy_block", module=F_JOINED, block="%mid", preds=["%a"]))
+    self.assertEqual(r["module"].count("add i32 %x, 1"), 2)
+    phi = next(line for line in r["module"].splitlines() if "%w = phi" in line)
+    self.assertEqual(phi.count("["), 2)
+    self.assertTrue(
+      self.good(run("reshaped", {"before": F_JOINED, "after": r["module"]}))["reshaped"]
+    )
+
+  def test_a_value_used_after_the_block_otherwise_is_refused(self):
+    module = F_JOINED.replace("%w = phi i32 [ %v, %mid ]", "%w = add i32 %v, 1")
+    self.bad(self.edit("copy_block", module=module, block="%mid", preds=["%a"]), "invalid")
+
+  def test_a_block_copied_for_its_own_back_edge_keeps_its_values_on_that_edge(self):
+    # The copy's phi takes %i.next along the edge from %loop, where only the
+    # block's own %i.next is defined.
+    r = self.good(self.edit("copy_block", module=F_SHARED_EXIT, block="%loop", preds=["%loop"]))
+    self.assertTrue(
+      self.good(run("reshaped", {"before": F_SHARED_EXIT, "after": r["module"]}))["reshaped"]
+    )
+
+  def test_a_phi_that_takes_the_value_through_another_block_is_refused(self):
+    module = F_JOINED.replace(
+      "  br label %join\n\njoin:\n  %w = phi i32 [ %v, %mid ]",
+      "  br i1 %c, label %d, label %join\n\nd:\n  br label %join\n\njoin:\n"
+      "  %w = phi i32 [ %v, %mid ], [ %v, %d ]",
+    )
+    self.assertIn("[ %v, %d ]", module)
+    self.bad(self.edit("copy_block", module=module, block="%mid", preds=["%a"]), "invalid")
+
+  def test_every_edge_into_the_block_is_refused(self):
+    self.bad(self.edit("copy_block", module=F_JOINED, block="%mid", preds=["%a", "%b"]), "invalid")
+
+  def test_a_block_that_does_not_branch_to_it_is_refused(self):
+    self.bad(self.edit("copy_block", module=F_JOINED, block="%mid", preds=["%join"]), "invalid")
+
+  def test_an_unknown_block_is_refused(self):
+    self.bad(self.edit("copy_block", module=F_JOINED, block="%nope", preds=["%a"]), "not_found")
+
+
 class TestEditValues(Case):
   def test_substitute(self):
     r = self.good(self.edit("substitute", module=F_TWO_ADDS, a="a", b="b"))

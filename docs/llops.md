@@ -90,6 +90,7 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 | `commute` | `v` | swap the operands of an operation |
 | `retype` | `v`, `ty`, `ext` | give a value another integer type |
 | `dedup` | `a`, `b` | erase `b`, its uses become `a` |
+| `copy_block` | `block`, `preds` | give the edges from `preds` their own copy of `block` |
 | `set_body` | `body` | replace the whole body |
 | `drop_attrs` | | remove the attributes `respected` reads from the function |
 | `flags` | `v`, `flags` | put or remove the flags an instruction can carry |
@@ -108,6 +109,8 @@ A snippet may use the module's global variables and call its functions. When a s
 `commute` swaps the operands of a commutative operation. On a comparison it swaps the predicate as well, so any predicate can be commuted.
 
 `retype` leaves the definition in the old type, gives the old name to a conversion into the new type, and converts back at every use, with `ext` choosing `zext` or `sext` where a conversion widens. Whether the conversions lose nothing is a claim for the caller's alive2 check.
+
+`copy_block` sends each edge from a block in `preds` to a copy of `block`. The copy's phis keep those edges and the block's keep the others, and each phi after the block takes from the copy what it takes from the block. It refuses a value of the block used outside it other than by a phi on an edge from it, which would need a phi of its own, and a copy that would take every edge into the block. The step only reshapes control flow, which `reshaped` can certify on a program that loops: it is how a loop's exit that the code before the loop also enters becomes the loop's alone.
 
 `flags` names instruction flags with `true` or `false`, so the same op puts and removes: `{ "nuw": true }` puts `nuw` on and `{ "nsw": false }` takes `nsw` off. `nuw` and `nsw` apply to `add`, `sub`, `mul`, `shl` and `trunc`, `exact` to the divisions and shifts that carry it, `disjoint` to `or`, `nneg` to `zext` and `uitofp`, and `fast`, `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn` and `reassoc` to floating-point instructions. A flag the instruction cannot carry is refused rather than ignored, so the agent never guesses what the IR keeps.
 
