@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
 import type { Llrwt } from "../core/drivers/llrwt.ts";
+import { Llubi } from "../core/drivers/llubi.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { applyEffect } from "../core/state/goals.ts";
@@ -23,6 +24,11 @@ const llops = new Llops(toolchain.path("llops"));
 const built = await llops
   .version()
   .then(() => true)
+  .catch(() => false);
+const llubi = new Llubi(toolchain.path("llubi"));
+const running = await llubi
+  .version()
+  .then((line) => line.length > 0)
   .catch(() => false);
 
 /** A checker that agrees, so a cut is all these tests need to set up. */
@@ -130,6 +136,56 @@ async function session(rewriter = unrewriting): Promise<Session> {
 function log(run: Session): ReturnType<typeof parse> {
   return parse(readFileSync(join(run.dir, "trajectory.jsonl"), "utf8"));
 }
+
+describe.skipIf(!built || !running)("executing a goal", () => {
+  /** A session on the nested sum, whose loops llubi runs. */
+  function nestedRun(): Promise<Session> {
+    return Session.start({
+      dir: join(dir, "session"),
+      src: nestedinvariant.src,
+      tgt: nestedinvariant.tgt,
+      llops,
+      checker: new YesMan(),
+      interp: llubi,
+      rewriter: unrewriting,
+    });
+  }
+  const args = (...values: number[]) =>
+    values.map((v) => ({ kind: "int" as const, value: `${v}` }));
+
+  test("execute runs a side on concrete arguments and shows its trace", async () => {
+    const run = await nestedRun();
+    const ran = await run.execute("g1", "src", args(3, 2));
+    expect(ran).toMatchObject({ kind: "executed", outcome: "returned", differences: [] });
+    if (ran.kind !== "executed") throw new Error("unreachable");
+    // The outer header's i is 0, 1 and 2 in the loop, and 3 where it exits.
+    const visits = [...ran.trace.matchAll(/phi i32 %2 -> i32 (\d+)/g)].map((m) => m[1]);
+    expect(visits).toEqual(["0", "1", "2", "3"]);
+  });
+
+  test("an execution stops after its steps, and says so", async () => {
+    const run = await nestedRun();
+    const ran = await run.execute("g1", "src", args(2147483647, 1), 500);
+    expect(ran).toMatchObject({ kind: "executed", outcome: "error" });
+    if (ran.kind !== "executed") throw new Error("unreachable");
+    expect(ran.reason).toContain("maximum steps");
+  });
+
+  test("execute refuses arguments the function does not take", async () => {
+    const run = await nestedRun();
+    expect(await run.execute("g1", "src", args(3))).toMatchObject({ kind: "refused" });
+  });
+
+  test("the log keeps an execution without its trace", async () => {
+    const run = await nestedRun();
+    await run.execute("g1", "tgt", args(1, 1));
+    const result = log(run).find(
+      (entry) => entry.kind === "tool_result" && entry.tool === "execute",
+    );
+    expect(result).toMatchObject({ result: { kind: "executed", outcome: "returned" } });
+    expect(JSON.stringify(result)).not.toContain("phi i32");
+  });
+});
 
 describe.skipIf(!built)("closing a session", () => {
   test("a run closed in the middle of a move says what its log holds", async () => {

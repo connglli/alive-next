@@ -28,6 +28,7 @@ import {
   type OptOp,
 } from "./drivers/llops.ts";
 import type { Llrwt, RuleInfo } from "./drivers/llrwt.ts";
+import type { RunResult } from "./drivers/llubi.ts";
 import type { Ref } from "./refs.ts";
 import { type CaseResult, cases, uncase } from "./state/cases.ts";
 import { Counterexamples, type Interpreter, type ReportResult } from "./state/counterexamples.ts";
@@ -113,6 +114,14 @@ export type UninterposeResult =
 
 export type UncaseResult = { kind: "uncased"; effects: Effect[] } | EditingRefusal;
 
+/** The most instructions an execution runs, which holds its trace to about a megabyte. */
+const EXECUTED_STEPS = 20_000;
+
+/** One run of a goal's side under llubi, with what llubi treats differently from alive2. */
+export type ExecuteResult =
+  | ({ kind: "executed"; differences: string[] } & RunResult)
+  | { kind: "refused"; message: string };
+
 export type SessionCutResult = CutResult | EditingRefusal;
 
 export type SessionInterposeResult = InterposeResult | EditingRefusal;
@@ -195,6 +204,7 @@ export class Session {
   private readonly strengthening: Strengthen;
   private readonly editing: Transactions;
   private readonly counterexamples: Counterexamples;
+  private readonly interp: Interpreter;
   private entries: Entry[] = [];
   private derived?: Tree;
   private calls = 0;
@@ -223,6 +233,7 @@ export class Session {
       this.steps,
       options.interp,
     );
+    this.interp = options.interp;
   }
 
   /** Begin a run on a pair, in a directory that has none. */
@@ -427,6 +438,34 @@ export class Session {
   ): Promise<LlopsResult<AnalyzeResult>> {
     return this.act("analyze", { gid, side, kind, point }, (tree) =>
       this.llops.analyze(this.store.get(head(goalOf(tree, gid), side)), kind, point),
+    );
+  }
+
+  /**
+   * Run one side of a goal on concrete arguments under llubi, for at most
+   * `maxSteps` instructions. It changes nothing, and its trace shows each
+   * with its result.
+   */
+  execute(
+    gid: string,
+    side: Side,
+    input: InputArg[],
+    maxSteps = EXECUTED_STEPS,
+  ): Promise<ExecuteResult> {
+    return this.act(
+      "execute",
+      { gid, side, input, max_steps: maxSteps },
+      async (tree): Promise<ExecuteResult> => {
+        const text = this.store.get(head(goalOf(tree, gid), side));
+        const defined = await definedIn(this.llops, text, `${gid} ${side}`);
+        if ("why" in defined) return { kind: "refused", message: defined.why };
+        const harness = await this.llops.harness(text, defined.name, input);
+        if (!harness.ok) return { kind: "refused", message: harness.message };
+        const ran = await this.interp.run(harness.module, { maxSteps });
+        return { kind: "executed", ...ran, differences: harness.differences };
+      },
+      // The trace is as long as the run, and running it again gives it back.
+      (result) => (result.kind === "executed" ? { ...result, trace: undefined } : result),
     );
   }
 
