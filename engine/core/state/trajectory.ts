@@ -39,7 +39,7 @@ export interface Slots {
  */
 export type CaseOn = Comparison | { defined: Name };
 
-/** A certified step in a goal's chain, named by the program it produced. */
+/** A goal's certified step or interpose, named by the program it put in place. */
 export interface StepRef {
   gid: string;
   hash: Hash;

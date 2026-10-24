@@ -819,7 +819,7 @@ export class Steps {
   }
 
   /** Whether a program loops, as `llops validate` says. */
-  private async loops(module: string): Promise<boolean> {
+  async loops(module: string): Promise<boolean> {
     const hash = sha256(module);
     const known = this.looping.get(hash);
     if (known !== undefined) return known;

@@ -16,6 +16,7 @@ import { applyEffect } from "../core/state/goals.ts";
 import { type Checker, DEFAULT_TIMEOUTS, timeoutsFrom } from "../core/state/steps.ts";
 import { parse } from "../core/state/trajectory.ts";
 import { cut } from "../examples/cut.ts";
+import { nestedinvariant } from "../examples/nestedinvariant.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 const llops = new Llops(toolchain.path("llops"));
@@ -324,6 +325,33 @@ describe.skipIf(!built)("reading a session", () => {
     await run.edit({ op: "replace", v: "%2", insts: ["%s = shl i32 %1, 3"] });
     expect((await run.commit()).kind).toBe("certified");
     expect((await run.revert(callee, "src", strengthened.id)).kind).toBe("reverted");
+  });
+
+  test("uninterpose refuses to undo the interpose a strengthen made", async () => {
+    const run = await Session.start({
+      dir: join(dir, "session"),
+      src: nestedinvariant.src,
+      tgt: nestedinvariant.tgt,
+      llops,
+      checker: new YesMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    const cut = await run.cut("g1", "%bb1", "%bb1", {
+      "%2": "%2",
+      "%3": "%3",
+      "%0": "%0",
+      "%1": "%1",
+    });
+    if (cut.kind !== "cut") throw new Error(cut.message);
+    const landed = await run.strengthen("g1", { predicates: [{ op: "sge", lhs: "!0", rhs: 0 }] });
+    expect(landed.kind).toBe("strengthened");
+
+    const refused = await run.uninterpose(cut.children.callee);
+    expect(refused).toMatchObject({ kind: "refused" });
+    if (refused.kind !== "refused") throw new Error("unreachable");
+    expect(refused.message).toContain("would undo part of a strengthen of g1; uncut g1");
+    expect((await run.uncut("g1")).kind).toBe("uncut");
   });
 
   test("rewrite refuses while its side is being edited", async () => {

@@ -24,6 +24,7 @@ import { loopwindow } from "./loopwindow.ts";
 import { memloop } from "./memloop.ts";
 import { miscompile } from "./miscompile.ts";
 import { nested } from "./nested.ts";
+import { nestedinvariant } from "./nestedinvariant.ts";
 import { nuw } from "./nuw.ts";
 import { offset } from "./offset.ts";
 import { peel } from "./peel.ts";
@@ -68,6 +69,7 @@ export const scenarios: Scenario[] = [
   loopbranch,
   rotated,
   nested,
+  nestedinvariant,
   invariantphi,
   copiedphi,
   exitcond,

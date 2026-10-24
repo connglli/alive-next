@@ -40,7 +40,7 @@ export function createStrengthenTool(session: Session) {
     name: "tree_strengthen",
     label: "Strengthen",
     description:
-      "Add facts to the interface of the function a goal was cut into. Parameter attributes (param_attrs) and preconditions (predicates) are first proved where the outer program calls the function, and for a loop also where one iteration calls the hypothesis; only then may the callee assume them. Function attributes (fn_attrs) are first proved on the callee; only then may the outer program assume them.",
+      "Add facts to the interface of the function a goal was cut into. Parameter attributes (param_attrs) and preconditions (predicates) are proved where the outer program calls the function, and for a loop also where one iteration calls the hypothesis; only then may the callee assume them. Function attributes (fn_attrs) are first proved on the callee; only then may the outer program assume them.",
     parameters: Type.Object({
       gid: Type.String({ description: "The goal that was cut, not one of its children." }),
       param_attrs: ParamAttrs,

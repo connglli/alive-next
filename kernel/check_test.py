@@ -317,6 +317,48 @@ exit:
 PARITY_SUB_NUW = PARITY_NUW.replace("%d = sub i32", "%d = sub nuw i32")
 ORDER = [{"op": "ule", "lhs": "!1", "rhs": "!0"}]
 
+# i summed m times for each i below n. The tgt's zext nneg needs i >= 0, which
+# holds by induction over the outer loop, whose every iteration runs the inner one.
+NESTED = """define i64 @f(i32 noundef %n, i32 noundef %m) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %latch ]
+  %s = phi i64 [ 0, %entry ], [ %t, %latch ]
+  %more = icmp slt i32 %i, %n
+  br i1 %more, label %body, label %exit
+
+body:
+  %k = sext i32 %i to i64
+  br label %inner
+
+inner:
+  %j = phi i32 [ 0, %body ], [ %j.next, %step ]
+  %t = phi i64 [ %s, %body ], [ %t.next, %step ]
+  %go = icmp slt i32 %j, %m
+  br i1 %go, label %step, label %latch
+
+step:
+  %t.next = add i64 %t, %k
+  %j.next = add nsw i32 %j, 1
+  br label %inner
+
+latch:
+  %i.next = add nsw i32 %i, 1
+  br label %head
+
+exit:
+  ret i64 %s
+}
+"""
+NESTED_NNEG = NESTED.replace("sext i32 %i", "zext nneg i32 %i")
+# i >= 0 over the outer loop's i, which is parameter 0 of its iteration k.
+NONNEGATIVE = [{"op": "sge", "lhs": "!0", "rhs": 0}]
+# What the inner loop l carries for it: i, its parameter 3, is at least 0 and
+# below n, its parameter 4, so that i + 1 neither wraps nor turns negative.
+CARRIED = [{"op": "sge", "lhs": "!3", "rhs": 0}, {"op": "slt", "lhs": "!3", "rhs": "!4"}]
+
 
 def llops(subcommand: str, request: dict) -> dict:
   done = subprocess.run(
@@ -701,6 +743,16 @@ class Case(unittest.TestCase):
     request = {"module": self.text(digest), "fn": fn, "param": 0, "attrs": fact}
     return self.built.program(canonical(llops("attrs", request)["module"]))
 
+  def claimed(self, inner: dict, assertions: list = ORDER, fact: dict | None = None) -> dict:
+    """The callee's pair as a strengthen of k with `assertions` and `fact` leaves it."""
+    start, calls = {"at": "start", "fn": "k"}, {"at": "before_calls", "fn": "k.ih"}
+    entered = {
+      side: self.assumed(self.declared(inner[side], "k", fact), start, assertions)
+      for side in ("src", "tgt")
+    }
+    tgt = self.assumed(self.declared(entered["tgt"], "k.ih", fact), calls, assertions)
+    return {"src": entered["src"], "tgt": tgt}
+
   def invariant(self, kept: bool = True, fact: dict | None = None) -> Path:
     """The parity loop proved with j <= i, assumed at the callee's entry and
     proved before each call: the outer's (on entry) and k.ih's (each
@@ -717,19 +769,78 @@ class Case(unittest.TestCase):
       steps.append({"kind": "check", "side": "tgt", "from": outer["tgt"], "to": outer_end["tgt"]})
     self.built.goal("g2", outer, outer_end, steps, {"kind": "check"})
 
-    start = {"at": "start", "fn": "k"}
-    strong = {side: assumed(declared(inner[side], "k", fact), start) for side in ("src", "tgt")}
+    strong = self.claimed(inner, ORDER, fact)
     kept_by = assumed(declared(strong["src"], "k.ih", fact), {"at": "before_calls", "fn": "k.ih"})
     by = [{"gid": "g2", "hash": entered}] + ([{"gid": "g3", "hash": kept_by}] if kept else [])
     claim = {"kind": "strengthen", "from": inner, "to": strong, "predicates": ORDER, "by": by}
     steps = [{**claim, **({"param_attrs": {"0": fact}} if fact is not None else {})}]
     if kept:
       steps.append({"kind": "check", "side": "src", "from": strong["src"], "to": kept_by})
-    end = {"src": kept_by if kept else strong["src"], "tgt": declared(strong["tgt"], "k.ih", fact)}
-    if fact is not None:
-      steps.append({"kind": "check", "side": "tgt", "from": strong["tgt"], "to": end["tgt"]})
+    end = {"src": kept_by if kept else strong["src"], "tgt": strong["tgt"]}
     self.built.goal("g3", inner, end, steps, {"kind": "check"})
     return self.built.write()
+
+  def inner_cut(self, gid: str, pair: dict, children: tuple[str, str]) -> tuple[dict, dict]:
+    """Goal `gid` cut at the inner loop's header, %bb3 in its iteration, into l."""
+    request = {"side": "src", "block": "%bb3", "callee": "l"}
+    s = llops("detach", {**request, "module": self.text(pair["src"])})
+    live = {p["live"]: p["live"] for p in s["params"]}
+    request = {**request, "side": "tgt", "params": s["params"], "value_map": live}
+    t = llops("detach", {**request, "module": self.text(pair["tgt"])})
+
+    def stored(text: str) -> str:
+      return self.built.program(canonical(text))
+
+    outer = {"src": stored(s["outer"]), "tgt": stored(t["outer"])}
+    inner = {"src": stored(s["callee"]), "tgt": stored(t["callee"])}
+    detach = {"phis": {"src": s["phis"], "tgt": t["phis"]}, "hypothesis": "l.ih"}
+    cut = {"kind": "cut", "callee": "l", "detach": detach}
+    self.built.goal(gid, pair, pair, [], {**cut, "outer": children[0], "inner": children[1]})
+    return outer, inner
+
+  def nested(self, fact: dict | None = None, carried: list = CARRIED) -> dict:
+    """The nested sum proved with i >= 0 through its iteration's interposed goal."""
+    halves = self.detached(NESTED, NESTED_NNEG)
+    outer, inner = halves["outer"], halves["inner"]
+    calls = {"at": "before_calls", "fn": "k"}
+    entered = {
+      side: self.assumed(self.declared(outer[side], "k", fact), calls, NONNEGATIVE)
+      for side in outer
+    }
+    steps = [
+      {"kind": "check", "side": side, "from": outer[side], "to": entered[side]} for side in outer
+    ]
+    self.built.goal("g2", outer, entered, steps, {"kind": "check"})
+
+    claim = self.claimed(inner, NONNEGATIVE, fact)
+    calls = {"at": "before_calls", "fn": "k.ih"}
+    between = self.assumed(self.declared(claim["src"], "k.ih", fact), calls, NONNEGATIVE)
+    by = [{"gid": "g2", "hash": entered["src"]}, {"gid": "g3", "hash": between}]
+    step = {"kind": "strengthen", "from": inner, "to": claim, "predicates": NONNEGATIVE, "by": by}
+    step.update({"param_attrs": {"0": fact}} if fact is not None else {})
+    interposed = {"kind": "interpose", "program": between, "lhs": "g4", "rhs": "g5"}
+    self.built.goal("g3", inner, claim, [step], interposed)
+
+    o, i = self.inner_cut("g4", {"src": claim["src"], "tgt": between}, ("g6", "g7"))
+    calls = {"at": "before_calls", "fn": "l"}
+    held = {side: self.assumed(o[side], calls, carried) for side in o}
+    steps = [{"kind": "check", "side": side, "from": o[side], "to": held[side]} for side in o]
+    self.built.goal("g6", o, held, steps, {"kind": "check"})
+    start, calls = {"at": "start", "fn": "l"}, {"at": "before_calls", "fn": "l.ih"}
+    entered = {side: self.assumed(i[side], start, carried) for side in i}
+    strong = {"src": entered["src"], "tgt": self.assumed(entered["tgt"], calls, carried)}
+    kept = self.assumed(strong["src"], calls, carried)
+    by = [{"gid": "g6", "hash": held["src"]}, {"gid": "g7", "hash": kept}]
+    steps = [
+      {"kind": "strengthen", "from": i, "to": strong, "predicates": carried, "by": by},
+      {"kind": "check", "side": "src", "from": strong["src"], "to": kept},
+    ]
+    self.built.goal("g7", i, {"src": kept, "tgt": strong["tgt"]}, steps, {"kind": "check"})
+
+    o, i = self.inner_cut("g5", {"src": between, "tgt": claim["tgt"]}, ("g8", "g9"))
+    self.built.goal("g8", o, o, [], {"kind": "check"})
+    self.built.goal("g9", i, i, [], {"kind": "check"})
+    return {"package": self.built.write(), "claim": claim, "between": between}
 
   def verified(self, package: Path, saying: str = "VERIFIED - root") -> subprocess.CompletedProcess:
     done = named(package)
@@ -793,6 +904,14 @@ class TestGolden(Case):
     done = run(package, "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
     self.assertEqual(done.stdout.count("Predicate proof"), 2, done.stdout)
+
+  def test_an_invariant_of_a_loop_that_holds_a_loop_verifies(self):
+    self.verified(self.nested()["package"])
+
+  def test_an_invariant_of_a_loop_that_holds_a_loop_with_a_parameter_fact_verifies(self):
+    # The iteration's src declares the fact on k.ih only in the program
+    # between, which is where its hypothesis is held to its definition.
+    self.verified(self.nested(fact={"noundef": True})["package"])
 
   def test_a_tgt_step_that_drops_attributes_its_body_respects_verifies(self):
     plain = self.built.program(canonical(READ))
@@ -1653,7 +1772,7 @@ declare i32 @k.ih(i32)
       {"kind": "unfold", "side": side, "from": proved[side], "to": unfolded},
     ]
     self.built.goal("g2", outer, {**proved, side: unfolded}, steps, {"kind": "check"})
-    strong = {side: self.assumed(inner[side], {"at": "start", "fn": "k"}) for side in inner}
+    strong = self.claimed(inner)
     kept_by = self.assumed(strong["src"], {"at": "before_calls", "fn": "k.ih"})
     by = [{"gid": "g2", "hash": entered}, {"gid": "g3", "hash": kept_by}]
     inner_steps = [
@@ -1687,7 +1806,7 @@ declare i32 @k.ih(i32)
     self.built.goal(
       "g2", outer, {"src": entered, "tgt": outer["tgt"]}, [initiation], {"kind": "check"}
     )
-    strong = {side: self.assumed(inner[side], {"at": "start", "fn": "k"}, even) for side in inner}
+    strong = self.claimed(inner, even)
     twice = self.unfolded(strong["src"])
     kept_by = self.assumed(twice, {"at": "before_calls", "fn": "k.ih"}, even)
     by = [{"gid": "g2", "hash": entered}, {"gid": "g3", "hash": kept_by}]
@@ -1699,6 +1818,52 @@ declare i32 @k.ih(i32)
     end = {"src": kept_by, "tgt": strong["tgt"]}
     self.built.goal("g3", inner, end, steps, {"kind": "check"})
     self.refused(self.built.write(), "does not start from the program the contract was assumed in")
+
+  def test_an_iteration_interposed_at_a_program_that_is_not_the_rebuilt_one(self):
+    # Assuming less before the call of k.ih makes an easier obligation, which
+    # does not show that the iteration keeps i >= 0.
+    built = self.nested()
+    less = [{"op": "sge", "lhs": "!0", "rhs": -1}]
+    calls = {"at": "before_calls", "fn": "k.ih"}
+    weaker = self.assumed(built["claim"]["src"], calls, less)
+
+    def change(manifest: dict) -> None:
+      g3 = manifest["goals"]["g3"]
+      g3["discharge"]["program"] = weaker
+      g3["steps"][0]["by"][1]["hash"] = weaker
+
+    self.built.bend(change)
+    self.refused(built["package"], "enforced at @k.ih; recorded program differs")
+
+  def test_an_iteration_interposed_at_a_program_its_strengthen_does_not_name(self):
+    built = self.nested()
+    self.built.bend(lambda manifest: manifest["goals"]["g3"]["steps"][0]["by"].pop())
+    self.refused(built["package"], "no src step proves the entry predicates before @k.ih")
+
+  def test_an_iteration_interposed_after_an_unfold(self):
+    # The unfolded iteration assumes i >= 0 again between its two copies,
+    # where nothing proved it.
+    built = self.nested()
+    src = built["claim"]["src"]
+    twice = self.unfolded(src)
+
+    def change(manifest: dict) -> None:
+      g3 = manifest["goals"]["g3"]
+      g3["steps"].append({"kind": "unfold", "side": "src", "from": src, "to": twice})
+      g3["end"]["src"] = twice
+
+    self.built.bend(change)
+    self.refused(built["package"], "does not start from the program the contract was assumed in")
+
+  def test_an_obligation_whose_inner_loop_does_not_carry_enough(self):
+    # Without i < n, i + 1 may wrap to poison, which the program between
+    # assumes is at least 0 where the iteration passes it on.
+    done = named(self.nested(carried=CARRIED[:1])["package"])
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    failed = [line for line in done.stdout.splitlines() if line.startswith("FAIL")]
+    self.assertTrue(
+      any(" g7 " in line and "Final refinement" in line for line in failed), done.stdout
+    )
 
   def test_a_recursive_callee_with_a_function_attribute(self):
     halves = self.detached(PARITY, PARITY_NUW)

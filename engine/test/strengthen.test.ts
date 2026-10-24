@@ -20,6 +20,7 @@ import { DEFAULT_TIMEOUTS, Steps } from "../core/state/steps.ts";
 import { Store } from "../core/state/store.ts";
 import { explainCallerRefusal, Strengthen } from "../core/state/strengthen.ts";
 import type { Effect, Entry, Event } from "../core/state/trajectory.ts";
+import { nestedinvariant } from "../examples/nestedinvariant.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 /** How a query is answered when queries are asked at once, so in no set order. */
@@ -177,6 +178,19 @@ async function ghosted(): Promise<Tree> {
 }
 const ABOUT_THE_COUNTER = [{ op: "ule" as const, lhs: "!2", rhs: "!1" }];
 
+/** A loop around another, detached at the outer header, so the callee still loops. */
+async function nestedDetached(tgtText = nestedinvariant.tgt): Promise<Tree> {
+  const src = await store.put(nestedinvariant.src);
+  const tgt = await store.put(tgtText);
+  events.push({ kind: "start", src, tgt, config: {}, versions: {} });
+  const map = { "%2": "%2", "%3": "%3", "%0": "%0", "%1": "%1" };
+  const result = await new Cuts(store, llops).cut(replay(), "g1", "%bb1", "%bb1", map);
+  if (result.kind !== "cut") throw new Error(result.message);
+  return record(result.effects);
+}
+/** That the outer counter, the iteration's parameter 0, is not negative. */
+const NONNEGATIVE = [{ op: "sge" as const, lhs: "!0", rhs: 0 }];
+
 /** The tree once the effects a move returned are in the log. */
 function replayWith(effects: Effect[]): Tree {
   events.push({ kind: "tool_result", id: "2", tool: "strengthen", effects, result: null, ms: 1 });
@@ -253,17 +267,10 @@ describe.skipIf(!built)("strengthening a loop", () => {
   });
 
   test("a contract is proved before both calls, the loop's in the callee's chain", async () => {
-    // The iteration's question, the outer's, the tgt steps that assume the
-    // same at the outer's call and at the hypothesis, then the two goals'
-    // checks: the iteration's step lands on its own answer rather than a second one.
-    const checker = new FakeChecker([
-      "correct",
-      "correct",
-      "correct",
-      "correct",
-      "unknown",
-      "unknown",
-    ]);
+    // The iteration's question, the outer's, and the tgt step that assumes the
+    // same at the outer's call: the iteration's step lands on its own answer
+    // rather than a second one.
+    const checker = new FakeChecker(["correct", "correct", "correct"]);
     const tree = await detached();
     const result = await strengthening(checker).strengthen(tree, "g1", { predicates: WITHIN });
     if (result.kind !== "strengthened") throw new Error(result.reason);
@@ -271,10 +278,12 @@ describe.skipIf(!built)("strengthening a loop", () => {
     const claim = result.effects.find((effect) => effect.effect === "strengthen");
     if (claim?.effect !== "strengthen") throw new Error("expected a strengthen effect");
     expect(claim.by?.map((proof) => proof.gid)).toEqual(["g2", "g3"]);
-    const kept = result.effects.find((effect) => effect.effect === "step" && effect.gid === "g3");
-    expect(kept).toMatchObject({ side: "src", to: claim.by?.[1]?.hash });
+    const kept = result.effects.filter((effect) => effect.effect === "step" && effect.gid === "g3");
+    expect(kept).toEqual([expect.objectContaining({ side: "src", to: claim.by?.[1]?.hash })]);
+    expect(checker.calls).toHaveLength(3);
     // Both sides of the iteration assume the contract at its entry and again
     // before calling the hypothesis.
+    expect(store.get(claim.tgt).match(/call void @llvm\.assume/g)).toHaveLength(2);
     const after = replayWith(result.effects);
     for (const side of ["src", "tgt"] as const) {
       const text = store.get(head(goal(after, "g3"), side));
@@ -283,16 +292,8 @@ describe.skipIf(!built)("strengthening a loop", () => {
   });
 
   test("parameter facts go on the hypothesis too, on both sides", async () => {
-    // The iteration's question, the outer's, the outer tgt's declaration, the
-    // tgt's hypothesis's declaration, then the two goals' checks.
-    const checker = new FakeChecker([
-      "correct",
-      "correct",
-      "correct",
-      "correct",
-      "correct",
-      "correct",
-    ]);
+    // The iteration's question, the outer's, and the outer tgt's declaration.
+    const checker = new FakeChecker(["correct", "correct", "correct"]);
     const tree = await detached();
     const result = await strengthening(checker).strengthen(tree, "g1", {
       param_attrs: { 0: { noundef: true }, 1: { noundef: true } },
@@ -313,18 +314,60 @@ describe.skipIf(!built)("strengthening a loop", () => {
       expect(text).toContain("define i32 @outlined_g3(i32 noundef %0, i32 noundef %1)");
     }
   });
+});
 
-  test("lands nothing when the tgt's hypothesis is refused its facts", async () => {
-    // The iteration's question, the outer's, the outer tgt's declaration, then
-    // the tgt's hypothesis's declaration, which is refused.
-    const checker = new FakeChecker(["correct", "correct", "correct", "incorrect"]);
-    const tree = await detached();
+describe.skipIf(!built)("strengthening a loop that holds a loop", () => {
+  test("an iteration that loops is interposed rather than asked", async () => {
+    // The outer's question and the outer tgt's step: nothing asks whether the
+    // iteration, which loops, keeps the facts.
+    const checker = new FakeChecker(["correct", "correct"]);
+    const tree = await nestedDetached();
     const result = await strengthening(checker).strengthen(tree, "g1", {
-      param_attrs: { 0: { noundef: true }, 1: { noundef: true } },
+      predicates: NONNEGATIVE,
     });
-    expect(result).toMatchObject({ kind: "refused", phase: "attribute", effects: [] });
-    expect(store.get(head(goal(tree, "g3"), "src"))).not.toContain("noundef %0");
-    expect(store.get(head(goal(tree, "g2"), "src"))).not.toContain("i32 noundef, i32 noundef");
+    if (result.kind !== "strengthened") throw new Error(result.reason);
+    expect(checker.calls).toHaveLength(2);
+
+    const claim = result.effects.find((effect) => effect.effect === "strengthen");
+    if (claim?.effect !== "strengthen") throw new Error("expected a strengthen effect");
+    const between = claim.by?.[1]?.hash ?? "";
+    expect(result.effects).toContainEqual({
+      effect: "interpose",
+      gid: "g3",
+      lhs: { gid: "g4", src: claim.src, tgt: between },
+      rhs: { gid: "g5", src: between, tgt: claim.tgt },
+    });
+    expect(result.effects.some((effect) => effect.effect === "step" && effect.gid === "g3")).toBe(
+      false,
+    );
+    // The program between and the tgt assume the facts at entry and before the hypothesis.
+    for (const hash of [between, claim.tgt])
+      expect(store.get(hash).match(/call void @llvm\.assume/g)).toHaveLength(2);
+    expect(goal(replayWith(result.effects), "g3")).toMatchObject({
+      status: "split",
+      children: ["g4", "g5"],
+    });
+  });
+
+  test("interposes an iteration whose two sides are one program", async () => {
+    const tree = await nestedDetached(nestedinvariant.src);
+    const result = await strengthening(new FakeChecker(["correct", "correct"])).strengthen(
+      tree,
+      "g1",
+      { predicates: NONNEGATIVE },
+    );
+    if (result.kind !== "strengthened") throw new Error(result.reason);
+    const between = result.effects.find((effect) => effect.effect === "interpose");
+    if (between?.effect !== "interpose") throw new Error("expected an interpose");
+    expect(between.rhs.src).toBe(between.rhs.tgt);
+  });
+
+  test("a preview keeps the facts that hold on entry", async () => {
+    const checker = new FakeChecker(["correct"]);
+    const tree = await nestedDetached();
+    const result = await strengthening(checker).preview(tree, "g1", { predicates: NONNEGATIVE });
+    expect(result).toEqual({ kind: "preview", holds: { predicates: NONNEGATIVE } });
+    expect(checker.calls).toHaveLength(1);
   });
 });
 

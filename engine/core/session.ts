@@ -106,7 +106,10 @@ export type RevertResult =
 /** The cut was restored, or preserved because an open transaction needs a child. */
 export type UncutResult = { kind: "uncut"; effects: Effect[] } | EditingRefusal;
 
-export type UninterposeResult = { kind: "uninterposed"; effects: Effect[] } | EditingRefusal;
+export type UninterposeResult =
+  | { kind: "uninterposed"; effects: Effect[] }
+  | { kind: "refused"; message: string }
+  | EditingRefusal;
 
 export type UncaseResult = { kind: "uncased"; effects: Effect[] } | EditingRefusal;
 
@@ -609,8 +612,30 @@ export class Session {
       if (editing && this.editing.isEditingBelow(tree, gid)) {
         return { kind: "editing", message: openMessage(editing) };
       }
+      // A strengthen's interpose holds the proof that an iteration keeps its contract.
+      if (this.interposedByStrengthen(tree, gid)) {
+        const cut = goalOf(tree, gid).parent;
+        const why = `undoing the interpose of ${gid} would undo part of a strengthen of ${cut}`;
+        return { kind: "refused", message: `${why}; uncut ${cut} to undo all of it` };
+      }
       return { kind: "uninterposed", effects: uninterpose(tree, gid) };
     });
+  }
+
+  /** Whether a strengthen made the interpose that left goal `gid`'s children. */
+  private interposedByStrengthen(tree: Tree, gid: string): boolean {
+    const children = goalOf(tree, gid).children;
+    return this.entries.some(
+      (entry) =>
+        entry.kind === "tool_result" &&
+        entry.tool === "strengthen" &&
+        (entry.effects ?? []).some(
+          (effect) =>
+            effect.effect === "interpose" &&
+            effect.gid === gid &&
+            children.includes(effect.lhs.gid),
+        ),
+    );
   }
 
   /**

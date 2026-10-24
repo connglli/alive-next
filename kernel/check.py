@@ -702,7 +702,7 @@ class Check:
       elif step["kind"] == "unfold":
         head[step["side"]] = self.unfold(gid, step, head, loop)
       elif step["kind"] == "strengthen":
-        self.strengthen(gid, step, head, role)
+        self.strengthen(gid, step, head, role, loop)
       else:
         self.fail(
           gid,
@@ -712,7 +712,9 @@ class Check:
         )
     return head
 
-  def strengthen(self, gid: str, step: dict, head: dict, role: str | None) -> None:
+  def strengthen(
+    self, gid: str, step: dict, head: dict, role: str | None, loop: dict | None
+  ) -> None:
     """Replay the exact parameter attributes, function attributes, and entry predicates a callee claims to have gained."""
     if role is None or role == "outer":
       self.fail(
@@ -775,6 +777,9 @@ class Check:
             "assertions": predicates,
           },
         )["module"]
+      # A loop's tgt takes the contract before its calls of the hypothesis too.
+      if side == "tgt" and loop:
+        attributed = self.enforced(attributed, loop["hypothesis"], replayable, predicates)
       same = self.package.run_llops("canon", {"module": attributed})["module"]
       matches = same == self.package.program(step["to"][side])
       ms = elapsed_ms(started)
@@ -789,8 +794,10 @@ class Check:
       )
       head[side] = step["to"][side]
 
-  def predicates(self, discharge: dict, step: dict, hypothesis: str | None) -> None:
-    """The src step that enforced a strengthen step's contract at each call of the callee.
+  def predicates(
+    self, discharge: dict, step: dict, hypothesis: str | None, between: str | None
+  ) -> None:
+    """The proof that enforced a strengthen step's contract at each call of the callee.
 
     The parameter facts go on the declaration of the function called and the
     predicates are assumed before each call. The outer calls the callee; a
@@ -808,17 +815,17 @@ class Check:
     facts = parameter_facts(step.get("param_attrs") or {})
     for gid, fn in sites:
       proved = next((link.get("hash") for link in links if link.get("gid") == gid), None)
-      steps = self.package.goal(gid)["steps"]
-      proofs = [s for s in steps if s.get("side") == "src" and proved and s.get("to") == proved]
-      if not proofs:
+      found = self.proof(gid, proved, between if fn == hypothesis else None)
+      if found is None:
         self.fail(
           gid, "src", "Predicate proof", f"no src step proves the entry predicates before @{fn}"
         )
         continue
+      start, later = found
       # One iteration keeps the contract when the proof starts from the
       # program that assumed it at the entry. After an unfold, the copy in the
       # middle would carry that assumption too, and it was never proved there.
-      if fn == hypothesis and proofs[0]["from"] != step["to"]["src"]:
+      if fn == hypothesis and start != step["to"]["src"]:
         self.fail(
           gid,
           "src",
@@ -828,29 +835,55 @@ class Check:
         continue
       # An unfold of the outer after the proof would make calls of the loop
       # that the proof does not cover.
-      later = steps[steps.index(proofs[0]) + 1 :]
       if fn == name and any(s.get("kind") == "unfold" for s in later):
         self.fail(gid, "src", "Predicate proof", f"an unfold follows the proof before @{fn}")
         continue
       started = time.monotonic()
-      enforced = self.package.program(proofs[0]["from"])
-      for param, fact in facts:
-        enforced = self.package.run_llops(
-          "attrs", {"module": enforced, "fn": fn, "param": param, "attrs": fact}
-        )["module"]
-      assumed = self.package.run_llops(
-        "assume",
-        {
-          "module": enforced,
-          "anchor": {"at": "before_calls", "fn": fn},
-          "assertions": contract_predicates(step),
-        },
-      )["module"]
-      same = self.package.run_llops("canon", {"module": assumed})["module"]
-      matches = same == self.package.program(proofs[0]["to"])
+      module = self.package.program(start)
+      enforced = self.enforced(module, fn, facts, contract_predicates(step))
+      same = self.package.run_llops("canon", {"module": enforced})["module"]
+      matches = same == self.package.program(proved)
       self.compared(
         gid, "src", "llops", "Predicate proof", f"enforced at @{fn}", matches, elapsed_ms(started)
       )
+
+  def proof(self, gid: str, proved: str | None, between: str | None) -> tuple[str, list] | None:
+    """Where the proof that made `proved` in goal `gid` starts, and the steps after it."""
+    steps = self.package.goal(gid)["steps"]
+    for at, s in enumerate(steps):
+      if proved and s.get("side") == "src" and s.get("to") == proved:
+        return s["from"], steps[at + 1 :]
+    # A callee whose iteration loops is interposed at the program the step would make.
+    if proved and proved == between:
+      return self.package.goal(gid)["end"]["src"], []
+    return None
+
+  def between(self, gid: str) -> str | None:
+    """The program a callee goal is interposed at, if its strengthen names it as a proof."""
+    goal = self.package.goal(gid)
+    named = {
+      link.get("hash")
+      for step in goal["steps"]
+      if step.get("kind") == "strengthen" and isinstance(step.get("by"), list)
+      for link in step["by"]
+      if isinstance(link, dict) and link.get("gid") == gid
+    }
+    discharge = goal["discharge"]
+    if discharge.get("kind") == "interpose" and discharge.get("program") in named:
+      return discharge["program"]
+    return None
+
+  def enforced(self, module: str, fn: str, facts: list, predicates: list) -> str:
+    """`module` with `facts` on `fn`'s declaration and `predicates` before each call."""
+    for param, fact in facts:
+      module = self.package.run_llops(
+        "attrs", {"module": module, "fn": fn, "param": param, "attrs": fact}
+      )["module"]
+    if predicates:
+      anchor = {"at": "before_calls", "fn": fn}
+      request = {"module": module, "anchor": anchor, "assertions": predicates}
+      module = self.package.run_llops("assume", request)["module"]
+    return module
 
   def window(self, gid: str, step: dict, head: dict) -> str:
     """A step narrowed to a window, optionally with proved preconditions.
@@ -1281,12 +1314,14 @@ class Check:
         ms=ms,
       )
 
+    # Where a strengthen interposed the callee goal, its src ends at the program between.
+    between = self.between(discharge["inner"]) if hypothesis else None
     # The hypothesis stands for the callee within its own body, so it says
     # what the definition says, no more.
     if hypothesis:
       for side in ("src", "tgt"):
         started = time.monotonic()
-        end = self.package.program(inner["end"][side])
+        end = self.package.program(between if between and side == "src" else inner["end"][side])
         matches = signature(self.package, end, hypothesis) == signature(self.package, end, name)
         self.report(
           result="OK" if matches else "FAIL",
@@ -1320,7 +1355,7 @@ class Check:
       if step.get("kind") != "strengthen":
         continue
       if step.get("predicates"):
-        self.predicates(discharge, step, hypothesis)
+        self.predicates(discharge, step, hypothesis, between)
       # Induction cannot prove willreturn, so a recursive callee takes no
       # function attribute at all.
       if hypothesis and step.get("fn_attrs"):

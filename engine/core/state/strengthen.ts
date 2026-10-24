@@ -48,8 +48,8 @@
 // its contract is proved there too, as at the outer's calls: one iteration has
 // to keep it, with the contract assumed at the callee's entry. That question is
 // asked before anything lands, and its step, which declares the hypothesis
-// with the parameter facts in the callee's src, lands in the callee's chain
-// right after the claim; the tgt's calls of the hypothesis take the same after it.
+// with the parameter facts, lands right after the claim; for an iteration
+// that loops, the callee goal is interposed at the program the step would make.
 // The callee takes no function attribute: induction cannot prove willreturn.
 import { availableParallelism } from "node:os";
 import { type CheckResult, timedOut } from "../drivers/alive2.ts";
@@ -61,6 +61,7 @@ import {
   type Goal,
   head,
   interposed,
+  nextGoalIds,
   type Side,
   type Tree,
 } from "./goals.ts";
@@ -167,17 +168,18 @@ export class Strengthen {
 
     // Phase 0, for a loop: the contract has to hold again where the callee
     // calls its hypothesis, with the contract assumed at its entry. That is
-    // one iteration keeping it, asked before anything lands, so a contract the
-    // loop does not keep changes nothing.
-    let kept: { from: Hash; hash: Hash } | undefined;
+    // one iteration keeping it, asked before anything lands unless it loops,
+    // so a contract the loop does not keep changes nothing.
+    let kept: { from: Hash; hash: Hash; loops: boolean } | undefined;
     if (hypothesis && (hasParamAttrs || hasPredicates)) {
       const entered = await this.materialize(this.store.get(head(callee, "src")), name, contract);
       if (typeof entered !== "string") return { ...entered, effects: [] };
       const next = await this.enforce(entered, hypothesis, contract);
       if (typeof next !== "string")
         return { kind: "refused", phase: "hypothesis", reason: next.reason, effects: [] };
-      const check = await this.steps.refinementCheck(entered, next);
-      if (check.outcome !== "correct") {
+      const loops = await this.steps.loops(entered);
+      const check = loops ? undefined : await this.steps.refinementCheck(entered, next);
+      if (check && check.outcome !== "correct") {
         const reason = `one iteration of @${name} is not shown to keep the facts at @${hypothesis}`;
         const calls = await this.callsOf(this.store.get(head(callee, "src")), hypothesis);
         // alive2's Source and Target read as the goal's two sides, and are not.
@@ -195,8 +197,8 @@ export class Strengthen {
           effects: [],
         };
       }
-      checks.push(check);
-      kept = { from: await this.store.put(entered), hash: await this.store.put(next) };
+      if (check) checks.push(check);
+      kept = { from: await this.store.put(entered), hash: await this.store.put(next), loops };
     }
 
     // Certified steps wait in a copy of the tree until every one is certified,
@@ -310,13 +312,17 @@ export class Strengthen {
     if (typeof srcRes !== "string") return { ...srcRes, effects: [] };
     const tgtRes = await this.materialize(this.store.get(head(callee, "tgt")), name, contract);
     if (typeof tgtRes !== "string") return { ...tgtRes, effects: [] };
+    // A loop's tgt takes the contract before its calls of the hypothesis too.
+    const tgtClaim = hypothesis ? await this.enforce(tgtRes, hypothesis, contract) : tgtRes;
+    if (typeof tgtClaim !== "string")
+      return { kind: "refused", phase: "attribute", reason: tgtClaim.reason, effects: [] };
 
     hold([
       {
         effect: "strengthen",
         gid: callee.id,
         src: await this.store.put(srcRes),
-        tgt: await this.store.put(tgtRes),
+        tgt: await this.store.put(tgtClaim),
         ...(hasParamAttrs ? { param_attrs: rawParamAttrs } : {}),
         ...(hasFnAttrs ? { fn_attrs: fnAttrs } : {}),
         ...(hasPredicates ? { predicates } : {}),
@@ -325,31 +331,24 @@ export class Strengthen {
     ]);
 
     // Phase 3, for a loop: the step Phase 0 certified lands in the callee's
-    // chain on that answer, so the claim never stands without it. It enforced
-    // the contract at the src's calls of the hypothesis, and the tgt's calls
-    // take the same, as the outer's tgt does.
-    if (hypothesis && kept) {
+    // chain on that answer, so the claim never stands without it. For an
+    // iteration that loops, which Phase 0 did not ask, the callee goal is
+    // interposed at the program the step would make.
+    if (kept && !kept.loops) {
       hold([
         { effect: "step", gid: callee.id, side: "src", to: kept.hash, how: "check", by: "alive2" },
       ]);
-      const before = this.store.get(head(now(callee), "tgt"));
-      const enforced = await this.enforce(before, hypothesis, contract);
-      if (typeof enforced !== "string")
-        return { kind: "refused", phase: "attribute", reason: enforced.reason, effects: [] };
-      const step = await this.steps.checkStep(ahead, callee.id, "tgt", enforced, {
-        eager: false,
-      });
-      if (step.kind !== "certified") {
-        return {
-          kind: "refused",
-          phase: "attribute",
-          reason: `the step that gives @${hypothesis} in the callee's tgt the interface is not certified`,
-          check: step.check,
-          effects: [],
-        };
-      }
-      hold(step.effects);
-      if (step.check) checks.push(step.check);
+    } else if (kept) {
+      const [lhs, rhs] = nextGoalIds(ahead);
+      const [src, tgt] = [head(now(callee), "src"), head(now(callee), "tgt")];
+      hold([
+        {
+          effect: "interpose",
+          gid: callee.id,
+          lhs: { gid: lhs, src, tgt: kept.hash },
+          rhs: { gid: rhs, src: kept.hash, tgt },
+        },
+      ]);
     }
     const landed: Effect[] = [];
     this.land(tree, landed, pending);
@@ -358,6 +357,7 @@ export class Strengthen {
     // Once both halves are attributed, both goals are checked. If the newly
     // established interface discharges either goal, it is settled immediately.
     for (const goal of [callee, outer]) {
+      if (tree.goals.get(goal.id)?.status === "split") continue;
       const cross = await this.steps.eagerGoalCheck(tree, goal.id);
       if (cross.check) checks.push(cross.check);
       this.land(tree, landed, cross.effects);
@@ -368,7 +368,7 @@ export class Strengthen {
   /**
    * The part of `contract` that strengthening the cut at goal `gid` would prove:
    * the facts that hold where the outer calls the callee and, for a loop's
-   * callee, that one iteration keeps with those facts assumed at its entry.
+   * callee, that one loop-free iteration keeps with those facts assumed at its entry.
    * Each parameter's attributes and each predicate is a fact, asked alone, and
    * nothing lands, so only `strengthen` makes one count.
    */
@@ -388,6 +388,7 @@ export class Strengthen {
       contractOf(entering),
     );
     if (typeof entered !== "string") return { kind: "refused", reason: entered.reason };
+    if (await this.steps.loops(entered)) return { kind: "preview", holds: contractOf(entering) };
     const kept = await this.holding(entered, hypothesis, entering);
     return { kind: "preview", holds: contractOf(kept) };
   }

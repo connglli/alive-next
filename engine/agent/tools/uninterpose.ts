@@ -13,7 +13,7 @@ export function createUninterposeTool(session: Session) {
     parameters: Type.Object({ gid: Type.String({ description: "The goal that was interposed." }) }),
     execute: async (_id, { gid }) => {
       const undone = await session.uninterpose(gid);
-      if (undone.kind === "editing") {
+      if (undone.kind !== "uninterposed") {
         return toolResultFrom(session, false, `refused: ${undone.message}`, undone);
       }
       return toolResultFrom(session, true, `${gid} is open again`, undone);
