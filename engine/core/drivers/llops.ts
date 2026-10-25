@@ -187,6 +187,13 @@ export interface AnalyzeResult {
   facts: Fact[];
 }
 
+/** A loop by its header, and the most times ScalarEvolution shows its back edge is taken. */
+export interface LoopBound {
+  loop: Ref;
+  /** Decimal and unsigned. */
+  max_backedge_taken?: string;
+}
+
 /** Attributes dictionary for functions or parameters (e.g. { noundef: true, memory: "none", range: ... }). */
 export type Attrs = Record<string, unknown>;
 
@@ -423,6 +430,11 @@ export class Llops {
 
   analyze(module: Module, kind: AnalyzeKind, point?: Ref): Promise<LlopsResult<AnalyzeResult>> {
     return this.run("analyze", point ? { module, kind, point } : { module, kind });
+  }
+
+  /** Each loop of the module's function, in the order of the headers. */
+  loops(module: Module): Promise<LlopsResult<{ facts: LoopBound[] }>> {
+    return this.run("analyze", { module, kind: "loops" });
   }
 
   /** Apply one optimizer op to an instruction or the whole function. */
