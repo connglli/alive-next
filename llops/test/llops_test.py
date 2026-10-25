@@ -858,6 +858,125 @@ class TestEditCopyBlock(Case):
     self.bad(self.edit("copy_block", module=F_JOINED, block="%nope", preds=["%a"]), "not_found")
 
 
+# A loop that holds a loop, whose exit takes the outer counter by a phi.
+F_NESTED_LOOPS = """define i32 @f() {
+entry:
+  br label %outer
+
+outer:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %outer.latch ]
+  br label %inner
+
+inner:
+  %j = phi i32 [ 0, %outer ], [ %j.next, %inner ]
+  %j.next = add nuw nsw i32 %j, 1
+  %more.j = icmp ult i32 %j.next, 3
+  br i1 %more.j, label %inner, label %outer.latch
+
+outer.latch:
+  %i.next = add nuw nsw i32 %i, 1
+  %more.i = icmp ult i32 %i.next, 5
+  br i1 %more.i, label %outer, label %exit
+
+exit:
+  %r = phi i32 [ %i, %outer.latch ]
+  ret i32 %r
+}
+"""
+
+
+class TestEditPeel(Case):
+  def reshaped(self, before, after):
+    return self.good(run("reshaped", {"before": before, "after": after}))["reshaped"]
+
+  def test_the_edges_into_the_loop_enter_a_copy_of_its_iteration(self):
+    r = self.good(self.edit("peel", module=F_SHARED_EXIT, block="%loop"))
+    self.assertIn("br i1 %g, label %exit, label %loop1", r["module"])
+    self.assertIn("%i = phi i32 [ %i.next3, %loop1 ], [ %i.next, %loop ]", r["module"])
+    self.assertIn("%i2 = phi i32 [ 0, %entry ]", r["module"])
+    self.assertIn("%r = phi i32 [ -1, %entry ], [ %i, %loop ], [ %i2, %loop1 ]", r["module"])
+    self.assertTrue(self.reshaped(F_SHARED_EXIT, r["module"]))
+
+  def test_a_loop_in_the_loop_is_copied_with_it(self):
+    r = self.good(self.edit("peel", module=F_NESTED_LOOPS, block="%outer"))
+    self.assertEqual(r["module"].count("icmp ult i32 %j"), 2)
+    self.assertIn("br i1 %more.j6, label %inner3, label %outer.latch7", r["module"])
+    self.assertIn("br i1 %more.i9, label %outer, label %exit", r["module"])
+    self.assertTrue(self.reshaped(F_NESTED_LOOPS, r["module"]))
+
+  def test_a_second_peel_copies_the_next_iteration(self):
+    once = self.good(self.edit("peel", module=F_NESTED_LOOPS, block="%outer"))["module"]
+    twice = self.good(self.edit("peel", module=once, block="%outer"))["module"]
+    self.assertEqual(twice.count("icmp ult i32 %i.next"), 3)
+    self.assertTrue(self.reshaped(F_NESTED_LOOPS, twice))
+
+  def test_each_of_two_edges_from_one_block_gets_its_entry(self):
+    module = """define i32 @f(i32 %s) {
+entry:
+  switch i32 %s, label %exit [ i32 0, label %loop
+                               i32 1, label %loop ]
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ 0, %entry ], [ %i.next, %loop ], [ %i.next, %loop ]
+  %i.next = add i32 %i, 1
+  switch i32 %i.next, label %loop [ i32 7, label %exit
+                                    i32 9, label %loop ]
+
+exit:
+  %r = phi i32 [ -1, %entry ], [ %i, %loop ]
+  ret i32 %r
+}
+"""
+    r = self.good(self.edit("peel", module=module, block="%loop"))
+    self.assertIn("%i2 = phi i32 [ 0, %entry ], [ 0, %entry ]", r["module"])
+    self.assertIn("[ %i.next3, %loop1 ], [ %i.next3, %loop1 ], [ %i.next, %loop ]", r["module"])
+    self.assertIn("%r = phi i32 [ -1, %entry ], [ %i, %loop ], [ %i2, %loop1 ]", r["module"])
+    self.assertTrue(self.reshaped(module, r["module"]))
+
+  def test_a_debug_record_in_the_copy_names_the_copy_s_value(self):
+    module = """define i32 @f() !dbg !3 {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+    #dbg_value(i32 %i, !6, !DIExpression(), !7)
+  %i.next = add i32 %i, 1
+  %c = icmp ult i32 %i.next, 3
+  br i1 %c, label %loop, label %exit
+
+exit:
+  %r = phi i32 [ %i, %loop ]
+  ret i32 %r
+}
+
+!llvm.dbg.cu = !{!0}
+!llvm.module.flags = !{!2}
+
+!0 = distinct !DICompileUnit(language: DW_LANG_C11, file: !1, emissionKind: FullDebug)
+!1 = !DIFile(filename: "t.c", directory: "/")
+!2 = !{i32 2, !"Debug Info Version", i32 3}
+!3 = distinct !DISubprogram(name: "f", scope: !1, file: !1, type: !4, unit: !0, spFlags: DISPFlagDefinition)
+!4 = !DISubroutineType(types: !5)
+!5 = !{}
+!6 = !DILocalVariable(name: "i", scope: !3, file: !1)
+!7 = !DILocation(line: 1, scope: !3)
+"""
+    r = self.good(self.edit("peel", module=module, block="%loop"))
+    self.assertIn("#dbg_value(i32 %i2,", r["module"])
+    self.assertEqual(r["module"].count("#dbg_value(i32 %i,"), 1)
+
+  def test_a_value_used_after_the_loop_otherwise_is_refused(self):
+    module = F_NESTED_LOOPS.replace("%r = phi i32 [ %i, %outer.latch ]", "%r = add i32 %i, 1")
+    self.bad(self.edit("peel", module=module, block="%outer"), "invalid")
+
+  def test_a_block_that_heads_no_loop_is_refused(self):
+    self.bad(self.edit("peel", module=F_NESTED_LOOPS, block="%outer.latch"), "invalid")
+
+  def test_an_unknown_block_is_refused(self):
+    self.bad(self.edit("peel", module=F_NESTED_LOOPS, block="%nope"), "not_found")
+
+
 class TestEditValues(Case):
   def test_substitute(self):
     r = self.good(self.edit("substitute", module=F_TWO_ADDS, a="a", b="b"))

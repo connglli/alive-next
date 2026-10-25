@@ -91,6 +91,7 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 | `retype` | `v`, `ty`, `ext` | give a value another integer type |
 | `dedup` | `a`, `b` | erase `b`, its uses become `a` |
 | `copy_block` | `block`, `preds` | give the edges from `preds` their own copy of `block` |
+| `peel` | `block` | give the edges into the loop `block` heads their own copy of its iteration |
 | `set_body` | `body` | replace the whole body |
 | `drop_attrs` | | remove the attributes `respected` reads from the function |
 | `flags` | `v`, `flags` | put or remove the flags an instruction can carry |
@@ -111,6 +112,8 @@ A snippet may use the module's global variables and call its functions. When a s
 `retype` leaves the definition in the old type, gives the old name to a conversion into the new type, and converts back at every use, with `ext` choosing `zext` or `sext` where a conversion widens. Whether the conversions lose nothing is a claim for the caller's alive2 check.
 
 `copy_block` sends each edge from a block in `preds` to a copy of `block`. The copy's phis keep those edges and the block's keep the others, and each phi after the block takes from the copy what it takes from the block. It refuses a value of the block used outside it other than by a phi on an edge from it, which would need a phi of its own, and a copy that would take every edge into the block. The step only reshapes control flow, which `reshaped` can certify on a program that loops: it is how a loop's exit that the code before the loop also enters becomes the loop's alone.
+
+`peel` sends the edges into the loop that `block` heads to a copy of one iteration: each block of the loop, inner loops included, with the copy's back edges going to `block`. The copy's phis keep the entering edges, the header's take the copy's back edges instead, and each phi after the loop takes from the copy what it takes from the loop. It refuses a block that heads no loop and, as `copy_block` does, a value used outside what it copies other than by a phi on an edge from it. The step only reshapes control flow, and a loop peeled one time more than it can run leaves behind a loop that no run enters.
 
 `flags` names instruction flags with `true` or `false`, so the same op puts and removes: `{ "nuw": true }` puts `nuw` on and `{ "nsw": false }` takes `nsw` off. `nuw` and `nsw` apply to `add`, `sub`, `mul`, `shl` and `trunc`, `exact` to the divisions and shifts that carry it, `disjoint` to `or`, `nneg` to `zext` and `uitofp`, and `fast`, `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn` and `reassoc` to floating-point instructions. A flag the instruction cannot carry is refused rather than ignored, so the agent never guesses what the IR keeps.
 
