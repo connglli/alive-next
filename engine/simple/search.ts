@@ -9,6 +9,7 @@
 import type { Comparison, Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { INVERSE } from "../core/state/cases.ts";
+import { peelBounded } from "./bounded.ts";
 import { caseOn, tested } from "./cases.ts";
 import { type Assumed, balancedPoints, beforePoints, cutAt, cutLoop, quota } from "./cuts.ts";
 import { strengthenAgainst } from "./facts.ts";
@@ -73,11 +74,15 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   const run: Run = { session, llops, limits, eagerMs, capMs, assumed: new Map() };
   await unrolling(session, llops, root, limits.counterexampleMs);
   await dropAttrs(session, llops, root);
-  const { src, tgt } = await session.show(root);
+  // A loop the tgt no longer has is peeled and cut away first, and what is left is searched.
+  const start = limits.steps ? await peelBounded(session, llops, root) : root;
+  if (start !== root && (await session.check(start, limits.rootMs)).outcome === "proved")
+    return session.verdict;
+  const { src, tgt } = await session.show(start);
   const walking = limits.stages && limits.steps;
   const stages = walking ? await stagesToward(llops, src.text, tgt.text) : [];
-  const cuts = quotaOf(limits, await bodies(session, llops, root));
-  const agenda = [goal(run, root, { stages, cuts })];
+  const cuts = quotaOf(limits, await bodies(session, llops, start));
+  const agenda = [goal(run, start, { stages, cuts })];
   // A check of the root's original pair may decide the run on the way.
   while (agenda.length > 0 && session.verdict === "unknown") {
     const top = agenda[agenda.length - 1] as Goal;

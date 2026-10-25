@@ -16,15 +16,25 @@ import { bodies } from "./windows.ts";
 
 /** Gives code outside each side's first loop its own copy of each block it enters there. */
 export async function copyShared(session: Session, llops: Llops, gid: string): Promise<void> {
-  for (const k of [0, 1] as const) {
-    const side = k === 0 ? "src" : "tgt";
-    const blocks = new Set((await bodies(session, llops, gid))[k].map((i) => i.block));
-    for (let left = blocks.size; left > 0; left--) {
-      const body = (await bodies(session, llops, gid))[k];
-      const header = headers(body)[0];
-      const shared = header && sharedWith(body, header);
-      if (!shared || !(await copied(session, gid, side, shared))) break;
-    }
+  for (const side of ["src", "tgt"] as const)
+    await copyInto(session, llops, gid, side, (body) => headers(body)[0]);
+}
+
+/** Gives code outside the loop `pick` names its own copy of each block it enters there. */
+export async function copyInto(
+  session: Session,
+  llops: Llops,
+  gid: string,
+  side: "src" | "tgt",
+  pick: (body: Instruction[]) => string | undefined,
+): Promise<void> {
+  const k = side === "src" ? 0 : 1;
+  const blocks = new Set((await bodies(session, llops, gid))[k].map((i) => i.block));
+  for (let left = blocks.size; left > 0; left--) {
+    const body = (await bodies(session, llops, gid))[k];
+    const header = pick(body);
+    const shared = header && sharedWith(body, header);
+    if (!shared || !(await copied(session, gid, side, shared))) break;
   }
 }
 

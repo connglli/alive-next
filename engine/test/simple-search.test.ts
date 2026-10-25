@@ -11,6 +11,7 @@ import { Llrwt } from "../core/drivers/llrwt.ts";
 import { Llubi } from "../core/drivers/llubi.ts";
 import { Session } from "../core/session.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
+import { bounded } from "../examples/bounded.ts";
 import { digits } from "../examples/digits.ts";
 import { induction } from "../examples/induction.ts";
 import { nested } from "../examples/nested.ts";
@@ -359,6 +360,11 @@ describe.skipIf(!solving)("search with alive-tv", () => {
     // takes alive2 longer than a window gets.
     expect(await run("varA", { stages: true }, 30_000)).toBe("verified");
   }, 180_000);
+
+  test("verifies a loop the tgt computes outright by peeling it away", async () => {
+    const session = await start(bounded.src, bounded.tgt, aliveTv);
+    expect(await search(session, llops, limits)).toBe("verified");
+  }, 120_000);
 
   test("proves a stage no step reaches as a goal of its own", async () => {
     // The optimizer divides unsigned and adds nuw since the counter is never

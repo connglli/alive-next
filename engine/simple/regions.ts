@@ -284,7 +284,7 @@ export function successors(body: Instruction[]): Map<string, string[]> {
 }
 
 /** Each block's predecessors: the blocks that name it. */
-function predecessors(body: Instruction[]): Map<string, string[]> {
+export function predecessors(body: Instruction[]): Map<string, string[]> {
   const before = new Map<string, string[]>();
   for (const [from, tos] of successors(body))
     for (const to of tos) before.set(to, [...(before.get(to) ?? []), from]);
