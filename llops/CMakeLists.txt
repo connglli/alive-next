@@ -52,8 +52,8 @@ set(LLOPS_SOURCES
 # TransformUtils provides CloneModule, the value mapper and the dead code
 # helper that `erase --cascade` reuses.
 llvm_map_components_to_libnames(llops_libs core support asmparser irreader
-                                analysis transformutils passes instcombine mc target
-                                ${LLVM_TARGETS_TO_BUILD})
+                                analysis transformutils passes instcombine scalaropts
+                                mc target ${LLVM_TARGETS_TO_BUILD})
 add_executable(llops ${LLOPS_SOURCES})
 target_compile_options(llops PRIVATE -Wall -Wextra)
 target_link_libraries(llops PRIVATE ${llops_libs})

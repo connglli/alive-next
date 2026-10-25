@@ -5388,6 +5388,93 @@ exit:
     self.assertEqual([o["op"] for o in b["operands"]], ["const", "zext"])
     self.assertEqual(b["operands"][1]["operands"][0]["type"], "i8")
 
+  # A counter in a stack slot, as -O0 keeps it. ScalarEvolution sees its bound
+  # only in a copy whose slots are promoted, which numbers the header %2.
+  SLOTTED = """define i32 @f(i32 noundef %0) {
+  %2 = alloca i32, align 4
+  %3 = alloca i32, align 4
+  store i32 %0, ptr %2, align 4
+  store i32 0, ptr %3, align 4
+  br label %4
+
+4:
+  %5 = load i32, ptr %3, align 4
+  %6 = icmp slt i32 %5, 7
+  br i1 %6, label %7, label %10
+
+7:
+  %8 = load i32, ptr %3, align 4
+  %9 = add nsw i32 %8, 1
+  store i32 %9, ptr %3, align 4
+  br label %4
+
+10:
+  %11 = load i32, ptr %3, align 4
+  ret i32 %11
+}
+"""
+
+  NESTED = """define i32 @f() {
+entry:
+  br label %outer
+
+outer:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %outer.latch ]
+  br label %inner
+
+inner:
+  %j = phi i32 [ 0, %outer ], [ %j.next, %inner ]
+  %j.next = add nuw nsw i32 %j, 1
+  %more.j = icmp ult i32 %j.next, 3
+  br i1 %more.j, label %inner, label %outer.latch
+
+outer.latch:
+  %i.next = add nuw nsw i32 %i, 1
+  %more.i = icmp ult i32 %i.next, 5
+  br i1 %more.i, label %outer, label %exit
+
+exit:
+  ret i32 %i
+}
+"""
+
+  def loops(self, module):
+    r = self.good(run("analyze", {"module": module, "kind": "loops"}))
+    return r["facts"]
+
+  def test_loops_bound_a_counter_in_a_stack_slot(self):
+    self.assertEqual(self.loops(self.SLOTTED), [{"loop": "%4", "max_backedge_taken": "7"}])
+
+  def test_loops_go_in_the_order_of_their_headers(self):
+    self.assertEqual(
+      self.loops(self.NESTED),
+      [
+        {"loop": "%outer", "max_backedge_taken": "4"},
+        {"loop": "%inner", "max_backedge_taken": "2"},
+      ],
+    )
+
+  def test_loops_read_a_bound_as_unsigned_and_leave_out_one_they_cannot_show(self):
+    wide = self.SLOTTED.replace("icmp slt i32 %5, 7", "icmp ult i32 %5, -1")
+    self.assertEqual(self.loops(wide), [{"loop": "%4", "max_backedge_taken": "4294967295"}])
+    unknown = """declare i1 @p(i32)
+
+define i32 @f(i32 %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %head ]
+  %i.next = add i32 %i, 1
+  %go = call i1 @p(i32 %i)
+  br i1 %go, label %head, label %exit
+
+exit:
+  ret i32 %i
+}
+"""
+    self.assertEqual(self.loops(unknown), [{"loop": "%head"}])
+
   def test_only_the_relevant_values_are_reported(self):
     facts, _ = self.facts(F_MEMORY, "pointer")
     self.assertEqual(list(facts), ["%p"])

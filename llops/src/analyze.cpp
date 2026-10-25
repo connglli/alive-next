@@ -17,8 +17,11 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/KnownBits.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Scalar/SROA.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #include <functional>
 #include <vector>
@@ -282,6 +285,38 @@ llvm::json::Object scevTree(const llvm::SCEV &S, ValueRefs &refs) {
   return node;
 }
 
+// Each loop of F by its header, with the most times ScalarEvolution shows its
+// back edge is taken. ScalarEvolution reads no stack slot, so it runs on a copy
+// whose slots SROA promoted. SROA keeps the blocks, so a header is named as in F.
+llvm::json::Object loopsResponse(llvm::Module &M, llvm::Function &F, ValueRefs &refs) {
+  std::unique_ptr<llvm::Module> copy = llvm::CloneModule(M);
+  llvm::Function &G = *copy->getFunction(F.getName());
+  llvm::PassBuilder PB;
+  llvm::FunctionAnalysisManager FAM;
+  PB.registerFunctionAnalyses(FAM);
+  llvm::SROAPass(llvm::SROAOptions::PreserveCFG).run(G, FAM);
+
+  llvm::DominatorTree DT(G);
+  llvm::LoopInfo LI(DT);
+  llvm::AssumptionCache AC(G);
+  llvm::TargetLibraryInfoImpl TLII(M.getTargetTriple());
+  llvm::TargetLibraryInfo TLI(TLII);
+  llvm::ScalarEvolution SE(G, TLI, AC, DT, LI);
+
+  llvm::json::Array facts;
+  for (auto [promoted, block] : llvm::zip(G, F)) {
+    if (!LI.isLoopHeader(&promoted))
+      continue;
+    llvm::json::Object fact;
+    fact["loop"] = refs.print(block);
+    const llvm::SCEV *most = SE.getConstantMaxBackedgeTakenCount(LI.getLoopFor(&promoted));
+    if (const auto *C = llvm::dyn_cast<llvm::SCEVConstant>(most))
+      fact["max_backedge_taken"] = apToString(C->getAPInt(), 10, false);
+    facts.emplace_back(std::move(fact));
+  }
+  return llvm::json::Object{{"ok", true}, {"kind", "loops"}, {"facts", std::move(facts)}};
+}
+
 } // namespace
 
 llvm::json::Object analyzeCmd(llvm::json::Object &args) {
@@ -289,11 +324,11 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
   auto kind = args.getString("kind");
   if (!text || !kind)
     return errResponse("bad_request", "analyze needs 'module' and 'kind'");
-  const llvm::StringRef kinds[] = {"knownbits", "ranges", "pointer", "defined", "scev"};
+  const llvm::StringRef kinds[] = {"knownbits", "ranges", "pointer", "defined", "scev", "loops"};
   if (!llvm::is_contained(kinds, *kind))
     return errResponse(
         "bad_request",
-        "analyze 'kind' must be 'knownbits', 'ranges', 'pointer', 'defined' or 'scev'");
+        "analyze 'kind' must be 'knownbits', 'ranges', 'pointer', 'defined', 'scev' or 'loops'");
 
   std::string parseErr;
   auto mwc = parseModule(*text, &parseErr);
@@ -305,6 +340,8 @@ llvm::json::Object analyzeCmd(llvm::json::Object &args) {
     return errResponse(d->code, d->message);
   llvm::Function *F = singleFunction(M);
   ValueRefs refs(*F);
+  if (*kind == "loops")
+    return loopsResponse(M, *F, refs);
 
   // Facts hold just before the analysis point runs, which defaults to the end
   // of a body of one block; a body of several has no one end. The point is

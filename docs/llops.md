@@ -250,6 +250,7 @@ Every fact carries `value` and `type`. The kind decides the rest:
 * `pointer` adds `align`, `dereferenceable` and `nonnull`.
 * `defined` adds `noundef`, `not_undef` and `not_poison`, and applies to every type. `noundef` is the conjunction of the other two, in the sense the attribute has.
 * `scev` adds `scev`, the expression ScalarEvolution gives the value, as a tree of nodes with an `op`, a `type` and `operands`. A `const` or `value` leaf has a `value` instead, and an `addrec`, the recurrence `{start,+,step}`, has the header of its `loop`; `add`, `mul` and `addrec` nodes have wrap `flags`. A value it knows only as itself gets no fact.
+* `loops` takes no point and reports each loop instead, in the order of the headers, with its header as `loop`. It adds `max_backedge_taken` where ScalarEvolution, run after promoting the stack slots, shows the most times the back edge is taken, decimal and unsigned.
 
 Analyses only propose; [design.md](./design.md) says why that keeps them out of the trust base.
 
