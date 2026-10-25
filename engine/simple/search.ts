@@ -1,11 +1,11 @@
 // The simple searcher, as one loop over an agenda of goals. A goal's moves are
-// made in a fixed order (the optimizer's stages on the root, a stage of a looping
-// program that its windows leave interposed as a goal of its own, windows and
-// rules toward the tgt, a check, then a cut at a loop, before an expensive
-// operation, around a region left, or where the expensive operations divide
-// evenly, then a split by cases) until one proves it or splits it, and the
-// goals a split leaves are searched before the next. Every move is a session move, so
-// whatever it proves, the kernel replays.
+// made in a fixed order (the optimizer's stages on the root, a stage that its
+// windows leave interposed as a goal of its own, windows and rules toward the
+// tgt, a check, then a cut at a loop, before an expensive operation, around a
+// region left, or where the expensive operations divide evenly, then a split by
+// cases) until one proves it or splits it, and the goals a split leaves are
+// searched before the next. Every move is a session move, so whatever it
+// proves, the kernel replays.
 import type { Comparison, Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { INVERSE } from "../core/state/cases.ts";
@@ -332,9 +332,8 @@ async function stepByRules(run: Run, gid: string) {
 
 /**
  * The moves that step goal `gid`'s src through `stages`: each stage's windows,
- * then one step of the whole function to it, and on a program that loops, a
- * stage neither reaches interposed, so that the step to it is a goal of its own
- * and the rest walks on.
+ * then one step of the whole function to it, and a stage neither reaches
+ * interposed, so that the step to it is a goal of its own and the rest walks on.
  */
 async function* walk(run: Run, gid: string, stages: string[], cuts: Cuts) {
   const { session, llops, limits } = run;
@@ -354,10 +353,10 @@ async function* walk(run: Run, gid: string, stages: string[], cuts: Cuts) {
       });
     if (outcome === "correct") continue;
     if (outcome === "unknown") jumping = false;
-    // alive2 refuses a step on a program that loops, which only the cuts of a step goal
-    // can prove; a step goal on one that does not would repeat what the goal's cuts do.
+    // A step alive2 refuses, as on a program that loops, or cannot decide is left to a step
+    // goal, whose sides differ by one stage's changes, so that its cuts pair most points.
     const provable = interposable && limits.interpose && limits.cuts > 0;
-    if (!provable || outcome !== "error") continue;
+    if (!provable || (outcome !== "error" && outcome !== "unknown")) continue;
     yield interposing(run, gid, stages.slice(k), cuts);
     interposable = false;
   }

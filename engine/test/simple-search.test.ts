@@ -300,6 +300,20 @@ entry:
     const jumps = calls(session).filter((call) => call.args.op === "set_body");
     expect(jumps).toHaveLength(1);
   });
+
+  test("interposes a stage alive2 cannot decide a jump to, though nothing loops", async () => {
+    const stages = await llops.pipelineStages(SPILLED);
+    if (!stages.ok) throw new Error(stages.message);
+    const tgt = stages.stages.at(-1)?.module ?? SPILLED;
+    const session = await start(
+      SPILLED,
+      tgt,
+      stub(() => false),
+    );
+    // Nothing proves under the stub, so the search undoes the interpose later.
+    await search(session, llops, { ...limits, stages: true, cuts: 1 });
+    expect(moves(session)).toContain("interpose");
+  }, 60_000);
 });
 
 describe.skipIf(!solving)("bun run simple", () => {
