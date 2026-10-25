@@ -323,7 +323,8 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
     return errResponse("not_found", "the outer does not call '@" + calleeName->str() + "'");
   if (!plainCall(*call))
     return errResponse("invalid", "the call of '@" + calleeName->str() + "' is not a plain call");
-  if (decl->getFunctionType() != callee->getFunctionType())
+  RenamedTypes &renamed = calleeMwc->renamed;
+  if (decl->getFunctionType() != renamed.remapType(callee->getFunctionType()))
     return errResponse("type_mismatch", "the outer does not declare '@" + calleeName->str() +
                                             "' as the callee defines it");
   // Only a call the function does not return right after is a window.
@@ -342,9 +343,9 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   for (unsigned i = 0; i < callee->arg_size(); ++i)
     vmap[std::next(callee->arg_begin(), i)] = call->getArgOperand(i);
   llvm::json::Object adoptErr;
-  if (!sharedSymbolsAgree(outerM, *F, *calleeMwc->mod, *callee, "", adoptErr))
+  if (!sharedSymbolsAgree(outerM, *F, *calleeMwc->mod, *callee, "", renamed, adoptErr))
     return adoptErr;
-  if (!adoptSymbols(*calleeMwc->mod, outerM, callee, vmap, adoptErr))
+  if (!adoptSymbols(*calleeMwc->mod, outerM, callee, vmap, renamed, adoptErr))
     return adoptErr;
   // The outer's slots take the place of the callee's copies of what they held.
   llvm::SmallPtrSet<llvm::Instruction *, 8> copies;
@@ -363,7 +364,7 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   // to put in the call's place, so it takes the place of the call and its ret.
   auto *ends = callee->getEntryBlock().getTerminator();
   if (callee->size() > 1 || !llvm::isa<llvm::ReturnInst>(ends)) {
-    if (!putBackRest(*call, *callee, *F, vmap, &copies))
+    if (!putBackRest(*call, *callee, *F, vmap, &copies, &renamed))
       return errResponse("invalid", "a callee of several blocks, or of one that does not end in "
                                     "ret, goes back only at a call followed by a ret of its "
                                     "result, and used by nothing else");
@@ -387,16 +388,17 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   }
   for (auto *clone : clones) {
     clone->insertInto(call->getParent(), call->getIterator());
-    llvm::RemapInstruction(clone, vmap,
-                           llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs);
+    llvm::RemapInstruction(
+        clone, vmap, llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs, &renamed);
   }
 
   llvm::Value *retVal = llvm::cast<llvm::ReturnInst>(calleeBB->getTerminator())->getReturnValue();
-  if (retVal) {
-    auto it = vmap.find(retVal);
-    if (it != vmap.end())
-      retVal = it->second;
-  }
+  // A constant answer is mapped too, since it may have a type the callee renamed.
+  if (retVal)
+    if (llvm::Value *mapped = llvm::MapValue(
+            retVal, vmap, llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs,
+            &renamed))
+      retVal = mapped;
   // A window that handed back several values answers with a struct the outer
   // takes apart at once, so each part goes back to where it is used.
   if (auto parts = partsOf(retVal); !parts.empty() && takenApart(*call, parts.size())) {

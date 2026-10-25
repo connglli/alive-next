@@ -7,6 +7,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/AsmParser/Parser.h"
+#include "llvm/AsmParser/SlotMapping.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InstIterator.h"
@@ -40,7 +41,10 @@ std::unique_ptr<ModuleWithCtx> parseModule(llvm::StringRef text, std::string *er
   mwc->ctx = std::shared_ptr<llvm::LLVMContext>(&sharedCtx, [](auto) {});
   llvm::SMDiagnostic smd;
   auto buf = llvm::MemoryBuffer::getMemBuffer(text, "<module>");
-  mwc->mod = llvm::parseIR(buf->getMemBufferRef(), smd, *mwc->ctx);
+  // The slot mapping says which name the text gave each type, before LLVM
+  // renamed the ones the context held already.
+  llvm::SlotMapping slots;
+  mwc->mod = llvm::parseAssembly(buf->getMemBufferRef(), smd, *mwc->ctx, &slots);
   if (!mwc->mod) {
     if (err) {
       llvm::raw_string_ostream os(*err);
@@ -48,7 +52,140 @@ std::unique_ptr<ModuleWithCtx> parseModule(llvm::StringRef text, std::string *er
     }
     return nullptr;
   }
+  mwc->renamed.collect(slots.NamedTypes, sharedCtx);
   return mwc;
+}
+
+llvm::Type *RenamedTypes::remapType(llvm::Type *T) {
+  if (auto it = named.find(T); it != named.end())
+    return it->second;
+  if (auto it = built.find(T); it != built.end())
+    return it->second;
+  llvm::Type *mapped = T;
+  if (auto *A = llvm::dyn_cast<llvm::ArrayType>(T)) {
+    mapped = llvm::ArrayType::get(remapType(A->getElementType()), A->getNumElements());
+  } else if (auto *V = llvm::dyn_cast<llvm::VectorType>(T)) {
+    mapped = llvm::VectorType::get(remapType(V->getElementType()), V->getElementCount());
+  } else if (auto *S = llvm::dyn_cast<llvm::StructType>(T); S && S->isLiteral()) {
+    std::vector<llvm::Type *> elements;
+    for (llvm::Type *E : S->elements())
+      elements.push_back(remapType(E));
+    mapped = llvm::StructType::get(T->getContext(), elements, S->isPacked());
+  } else if (auto *FT = llvm::dyn_cast<llvm::FunctionType>(T)) {
+    std::vector<llvm::Type *> params;
+    for (llvm::Type *P : FT->params())
+      params.push_back(remapType(P));
+    mapped = llvm::FunctionType::get(remapType(FT->getReturnType()), params, FT->isVarArg());
+  }
+  built[T] = mapped;
+  return mapped;
+}
+
+void RenamedTypes::collect(const llvm::StringMap<llvm::Type *> &slots, llvm::LLVMContext &ctx) {
+  // The name may have gone to another of the module's own types, renamed into
+  // it, which stands for nothing the context held before.
+  llvm::SmallPtrSet<llvm::Type *, 8> own;
+  for (const auto &entry : slots)
+    own.insert(entry.getValue());
+  for (const auto &entry : slots)
+    if (auto *theirs = llvm::StructType::getTypeByName(ctx, entry.getKey());
+        theirs && !own.contains(theirs))
+      named[entry.getValue()] = theirs;
+  // Two types of one name stand for each other only where every element does,
+  // so a pair that disagrees goes, and with it what the pairs built so far.
+  auto agree = [&](llvm::StructType *mine, llvm::StructType *theirs) {
+    if (mine->isOpaque() || theirs->isOpaque())
+      return mine->isOpaque() && theirs->isOpaque();
+    if (mine->isPacked() != theirs->isPacked() ||
+        mine->getNumElements() != theirs->getNumElements())
+      return false;
+    for (unsigned i = 0; i < mine->getNumElements(); ++i)
+      if (remapType(mine->getElementType(i)) != theirs->getElementType(i))
+        return false;
+    return true;
+  };
+  for (bool dropped = true; dropped;) {
+    dropped = false;
+    for (auto [mine, theirs] : named)
+      if (!agree(llvm::cast<llvm::StructType>(mine), llvm::cast<llvm::StructType>(theirs))) {
+        named.erase(mine);
+        built.clear();
+        dropped = true;
+        break;
+      }
+  }
+  // A type of the module's own that kept its name may hold a renamed one, and a
+  // body cannot change, so it is made again with what it holds mapped, and the
+  // new type takes its name.
+  for (bool made = true; made;) {
+    made = false;
+    for (const auto &entry : slots) {
+      auto *mine = llvm::dyn_cast<llvm::StructType>(entry.getValue());
+      if (!mine || named.contains(mine) || mine->isOpaque())
+        continue;
+      std::vector<llvm::Type *> elements;
+      for (llvm::Type *E : mine->elements())
+        elements.push_back(remapType(E));
+      if (llvm::ArrayRef<llvm::Type *>(elements) == mine->elements())
+        continue;
+      std::string name = mine->getName().str();
+      mine->setName(name + ".held");
+      named[mine] = llvm::StructType::create(ctx, elements, name, mine->isPacked());
+      built.clear();
+      made = true;
+    }
+  }
+}
+
+llvm::AttributeList RenamedTypes::remap(llvm::AttributeList attrs, llvm::LLVMContext &ctx) {
+  for (unsigned i = 0; i < attrs.getNumAttrSets(); ++i)
+    for (int kind = llvm::Attribute::FirstTypeAttr; kind <= llvm::Attribute::LastTypeAttr; ++kind) {
+      auto typed = static_cast<llvm::Attribute::AttrKind>(kind);
+      if (llvm::Type *T = attrs.getAttributeAtIndex(i, typed).getValueAsType())
+        attrs = attrs.replaceAttributeTypeAtIndex(ctx, i, typed, remapType(T));
+    }
+  return attrs;
+}
+
+std::string RenamedTypes::respell(llvm::StringRef text) const {
+  auto spelled = [](llvm::Type *T) {
+    std::string out;
+    llvm::raw_string_ostream os(out);
+    T->print(os, /*IsForDebug=*/false, /*NoDetails=*/true);
+    return out;
+  };
+  llvm::StringMap<std::string> as;
+  for (auto [mine, theirs] : named)
+    as[spelled(mine)] = spelled(theirs);
+  if (as.empty())
+    return text.str();
+  // One pass over the type names, quoted or not, so that no respelling is
+  // respelled again; a string's contents name no type, however they read.
+  std::string out;
+  for (size_t at = 0; at < text.size();) {
+    if (text[at] == '"') {
+      size_t end = std::min(text.find('"', at + 1), text.size() - 1) + 1;
+      out += text.slice(at, end);
+      at = end;
+      continue;
+    }
+    if (text[at] != '%') {
+      out += text[at++];
+      continue;
+    }
+    size_t end = at + 1;
+    if (end < text.size() && text[end] == '"')
+      end = std::min(text.find('"', end + 1), text.size() - 1) + 1;
+    else
+      while (end < text.size() &&
+             (llvm::isAlnum(text[end]) || llvm::StringRef("-$._").contains(text[end])))
+        ++end;
+    llvm::StringRef name = text.slice(at, end);
+    auto it = as.find(name);
+    out += it != as.end() ? it->second : name.str();
+    at = end;
+  }
+  return out;
 }
 
 std::string printModule(llvm::Module &M, llvm::AssemblyAnnotationWriter *annotator) {
@@ -591,7 +728,7 @@ std::optional<Diag> frameDependence(const llvm::Function &callee, bool window) {
 
 bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F,
                  llvm::ValueToValueMapTy &vmap,
-                 const llvm::SmallPtrSetImpl<llvm::Instruction *> *skip) {
+                 const llvm::SmallPtrSetImpl<llvm::Instruction *> *skip, RenamedTypes *renamed) {
   auto *ret = llvm::dyn_cast_or_null<llvm::ReturnInst>(call.getNextNode());
   if (!ret || ret->getReturnValue() != (call.getType()->isVoidTy() ? nullptr : &call) ||
       call.getNumUses() > 1)
@@ -616,8 +753,8 @@ bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F
     }
   }
   for (auto *clone : clones)
-    llvm::RemapInstruction(clone, vmap,
-                           llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs);
+    llvm::RemapInstruction(
+        clone, vmap, llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs, renamed);
   return true;
 }
 
@@ -898,16 +1035,16 @@ liveOutOf(llvm::Function &F, llvm::ArrayRef<llvm::Instruction *> window,
 }
 
 bool adoptSymbols(llvm::Module &from, llvm::Module &into, const llvm::GlobalValue *skip,
-                  llvm::ValueToValueMapTy &vmap, llvm::json::Object &err) {
+                  llvm::ValueToValueMapTy &vmap, RenamedTypes &renamed, llvm::json::Object &err) {
   for (llvm::GlobalValue &gv : from.global_values()) {
     if (&gv == skip)
       continue;
     if (auto *fn = llvm::dyn_cast<llvm::Function>(&gv)) {
       auto *mine = into.getFunction(fn->getName());
       if (!mine) {
-        mine =
-            llvm::Function::Create(fn->getFunctionType(), fn->getLinkage(), fn->getName(), &into);
-        mine->setAttributes(fn->getAttributes());
+        auto *type = llvm::cast<llvm::FunctionType>(renamed.remapType(fn->getFunctionType()));
+        mine = llvm::Function::Create(type, fn->getLinkage(), fn->getName(), &into);
+        mine->setAttributes(renamed.remap(fn->getAttributes(), into.getContext()));
       }
       vmap[&gv] = mine;
       continue;
@@ -950,10 +1087,10 @@ std::string sharedText(llvm::Module &M, std::initializer_list<llvm::StringRef> b
 
 bool sharedSymbolsAgree(llvm::Module &outerM, llvm::Function &outerFn, llvm::Module &calleeM,
                         llvm::Function &calleeFn, llvm::StringRef hypothesis,
-                        llvm::json::Object &err) {
+                        const RenamedTypes &renamed, llvm::json::Object &err) {
   std::initializer_list<llvm::StringRef> cut = {outerFn.getName(), calleeFn.getName(), hypothesis};
   std::string outerText = sharedText(outerM, cut, calleeM);
-  std::string calleeText = sharedText(calleeM, cut, outerM);
+  std::string calleeText = renamed.respell(sharedText(calleeM, cut, outerM));
   if (outerText == calleeText)
     return true;
   llvm::SmallVector<llvm::StringRef> outerLines, calleeLines;

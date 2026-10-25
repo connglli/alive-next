@@ -1739,6 +1739,39 @@ entry:
     self.bad(self.outline_tgt({"%m": "%prod", "%x": "%a"}, module=tgt), "invalid")
 
 
+# Struct types both halves of a cut use: one quoted, one nested in a global's
+# array, so that a callee parsed beside the outer has to give them back.
+STRUCTS = """%struct.S = type { i32, i32 }
+%"struct.T u" = type { %struct.S, i8 }
+
+@arr = external global [4 x %struct.S]
+@t = external global %"struct.T u"
+
+define i32 @f(ptr %p, i32 %n) {
+entry:
+  %a = getelementptr %struct.S, ptr %p, i32 0, i32 1
+  %x = load i32, ptr %a, align 4
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %s = phi i32 [ %x, %entry ], [ %s.next, %loop ]
+  %e = getelementptr [4 x %struct.S], ptr @arr, i32 0, i32 %i, i32 0
+  %v = load i32, ptr %e, align 4
+  %f = getelementptr %"struct.T u", ptr @t, i32 0, i32 0, i32 1
+  %w = load i32, ptr %f, align 4
+  %s.next = add i32 %s, %v
+  %i.next = add i32 %i, 1
+  %c = icmp slt i32 %i.next, %n
+  br i1 %c, label %loop, label %exit
+
+exit:
+  %b = getelementptr %struct.S, ptr %p, i32 0, i32 0
+  store i32 %w, ptr %b, align 4
+  ret i32 %s.next
+}
+"""
+
 ROTATED = """define i32 @g(i32 noundef %n) {
 entry:
   %guard = icmp eq i32 %n, 0
@@ -1809,6 +1842,12 @@ class TestDetach(Case):
       )
     )
     self.reattaches(whole, tgt, "k")
+
+  def test_struct_types_both_halves_use_come_back(self):
+    for block in ("%loop", "%exit"):
+      with self.subTest(block=block):
+        half = self.good(self.detach(STRUCTS, block, "k"))
+        self.reattaches(STRUCTS, half, "k")
 
   def test_a_rotated_loop_is_detached_at_its_exit_then_its_header(self):
     self.bad(self.detach(ROTATED, "%loop", "k"), "not_single_entry")
@@ -2266,6 +2305,20 @@ entry:
     m = {"%r": "%r"}
     self.bad(self.splice(self.READS, "r", "#3", self.READS_OTHER, "r", "#3", m), "invalid")
 
+  def test_a_window_over_a_struct_type_takes_this_module_s(self):
+    src = """%struct.S = type { i32, i32 }
+
+define i32 @f(ptr %p) {
+entry:
+  %a = getelementptr %struct.S, ptr %p, i32 0, i32 1
+  %x = load i32, ptr %a, align 4
+  ret i32 %x
+}
+"""
+    other = src.replace("i32 0, i32 1", "i32 0, i32 0")
+    r = self.good(self.splice(src, "a", "x", other, "a", "x", {"%p": "%p", "%x": "%x"}))
+    self.assertEqual(self.canon(r["module"]), self.canon(other))
+
   def test_a_function_only_the_other_declares_is_declared(self):
     src = "define i32 @f(i32 %x) {\nentry:\n  %y = add i32 %x, 1\n  ret i32 %y\n}\n"
     other = (
@@ -2289,6 +2342,122 @@ class TestInline(Case):
       with self.subTest(cut=cut):
         _, back = self.roundtrip(F_SIMPLE, cut)
         self.assertEqual(self.canon(back["module"]), self.canon(F_SIMPLE))
+
+  def test_struct_types_both_halves_use_go_back(self):
+    for cut in ("x", "b"):
+      with self.subTest(cut=cut):
+        _, back = self.roundtrip(STRUCTS, cut)
+        self.assertEqual(self.canon(back["module"]), self.canon(STRUCTS))
+
+  def test_a_string_that_spells_a_type_is_kept(self):
+    module = STRUCTS.replace(
+      '@t = external global %"struct.T u"',
+      '@t = external global %"struct.T u"\n@m = constant [12 x i8] c"%struct.S.0\\00"',
+    ).replace("  ret i32 %s.next", "  store ptr @m, ptr %p, align 8\n  ret i32 %s.next")
+    for cut in ("x", "b"):
+      with self.subTest(cut=cut):
+        _, back = self.roundtrip(module, cut)
+        self.assertEqual(self.canon(back["module"]), self.canon(module))
+
+  def test_a_type_only_the_callee_names_holds_the_outer_s_types(self):
+    # The outer names %struct.s1 alone, so the callee's %struct.io keeps its
+    # name and holds the callee's renamed %struct.s1.
+    module = """%struct.s1 = type { i32 }
+%struct.s2 = type { i32 }
+%struct.io = type { %struct.s1, %struct.s2 }
+
+define i32 @f(ptr %p) {
+entry:
+  %a = getelementptr %struct.s1, ptr %p, i32 0, i32 0
+  %x = load i32, ptr %a, align 4
+  %b = getelementptr %struct.io, ptr %p, i32 0, i32 1
+  %y = load i32, ptr %b, align 4
+  %r = add i32 %x, %y
+  ret i32 %r
+}
+"""
+    out, back = self.roundtrip(module, "b")
+    self.assertNotIn("%struct.io", out["outer"])
+    self.assertEqual(self.canon(back["module"]), self.canon(module))
+
+  def test_a_declaration_the_callee_adds_takes_the_outer_s_types(self):
+    outer = """%struct.S = type { i32, i32 }
+
+declare i32 @g(ptr)
+
+define i32 @f(ptr %p) {
+entry:
+  %r = call i32 @g(ptr %p)
+  ret i32 %r
+}
+"""
+    callee = """%struct.S = type { i32, i32 }
+
+declare void @use(%struct.S, ptr byval(%struct.S))
+
+define i32 @g(ptr %q) {
+entry:
+  %v = load %struct.S, ptr %q, align 4
+  call void @use(%struct.S %v, ptr byval(%struct.S) %q)
+  ret i32 0
+}
+"""
+    whole = """%struct.S = type { i32, i32 }
+
+define i32 @f(ptr %p) {
+entry:
+  %v = load %struct.S, ptr %p, align 4
+  call void @use(%struct.S %v, ptr byval(%struct.S) %p)
+  ret i32 0
+}
+
+declare void @use(%struct.S, ptr byval(%struct.S))
+"""
+    request = {"outer": outer, "callee": callee, "callee_name": "g"}
+    back = self.good(run("inline", request))["module"]
+    self.assertEqual(self.canon(back), self.canon(whole))
+
+  def test_a_constant_answer_takes_the_outer_s_type(self):
+    module = """%struct.S = type { i32, i32 }
+
+define %struct.S @f() {
+entry:
+  ret %struct.S zeroinitializer
+}
+"""
+    _, back = self.roundtrip(module, "#0")
+    self.assertEqual(self.canon(back["module"]), self.canon(module))
+
+  def test_an_opaque_struct_type_both_halves_name_goes_back(self):
+    module = """%struct.O = type opaque
+
+@o = external global %struct.O
+
+define void @f(ptr %p, ptr %q) {
+entry:
+  store ptr @o, ptr %p, align 8
+  store ptr @o, ptr %q, align 8
+  ret void
+}
+"""
+    _, back = self.roundtrip(module, "#1")
+    self.assertEqual(self.canon(back["module"]), self.canon(module))
+
+  def test_a_struct_type_the_halves_pack_differently_is_refused(self):
+    out = self.good(run("outline", {"module": STRUCTS, "side": "src", "cut": "b", "callee": "g"}))
+    body = "%struct.S = type { i32, i32 }"
+    callee = out["callee"].replace(body, "%struct.S = type <{ i32, i32 }>")
+    request = {"outer": out["outer"], "callee": callee, "callee_name": "g"}
+    self.bad(run("inline", request), "invalid")
+
+  def test_a_struct_type_the_halves_give_two_bodies_is_refused(self):
+    out = self.good(run("outline", {"module": STRUCTS, "side": "src", "cut": "b", "callee": "g"}))
+    body = "%struct.S = type { i32, i32 }"
+    self.assertIn(body, out["callee"])
+    callee = out["callee"].replace(body, "%struct.S = type { i64, i32 }")
+    request = {"outer": out["outer"], "callee": callee, "callee_name": "g"}
+    r = self.bad(run("inline", request), "invalid")
+    self.assertIn("disagree about a symbol they share", r["error"]["message"])
 
   def test_a_callee_that_never_returns_goes_back(self):
     module = """declare void @abort()
@@ -3551,6 +3720,14 @@ class TestUnfold(Case):
     )
     r = self.good(self.unfold(twice))
     self.assertEqual(r["module"].count("call i32 @k.ih("), 4)
+    self.assertTrue(self.conforms(r["module"]))
+
+  def test_a_loop_over_struct_types_unfolds_into_its_outer(self):
+    half = self.good(
+      run("detach", {"module": STRUCTS, "side": "src", "block": "%loop", "callee": "k"})
+    )
+    r = self.good(self.unfold(half["outer"], half["hypothesis"], callee=half["callee"]))
+    self.assertNotIn("%struct.S.", r["module"])
     self.assertTrue(self.conforms(r["module"]))
 
   def test_a_function_with_attributes_is_refused(self):

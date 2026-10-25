@@ -3,6 +3,7 @@
 #pragma once
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/AssemblyAnnotationWriter.h"
 #include "llvm/IR/Function.h"
@@ -28,18 +29,38 @@ struct Diag {
   std::string message;
 };
 
+// The named struct types a module parsed into a context that already held one
+// of the same name had to take a fresh name for, each mapped back to the
+// context's own where their bodies agree. Code cloned through LLVM's value
+// mapper with it uses the context's types, as the module's text did.
+class RenamedTypes : public llvm::ValueMapTypeRemapper {
+public:
+  llvm::Type *remapType(llvm::Type *T) override;
+  // Map each type the slot mapping names to the context's type of that name.
+  void collect(const llvm::StringMap<llvm::Type *> &slots, llvm::LLVMContext &ctx);
+  // `attrs` with each type it names remapped.
+  llvm::AttributeList remap(llvm::AttributeList attrs, llvm::LLVMContext &ctx);
+  // `text` with each renamed type spelled as the type it maps to.
+  std::string respell(llvm::StringRef text) const;
+
+private:
+  llvm::DenseMap<llvm::Type *, llvm::Type *> named, built;
+};
+
 // A parsed module plus the context owning its types and constants. The
 // context is shared so that two modules parsed together can exchange values.
 struct ModuleWithCtx {
   std::shared_ptr<llvm::LLVMContext> ctx;
   std::unique_ptr<llvm::Module> mod;
+  RenamedTypes renamed;
 };
 
 // Parse IR text. On failure returns nullptr and fills `err`.
 std::unique_ptr<ModuleWithCtx> parseModule(llvm::StringRef text, std::string *err);
 
 // Parse into a caller-provided context, so two modules can share types and
-// constants. Needed by `inline`, which clones instructions across modules.
+// constants; `renamed` maps each struct type LLVM renamed back to the
+// context's. Needed by `inline`, which clones instructions across modules.
 std::unique_ptr<ModuleWithCtx> parseModule(llvm::StringRef text, std::string *err,
                                            llvm::LLVMContext &sharedCtx);
 
@@ -136,7 +157,8 @@ std::optional<Diag> frameDependence(const llvm::Function &callee, bool window);
 // Put a callee's blocks but `skip` back at a call used only by the ret after it.
 bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F,
                  llvm::ValueToValueMapTy &vmap,
-                 const llvm::SmallPtrSetImpl<llvm::Instruction *> *skip = nullptr);
+                 const llvm::SmallPtrSetImpl<llvm::Instruction *> *skip = nullptr,
+                 RenamedTypes *renamed = nullptr);
 
 // Whether a slot is a one-value entry-block alloca only simple loads and stores of it use.
 bool privateSlot(const llvm::AllocaInst &slot);
@@ -244,11 +266,11 @@ llvm::Value *mappedParam(const llvm::json::Value &entry, const llvm::json::Objec
 // `into`, declaring a function `into` lacks. A global variable `into` lacks
 // is an error when something uses it.
 bool adoptSymbols(llvm::Module &from, llvm::Module &into, const llvm::GlobalValue *skip,
-                  llvm::ValueToValueMapTy &vmap, llvm::json::Object &err);
+                  llvm::ValueToValueMapTy &vmap, RenamedTypes &renamed, llvm::json::Object &err);
 
 // Whether a cut's halves agree on each shared symbol but `outerFn`, `calleeFn` and `hypothesis`.
 bool sharedSymbolsAgree(llvm::Module &outerM, llvm::Function &outerFn, llvm::Module &calleeM,
                         llvm::Function &calleeFn, llvm::StringRef hypothesis,
-                        llvm::json::Object &err);
+                        const RenamedTypes &renamed, llvm::json::Object &err);
 
 } // namespace llops

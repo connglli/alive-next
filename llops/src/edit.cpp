@@ -59,7 +59,8 @@ void globalsOf(llvm::Value *v, llvm::SmallPtrSetImpl<llvm::GlobalValue *> &out) 
 // any function `into` lacks. Only names the window uses are taken, so no unused
 // declaration is added.
 bool adoptWindowSymbols(llvm::ArrayRef<llvm::Instruction *> window, llvm::Module &into,
-                        llvm::ValueToValueMapTy &vmap, llvm::json::Object &err) {
+                        llvm::ValueToValueMapTy &vmap, RenamedTypes &renamed,
+                        llvm::json::Object &err) {
   llvm::SmallPtrSet<llvm::GlobalValue *, 8> named;
   for (auto *I : window)
     for (llvm::Use &U : I->operands())
@@ -73,12 +74,13 @@ bool adoptWindowSymbols(llvm::ArrayRef<llvm::Instruction *> window, llvm::Module
                                            "', which the module does not have");
         return false;
       }
-      auto *decl =
-          llvm::Function::Create(fn->getFunctionType(), fn->getLinkage(), fn->getName(), &into);
-      decl->setAttributes(fn->getAttributes());
+      auto *type = llvm::cast<llvm::FunctionType>(renamed.remapType(fn->getFunctionType()));
+      auto *decl = llvm::Function::Create(type, fn->getLinkage(), fn->getName(), &into);
+      decl->setAttributes(renamed.remap(fn->getAttributes(), into.getContext()));
       mine = decl;
     }
-    if (mine->getType() != gv->getType() || mine->getValueType() != gv->getValueType()) {
+    if (mine->getType() != gv->getType() ||
+        mine->getValueType() != renamed.remapType(gv->getValueType())) {
       err = errResponse("type_mismatch", "splice: '@" + gv->getName().str() +
                                              "' has another type in the two modules");
       return false;
@@ -144,7 +146,7 @@ llvm::json::Object splice(llvm::json::Object &args, CmdShape &shape) {
     if (!mine || !theirsValue)
       return errResponse("not_found", "splice: value_map: '" + key.str() +
                                           "' or what it maps to does not exist");
-    if (mine->getType() != theirsValue->getType())
+    if (mine->getType() != otherMwc->renamed.remapType(theirsValue->getType()))
       return errResponse("type_mismatch", "splice: value_map: '" + key.str() + "' and '" +
                                               other->str() + "' have different types");
     standsFor[mine] = theirsValue;
@@ -162,7 +164,7 @@ llvm::json::Object splice(llvm::json::Object &args, CmdShape &shape) {
                                         "', which has no partner in the value map");
     vmap[read] = it->second;
   }
-  if (!adoptWindowSymbols(theirs, M, vmap, err))
+  if (!adoptWindowSymbols(theirs, M, vmap, otherMwc->renamed, err))
     return err;
 
   // The copy goes where the replaced window starts.
@@ -176,7 +178,8 @@ llvm::json::Object splice(llvm::json::Object &args, CmdShape &shape) {
   }
   for (auto *copy : copies)
     llvm::RemapInstruction(copy, vmap,
-                           llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs);
+                           llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs,
+                           &otherMwc->renamed);
 
   // A later use of a replaced value takes its partner instead: a copied value,
   // or a value of this module that the copy reads.

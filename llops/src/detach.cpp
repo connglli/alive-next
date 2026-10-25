@@ -524,8 +524,10 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
   llvm::Function *K = calleeMwc->mod->getFunction(*name);
   if (!K || K->isDeclaration())
     return errResponse("not_found", "'@" + name->str() + "' is not defined in the callee module");
+  RenamedTypes &renamed = calleeMwc->renamed;
+  llvm::Type *type = renamed.remapType(K->getFunctionType());
   llvm::Function *decl = outerM.getFunction(*name);
-  if (!decl || decl->getFunctionType() != K->getFunctionType())
+  if (!decl || decl->getFunctionType() != type)
     return errResponse("type_mismatch", "the outer does not declare '@" + name->str() +
                                             "' as the callee defines it");
   if (auto d = frameDependence(*K, /*window=*/false))
@@ -541,12 +543,13 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
 
   llvm::ValueToValueMapTy vmap;
   llvm::json::Object err;
-  if (!sharedSymbolsAgree(outerM, *F, *calleeMwc->mod, *K, hypothesis ? *hypothesis : "", err))
+  if (!sharedSymbolsAgree(outerM, *F, *calleeMwc->mod, *K, hypothesis ? *hypothesis : "", renamed,
+                          err))
     return err;
-  if (!adoptSymbols(*calleeMwc->mod, outerM, K, vmap, err))
+  if (!adoptSymbols(*calleeMwc->mod, outerM, K, vmap, renamed, err))
     return err;
   llvm::Function *ih = hypothesis ? outerM.getFunction(*hypothesis) : nullptr;
-  if (ih && ih->getFunctionType() != K->getFunctionType())
+  if (ih && ih->getFunctionType() != type)
     return errResponse("type_mismatch", "'@" + hypothesis->str() + "' is not declared as '@" +
                                             name->str() + "' is defined");
 
@@ -584,7 +587,7 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
     if (!isPhi(i))
       order.push_back(i);
   for (unsigned i : order) {
-    phis[i] = llvm::PHINode::Create(K->getArg(i)->getType(), 0, "", entry);
+    phis[i] = llvm::PHINode::Create(renamed.remapType(K->getArg(i)->getType()), 0, "", entry);
     vmap[K->getArg(i)] = phis[i];
   }
   std::vector<llvm::Instruction *> clones;
@@ -602,8 +605,8 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
     ++b;
   }
   for (auto *clone : clones)
-    llvm::RemapInstruction(clone, vmap,
-                           llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs);
+    llvm::RemapInstruction(
+        clone, vmap, llvm::RF_IgnoreMissingLocals | llvm::RF_ReuseAndMutateDistinctMDs, &renamed);
 
   // Every block that only calls `k` or its hypothesis was an edge into the
   // callee's entry, carrying the parameters' values on that edge.
@@ -724,7 +727,7 @@ llvm::json::Object unfoldCmd(llvm::json::Object &args) {
     loop = singleFunction(*calleeMwc->mod);
     if (!loop)
       return errResponse("shape_error", "the callee module must define exactly one function");
-    if (!sharedSymbolsAgree(M, F, *calleeMwc->mod, *loop, *hypothesis, err))
+    if (!sharedSymbolsAgree(M, F, *calleeMwc->mod, *loop, *hypothesis, calleeMwc->renamed, err))
       return err;
   }
   llvm::StringRef called = calleeMwc ? loop->getName() : *hypothesis;
@@ -734,7 +737,9 @@ llvm::json::Object unfoldCmd(llvm::json::Object &args) {
   llvm::Function *decl = M.getFunction(called);
   if (!decl || !decl->isDeclaration())
     return errResponse("not_found", "the module does not declare " + fn);
-  if (decl->getFunctionType() != loop->getFunctionType())
+  RenamedTypes *renamed = calleeMwc ? &calleeMwc->renamed : nullptr;
+  llvm::Type *type = loop->getFunctionType();
+  if (decl->getFunctionType() != (renamed ? renamed->remapType(type) : type))
     return errResponse("type_mismatch", fn + " is not declared as " + defined + " is defined");
   // A copy has to mean what the call meant. It would drop the attributes of
   // the loop and of the declaration it is called through, and share the
@@ -769,13 +774,13 @@ llvm::json::Object unfoldCmd(llvm::json::Object &args) {
   for (llvm::CallInst *call : calls) {
     llvm::ValueToValueMapTy vmap;
     if (calleeMwc) {
-      if (!adoptSymbols(*calleeMwc->mod, M, loop, vmap, err))
+      if (!adoptSymbols(*calleeMwc->mod, M, loop, vmap, *renamed, err))
         return err;
       vmap[loop] = decl;
     }
     for (unsigned i = 0; i < body->arg_size(); ++i)
       vmap[body->getArg(i)] = call->getArgOperand(i);
-    if (!putBackRest(*call, *body, F, vmap))
+    if (!putBackRest(*call, *body, F, vmap, nullptr, renamed))
       return errResponse("invalid", "a call of " + fn +
                                         " must be followed by a ret of its result, and used by "
                                         "nothing else");
