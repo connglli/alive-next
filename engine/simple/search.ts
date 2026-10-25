@@ -233,10 +233,11 @@ async function* moves(
   if (limits.steps && steps && limits.rules) yield stepping(() => stepByRules(run, gid));
   // A goal gets a short check before it is cut, and the largest one when nothing cuts it.
   yield checking(run, gid, run.eagerMs);
-  const [src, tgt] = await bodies(session, llops, gid);
   const at = (point: [string, string]) =>
     halves(run, cuts, () => cutAt(session, llops, gid, limits, point, run.assumed));
   yield halves(run, cuts, () => cutLoop(session, llops, gid, limits, run.assumed));
+  // Read after the loop cut, which may have given the goal's code its own copies of blocks.
+  const [src, tgt] = await bodies(session, llops, gid);
   for (const point of beforePoints(src, tgt)) yield at(point);
   if (peelable) yield peeled(run, gid, cuts);
   for (const point of balancedPoints(src, tgt)) yield at(point);
