@@ -786,6 +786,20 @@ exit:
   ret i32 %r
 }
 """
+# Debug information for a function @f that names !3, a variable !6 and a location !7.
+DEBUG_INFO = """
+!llvm.dbg.cu = !{!0}
+!llvm.module.flags = !{!2}
+
+!0 = distinct !DICompileUnit(language: DW_LANG_C11, file: !1, emissionKind: FullDebug)
+!1 = !DIFile(filename: "t.c", directory: "/")
+!2 = !{i32 2, !"Debug Info Version", i32 3}
+!3 = distinct !DISubprogram(name: "f", scope: !1, file: !1, type: !4, unit: !0, spFlags: DISPFlagDefinition)
+!4 = !DISubroutineType(types: !5)
+!5 = !{}
+!6 = !DILocalVariable(name: "var", scope: !3, file: !1)
+!7 = !DILocation(line: 1, scope: !3)
+"""
 # A block both arms of a branch reach, whose value a phi after it takes.
 F_JOINED = """define i32 @f(i1 %c, i32 %x) {
 entry:
@@ -856,6 +870,21 @@ class TestEditCopyBlock(Case):
 
   def test_an_unknown_block_is_refused(self):
     self.bad(self.edit("copy_block", module=F_JOINED, block="%nope", preds=["%a"]), "not_found")
+
+  def test_the_copy_s_debug_information_names_the_copy_s_values(self):
+    module = (
+      F_JOINED.replace(
+        "define i32 @f(i1 %c, i32 %x) {", "define i32 @f(i1 %c, i32 %x) !dbg !3 {"
+      ).replace(
+        "  %v = add i32 %x, 1\n",
+        "  %v = add i32 %x, 1, !dbg !7\n    #dbg_value(i32 %v, !6, !DIExpression(), !7)\n",
+      )
+      + DEBUG_INFO
+    )
+    r = self.good(self.edit("copy_block", module=module, block="%mid", preds=["%a"]))
+    self.assertIn("#dbg_value(i32 %v2,", r["module"])
+    self.assertEqual(r["module"].count("#dbg_value(i32 %v,"), 1)
+    self.assertEqual(r["module"].count("DICompileUnit"), 1)
 
 
 # A loop that holds a loop, whose exit takes the outer counter by a phi.
@@ -934,7 +963,8 @@ exit:
     self.assertTrue(self.reshaped(module, r["module"]))
 
   def test_a_debug_record_in_the_copy_names_the_copy_s_value(self):
-    module = """define i32 @f() !dbg !3 {
+    module = (
+      """define i32 @f() !dbg !3 {
 entry:
   br label %loop
 
@@ -949,19 +979,9 @@ exit:
   %r = phi i32 [ %i, %loop ]
   ret i32 %r
 }
-
-!llvm.dbg.cu = !{!0}
-!llvm.module.flags = !{!2}
-
-!0 = distinct !DICompileUnit(language: DW_LANG_C11, file: !1, emissionKind: FullDebug)
-!1 = !DIFile(filename: "t.c", directory: "/")
-!2 = !{i32 2, !"Debug Info Version", i32 3}
-!3 = distinct !DISubprogram(name: "f", scope: !1, file: !1, type: !4, unit: !0, spFlags: DISPFlagDefinition)
-!4 = !DISubroutineType(types: !5)
-!5 = !{}
-!6 = !DILocalVariable(name: "i", scope: !3, file: !1)
-!7 = !DILocation(line: 1, scope: !3)
 """
+      + DEBUG_INFO
+    )
     r = self.good(self.edit("peel", module=module, block="%loop"))
     self.assertIn("#dbg_value(i32 %i2,", r["module"])
     self.assertEqual(r["module"].count("#dbg_value(i32 %i,"), 1)

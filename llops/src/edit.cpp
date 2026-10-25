@@ -537,9 +537,12 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     llvm::ValueToValueMapTy vmap;
     llvm::BasicBlock *copy = llvm::CloneBasicBlock(B, vmap, "", F);
     // A phi takes its values along the edges into the block, so they stay the block's.
+    const auto flags = llvm::RF_NoModuleLevelChanges | llvm::RF_IgnoreMissingLocals;
     for (llvm::Instruction &I : *copy)
-      if (!llvm::isa<llvm::PHINode>(I))
-        llvm::RemapInstruction(&I, vmap, llvm::RF_IgnoreMissingLocals);
+      if (!llvm::isa<llvm::PHINode>(I)) {
+        llvm::RemapInstruction(&I, vmap, flags);
+        llvm::RemapDbgRecordRange(M, I.getDbgRecordRange(), vmap, flags);
+      }
     for (llvm::BasicBlock *P : from)
       P->getTerminator()->replaceSuccessorWith(B, copy);
     // Each successor once: its phis hold an entry for each edge from the block, which
