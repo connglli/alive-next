@@ -159,6 +159,34 @@ j:
     expect(await left(session, peeled.goals)).toEqual([1, 0, 0]);
   });
 
+  test("a phi with another phi after it is cut at its block alone", async () => {
+    const src = `define i32 @f(i1 %c, i32 %x) {
+entry:
+  br i1 %c, label %t, label %e
+
+t:
+  %a = add i32 %x, 1
+  br label %j
+
+e:
+  %b = sub i32 %x, 1
+  br label %j
+
+j:
+  %p = phi i32 [ %a, %t ], [ %b, %e ]
+  %q = phi i32 [ %x, %t ], [ 0, %e ]
+  %s = add i32 %p, %q
+  %r = mul i32 %s, 3
+  ret i32 %r
+}
+`;
+    const session = await start(src, src.replace("[ %b, %e ]", "[ %x, %e ]"));
+    const [region] = regions(...(await bodies(session, llops, "g1")));
+    if (!region) throw new Error("expected a region");
+    const peeled = await peel(session, llops, "g1", DEFAULT_LIMITS, region);
+    expect(peeled.goals).toHaveLength(2);
+  });
+
   test("a cut goes before a floating-point add both sides apply", async () => {
     const src = `define float @f(float %x, float %y, float %z) {
 entry:

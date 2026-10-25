@@ -23,7 +23,10 @@ export async function peel(
   if (a === undefined || b === undefined || c === undefined || d === undefined) return none;
   const after: string[] = [];
   let at = gid;
-  if (src[b + 1]?.block === src[b]?.block && tgt[d + 1]?.block === tgt[d]?.block) {
+  // A region that ends among its block's phis has no cut after it: phis stay together.
+  const next = [src[b + 1], tgt[d + 1]];
+  const within = next[0]?.block === src[b]?.block && next[1]?.block === tgt[d]?.block;
+  if (within && !next.some((i) => i?.phi)) {
     const halves = await cut(session, llops, at, limits, `#${b + 1}`, `#${d + 1}`, assumed);
     if (!halves) return none;
     after.push(halves.callee);
@@ -31,7 +34,8 @@ export async function peel(
   }
   const first = a <= firstOwn(src) && c <= firstOwn(tgt);
   if (first) return { goals: [at, ...after], region: at };
-  const head = src[a]?.phi ? [src[a]?.block, tgt[c]?.block] : [`#${a}`, `#${c}`];
+  const phi = src[a]?.phi || tgt[c]?.phi;
+  const head = phi ? [src[a]?.block, tgt[c]?.block] : [`#${a}`, `#${c}`];
   const [srcHead = "", tgtHead = ""] = head;
   const halves = await cut(session, llops, at, limits, srcHead, tgtHead, assumed);
   if (!halves) return { goals: [at, ...after], region: at };
