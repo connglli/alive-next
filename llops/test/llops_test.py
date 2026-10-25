@@ -2290,6 +2290,40 @@ class TestInline(Case):
         _, back = self.roundtrip(F_SIMPLE, cut)
         self.assertEqual(self.canon(back["module"]), self.canon(F_SIMPLE))
 
+  def test_a_callee_that_never_returns_goes_back(self):
+    module = """declare void @abort()
+
+define i32 @f(i32 %x) {
+entry:
+  %c = icmp eq i32 %x, 0
+  br i1 %c, label %dead, label %live
+
+dead:
+  call void @abort()
+  unreachable
+
+live:
+  ret i32 %x
+}
+"""
+    out, back = self.roundtrip(module, "#3")
+    self.assertIn("unreachable", out["callee"])
+    self.assertEqual(self.canon(back["module"]), self.canon(module))
+
+  def test_a_window_that_never_returns_is_not_inlined(self):
+    outer = """declare i32 @g()
+
+define i32 @f() {
+entry:
+  %r = call i32 @g()
+  %s = add i32 %r, 1
+  ret i32 %s
+}
+"""
+    callee = "define i32 @g() {\nentry:\n  unreachable\n}\n"
+    request = {"outer": outer, "callee": callee, "callee_name": "g"}
+    self.bad(run("inline", request), "invalid")
+
   def test_a_call_with_anything_on_it_is_not_inlined(self):
     out, _ = self.roundtrip(F_SIMPLE, "s")
     plain = "call i32 @g(i32 %"

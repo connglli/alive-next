@@ -133,7 +133,7 @@ bool plainCall(const llvm::CallInst &call);
 // runs, so in one an alloca counts too.
 std::optional<Diag> frameDependence(const llvm::Function &callee, bool window);
 
-// Put a callee of several blocks but `skip` back at a call used only by the ret after it.
+// Put a callee's blocks but `skip` back at a call used only by the ret after it.
 bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F,
                  llvm::ValueToValueMapTy &vmap,
                  const llvm::SmallPtrSetImpl<llvm::Instruction *> *skip = nullptr);

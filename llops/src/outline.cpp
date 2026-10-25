@@ -359,10 +359,14 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
     passed = std::move(*loads);
   }
 
-  if (callee->size() > 1) {
+  // A block that ends without a ret, as one ending in unreachable, has no answer
+  // to put in the call's place, so it takes the place of the call and its ret.
+  auto *ends = callee->getEntryBlock().getTerminator();
+  if (callee->size() > 1 || !llvm::isa<llvm::ReturnInst>(ends)) {
     if (!putBackRest(*call, *callee, *F, vmap, &copies))
-      return errResponse("invalid", "a callee of several blocks goes back only at a call "
-                                    "followed by a ret of its result, and used by nothing else");
+      return errResponse("invalid", "a callee of several blocks, or of one that does not end in "
+                                    "ret, goes back only at a call followed by a ret of its "
+                                    "result, and used by nothing else");
     for (auto *load : passed)
       load->eraseFromParent();
     return inlined(outerM, *decl);
