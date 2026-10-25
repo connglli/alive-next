@@ -28,7 +28,7 @@ Every step is on the src side, since putting the tgt's region into the src asks 
 
 ## Cuts and preconditions
 
-A goal that does not close is split at the first of these that the framework accepts:
+A goal that does not close is split at the first of these that the framework accepts, or first where outside code joins what that point reaches:
 
 * Its first loop header, as the next section says.
 * Just before one of the last three expensive operations both sides apply, latest first, so that it reads the same operands on both: a multiplication of two variables, a division, a remainder, floating-point arithmetic, a load, or a store. Calls do not count, since every cut adds one.

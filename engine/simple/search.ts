@@ -10,7 +10,7 @@ import type { Comparison, Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { INVERSE } from "../core/state/cases.ts";
 import { caseOn, tested } from "./cases.ts";
-import { type Assumed, balancedPoints, beforePoints, cut, cutLoop, quota } from "./cuts.ts";
+import { type Assumed, balancedPoints, beforePoints, cutAt, cutLoop, quota } from "./cuts.ts";
 import { strengthenAgainst } from "./facts.ts";
 import type { Limits } from "./limits.ts";
 import { peel } from "./peel.ts";
@@ -230,7 +230,7 @@ async function* moves(
   yield checking(run, gid, run.eagerMs);
   const [src, tgt] = await bodies(session, llops, gid);
   const at = (point: [string, string]) =>
-    halves(run, cuts, () => cut(session, llops, gid, limits, ...point, run.assumed));
+    halves(run, cuts, () => cutAt(session, llops, gid, limits, point, run.assumed));
   yield halves(run, cuts, () => cutLoop(session, llops, gid, limits, run.assumed));
   for (const point of beforePoints(src, tgt)) yield at(point);
   if (peelable) yield peeled(run, gid, cuts);

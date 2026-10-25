@@ -60,10 +60,15 @@ async function copied(
 /** Where to cut a goal that loops, as a src block and its tgt partner. */
 export function loopCut(src: Instruction[], tgt: Instruction[]) {
   const header = headers(src)[0];
+  return header ? blockCut(src, tgt, header) : undefined;
+}
+
+/** Where to cut to detach src `block`, as a src block and its tgt partner. */
+export function blockCut(src: Instruction[], tgt: Instruction[], block: string) {
   const { pairs } = diff(src, tgt);
-  const at = header && entryFirst(src, header);
-  const partner = at && pairs.get(at);
-  if (!at || !partner) return undefined;
+  const at = entryFirst(src, block);
+  const partner = pairs.get(at);
+  if (!partner) return undefined;
   // The tgt may have to be cut first where the src need not, as at a peeled loop's exit.
   const first = entryFirst(tgt, partner);
   if (first === partner) return [at, partner] as const;
@@ -132,7 +137,7 @@ export function guessInvariants(params: OutlineParam[]): StrengthenContract {
 }
 
 /** Where to cut to detach `block`: itself, or first where outside code enters its reach. */
-function entryFirst(body: Instruction[], block: string, seen = new Set<string>()): string {
+export function entryFirst(body: Instruction[], block: string, seen = new Set<string>()): string {
   const next = successors(body);
   const reached = new Set([block]);
   for (const from of reached) for (const to of next.get(from) ?? []) reached.add(to);

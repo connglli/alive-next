@@ -13,7 +13,15 @@ import type { CutResult } from "../core/state/cuts.ts";
 import { cutFacts, passedOn, predicatesAt, strengthenCut, union } from "./facts.ts";
 import { fillCut } from "./fill.ts";
 import type { Limits } from "./limits.ts";
-import { copyShared, guessInvariants, loopCut, strengthenLoop, unfoldToMatch } from "./loops.ts";
+import {
+  blockCut,
+  copyShared,
+  entryFirst,
+  guessInvariants,
+  loopCut,
+  strengthenLoop,
+  unfoldToMatch,
+} from "./loops.ts";
 import { diff, dominates, headers, storedAt, successors } from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
 import { unbrokenByRuns } from "./runs.ts";
@@ -285,6 +293,37 @@ async function strengthenNewCut(
  */
 function pointOf(src: Instruction[], at: string): string {
   return at.startsWith("#") ? at : `#${src.findIndex((i) => i.block === at && !i.phi)}`;
+}
+
+/** Cuts goal `gid` at `point`, or first where outside code joins what the point reaches. */
+export async function cutAt(
+  session: Session,
+  llops: Llops,
+  gid: string,
+  limits: Limits,
+  point: [string, string],
+  assumed?: Assumed,
+) {
+  const first = joinFirst(...(await bodies(session, llops, gid)), point);
+  return first ? cut(session, llops, gid, limits, ...first, assumed) : undefined;
+}
+
+/**
+ * Where to cut for instruction `point`: there, or at the block where outside
+ * code joins what it reaches on either side, as a loop is cut at its header.
+ */
+export function joinFirst(
+  src: Instruction[],
+  tgt: Instruction[],
+  [srcCut, tgtCut]: readonly [string, string],
+) {
+  const blockAt = (body: Instruction[], at: string) => body[Number(at.slice(1))]?.block ?? "";
+  const [mine, theirs] = [blockAt(src, srcCut), blockAt(tgt, tgtCut)];
+  if (entryFirst(src, mine) !== mine) return blockCut(src, tgt, mine);
+  const join = entryFirst(tgt, theirs);
+  if (join === theirs) return [srcCut, tgtCut] as const;
+  const partner = [...diff(src, tgt).pairs].find(([, other]) => other === join)?.[0];
+  return partner ? blockCut(src, tgt, partner) : undefined;
 }
 
 /** Cuts goal `gid` where its first loop must be cut, if it loops. */

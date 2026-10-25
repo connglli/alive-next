@@ -19,7 +19,15 @@ import { scenario } from "../examples/scenarios.ts";
 import { slots } from "../examples/slots.ts";
 import { strchr } from "../examples/strchr.ts";
 import { unfold } from "../examples/unfold.ts";
-import { balancedPoints, beforePoints, cut, cutLoop, returnFacts } from "../simple/cuts.ts";
+import {
+  balancedPoints,
+  beforePoints,
+  cut,
+  cutAt,
+  cutLoop,
+  joinFirst,
+  returnFacts,
+} from "../simple/cuts.ts";
 import { strengthenCut } from "../simple/facts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { strengthenLoop } from "../simple/loops.ts";
@@ -177,6 +185,37 @@ declare void @llvm.assume(i1 noundef)
 `;
     const session = await start(src, src.replace("mul i32 %a", "mul nsw i32 %a"));
     expect(beforePoints(...(await bodies(session, llops, "g1")))).toEqual([["#3", "#3"]]);
+  });
+
+  test("a cut that outside code joins below it is made at the join first", async () => {
+    // A cut before the second multiply reaches the return, which the early exit enters too.
+    const src = `define i32 @f(i1 %c, i32 %x, i32 %y) {
+entry:
+  br i1 %c, label %early, label %work
+
+work:
+  %a = mul i32 %x, %y
+  %b = mul i32 %a, %x
+  br label %early
+
+early:
+  %r = phi i32 [ 0, %entry ], [ %b, %work ]
+  ret i32 %r
+}
+`;
+    const session = await start(src, src.replace("mul i32 %a", "mul nsw i32 %a"));
+    const [mine, theirs] = await bodies(session, llops, "g1");
+    const [point] = beforePoints(mine, theirs);
+    if (!point) throw new Error("expected a point before the multiply");
+    const join = (body: typeof mine) => body.find((i) => i.phi)?.block;
+    expect(joinFirst(mine, theirs, point)).toEqual([join(mine), join(theirs)]);
+    const halves = await cutAt(session, llops, "g1", DEFAULT_LIMITS, point);
+    if (!halves) throw new Error("expected a cut at the join");
+    // Each exit of the outer calls the join now, so the point itself can be cut.
+    const [outer, its] = await bodies(session, llops, halves.outer);
+    const [again] = beforePoints(outer, its);
+    if (!again) throw new Error("expected a point before the multiply in the outer");
+    expect(joinFirst(outer, its, again)).toEqual(again);
   });
 
   test("a balanced cut counts what its point reaches", async () => {
