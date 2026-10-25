@@ -986,6 +986,31 @@ exit:
     self.assertIn("#dbg_value(i32 %i2,", r["module"])
     self.assertEqual(r["module"].count("#dbg_value(i32 %i,"), 1)
 
+  def test_the_copy_of_a_latch_keeps_no_loop_metadata(self):
+    module = (
+      F_NESTED_LOOPS.replace(
+        "br i1 %more.i, label %outer, label %exit",
+        "br i1 %more.i, label %outer, label %exit, !llvm.loop !0",
+      )
+      + '\n!0 = distinct !{!0, !1}\n!1 = !{!"llvm.loop.mustprogress"}\n'
+    )
+    r = self.good(self.edit("peel", module=module, block="%outer"))
+    self.assertEqual(r["module"].count("!llvm.loop"), 1)
+    self.assertIn("br i1 %more.i, label %outer, label %exit, !llvm.loop !0", r["module"])
+
+  def test_a_loop_inside_the_copy_gets_a_loop_id_of_its_own(self):
+    module = (
+      F_NESTED_LOOPS.replace(
+        "br i1 %more.j, label %inner, label %outer.latch",
+        "br i1 %more.j, label %inner, label %outer.latch, !llvm.loop !0",
+      )
+      + '\n!0 = distinct !{!0, !1}\n!1 = !{!"llvm.loop.mustprogress"}\n'
+    )
+    r = self.good(self.edit("peel", module=module, block="%outer"))
+    ids = re.findall(r"label %outer.latch\d*, !llvm.loop (!\d+)", r["module"])
+    self.assertEqual(len(set(ids)), 2)
+    self.assertTrue(self.reshaped(module, r["module"]))
+
   def test_a_value_used_after_the_loop_otherwise_is_refused(self):
     module = F_NESTED_LOOPS.replace("%r = phi i32 [ %i, %outer.latch ]", "%r = add i32 %i, 1")
     self.bad(self.edit("peel", module=module, block="%outer"), "invalid")

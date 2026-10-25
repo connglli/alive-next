@@ -61,6 +61,16 @@ const llvm::Instruction *usedAfter(llvm::ArrayRef<llvm::BasicBlock *> blocks) {
   return nullptr;
 }
 
+// A distinct loop ID of its own with the properties of `id`, for a loop that copies another.
+llvm::MDNode *freshLoopID(llvm::MDNode *id) {
+  llvm::SmallVector<llvm::Metadata *, 4> ops{nullptr};
+  for (unsigned k = 1; k < id->getNumOperands(); ++k)
+    ops.push_back(id->getOperand(k));
+  llvm::MDNode *own = llvm::MDNode::getDistinct(id->getContext(), ops);
+  own->replaceOperandWith(0, own);
+  return own;
+}
+
 // Where a conversion for use `U` goes: before its user, or ending a phi's incoming block.
 llvm::BasicBlock::iterator beforeUse(const llvm::Use &U) {
   auto *user = llvm::cast<llvm::Instruction>(U.getUser());
@@ -598,6 +608,23 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     }
     llvm::remapInstructionsInBlocks(copies, vmap);
     auto *first = llvm::cast<llvm::BasicBlock>(vmap[H]);
+    // A copy's back edge enters the loop rather than closing it, so it keeps no loop
+    // metadata, as in LLVM's peeling; a loop inside the copy gets an ID of its own.
+    llvm::DenseMap<llvm::MDNode *, llvm::MDNode *> ids;
+    for (llvm::BasicBlock *C : copies) {
+      llvm::Instruction *term = C->getTerminator();
+      llvm::MDNode *id = term->getMetadata(llvm::LLVMContext::MD_loop);
+      if (!id)
+        continue;
+      if (llvm::is_contained(llvm::successors(C), first)) {
+        term->setMetadata(llvm::LLVMContext::MD_loop, nullptr);
+        continue;
+      }
+      llvm::MDNode *&own = ids[id];
+      if (!own)
+        own = freshLoopID(id);
+      term->setMetadata(llvm::LLVMContext::MD_loop, own);
+    }
     auto mapped = [&](llvm::Value *v) {
       llvm::Value *copy = vmap.lookup(v);
       return copy ? copy : v;
