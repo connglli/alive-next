@@ -2,6 +2,7 @@
 // mechanism to the one before it.
 
 import type { Scenario } from "../core/scenario.ts";
+import { bounded } from "./bounded.ts";
 import { branch } from "./branch.ts";
 import { carry } from "./carry.ts";
 import { copiedphi } from "./copiedphi.ts";
@@ -90,6 +91,7 @@ export const scenarios: Scenario[] = [
   countdown,
   unfold,
   peel,
+  bounded,
   offset,
   unroll,
 ];

@@ -585,14 +585,14 @@ export class Session {
   }
 
   /**
-   * Preview cutting a goal in two without modifying the goal tree or store.
+   * Preview cutting a goal, or its src alone without tgtCut, leaving tree and store intact.
    * If valueMap is omitted, returns the src live-in parameter signature.
    * If valueMap is provided, validates that the tgt cut lines up with that signature.
    */
   cutPreview(
     gid: string,
     srcCut: Ref,
-    tgtCut: Ref,
+    tgtCut?: Ref,
     valueMap?: Record<Ref, Ref>,
   ): Promise<CutPreviewResult> {
     return this.act(
@@ -603,12 +603,12 @@ export class Session {
     );
   }
 
-  /** Cut a goal in two, which adds the two children to the tree. */
+  /** Cut a goal, or its src alone without tgtCut, adding two children to the tree. */
   cut(
     gid: string,
     srcCut: Ref,
-    tgtCut: Ref,
-    valueMap: Record<Ref, Ref>,
+    tgtCut?: Ref,
+    valueMap?: Record<Ref, Ref>,
   ): Promise<SessionCutResult> {
     return this.act(
       "cut",

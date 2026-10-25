@@ -421,6 +421,29 @@ def llrwt(rules: list, module: str) -> str:
     return done.stdout
 
 
+# A loop no run enters, x being equal to itself wherever it is not poison,
+# and the tgt that does not have it.
+UNENTERED = """define i32 @f(i32 %x) {
+entry:
+  %c = icmp eq i32 %x, %x
+  br i1 %c, label %exit, label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %n, %head ]
+  %n = add i32 %i, 1
+  %d = icmp ult i32 %n, 10
+  br i1 %d, label %head, label %done
+
+done:
+  ret i32 0
+
+exit:
+  ret i32 %x
+}
+"""
+UNENTERED_GONE = "define i32 @f(i32 %x) {\nentry:\n  ret i32 %x\n}\n"
+
+
 class Built:
   """A package under construction."""
 
@@ -740,6 +763,23 @@ class Case(unittest.TestCase):
     self.built.goal("g2", outer, outer, [], {"kind": "check"})
     self.built.goal("g3", inner, inner, [], {"kind": "check"})
     return {"outer": outer, "inner": inner}
+
+  def src_alone(self, src: str = UNENTERED, tgt: str = UNENTERED_GONE) -> dict:
+    """A root cut on its src alone at the loop's header."""
+    s = llops("detach", {"module": src, "side": "src", "block": "%head", "callee": "k"})
+
+    def stored(text: str) -> str:
+      return self.built.program(llops("canon", {"module": text})["module"])
+
+    whole = {"src": stored(src), "tgt": stored(tgt)}
+    outer = {"src": stored(s["outer"]), "tgt": whole["tgt"]}
+    inner = {"src": stored(s["callee"]), "tgt": stored(s["callee"])}
+    detach = {"phis": {"src": s["phis"], "tgt": []}, "hypothesis": "k.ih"}
+    cut = {"kind": "cut", "callee": "k", "detach": detach, "src_alone": True}
+    self.built.goal("g1", whole, whole, [], {**cut, "outer": "g2", "inner": "g3"})
+    self.built.goal("g2", outer, outer, [], {"kind": "check"})
+    self.built.goal("g3", inner, inner, [], {"kind": "check"})
+    return {"whole": whole, "outer": outer, "inner": inner}
 
   def text(self, digest: str) -> str:
     return (self.built.root / "programs" / f"{digest}.ll").read_text()
@@ -1146,6 +1186,44 @@ class TestGolden(Case):
 
   def test_a_cut_verifies(self):
     self.verified(self.cut())
+
+  def test_a_cut_of_the_src_alone_at_an_instruction_verifies(self):
+    # The suffix runs only where x is not x, which no defined x is.
+    src = """define i32 @f(i32 %x) {
+entry:
+  %c = icmp eq i32 %x, %x
+  br i1 %c, label %exit, label %dead
+
+dead:
+  %y = mul i32 %x, 3
+  %z = add i32 %y, 1
+  ret i32 %z
+
+exit:
+  ret i32 %x
+}
+"""
+    s = llops("outline", {"module": canonical(src), "side": "src", "cut": "%3", "callee": "g"})
+    whole = {
+      "src": self.built.program(canonical(src)),
+      "tgt": self.built.program(canonical(UNENTERED_GONE)),
+    }
+    outer = {"src": self.built.program(canonical(s["outer"])), "tgt": whole["tgt"]}
+    callee = self.built.program(canonical(s["callee"]))
+    inner = {"src": callee, "tgt": callee}
+    cut = {"kind": "cut", "callee": "g", "outer": "g2", "inner": "g3", "src_alone": True}
+    self.built.goal("g1", whole, whole, [], cut)
+    self.built.goal("g2", outer, outer, [], {"kind": "check"})
+    self.built.goal("g3", inner, inner, [], {"kind": "check"})
+    self.verified(self.built.write())
+
+  def test_a_cut_of_the_src_alone_verifies(self):
+    # The tgt never calls the loop, and the outer shows the src never does.
+    self.src_alone()
+    done = run(self.built.write(), "--alive-tv", ALIVE_TV, "--llops", LLOPS, "-v")
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertIn("VERIFIED - root", done.stdout)
+    self.assertIn("starts from the parent's tgt", done.stdout)
 
   def test_a_cut_at_an_instruction_of_a_body_that_branches_verifies(self):
     # The src's callee is the rest of its entry block and both blocks after
@@ -1623,6 +1701,24 @@ class TestTampered(Case):
     pair = {"src": self.built.program(canonical(LOOP)), "tgt": self.built.program(canonical(LATE))}
     self.built.goal("g1", pair, pair, [], {"kind": "check"})
     self.refused(self.built.write(), "handed to alive-tv loops")
+
+  def test_a_cut_of_the_src_alone_whose_outer_has_another_tgt(self):
+    halves = self.src_alone()
+    other = self.built.program(canonical(UNENTERED_GONE.replace("ret i32 %x", "ret i32 0")))
+    moved = {**halves["outer"], "tgt": other}
+    self.built.goal("g2", moved, moved, [], {"kind": "check"})
+    self.refused(self.built.write(), "recorded program differs")
+
+  def test_a_cut_of_the_src_alone_whose_tgt_calls_a_function_of_its_name(self):
+    tgt = "declare i32 @k(i32)\n\ndefine i32 @f(i32 %x) {\nentry:\n  ret i32 %x\n}\n"
+    self.src_alone(UNENTERED, tgt)
+    self.refused(self.built.write(), "names @k too")
+
+  def test_a_cut_of_the_src_alone_takes_no_strengthening(self):
+    halves = self.src_alone()
+    step = {"kind": "strengthen", "from": halves["inner"], "to": halves["inner"], "by": []}
+    self.built.goal("g3", halves["inner"], halves["inner"], [step], {"kind": "check"})
+    self.refused(self.built.write(), "takes no strengthening")
 
   def test_a_detached_cut_whose_halves_do_not_reattach(self):
     # The tgt's callee in the src's place reattaches to the tgt, not the src.

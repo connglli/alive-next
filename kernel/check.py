@@ -1328,8 +1328,13 @@ class Check:
     hypothesis = detach.get("hypothesis") if detach else None
     rebuild = "reattach" if detach else "inline"
     slots = discharge.get("slots")
+    # A cut of the src alone keeps the tgt as it is: the outer's tgt is the
+    # goal's, which never calls the callee, and the outer holds for every
+    # callee, so for the src's.
+    src_alone = discharge.get("src_alone") is True
+    cut_sides = ("src",) if src_alone else ("src", "tgt")
 
-    for side in ("src", "tgt"):
+    for side in cut_sides:
       started = time.monotonic()
       request = {
         "outer": self.package.program(outer["start"][side]),
@@ -1357,11 +1362,23 @@ class Check:
         ms,
       )
       self.outlined(gid, side, whole)
+    if src_alone:
+      same = outer["start"]["tgt"] == goal["end"]["tgt"]
+      notes = f"{discharge['outer']} starts from the parent's tgt"
+      self.compared(gid, "tgt", "kernel", "Cut reconstruction", notes, same, 0)
+      steps = [step for half in (outer, inner) for step in half["steps"]]
+      if any(step.get("kind") == "strengthen" for step in steps):
+        self.fail(gid, "pair", "Cut of the src alone", "takes no strengthening")
+      # alive2 takes two calls of one name for calls of one function, so a tgt
+      # that called a function of the callee's name would pair with the src.
+      tgt = self.package.program(goal["end"]["tgt"])
+      if name in self.package.run_llops("validate", {"module": tgt}).get("functions", {}):
+        self.fail(gid, "tgt", "Cut of the src alone", f"the tgt names @{name} too")
 
     # The outer was checked against a declaration; the callee proves a
     # definition. An attribute on one and not the other is a claim nobody
     # made, so the two have to say the same thing.
-    for side in ("src", "tgt"):
+    for side in cut_sides:
       started = time.monotonic()
       declared = signature(self.package, self.package.program(outer["end"][side]), name)
       defined = signature(self.package, self.package.program(inner["end"][side]), name)
@@ -1411,6 +1428,8 @@ class Check:
       starts.append((discharge["inner"], hypothesis))
     for half, fn in starts:
       for side in ("src", "tgt"):
+        if src_alone and half == discharge["outer"] and side == "tgt":
+          continue
         started = time.monotonic()
         start = self.package.program(self.package.goal(half)["start"][side])
         self.report(

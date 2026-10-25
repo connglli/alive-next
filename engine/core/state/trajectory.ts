@@ -149,6 +149,8 @@ export type Effect =
       detach?: Detach;
       /** Present when either side passes what a stack slot held. */
       slots?: Slots;
+      /** Present when only the src was cut: the outer's tgt is the goal's. */
+      src_alone?: true;
     }
   /**
    * Both sides of a callee goal gained a strengthened interface contract

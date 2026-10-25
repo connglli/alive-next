@@ -132,6 +132,7 @@ export type Discharge =
       inner: string;
       detach?: Detach;
       slots?: Slots;
+      src_alone?: true;
     };
 
 /** One goal in a proof, from the pair it started with to the one it proved. */
@@ -346,6 +347,7 @@ function include(
       inner: inner.id,
       ...(outer.detach ? { detach: outer.detach } : {}),
       ...(outer.slots ? { slots: outer.slots } : {}),
+      ...(outer.src_alone ? { src_alone: true } : {}),
     },
   };
   include(tree, outer, effects, goals, programs);

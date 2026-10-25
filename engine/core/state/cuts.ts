@@ -1,10 +1,10 @@
 // Cutting a goal in two.
 //
-// Both sides are outlined at the cut the agent names: the prefix stays in an
-// outer function that gains a call, the suffix becomes a fresh function, and
-// the goal becomes two. The src side is cut first because its live-in set is
-// the signature, and the tgt side is cut against that signature with the
-// agent's value map.
+// Both sides, or the src alone without a tgt cut, are outlined at the cut the
+// agent names: the prefix stays in an outer function that gains a call, the
+// suffix becomes a fresh function, and the goal becomes two. The src is cut
+// first because its live-in set is the signature the tgt is cut against with
+// the agent's value map.
 //
 // No solver runs here. A cut is a claim about where two programs line up, and
 // what makes it hold is the two checks on the children afterwards: the outer
@@ -27,7 +27,16 @@ import {
   unoutlinable,
 } from "../drivers/llops.ts";
 import type { Ref } from "../refs.ts";
-import { cased, type GoalId, head, interposed, nextGoalIds, type Tree, workable } from "./goals.ts";
+import {
+  cased,
+  type Goal,
+  type GoalId,
+  head,
+  interposed,
+  nextGoalIds,
+  type Tree,
+  workable,
+} from "./goals.ts";
 import type { Store } from "./store.ts";
 import type { Detach, Effect, Slots } from "./trajectory.ts";
 
@@ -43,6 +52,8 @@ export type CutPreviewResult =
       detach?: Detach;
       /** Present when either side passes what a stack slot held. */
       slots?: Slots;
+      /** Present when only the src is cut. */
+      src_alone?: true;
       /** Outlined programs if value_map was provided and valid. */
       programs?: {
         outerSrc: string;
@@ -83,7 +94,7 @@ export class Cuts {
     tree: Tree,
     gid: string,
     srcCut: Ref,
-    tgtCut: Ref,
+    tgtCut?: Ref,
     valueMap?: Record<Ref, Ref>,
   ): Promise<CutPreviewResult> {
     const goal = workable(tree, gid);
@@ -92,6 +103,7 @@ export class Cuts {
     // The outlined function is named after the callee goal, so the name is
     // fresh by construction and a reader can tell which cut made it.
     const callee = `outlined_${calleeGoal}`;
+    if (tgtCut === undefined) return this.srcAlone(goal, srcCut, callee);
 
     const srcModule = this.store.get(head(goal, "src"));
     const tgtModule = this.store.get(head(goal, "tgt"));
@@ -173,8 +185,8 @@ export class Cuts {
     tree: Tree,
     gid: string,
     srcCut: Ref,
-    tgtCut: Ref,
-    valueMap: Record<Ref, Ref>,
+    tgtCut?: Ref,
+    valueMap?: Record<Ref, Ref>,
   ): Promise<CutResult> {
     const preview = await this.preview(tree, gid, srcCut, tgtCut, valueMap);
     if (preview.kind === "refused") return preview;
@@ -183,7 +195,7 @@ export class Cuts {
         kind: "refused",
         side: "tgt",
         code: "missing_programs",
-        message: "cut preview produced no programs",
+        message: "a tgt cut needs a value map",
       };
     }
 
@@ -214,8 +226,48 @@ export class Cuts {
           callee: { gid: children.callee, src: calleeSrcHash, tgt: calleeTgtHash },
           ...(preview.detach ? { detach: preview.detach } : {}),
           ...(preview.slots ? { slots: preview.slots } : {}),
+          ...(preview.src_alone ? { src_alone: true } : {}),
         },
+        // The same program on both sides needs no solver.
+        ...(preview.src_alone ? [{ effect: "proved", gid: children.callee } as const] : []),
       ],
+    };
+  }
+
+  /** The preview of a cut of the src alone, the tgt as it is. */
+  private async srcAlone(goal: Goal, srcCut: Ref, callee: string): Promise<CutPreviewResult> {
+    const srcModule = this.store.get(head(goal, "src"));
+    const tgtModule = this.store.get(head(goal, "tgt"));
+    // alive2 takes two calls of one name for calls of one function, so the tgt
+    // may not name the callee already, as outline refuses on the side it cuts.
+    const tgt = await this.llops.validate(tgtModule);
+    if (tgt.ok && tgt.functions?.[callee]) {
+      const message = `the name '@${callee}' is already taken in the tgt`;
+      return { kind: "refused", side: "tgt", code: "invalid", message };
+    }
+    const unmovable = await unoutlinable(this.llops, srcModule, "the src");
+    if (unmovable) return { kind: "refused", side: "src", code: "invalid", message: unmovable };
+    const atBlock = namesBlock(srcCut, srcModule);
+    const src: LlopsResult<DetachResult> = atBlock
+      ? await this.llops.detachSrc(srcModule, srcCut, callee)
+      : await this.llops.outlineSrc(srcModule, srcCut, callee);
+    if (!src.ok) return { kind: "refused", side: "src", code: src.code, message: src.message };
+    const message = await this.unbuilt(src, srcModule, callee, atBlock);
+    if (message) return { kind: "refused", side: "src", code: "invalid", message };
+    const detach = { phis: { src: src.phis ?? [], tgt: [] }, ...hypothesisOf(src) };
+    return {
+      kind: "preview",
+      params: src.params,
+      callee,
+      ...(atBlock ? { detach } : {}),
+      ...(src.slots?.length ? { slots: { src: src.slots, tgt: [] } } : {}),
+      src_alone: true,
+      programs: {
+        outerSrc: src.outer,
+        outerTgt: tgtModule,
+        calleeSrc: src.callee,
+        calleeTgt: src.callee,
+      },
     };
   }
 
@@ -250,7 +302,12 @@ export class Cuts {
 /** What a block cut records: each side's phis, and the hypothesis when it heads a loop. */
 function detachOf(src: DetachResult, tgt: DetachResult): Detach {
   const phis = { src: src.phis ?? [], tgt: tgt.phis ?? [] };
-  return src.hypothesis ? { phis, hypothesis: src.hypothesis } : { phis };
+  return { phis, ...hypothesisOf(src) };
+}
+
+/** The hypothesis a detach made, when the block heads a loop. */
+function hypothesisOf(half: DetachResult): { hypothesis?: string } {
+  return half.hypothesis ? { hypothesis: half.hypothesis } : {};
 }
 
 /** Which parameters carry what a stack slot held on each side, or nothing when none does. */

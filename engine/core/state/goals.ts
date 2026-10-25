@@ -38,6 +38,8 @@ export interface Goal {
   detach?: Detach;
   /** Present on both children when the cut passed what a stack slot held. */
   slots?: Slots;
+  /** Present on both children when only the src was cut. */
+  src_alone?: true;
   src: SideHistory;
   tgt: SideHistory;
   status: Status;
@@ -189,8 +191,13 @@ function apply(tree: Tree, effect: Effect): void {
     }
     case "cut": {
       const parent = editable(tree, effect.gid);
-      const { name: callee, detach, slots } = effect;
-      const made = { callee, ...(detach ? { detach } : {}), ...(slots ? { slots } : {}) };
+      const { name: callee, detach, slots, src_alone } = effect;
+      const made = {
+        callee,
+        ...(detach ? { detach } : {}),
+        ...(slots ? { slots } : {}),
+        ...(src_alone ? { src_alone } : {}),
+      };
       opened(tree, parent, effect.outer, "outer", made);
       opened(tree, parent, effect.callee, "callee", made);
       // The parent's heads freeze here: it is proved through its children now.

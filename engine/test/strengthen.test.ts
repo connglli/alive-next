@@ -206,6 +206,20 @@ function strengthening(checker: FakeChecker): Strengthen {
 }
 
 describe.skipIf(!built)("strengthening a loop", () => {
+  test("a cut of the src alone takes no facts", async () => {
+    const src = await store.put(LOOP);
+    events.push({ kind: "start", src, tgt: await store.put(SRC), config: {}, versions: {} });
+    const result = await new Cuts(store, llops).cut(replay(), "g1", "%bb1");
+    if (result.kind !== "cut") throw new Error(result.message);
+    const checker = new FakeChecker([]);
+    const refused = await strengthening(checker).strengthen(record(result.effects), "g1", {
+      param_attrs: { 1: { noundef: true } },
+    });
+    expect(refused).toMatchObject({ kind: "refused", effects: [] });
+    expect(JSON.stringify(refused)).toContain("cut on its src alone");
+    expect(checker.calls).toHaveLength(0);
+  });
+
   test("a callee that calls its hypothesis takes no function attributes", async () => {
     const checker = new FakeChecker([]);
     const tree = await detached();

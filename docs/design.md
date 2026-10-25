@@ -38,7 +38,7 @@ The framework proves that one LLVM function refines another, or refutes it, unde
 
 * A variable the tgt dropped, such as `%i` after linear function test replacement: the tgt would have to pass the shared hypothesis a value refining the src's.
 * Loop state the src keeps in a stack slot whose address escapes, or in a struct or an array, and the tgt in values: the src passes an address where the tgt passes a value.
-* Unrolling by a factor that is not a power of two, unrolling with a remainder loop, a loop replaced by a call such as `memset`, and a deleted loop: no call of the tgt pairs with each call of the src's hypothesis.
+* Unrolling by a factor that is not a power of two, unrolling with a remainder loop, and an unbounded loop replaced by a call such as `memset` or deleted: no call of the tgt pairs with each call of the src's hypothesis.
 * Reordering transformations (interchange, fusion, fission, tiling, reversal): the two sides agree on memory only at the end, which takes a quantified invariant.
 * An irreducible loop, whose second entry breaks the single entry a cut at a block needs.
 * A pointer carried as loop state: a fact compares addresses, not the objects the pointers may access.
@@ -199,7 +199,7 @@ Every tool call is logged. Tools that create certified steps record enough to re
 
 ### Splitting
 
-- `cut(gid, src_cut, tgt_cut, value_map)`: outlines both sides of an open goal at the given cut points (a cut point names a position in the instruction sequence by the value defined there), or detaches both at a block. The src side's live values at the cut define `g`'s signature; `value_map` gives the corresponding tgt values. Creates two child goals (outer and callee); the parent's status becomes `split` and its heads are frozen. The parent is proved automatically when both children are. Fails structurally if the map is ill-typed or the tgt suffix uses values not covered by the map.
+- `cut(gid, src_cut, tgt_cut, value_map)`: outlines an open goal's src, and its tgt with `tgt_cut`, at the given cut points (a cut point names a position in the instruction sequence by the value defined there), or detaches them at a block. The src side's live values at the cut define `g`'s signature; `value_map` gives the corresponding tgt values. Creates two child goals (outer and callee); the parent's status becomes `split` and its heads are frozen. The parent is proved automatically when both children are. Fails structurally if the map is ill-typed or the tgt suffix uses values not covered by the map.
 - `uncut(gid)`: discards a cut goal's children (and their subtrees) and reopens the parent. The way to undo a bad cut.
 - `case(gid, on)`: splits an open goal into two child goals, `holds` where `on` holds and `fails` where it does not. `on` is `{ defined: "!N" }`, whether parameter N is not poison, which `holds` makes `noundef` and `fails` replaces by poison, or a comparison of two parameters, or of one and an integer, which `holds` assumes at the start of both programs and `fails` assumes the inverse of. The parent's status becomes `split`, and it is proved when both children are. Fails if a parameter compared is not `noundef` in the src, or one split on its poison is not a scalar.
 - `uncase(gid)`: discards a goal's two cases (and their subtrees) and reopens it, which undoes a split by cases.

@@ -181,6 +181,15 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(copied).toContain("phi i32 [ 0, %entry ]");
   });
 
+  test("tree_cut needs a value map with tgt_cut, and without it cuts the src alone", async () => {
+    expect(await call("tree_cut", { gid: "g1", src_cut: "%2", tgt_cut: "%2" })).toContain(
+      "refused: a tgt cut needs a value map",
+    );
+    const cut = await call("tree_cut", { gid: "g1", src_cut: "%2" });
+    expect(cut).toContain("cut into @outlined_g3");
+    expect(cut).toContain("g3 callee of g1, proved");
+  });
+
   test("tree_strengthen takes facts about what the callee returns, alone", async () => {
     const cutting = { gid: "g1", src_cut: "%2", tgt_cut: "%2", value_map: SAME };
     await call("tree_cut", cutting);

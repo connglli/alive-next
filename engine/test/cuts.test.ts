@@ -183,6 +183,34 @@ join:
     expect(goal(tree, "g3").detach).toBeUndefined();
   });
 
+  test("a cut of the src alone keeps the tgt as it is and proves its callee goal", async () => {
+    const cuts = new Cuts(store, llops);
+    const parent = await start(LOOP, PROGRAM);
+    const result = await cuts.cut(parent, "g1", "%bb1");
+    if (result.kind !== "cut") throw new Error(result.message);
+    const tree = record(result.effects);
+    const [outer, callee] = [goal(tree, "g2"), goal(tree, "g3")];
+    expect(head(outer, "tgt")).toBe(head(goal(parent, "g1"), "tgt"));
+    expect(store.get(head(outer, "src"))).toContain("call i32 @outlined_g3(");
+    expect(head(callee, "tgt")).toBe(head(callee, "src"));
+    expect(callee.status).toBe("proved");
+    expect(outer.src_alone).toBe(true);
+    expect(callee.detach).toEqual({ phis: { src: [0], tgt: [] }, hypothesis: "outlined_g3.ih" });
+  });
+
+  test("a cut of the src alone refuses a name the tgt has taken", async () => {
+    const cuts = new Cuts(store, llops);
+    const taken = `declare i32 @outlined_g3(i32)\n\n${PROGRAM}`;
+    const result = await cuts.cut(await start(LOOP, taken), "g1", "%bb1");
+    expect(result).toMatchObject({ kind: "refused", side: "tgt", code: "invalid" });
+  });
+
+  test("a cut of the src alone refuses a point the src does not have", async () => {
+    const cuts = new Cuts(store, llops);
+    const result = await cuts.cut(await start(LOOP, PROGRAM), "g1", "%bb9");
+    expect(result).toMatchObject({ kind: "refused", side: "src" });
+  });
+
   test("refuses a block that heads a loop on one side only", async () => {
     const once = LOOP.replace(", [ %i.next, %loop ]", "").replace(
       "br i1 %c, label %loop, label %exit",

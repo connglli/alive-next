@@ -511,6 +511,10 @@ export class Strengthen {
     for (const goal of [outer, callee])
       if (goal.status === "split" || goal.status === "refuted")
         return { reason: `${goal.id} is ${goal.status}, so its interface can no longer change` };
+    if (outer.src_alone)
+      return {
+        reason: `${gid} was cut on its src alone, so its tgt has no @${name} to carry facts`,
+      };
     return { outer, callee, name, hypothesis: callee.detach?.hypothesis };
   }
 
