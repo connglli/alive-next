@@ -207,8 +207,8 @@ early:
     const [mine, theirs] = await bodies(session, llops, "g1");
     const [point] = beforePoints(mine, theirs);
     if (!point) throw new Error("expected a point before the multiply");
-    const join = (body: typeof mine) => body.find((i) => i.phi)?.block;
-    expect(joinFirst(mine, theirs, point)).toEqual([join(mine), join(theirs)]);
+    const join = (body: typeof mine) => body.find((i) => i.phi)?.block ?? "";
+    expect(joinFirst(mine, theirs, point)).toEqual([join(mine), join(theirs)] as const);
     const halves = await cutAt(session, llops, "g1", DEFAULT_LIMITS, point);
     if (!halves) throw new Error("expected a cut at the join");
     // Each exit of the outer calls the join now, so the point itself can be cut.
