@@ -73,6 +73,7 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   const [eagerMs, capMs] = [budgets.eagerCheckMs, budgets.checkCapMs];
   const run: Run = { session, llops, limits, eagerMs, capMs, assumed: new Map() };
   await unrolling(session, llops, root, limits.counterexampleMs);
+  if (session.verdict !== "unknown") return session.verdict;
   await dropAttrs(session, llops, root);
   // A loop the tgt no longer has is peeled and cut away first, and what is left is searched.
   const start = limits.steps ? await peelBounded(session, llops, root) : root;

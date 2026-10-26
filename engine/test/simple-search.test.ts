@@ -559,6 +559,16 @@ exit:
     60_000,
   );
 
+  test("stops once the unrolled check refutes the root, before any step", async () => {
+    // An attribute the search would drop from the tgt is a step after the refutation.
+    const tgt = unroll.tgt.replace(
+      "define i32 @f(i32 noundef %n) {",
+      "define i32 @f(i32 noundef %n) nofree {",
+    );
+    const session = await start(unroll.src, tgt, aliveTv);
+    expect(await search(session, llops, limits)).toBe("counterexample");
+  }, 60_000);
+
   test("reports a goal's counterexample whose input is poison", async () => {
     // Only a poison %x tells them apart: the tgt then returns poison, and the src 1.
     const src = "define i32 @f(i32 %x) {\nentry:\n  ret i32 1\n}\n";
