@@ -1,11 +1,9 @@
-// Steps a goal's src toward its tgt one region at a time. For each region,
-// the `splice` edit puts the tgt's code in place of the src's, wired through
-// the values the diff pairs. The commit names the region as its window. When
-// alive2 refuses, the window grows backward over the instructions that define
-// the values either side reads, and last, the window is tried again with what
-// the analyses know about those values.
+// Steps a goal's src toward its tgt through small windows. Tail markers are
+// aligned first, then regions are spliced through the values the diff pairs.
+// Refused windows grow over their inputs' definitions before trying preconditions.
 import type { Instruction, Llops, Predicate } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
+import { stepCalls } from "./calls.ts";
 import { factsAt } from "./facts.ts";
 import type { Limits } from "./limits.ts";
 import { diff, isTerminator, type Region, regions } from "./regions.ts";
@@ -33,7 +31,9 @@ export async function stepWindows(
   limits: Limits,
   toward?: string,
 ): Promise<Region[]> {
-  const [src, tgt] = await bodies(session, llops, gid, toward);
+  let [src, tgt] = await bodies(session, llops, gid, toward);
+  if (limits.windows && (await stepCalls(session, gid, src, tgt)))
+    [src, tgt] = await bodies(session, llops, gid, toward);
   const { regions: found, pairs } = diff(src, tgt);
   const run = { session, llops, gid, limits, toward, pairs };
   const across = partners(src, tgt, found);

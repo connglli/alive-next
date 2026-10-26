@@ -4,12 +4,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { certify } from "../cert/main.ts";
+import { repoRoot } from "../core/config.ts";
 import { AliveTv, type CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
 import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
+import { stepCalls } from "../simple/calls.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { regions } from "../simple/regions.ts";
 import { bodies, stepWindows } from "../simple/windows.ts";
@@ -92,6 +95,91 @@ async function arrived(session: Session) {
 }
 
 describe.skipIf(!built)("windows", () => {
+  test("a tail step preserves the source call's attributes", async () => {
+    const src = `declare void @h(i32)
+
+define void @f(i32 %x) {
+entry:
+  call void @h(i32 %x)
+  ret void
+}
+`;
+    const tgt = src.replace("call void @h(i32 %x)", "tail call void @h(i32 noundef %x)");
+    const checker = windowsOnly(() => true);
+    const session = await start("tail-attributes", checker, 5_000, {
+      about: "",
+      refines: false,
+      src,
+      tgt,
+    });
+    expect(await stepCalls(session, "g1", ...(await bodies(session, llops, "g1")))).toBe(1);
+    const current = (await session.show("g1")).src.text;
+    expect(current).toContain("tail call void @h(i32 %0)");
+    expect(current).not.toContain("noundef");
+  });
+
+  test("a tail step excludes pointers carried directly or inside an aggregate", async () => {
+    for (const [k, type] of ["ptr", "<2 x ptr>", "%nested"].entries()) {
+      const src = `%nested = type { i32, [2 x ptr] }
+declare void @h(${type})
+
+define void @f(${type} %p) {
+entry:
+  call void @h(${type} %p)
+  ret void
+}
+`;
+      const tgt = src.replace("call void", "tail call void");
+      const checker = windowsOnly(() => true);
+      const session = await start(`tail-pointer-${k}`, checker, 5_000, {
+        about: "",
+        refines: false,
+        src,
+        tgt,
+      });
+      expect(await stepCalls(session, "g1", ...(await bodies(session, llops, "g1")))).toBe(0);
+      expect(checker.windows).toEqual([]);
+    }
+  });
+
+  test("calls stay as they are when the target's markers disagree", async () => {
+    const src = `declare void @h(i32)
+
+define void @f(i32 %x) {
+entry:
+  call void @h(i32 %x)
+  call void @h(i32 7)
+  ret void
+}
+`;
+    const tgt = src.replace("call void @h(i32 %x)", "tail call void @h(i32 %x)");
+    const checker = windowsOnly(() => true);
+    const session = await start("mixed-tails", checker, 5_000, {
+      about: "",
+      refines: true,
+      src,
+      tgt,
+    });
+    expect(await stepCalls(session, "g1", ...(await bodies(session, llops, "g1")))).toBe(0);
+    expect(checker.windows).toEqual([]);
+  });
+
+  test("a tail marker changes only after the window is certified", async () => {
+    const src =
+      "declare void @h()\n\ndefine void @f() {\nentry:\n  call void @h()\n  ret void\n}\n";
+    const tgt = src.replace("call void", "tail call void");
+    const checker = windowsOnly(() => false);
+    const session = await start("uncertified-tail", checker, 5_000, {
+      about: "",
+      refines: true,
+      src,
+      tgt,
+    });
+    expect(await stepCalls(session, "g1", ...(await bodies(session, llops, "g1")))).toBe(0);
+    expect(checker.windows).toHaveLength(1);
+    expect((await session.show("g1")).src.text).not.toContain("tail call");
+  });
+
   test("one commit per region: a rewritten instruction, a rewritten pair, a commuted mul", async () => {
     const checker = windowsOnly(() => true);
     const session = await start("e2", checker);
@@ -143,6 +231,100 @@ entry:
 });
 
 describe.skipIf(!solving)("windows with alive-tv", () => {
+  test("tail markers let reshaped match calls across a loop rotation", async () => {
+    const src = `declare void @h(i32)
+
+define i32 @f(i32 %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %next, %body ]
+  call void @h(i32 %i)
+  %more = icmp ult i32 %i, %n
+  br i1 %more, label %body, label %exit
+
+body:
+  %next = add i32 %i, 1
+  br label %head
+
+exit:
+  ret i32 %i
+}
+`;
+    const tgt = `declare void @h(i32)
+
+define i32 @f(i32 %n) {
+entry:
+  tail call void @h(i32 0)
+  %start = icmp ult i32 0, %n
+  br i1 %start, label %body, label %exit
+
+body:
+  %i = phi i32 [ 0, %entry ], [ %next, %body ]
+  %next = add i32 %i, 1
+  tail call void @h(i32 %next)
+  %more = icmp ult i32 %next, %n
+  br i1 %more, label %body, label %exit
+
+exit:
+  %r = phi i32 [ 0, %entry ], [ %next, %body ]
+  ret i32 %r
+}
+`;
+    const session = await start("rotated-calls", aliveTv, 5_000, {
+      about: "",
+      refines: true,
+      src,
+      tgt,
+    });
+    await stepWindows(session, llops, "g1", grow(0));
+    const checked = await session.check("g1");
+    expect(checked.outcome).toBe("proved");
+    expect(checked.by).toBe("reshaped");
+    const certificate = certify(session.dir, join(session.dir, "certificate"));
+    const replay = Bun.spawnSync([
+      "python3",
+      join(repoRoot(), "kernel/check.py"),
+      certificate,
+      "--llops",
+      toolchain.path("llops"),
+      "--alive-tv",
+      toolchain.path("alive-tv"),
+    ]);
+    expect(replay.stdout.toString()).toContain("VERIFIED - root g1");
+    expect(replay.exitCode).toBe(0);
+  }, 60_000);
+
+  test("tail markers step inside a loop beside a changed branch", async () => {
+    const src = `declare void @h(i32)
+
+define i32 @f(i32 %n) {
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %next, %loop ]
+  %next = add i32 %i, 1
+  %again = icmp ult i32 %next, %n
+  call void @h(i32 %i)
+  call void @h(i32 %next)
+  br i1 %again, label %loop, label %exit
+
+exit:
+  ret i32 %next
+}
+`;
+    const tgt = src
+      .replaceAll("call void", "tail call void")
+      .replace("br i1 %again, label %loop, label %exit", "br i1 %again, label %exit, label %loop");
+    // The branch change remains open; each call can still take its own certified step.
+    const session = await start("tail", aliveTv, 5_000, { about: "", refines: false, src, tgt });
+    const left = await stepWindows(session, llops, "g1", grow(0));
+    expect((await session.show("g1")).src.text.match(/tail call void @h/g)).toHaveLength(2);
+    expect(left.some((region) => !region.window)).toBe(true);
+  }, 60_000);
+
   test.each(["e1", "e1alt", "e2", "e3", "varB"])(
     "%s arrives at its tgt",
     async (name) => {
