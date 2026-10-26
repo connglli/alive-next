@@ -739,6 +739,79 @@ entry:
   def test_move_after_the_terminator(self):
     self.bad(self.edit("move", v="m", where="after", w="#2"), "invalid")
 
+  def test_move_requires_an_instruction_anchor(self):
+    self.bad(self.edit("move", v="m", where="before", w="%entry"), "not_found")
+
+  def test_hoist_merges_the_cast_results_at_a_loop_header(self):
+    module = """define i32 @f(i64 %n) {
+entry:
+  br label %head
+head:
+  %i = phi i64 [ 0, %entry ], [ %next, %body ]
+  %view = trunc i64 %i to i32
+  %more = icmp ult i64 %i, %n
+  br i1 %more, label %body, label %exit
+body:
+  %next = add i64 %i, 1
+  br label %head
+exit:
+  ret i32 %view
+}
+"""
+    hoisted = self.good(self.edit("hoist", module=module, v="view"))["module"]
+    self.assertIn("%view = phi i32", hoisted)
+    self.assertEqual(hoisted.count("trunc i64"), 2)
+    for before, after in [(module, hoisted), (hoisted, module)]:
+      self.assertTrue(self.good(run("reshaped", {"before": before, "after": after}))["reshaped"])
+    self.bad(self.edit("hoist", module=module, v="i"), "invalid")
+    self.bad(self.edit("hoist", module=module, v="more"), "invalid")
+
+  def test_hoist_keeps_a_store_off_bypassing_paths(self):
+    module = """define void @f(i1 %c, i1 %take, ptr %p, ptr %q, i32 %x, i32 %y) {
+entry:
+  br i1 %c, label %left, label %right
+left:
+  br i1 %take, label %join, label %exit
+right:
+  br label %join
+join:
+  %at = phi ptr [ %p, %left ], [ %q, %right ]
+  %v = phi i32 [ %x, %left ], [ %y, %right ]
+  store i32 %v, ptr %at
+  br label %exit
+exit:
+  ret void
+}
+"""
+    hoisted = self.good(self.edit("hoist", module=module, v="#5"))["module"]
+    self.assertEqual(hoisted.count("store i32"), 2)
+    for before, after in [(module, hoisted), (hoisted, module)]:
+      self.assertTrue(self.good(run("reshaped", {"before": before, "after": after}))["reshaped"])
+
+  def test_hoist_handles_repeated_edges_and_a_recurrence(self):
+    module = """define i32 @f(i32 %s) {
+entry:
+  switch i32 %s, label %exit [ i32 0, label %head
+                               i32 1, label %head ]
+head:
+  %i = phi i32 [ 0, %entry ], [ 0, %entry ], [ %next, %head ], [ %next, %head ]
+  %next = add i32 %i, 1
+  switch i32 %next, label %head [ i32 4, label %exit
+                                  i32 7, label %head ]
+exit:
+  %r = phi i32 [ 0, %entry ], [ %next, %head ]
+  ret i32 %r
+}
+"""
+    hoisted = self.good(self.edit("hoist", module=module, v="next"))["module"]
+    self.assertIn("%next = phi i32", hoisted)
+    self.assertEqual(hoisted.count("add i32"), 2)
+    for before, after in [(module, hoisted), (hoisted, module)]:
+      self.assertTrue(self.good(run("reshaped", {"before": before, "after": after}))["reshaped"])
+
+  def test_hoist_requires_incoming_edges(self):
+    self.bad(self.edit("hoist", v="m"), "invalid")
+
   def test_erase_dead(self):
     module = """define i32 @f(i32 %x) {
 entry:

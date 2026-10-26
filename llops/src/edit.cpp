@@ -10,6 +10,7 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/AsmParser/LLLexer.h"
 #include "llvm/AsmParser/Parser.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Dominators.h"
@@ -18,10 +19,12 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace llops {
@@ -36,6 +39,47 @@ bool reachesEveryUse(llvm::Value *def, llvm::Value *v) {
   llvm::DominatorTree DT(*I->getFunction());
   return llvm::all_of(v->uses(),
                       [&](const llvm::Use &U) { return U.getUser() != I && DT.dominates(I, U); });
+}
+
+// Copy the first non-phi instruction onto incoming edges and join its results.
+llvm::json::Object hoist(llvm::Instruction &I) {
+  llvm::BasicBlock *B = I.getParent();
+  if (I.isTerminator())
+    return errResponse("invalid", "hoist: terminators cannot be copied onto incoming edges");
+  if (I.getIterator() != B->getFirstNonPHIIt() || I.isEHPad() || I.getType()->isTokenTy())
+    return errResponse("invalid", "hoist: expected the first ordinary instruction after the phis");
+  llvm::SmallSetVector<llvm::BasicBlock *, 8> preds;
+  for (llvm::BasicBlock *P : llvm::predecessors(B)) {
+    if (!llvm::isa<llvm::BranchInst, llvm::SwitchInst>(P->getTerminator()))
+      return errResponse("invalid", "hoist: incoming edges must be branches or switches");
+    preds.insert(P);
+  }
+  if (preds.empty())
+    return errResponse("invalid", "hoist: the block has no incoming edge");
+
+  llvm::SmallVector<std::pair<llvm::Instruction *, llvm::BasicBlock *>, 8> copies;
+  for (llvm::BasicBlock *P : preds) {
+    // An edge block keeps the instruction off paths that bypass its old block.
+    llvm::BasicBlock *edge = llvm::SplitBlockPredecessors(B, {P}, ".hoist");
+    if (!edge)
+      return errResponse("invalid", "hoist: the incoming edge cannot be split");
+    llvm::Instruction *copy = I.clone();
+    for (llvm::Use &U : copy->operands())
+      if (auto *phi = llvm::dyn_cast<llvm::PHINode>(U.get()); phi && phi->getParent() == B)
+        U.set(phi->getIncomingValueForBlock(edge));
+    copy->insertBefore(edge->getTerminator()->getIterator());
+    copies.emplace_back(copy, edge);
+  }
+  if (!I.getType()->isVoidTy()) {
+    auto *phi = llvm::PHINode::Create(I.getType(), copies.size(), "", I.getIterator());
+    phi->takeName(&I);
+    for (auto [copy, edge] : copies)
+      phi->addIncoming(copy, edge);
+    I.replaceAllUsesWith(phi);
+  }
+  llvm::Module *M = I.getModule();
+  I.eraseFromParent();
+  return checkedResponse(*M);
 }
 
 // The block of F that `ref` names as F prints it, or nullptr.
@@ -315,6 +359,16 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     wi->getParent()->splice(*where == "before" ? wi->getIterator() : std::next(wi->getIterator()),
                             vi->getParent(), vi->getIterator());
     return checkedResponse(*M);
+  }
+
+  if (*op == "hoist") {
+    auto v = args.getString("v");
+    if (!v)
+      return missing("'v'");
+    llvm::Instruction *I = refs.resolveInst(*v);
+    if (!I)
+      return errResponse("not_found", "hoist: unknown instruction");
+    return hoist(*I);
   }
 
   if (*op == "substitute") {

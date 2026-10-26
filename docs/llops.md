@@ -87,6 +87,7 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 | --- | --- | --- |
 | `swap` | `a`, `b` | exchange the positions of two instructions |
 | `move` | `v`, `where`, `w` | move `v` before or after `w` |
+| `hoist` | `v` | copy `v` onto incoming edges and merge any result with a phi |
 | `substitute` | `a`, `b` | every use of `a` becomes `b` |
 | `replace` | `v`, `insts` | redefine `v` with an instruction sequence |
 | `insert` | `where`, `w`, `insts` | insert instructions around `w` |
@@ -103,11 +104,13 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 
 `where` is `"before"` or `"after"`. The terminator cannot be moved, erased or replaced, and nothing can be inserted after it.
 
-`replace` and `insert` take `insts`, an array of instruction lines. The snippet is parsed against the values in scope, so it may use them by reference and define names of its own, which survive the edit.
+`hoist` requires `v` to be the first non-phi instruction in a block with predecessors. Each copy reads the phis' incoming values on its edge, and any result is joined by a phi in the original block.
 
-A snippet may not shadow a name that already exists. `replace` may reuse the name of the value it replaces, and may not use the value itself.
+`replace` and `insert` take instruction lines in the `insts` array, using values in scope and preserving new names.
 
-A snippet may use the module's global variables and call its functions. When a snippet calls an intrinsic that the module does not declare, llops adds the declaration, which is how a snippet can call `llvm.assume`. A snippet cannot name a type the module declares, because it is parsed in a throwaway function that cannot declare one; `set_body` reparses the whole module and can.
+`replace` may reuse the replaced value's name, but its snippet cannot read that value. Other existing names cannot be shadowed.
+
+Snippets may use globals and call functions. llops declares missing intrinsics such as `llvm.assume`. A snippet cannot name a module's types because its temporary parsing function cannot declare them; `set_body` supports them by reparsing the module.
 
 `erase` refuses a value that still has users, leaving the caller to erase or rewrite them first. With `"cascade": true` the operands that become dead go with it, stopping at anything with a side effect; a plain load has none, so a dead one goes.
 

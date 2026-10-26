@@ -27,6 +27,13 @@ export const Op = Type.Union(
   [
     Type.Object({ op: Type.Literal("swap"), a: Ref, b: Ref }),
     Type.Object({ op: Type.Literal("move"), v: Ref, where: Where, w: Ref }),
+    Type.Object(
+      { op: Type.Literal("hoist"), v: Ref },
+      {
+        description:
+          "Copy the first non-phi instruction onto its block's incoming edges and merge any result with a phi.",
+      },
+    ),
     Type.Object({ op: Type.Literal("substitute"), a: Ref, b: Ref }),
     Type.Object(
       { op: Type.Literal("replace"), v: Ref, insts: Insts },

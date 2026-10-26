@@ -194,6 +194,7 @@ export type Attrs = Record<string, unknown>;
 export type EditOp =
   | { op: "swap"; a: Ref; b: Ref }
   | { op: "move"; v: Ref; where: "before" | "after"; w: Ref }
+  | { op: "hoist"; v: Ref }
   | { op: "substitute"; a: Ref; b: Ref }
   | { op: "replace"; v: Ref; insts: string[] }
   | { op: "insert"; where: "before" | "after"; w: Ref; insts: string[] }

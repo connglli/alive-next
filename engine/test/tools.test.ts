@@ -181,6 +181,25 @@ describe.skipIf(!built)("the tool layer", () => {
     expect(copied).toContain("phi i32 [ 0, %entry ]");
   });
 
+  test("tx_edit hoists a header instruction onto its incoming edges", async () => {
+    const looping = await Session.start({
+      dir: join(dir, "hoisted"),
+      src: loop.src,
+      tgt: loop.tgt,
+      llops,
+      checker: new NoMan(),
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    const tools = createProofAssistantTools(looping);
+    await callFrom(tools, "tx_begin", { gid: "g1", side: "src" });
+    const hoisted = await callFrom(tools, "tx_edit", { op: "hoist", v: "#3" });
+    expect(hoisted).toContain("applied, 1 edit so far");
+    expect(hoisted).toContain("phi i1");
+    const committed = await callFrom(tools, "tx_commit", { narrow: false, eager: false });
+    expect(committed).toContain("certified with no solver, g1 src is");
+  });
+
   test("tree_cut needs a value map with tgt_cut, and without it cuts the src alone", async () => {
     expect(await call("tree_cut", { gid: "g1", src_cut: "%2", tgt_cut: "%2" })).toContain(
       "refused: a tgt cut needs a value map",
