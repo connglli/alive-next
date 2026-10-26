@@ -56,6 +56,12 @@ llvm::json::Array flagsOf(const llvm::Instruction &I) {
     if (set)
       flags.push_back(flag);
   };
+  if (const auto *call = llvm::dyn_cast<llvm::CallInst>(&I)) {
+    auto kind = call->getTailCallKind();
+    add(kind == llvm::CallInst::TCK_Tail, "tail");
+    add(kind == llvm::CallInst::TCK_MustTail, "musttail");
+    add(kind == llvm::CallInst::TCK_NoTail, "notail");
+  }
   if (const auto *gep = llvm::dyn_cast<llvm::GEPOperator>(&I)) {
     add(gep->isInBounds(), "inbounds");
     add(!gep->isInBounds() && gep->hasNoUnsignedSignedWrap(), "nusw");

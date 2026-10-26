@@ -75,7 +75,7 @@ The returned module marks each instruction with the comment `; #N`, its [referen
 
 `body[N]` describes instruction `#N`: its `block`, one-line `text`, `opcode`, result `type`, `operands`, `flags`, `form`, and the booleans `commutative` and `phi`. `value` names the result when there is one. A phi also lists its incoming `blocks`.
 
-Calls report their callee as `calls` and their arguments as `args`. `pointer_args` is true when any argument type contains a pointer, including within a vector or aggregate. Operands and arguments use LLVM references or constants.
+`calls` and `args` identify a call's callee and arguments. Its tail marker, if any, appears in `flags` as `tail`, `musttail` or `notail`. `pointer_args` reports whether any argument type contains a pointer, including within a vector or aggregate. Operands and arguments use LLVM references or constants.
 
 `form` prints the instruction without its result name, substituting `poison` for values defined by the function and `%_` for blocks. Instructions differing only in those values or blocks share a form.
 
@@ -119,7 +119,11 @@ A snippet may use the module's global variables and call its functions. When a s
 
 `peel` sends the edges into the loop that `block` heads to a copy of one iteration: each block of the loop, inner loops included, with the copy's back edges going to `block`. The copy's phis keep the entering edges, the header's take the copy's back edges instead, and each phi after the loop takes from the copy what it takes from the loop. It refuses a block that heads no loop and, as `copy_block` does, a value used outside what it copies other than by a phi on an edge from it. The step only reshapes control flow, and a loop peeled one time more than it can run leaves behind a loop that no run enters.
 
-`flags` names instruction flags with `true` or `false`, so the same op puts and removes: `{ "nuw": true }` puts `nuw` on and `{ "nsw": false }` takes `nsw` off. `nuw` and `nsw` apply to `add`, `sub`, `mul`, `shl` and `trunc`, `exact` to the divisions and shifts that carry it, `disjoint` to `or`, `nneg` to `zext` and `uitofp`, and `fast`, `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn` and `reassoc` to floating-point instructions. A flag the instruction cannot carry is refused rather than ignored, so the agent never guesses what the IR keeps.
+`flags` sets each named flag to `true` or `false`: `{ "nuw": true, "nsw": false }` adds `nuw` and removes `nsw`. A flag the instruction cannot carry is refused.
+
+Integer flags are `nuw` and `nsw` on `add`, `sub`, `mul`, `shl` and `trunc`; `exact` on supported divisions and shifts; `disjoint` on `or`; and `nneg` on `zext` and `uitofp`. Floating-point instructions take `fast`, `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn` and `reassoc`.
+
+On a call, `tail` sets or removes the ordinary tail marker. Calls marked `musttail` or `notail` are refused.
 
 `splice` replaces the instructions from `from` to `to` with a copy of instructions from another module. `with` names them as `{ "module": ..., "from": "<ref>", "to": "<ref>" }`. Each range must lie in one block and hold no phi and no terminator. `value_map` gives each value of this module a partner in the other module. Where the copy reads a value from outside its range, it reads that value's partner in this module instead. Where the rest of the body used a replaced value, it uses that value's partner in the copy. If the copy calls a function that only the other module declares, the declaration comes with it.
 

@@ -802,6 +802,13 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
         if (!dj)
           return errResponse("invalid", "flags: 'disjoint' applies to or");
         dj->setIsDisjoint(on);
+      } else if (kind == "tail") {
+        auto *call = llvm::dyn_cast<llvm::CallInst>(vi);
+        if (!call || call->isMustTailCall() ||
+            call->getTailCallKind() == llvm::CallInst::TCK_NoTail)
+          return errResponse("invalid",
+                             "flags: 'tail' applies to a call without musttail or notail");
+        call->setTailCallKind(on ? llvm::CallInst::TCK_Tail : llvm::CallInst::TCK_None);
       } else {
         // The fast-math flags are one word on the instruction: the named flag
         // is set or cleared in a copy that goes back whole.

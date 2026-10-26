@@ -654,6 +654,17 @@ bb2:
     r = self.good(run("edit", {"module": self.PROGRAM, "op": "erase", "v": "#2"}))
     self.assertNotIn("call void @g", r["module"])
 
+  def test_lists_each_call_tail_marker(self):
+    for marker in ("", "tail", "musttail", "notail"):
+      with self.subTest(marker=marker):
+        module = (
+          "declare void @g(i32)\n\ndefine void @f(i32 %x) {\nentry:\n"
+          f"  {marker} call void @g(i32 %x)\n  ret void\n}}\n"
+        )
+        self.assertTrue(self.conforms(module))
+        call = self.good(run("number", {"module": module}))["body"][0]
+        self.assertEqual(call["flags"], [marker] if marker else [])
+
   def test_the_marks_are_comments(self):
     marked = self.good(run("number", {"module": self.PROGRAM}))["module"]
     canon = [self.good(run("canon", {"module": m}))["module"] for m in (marked, self.PROGRAM)]
@@ -1499,6 +1510,34 @@ entry:
 
 
 class TestEditFlags(Case):
+  def test_tail_changes_only_the_call_marker(self):
+    module = """declare i32 @g(i32)
+
+define i32 @f(i32 %x) {
+entry:
+  %v = call i32 @g(i32 noundef %x) #0
+  ret i32 %v
+}
+
+attributes #0 = { nounwind }
+"""
+    marked = self.good(self.edit("flags", module=module, v="v", flags={"tail": True}))["module"]
+    self.assertIn("%v = tail call i32 @g(i32 noundef %x) #0", self.body(marked))
+    plain = self.good(self.edit("flags", module=marked, v="v", flags={"tail": False}))["module"]
+    self.assertEqual(self.canon(plain), self.canon(module))
+
+  def test_tail_refuses_other_markers_and_non_calls(self):
+    self.bad(self.edit("flags", v="m", flags={"tail": True}), "invalid")
+    for marker in ("musttail", "notail"):
+      for on in (True, False):
+        with self.subTest(marker=marker, on=on):
+          module = (
+            "declare void @g(i32)\n\ndefine void @f(i32 %x) {\nentry:\n"
+            f"  {marker} call void @g(i32 %x)\n  ret void\n}}\n"
+          )
+          self.assertTrue(self.conforms(module))
+          self.bad(self.edit("flags", module=module, v="#0", flags={"tail": on}), "invalid")
+
   def test_add_nuw(self):
     module = """define i32 @f(i32 %x) {
 entry:
