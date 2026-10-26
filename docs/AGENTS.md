@@ -12,7 +12,7 @@ One fact, one home. A second copy is how the two drift apart.
 * [docs/llops.md](./llops.md) holds the contract for the native C++ LLVM binary: the JSON-over-stdin/stdout protocol, exit codes, the program shape, value reference syntax (`%slot`, `%name`, `#index`), and every subcommand.
 * [docs/agent.md](./agent.md) holds the Pi agent wiring and runtime: custom tool registration and name prefixes (`run_`, `goal_`, `tx_`, `tree_`), sandbox confinement, execution model, session lifecycle, budget enforcement, system prompt, and provider or model configuration.
 * [config.example.jsonc](../config.example.jsonc) holds the template for machine-local settings: toolchain locations, timeouts, and solver options.
-* [.agents/notes/](../.agents/notes/) holds ephemeral rationale and design explorations: trade-off analyses in `designs/`, implementation plans in `implementations/`, and change records in `commits/` that do not belong in durable documentation.
+* [.agents/notes/](../.agents/notes/) holds ephemeral rationale and design explorations: trade-off analyses in `designs/`, implementation plans in `implementations/`, and change records in `commits/` that do not belong in durable documentation. Each note should be named in format `YYYY-MM-DD-<short-title>.md`. When a note is completed, prefix it with `completed-`. When a note is deprecated, prefix it with `deprecated-`.
 * Source files and tests hold the live implementation, type definitions, and invariants: code comments explain why rather than what, and test suites define executable contracts for components.
 
 ## Writing rules
