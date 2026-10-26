@@ -10,7 +10,7 @@ import type { Session } from "../core/session.ts";
 import type { CutResult } from "../core/state/cuts.ts";
 import type { StrengthenContract } from "../core/state/strengthen.ts";
 import { comparisons, noundefLost, size } from "./facts.ts";
-import { diff, headers, successors } from "./regions.ts";
+import { diff, headers, loopOf, predecessors, successors } from "./regions.ts";
 import { expressionsAt, type Side } from "./relations.ts";
 import { bodies } from "./windows.ts";
 
@@ -36,6 +36,26 @@ export async function copyInto(
     const shared = header && sharedWith(body, header);
     if (!shared || !(await copied(session, gid, side, shared))) break;
   }
+}
+
+/** Rotates each src loop whose header exits: the edges into it get their own copy of it. */
+export async function rotate(session: Session, llops: Llops, gid: string): Promise<void> {
+  for (let left = headers((await bodies(session, llops, gid))[0]).length; left > 0; left--) {
+    const guard = exitingHeader((await bodies(session, llops, gid))[0]);
+    if (!guard || !(await copied(session, gid, "src", guard))) return;
+  }
+}
+
+/** A loop header that exits, with the blocks outside its loop that enter it. */
+function exitingHeader(body: Instruction[]) {
+  const [next, before] = [successors(body), predecessors(body)];
+  for (const block of headers(body)) {
+    const inside = loopOf(next, before, block);
+    const exits = (next.get(block) ?? []).some((to) => !inside.has(to));
+    const preds = (before.get(block) ?? []).filter((from) => !inside.has(from));
+    if (exits && preds.length > 0) return { block, preds };
+  }
+  return undefined;
 }
 
 /** A block the loop at `header` reaches that blocks outside its reach enter too, with those. */

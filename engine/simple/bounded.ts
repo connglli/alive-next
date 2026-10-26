@@ -6,7 +6,7 @@
 import type { Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { copyInto } from "./loops.ts";
-import { headers, predecessors, successors } from "./regions.ts";
+import { headers, loopOf, predecessors, successors } from "./regions.ts";
 import { bodies } from "./windows.ts";
 
 /** The most times a loop is peeled. */
@@ -70,18 +70,4 @@ export function outermost(body: Instruction[]): string[] {
   const [next, before] = [successors(body), predecessors(body)];
   const loops = all.map((header) => loopOf(next, before, header));
   return all.filter((h, k) => !loops.some((inside, j) => j !== k && inside.has(h)));
-}
-
-/** The blocks of the loop at `header`, which reach its back edges without passing it. */
-function loopOf(next: Map<string, string[]>, before: Map<string, string[]>, header: string) {
-  const order = [...next.keys()];
-  const at = order.indexOf(header);
-  const inside = new Set([header]);
-  const todo = order.filter((b, k) => k >= at && next.get(b)?.includes(header));
-  for (let block = todo.pop(); block !== undefined; block = todo.pop()) {
-    if (inside.has(block)) continue;
-    inside.add(block);
-    todo.push(...(before.get(block) ?? []));
-  }
-  return inside;
 }

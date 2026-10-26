@@ -14,6 +14,7 @@ import { caseOn, tested } from "./cases.ts";
 import { type Assumed, balancedPoints, beforePoints, cutAt, cutLoop, quota } from "./cuts.ts";
 import { strengthenAgainst } from "./facts.ts";
 import type { Limits } from "./limits.ts";
+import { rotate } from "./loops.ts";
 import { peel } from "./peel.ts";
 import { refuteFrom, unrolling } from "./refute.ts";
 import { regions } from "./regions.ts";
@@ -73,11 +74,14 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   const [eagerMs, capMs] = [budgets.eagerCheckMs, budgets.checkCapMs];
   const run: Run = { session, llops, limits, eagerMs, capMs, assumed: new Map() };
   await unrolling(session, llops, root, limits.counterexampleMs);
+  if (session.verdict !== "unknown") return session.verdict;
   await dropAttrs(session, llops, root);
   // A loop the tgt no longer has is peeled and cut away first, and what is left is searched.
   const start = limits.steps ? await peelBounded(session, llops, root) : root;
   if (start !== root && (await session.check(start, limits.rootMs)).outcome === "proved")
     return session.verdict;
+  // The loops left are rotated as the optimizer rotates them, so that no stage does.
+  if (limits.steps) await rotate(session, llops, start);
   const { src, tgt } = await session.show(start);
   const walking = limits.stages && limits.steps;
   const stages = walking ? await stagesToward(llops, src.text, tgt.text) : [];

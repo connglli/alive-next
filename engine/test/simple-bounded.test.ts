@@ -1,4 +1,4 @@
-// The loops the tgt no longer has, peeled and cut away before the search.
+// Loops before the search: those the tgt no longer has peeled away, the rest rotated.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,7 +10,8 @@ import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { bounded } from "../examples/bounded.ts";
 import { outermost, peelBounded } from "../simple/bounded.ts";
-import { headers } from "../simple/regions.ts";
+import { rotate } from "../simple/loops.ts";
+import { headers, loopOf, predecessors, successors } from "../simple/regions.ts";
 import { bodies } from "../simple/windows.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
@@ -88,6 +89,20 @@ describe.skipIf(!built)("bounded loops", () => {
     expect(headers(src)).toEqual([]);
     const callee = [...session.tree.goals.values()].find((goal) => goal.role === "callee");
     expect(callee?.status).toBe("proved");
+  });
+
+  test("a loop whose header exits is rotated", async () => {
+    const session = await start(bounded.src, bounded.src);
+    await rotate(session, llops, "g1");
+    const [src] = await bodies(session, llops, "g1");
+    const [header] = headers(src);
+    if (!header) throw new Error("expected a loop");
+    const inside = loopOf(successors(src), predecessors(src), header);
+    expect(
+      successors(src)
+        .get(header)
+        ?.every((to) => inside.has(to)),
+    ).toBe(true);
   });
 
   test("a loop no constant bounds stays", async () => {
