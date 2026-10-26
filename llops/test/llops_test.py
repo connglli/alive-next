@@ -625,7 +625,30 @@ bb2:
     module = self.PROGRAM.replace("call void @g(i32 %0)", "call void @g(i32 poison)")
     body = self.good(run("number", {"module": module}))["body"]
     self.assertEqual((body[2]["calls"], body[2]["args"]), ("@g", ["poison"]))
+    self.assertFalse(body[2]["pointer_args"])
     self.assertNotIn("calls", body[1])
+    self.assertNotIn("pointer_args", body[1])
+
+  def test_lists_pointers_inside_call_argument_types(self):
+    for ty, pointer in (
+      ("i32", False),
+      ("ptr", True),
+      ("<2 x i32>", False),
+      ("<2 x ptr>", True),
+      ("[2 x ptr]", True),
+      ("%scalar", False),
+      ("%nested", True),
+    ):
+      with self.subTest(type=ty):
+        module = (
+          "%scalar = type { i32, double }\n%nested = type { i32, [2 x ptr] }\n"
+          f"declare void @g({ty})\n\ndefine void @f({ty} %x) {{\nentry:\n"
+          f"  call void @g({ty} %x)\n  ret void\n}}\n"
+        )
+        call = self.good(run("number", {"module": module}))["body"][0]
+        self.assertEqual(call["pointer_args"], pointer)
+    empty = "declare void @g()\n\ndefine void @f() {\nentry:\n  call void @g()\n  ret void\n}\n"
+    self.assertFalse(self.good(run("number", {"module": empty}))["body"][0]["pointer_args"])
 
   def test_a_mark_names_what_it_marks(self):
     r = self.good(run("edit", {"module": self.PROGRAM, "op": "erase", "v": "#2"}))

@@ -71,9 +71,13 @@ A module holding an `undef` value is refused with the error code `undef`. Every 
 
 Request `{ "module": "<ir text>" }`, response `{ "ok": true, "module": ..., "body": [ ... ] }`.
 
-The module comes back with each instruction of its function marked `; #N`, the [reference](#value-references) that names it, at the column LLVM writes its own comments. Each mark is what `#N` resolves to, and the marks are comments, so the text still parses as the program it marks.
+The returned module marks each instruction with the comment `; #N`, its [reference](#value-references). The comments leave the program unchanged.
 
-`body` lists the same instructions as data, the one at index N in position N: its `block`, `text` on one line, `opcode`, result `type`, `flags`, `operands` in LLVM's order, whether it is `commutative`, the `value` it defines if it defines one, whether it is a `phi` and the `blocks` a phi's values come from, and for a call, the function it `calls` and its `args`. Operands and arguments are references or constants. The `form` is the text without the result, with `poison` for each operand the function defines and `%_` for each block, which two instructions doing the same to different values or blocks share.
+`body[N]` describes instruction `#N`: its `block`, one-line `text`, `opcode`, result `type`, `operands`, `flags`, `form`, and the booleans `commutative` and `phi`. `value` names the result when there is one. A phi also lists its incoming `blocks`.
+
+Calls report their callee as `calls` and their arguments as `args`. `pointer_args` is true when any argument type contains a pointer, including within a vector or aggregate. Operands and arguments use LLVM references or constants.
+
+`form` prints the instruction without its result name, substituting `poison` for values defined by the function and `%_` for blocks. Instructions differing only in those values or blocks share a form.
 
 ## edit
 

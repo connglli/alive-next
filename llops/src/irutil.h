@@ -149,6 +149,9 @@ std::string printNumbered(llvm::Module &M, const ValueRefs &refs);
 // Whether a call is as outline and detach make it, with nothing on it.
 bool plainCall(const llvm::CallInst &call);
 
+// Whether a type contains a pointer, including inside a vector or an aggregate.
+bool holdsPointer(const llvm::Type *T);
+
 // Why a callee, run in a frame of its own, could act differently than its code
 // did in place in `outer`, or nothing. A window's frame ends before the rest of
 // the body runs, so in one an alloca counts too.

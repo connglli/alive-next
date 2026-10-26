@@ -670,12 +670,11 @@ bool plainCall(const llvm::CallInst &call) {
          !(fp && fp->getFastMathFlags().any());
 }
 
-namespace {
-
-// Whether a value of type `T` holds a pointer, alone or in a vector or an aggregate.
 bool holdsPointer(const llvm::Type *T) {
   return T->isPtrOrPtrVectorTy() || llvm::any_of(T->subtypes(), holdsPointer);
 }
+
+namespace {
 
 // Whether `F` has a frame a pointer could point into: a stack slot or a byval argument.
 bool holdsFrame(const llvm::Function &F) {

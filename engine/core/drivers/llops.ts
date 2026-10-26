@@ -85,6 +85,8 @@ export interface Instruction {
   calls?: string;
   /** For a call, its arguments as references or constants, such as `%3` or `poison`. */
   args?: string[];
+  /** For a call, whether any argument type contains a pointer. */
+  pointer_args?: boolean;
 }
 
 /** The module after a pass of a pipeline that changed it. */

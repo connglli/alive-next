@@ -1,6 +1,7 @@
 #include "number.h"
 
 #include "irutil.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InstIterator.h"
@@ -135,6 +136,8 @@ llvm::json::Object numberCmd(llvm::json::Object &args) {
       for (const llvm::Use &arg : call->args())
         arguments.push_back(shape.refs->print(*arg.get()));
       entry["args"] = std::move(arguments);
+      entry["pointer_args"] = llvm::any_of(
+          call->args(), [](const llvm::Use &arg) { return holdsPointer(arg->getType()); });
     }
     body[*shape.refs->indexOf(I)] = std::move(entry);
   }
