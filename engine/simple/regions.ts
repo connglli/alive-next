@@ -283,20 +283,6 @@ export function successors(body: Instruction[]): Map<string, string[]> {
   return next;
 }
 
-/** The blocks of the loop at `header`, which reach its back edges without passing it. */
-export function loopOf(next: Map<string, string[]>, before: Map<string, string[]>, header: string) {
-  const order = [...next.keys()];
-  const at = order.indexOf(header);
-  const inside = new Set([header]);
-  const todo = order.filter((b, k) => k >= at && next.get(b)?.includes(header));
-  for (let block = todo.pop(); block !== undefined; block = todo.pop()) {
-    if (inside.has(block)) continue;
-    inside.add(block);
-    todo.push(...(before.get(block) ?? []));
-  }
-  return inside;
-}
-
 /** Each block's predecessors: the blocks that name it. */
 export function predecessors(body: Instruction[]): Map<string, string[]> {
   const before = new Map<string, string[]>();
