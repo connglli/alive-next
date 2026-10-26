@@ -150,9 +150,10 @@ std::string printNumbered(llvm::Module &M, const ValueRefs &refs);
 bool plainCall(const llvm::CallInst &call);
 
 // Why a callee, run in a frame of its own, could act differently than its code
-// did in place, or nothing. A window's frame ends before the rest of the body
-// runs, so in one an alloca counts too.
-std::optional<Diag> frameDependence(const llvm::Function &callee, bool window);
+// did in place in `outer`, or nothing. A window's frame ends before the rest of
+// the body runs, so in one an alloca counts too.
+std::optional<Diag> frameDependence(const llvm::Function &callee, const llvm::Function &outer,
+                                    bool window);
 
 // Put a callee's blocks but `skip` back at a call used only by the ret after it.
 bool putBackRest(llvm::CallInst &call, llvm::Function &callee, llvm::Function &F,

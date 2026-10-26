@@ -4777,6 +4777,112 @@ declare i32 @h(i32)
     self.assertTrue(self.conforms(module))
     self.refused("outline", {"module": module, "side": "src", "cut": "%y", "callee": "g"})
 
+  def test_a_tail_call_stays_where_its_pointer_may_point_into_the_frame(self):
+    # alive2 makes the tail call undefined, as %a is a stack slot of @f, while in a
+    # callee %a would arrive as a parameter, which points into no frame of its own.
+    framed = """declare void @h(ptr)
+
+define i32 @f(i32 %x) {
+entry:
+  %a = alloca i32, align 4
+  store i32 %x, ptr %a, align 4
+  br label %next
+
+next:
+  tail call void @h(ptr %a)
+  %v = load i32, ptr %a, align 4
+  ret i32 %v
+}
+"""
+    self.assertTrue(self.conforms(framed))
+    self.refused("outline", {"module": framed, "cut": "#3", "to": "#3", "callee": "r"})
+    self.refused("outline", {"module": framed, "side": "src", "cut": "#3", "callee": "g"})
+    self.refused("detach", {"module": framed, "side": "src", "block": "%next", "callee": "k"})
+    plain = framed.replace("tail call", "call")
+    r = self.good(run("outline", {"module": plain, "cut": "#3", "to": "#3", "callee": "r"}))
+    callee = r["callee"].replace("call void @h", "tail call void @h")
+    self.refused("inline", {"outer": r["outer"], "callee": callee, "callee_name": "r"})
+    k = self.good(run("detach", {"module": plain, "side": "src", "block": "%next", "callee": "k"}))
+    callee = k["callee"].replace("call void @h", "tail call void @h")
+    self.refused(
+      "reattach",
+      {"outer": k["outer"], "callee": callee, "callee_name": "k", "phis": k["phis"]},
+    )
+    # Where nothing can point into the frame, the tail call moves.
+    free = """declare void @h(ptr)
+
+define void @f(ptr %p) {
+entry:
+  %q = getelementptr i8, ptr %p, i64 4
+  tail call void @h(ptr %q)
+  ret void
+}
+"""
+    self.good(run("outline", {"module": free, "side": "src", "cut": "%q", "callee": "g"}))
+
+  def test_a_tail_call_cannot_move_away_from_a_byval_argument(self):
+    module = """declare void @h(ptr)
+
+define void @f(ptr byval(i32) %p) {
+entry:
+  tail call void @h(ptr %p)
+  ret void
+}
+"""
+    self.assertTrue(self.conforms(module))
+    self.refused("outline", {"module": module, "cut": "#0", "to": "#0", "callee": "w"})
+
+  def test_a_tail_call_cannot_hide_a_frame_pointer_inside_a_value(self):
+    for ty, make in (
+      ("<2 x ptr>", "insertelement <2 x ptr> poison, ptr %a, i32 0"),
+      ("{ ptr, i32 }", "insertvalue { ptr, i32 } poison, ptr %a, 0"),
+    ):
+      with self.subTest(type=ty):
+        module = (
+          f"declare void @h({ty})\n\ndefine void @f() {{\nentry:\n"
+          f"  %a = alloca i8\n  %v = {make}\n  tail call void @h({ty} %v)\n  ret void\n}}\n"
+        )
+        self.assertTrue(self.conforms(module))
+        self.refused("outline", {"module": module, "cut": "#2", "to": "#2", "callee": "w"})
+
+  def test_unfold_keeps_tail_calls_in_the_frame_they_observe(self):
+    callee = """declare void @h(ptr)
+declare void @k.ih(ptr)
+
+define void @k(ptr %p) {
+entry:
+  tail call void @h(ptr %p)
+  call void @k.ih(ptr %p)
+  ret void
+}
+"""
+    outer = """declare void @k(ptr)
+
+define void @f() {
+entry:
+  %a = alloca i8
+  call void @k(ptr %a)
+  ret void
+}
+"""
+    self.refused("unfold", {"module": outer, "callee": callee, "hypothesis": "k.ih"})
+    framed = callee.replace("entry:\n", "entry:\n  %a = alloca i8\n")
+    framed = framed.replace("@h(ptr %p)", "@h(ptr %a)")
+    self.refused("unfold", {"module": framed, "hypothesis": "k.ih"})
+
+  def test_tail_calls_without_a_frame_pointer_still_move(self):
+    for ty, value in (("ptr", "null"), ("ptr", "@global"), ("i32", "7")):
+      with self.subTest(type=ty, value=value):
+        module = (
+          f"@global = global i8 0\n\ndeclare void @h({ty})\n\ndefine void @f() {{\nentry:\n"
+          f"  %a = alloca i8\n  tail call void @h({ty} {value})\n  ret void\n}}\n"
+        )
+        half = self.good(run("outline", {"module": module, "cut": "#1", "to": "#1", "callee": "w"}))
+        back = self.good(
+          run("inline", {"outer": half["outer"], "callee": half["callee"], "callee_name": "w"})
+        )
+        self.assertEqual(self.canon(back["module"]), self.canon(module))
+
   def test_a_window_does_not_allocate(self):
     self.refused("outline", {"module": ALLOCATES, "cut": "%a", "to": "%v", "callee": "r"})
 

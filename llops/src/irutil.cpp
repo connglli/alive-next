@@ -672,9 +672,22 @@ bool plainCall(const llvm::CallInst &call) {
 
 namespace {
 
+// Whether a value of type `T` holds a pointer, alone or in a vector or an aggregate.
+bool holdsPointer(const llvm::Type *T) {
+  return T->isPtrOrPtrVectorTy() || llvm::any_of(T->subtypes(), holdsPointer);
+}
+
+// Whether `F` has a frame a pointer could point into: a stack slot or a byval argument.
+bool holdsFrame(const llvm::Function &F) {
+  auto byval = [](const llvm::Argument &arg) { return arg.hasByValAttr(); };
+  auto slot = [](const llvm::Instruction &I) { return llvm::isa<llvm::AllocaInst>(I); };
+  return llvm::any_of(F.args(), byval) || llvm::any_of(llvm::instructions(F), slot);
+}
+
 // What an instruction of a callee depends on that the callee does not share
-// with the code around its call, or nothing.
-std::optional<std::string> frameHazard(const llvm::Instruction &I, bool window) {
+// with the code around its call, or nothing. `framed` says whether the code had
+// a frame a pointer could point into.
+std::optional<std::string> frameHazard(const llvm::Instruction &I, bool window, bool framed) {
   static const std::string ownFrame = ", and a callee has a frame of its own";
   static const std::string variadic =
       ", which works on variadic arguments, and a callee is passed none";
@@ -689,6 +702,15 @@ std::optional<std::string> frameHazard(const llvm::Instruction &I, bool window) 
   if (call->isMustTailCall())
     return "holds a musttail call, which must match the signature of the function it is in, "
            "and a callee has a signature of its own";
+  // alive2 makes a tail call undefined where a pointer it passes points into the
+  // frame the call runs in, which a pointer into the code's frame no longer does
+  // once the call runs in a callee.
+  auto variable = [](const llvm::Use &arg) {
+    return !llvm::isa<llvm::Constant>(arg.get()) && holdsPointer(arg->getType());
+  };
+  if (framed && call->isTailCall() && llvm::any_of(call->args(), variable))
+    return "holds a tail call passing a pointer, which may point into the frame the code had" +
+           ownFrame;
   if (call->hasInAllocaArgument() || call->getOperandBundle(llvm::LLVMContext::OB_preallocated))
     return "passes an inalloca or preallocated argument, which belongs to the frame that makes "
            "the call" +
@@ -718,9 +740,11 @@ std::optional<std::string> frameHazard(const llvm::Instruction &I, bool window) 
 
 } // namespace
 
-std::optional<Diag> frameDependence(const llvm::Function &callee, bool window) {
+std::optional<Diag> frameDependence(const llvm::Function &callee, const llvm::Function &outer,
+                                    bool window) {
+  bool framed = holdsFrame(outer) || holdsFrame(callee);
   for (const auto &I : llvm::instructions(callee))
-    if (auto what = frameHazard(I, window))
+    if (auto what = frameHazard(I, window, framed))
       return Diag{Diag::Severity::Error, "frame_dependent",
                   "'@" + callee.getName().str() + "' " + *what};
   return std::nullopt;

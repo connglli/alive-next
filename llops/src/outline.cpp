@@ -256,7 +256,7 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
     live.push_back(refs.print(*I));
 
   llvm::Function *callee = moveOut(M, *BB, window, inside, *calleeName, params, out);
-  if (auto d = frameDependence(*callee, /*window=*/true))
+  if (auto d = frameDependence(*callee, *F, /*window=*/true))
     return errResponse(d->code, d->message);
   for (unsigned i = 0; i < paramInfo.size(); ++i)
     (*paramInfo[i].getAsObject())["param"] =
@@ -329,7 +329,7 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
                                             "' as the callee defines it");
   // Only a call the function does not return right after is a window.
   bool window = !llvm::isa<llvm::ReturnInst>(call->getNextNode());
-  if (auto d = frameDependence(*callee, window))
+  if (auto d = frameDependence(*callee, *F, window))
     return errResponse(d->code, d->message);
   auto slots = slotParams(args, callee->arg_size());
   if (!slots)

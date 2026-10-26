@@ -416,7 +416,7 @@ llvm::json::Object moveRegion(llvm::json::Object &args, llvm::Module &M, llvm::F
   std::string hypothesis = name.str() + ".ih";
   bool recurses = false;
   llvm::Function *k = cutOut(M, F, region, params, dead, name, hypothesis, recurses);
-  if (auto d = frameDependence(*k, /*window=*/false))
+  if (auto d = frameDependence(*k, F, /*window=*/false))
     return errResponse(d->code, d->message);
   for (unsigned i = 0; i < paramInfo.size(); ++i)
     (*paramInfo[i].getAsObject())["param"] = "%" + k->getArg(i)->getName().str();
@@ -530,7 +530,7 @@ llvm::json::Object reattachCmd(llvm::json::Object &args) {
   if (!decl || decl->getFunctionType() != type)
     return errResponse("type_mismatch", "the outer does not declare '@" + name->str() +
                                             "' as the callee defines it");
-  if (auto d = frameDependence(*K, /*window=*/false))
+  if (auto d = frameDependence(*K, *F, /*window=*/false))
     return errResponse(d->code, d->message);
   auto listed = phiParams(*phiList, K->arg_size());
   if (!listed)
@@ -747,7 +747,7 @@ llvm::json::Object unfoldCmd(llvm::json::Object &args) {
   if (!loop->getAttributes().isEmpty() || !decl->getAttributes().isEmpty())
     return errResponse("invalid", "the copies would lose the attributes of " + defined +
                                       " or of its declaration " + fn);
-  if (auto d = frameDependence(*loop, /*window=*/false))
+  if (auto d = frameDependence(*loop, F, /*window=*/false))
     return errResponse(d->code, d->message);
   for (auto &I : llvm::instructions(*loop))
     if (I.hasMetadata(llvm::LLVMContext::MD_alias_scope) ||

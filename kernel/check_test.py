@@ -2342,6 +2342,37 @@ declare i32 @k.ih(i32)
     self.built.goals["g1"]["start"]["src"] = step["from"]
     self.refused(self.built.write(), "allocates stack memory")
 
+  def test_a_tail_window_cannot_hide_its_callers_frame(self):
+    # The alloca proves the window's noundef precondition, but its pointer is
+    # local only in the whole function, where the added tail makes the call UB.
+    plain = """declare void @h(ptr)
+
+define i32 @f(i32 %x) {
+entry:
+  %a = alloca i32, align 4
+  store i32 %x, ptr %a, align 4
+  call void @h(ptr %a)
+  %v = load i32, ptr %a, align 4
+  ret i32 %v
+}
+"""
+    step = self.windowed(plain, plain, "#2")
+
+    def marked(digest: str) -> str:
+      text = self.text(digest)
+      changed = text.replace("call void @h", "tail call void @h")
+      self.assertNotEqual(changed, text)
+      return self.built.program(canonical(changed))
+
+    # Forge the target halves directly: an untrusted writer need not use outline.
+    step["to"] = marked(step["to"])
+    step["window"]["to"] = marked(step["window"]["to"])
+    step["window"]["preconditions"] = {0: {"noundef": True}}
+    goal = self.built.goals["g1"]
+    goal["start"]["tgt"] = step["to"]
+    goal["end"] = {"src": step["to"], "tgt": step["to"]}
+    self.refused(self.built.write(), "holds a tail call passing a pointer")
+
   def test_a_step_of_a_kind_the_checker_does_not_know(self):
     pair = {"src": self.src, "tgt": self.tgt}
     self.built.goal("g1", pair, pair, [{"kind": "trust-me"}], {"kind": "check"})
