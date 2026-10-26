@@ -55,6 +55,46 @@ const running = await llubi
   .then((line) => line.length > 0)
   .catch(() => false);
 
+/** A branch and a select whose products feed calls in unmatched blocks. */
+const PRODUCT = {
+  src: `define void @f(i1 %c, i32 %x, i32 %y, i32 %z) {
+entry:
+  br i1 %c, label %other, label %join
+
+other:
+  br label %join
+
+join:
+  %p = phi i32 [ %x, %entry ], [ %y, %other ]
+  %m = mul i32 %p, %z
+  %r = call i32 @h(i32 %m)
+  br label %done
+
+done:
+  call void @g(i32 %r, i32 %p)
+  ret void
+}
+
+declare i32 @h(i32)
+declare void @g(i32, i32)
+`,
+  tgt: `define void @f(i1 %c, i32 %x, i32 %y, i32 %z) {
+entry:
+  %p = select i1 %c, i32 %y, i32 %x
+  %m = mul i32 %p, %z
+  %r = call i32 @h(i32 %m)
+  br label %done
+
+done:
+  call void @g(i32 %r, i32 %p)
+  ret void
+}
+
+declare i32 @h(i32)
+declare void @g(i32, i32)
+`,
+};
+
 let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "alive-next-peel-"));
@@ -215,6 +255,21 @@ declare void @llvm.assume(i1 noundef)
     expect(beforePoints(...(await bodies(session, llops, "g1")))).toEqual([["#3", "#3"]]);
   });
 
+  test("unmatched operations with different operands do not become cut points", async () => {
+    const tgt = PRODUCT.tgt.replace("mul i32 %p, %z", "mul i32 %y, %z");
+    const session = await start(PRODUCT.src, tgt);
+    expect(beforePoints(...(await bodies(session, llops, "g1")))).toEqual([]);
+  });
+
+  test("unmatched operations with several possible partners do not become cut points", async () => {
+    const tgt = PRODUCT.tgt.replace(
+      "%r = call i32 @h(i32 %m)",
+      "%n = mul i32 %p, %z\n  %r = call i32 @h(i32 %n)",
+    );
+    const session = await start(PRODUCT.src, tgt);
+    expect(beforePoints(...(await bodies(session, llops, "g1")))).toEqual([]);
+  });
+
   test("a cut that outside code joins below it is made at the join first", async () => {
     // A cut before the second multiply reaches the return, which the early exit enters too.
     const src = `define i32 @f(i1 %c, i32 %x, i32 %y) {
@@ -321,6 +376,21 @@ function statuses(session: Session, goals: string[]) {
 }
 
 describe.skipIf(!solving || !running)("cuts with alive-tv", () => {
+  test("cuts before a product in unmatched blocks using its paired operands", async () => {
+    const session = await solved("operands", PRODUCT.src, PRODUCT.tgt);
+    const [src, tgt] = await bodies(session, llops, "g1");
+    const points = beforePoints(src, tgt);
+    const product = (body: typeof src) => `#${body.findIndex((i) => i.opcode === "mul")}`;
+    expect(points).toEqual([[product(src), product(tgt)]]);
+    const point = points[0];
+    if (!point) throw new Error("expected a cut before the product");
+    const halves = await cutAt(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false }, point);
+    if (!halves) throw new Error("expected a cut");
+    for (const gid of [halves.outer, halves.callee])
+      expect((await session.check(gid)).outcome).toBe("proved");
+    expect(session.verdict).toBe("verified");
+  });
+
   test("a cut passes what the analyses know to its callee", async () => {
     // The tgt's callee adds nuw nsw to the value it is passed, which is safe
     // only in the range that the outer's mask leaves.

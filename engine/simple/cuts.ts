@@ -345,12 +345,24 @@ export async function cutLoop(
  */
 export function beforePoints(src: Instruction[], tgt: Instruction[]): [string, string][] {
   const { regions, pairs } = diff(src, tgt);
-  // Instructions both sides apply: partners outside the regions, or values the diff pairs.
+  // Match through the diff first, then through the form and paired operands.
   const shared = new Map(partners(src, tgt, regions));
   const at = new Map(tgt.flatMap((i, j) => (i.value ? [[i.value, j] as const] : [])));
+  const defined = new Set(src.flatMap((i) => i.value ?? []));
   src.forEach((i, k) => {
     const j = at.get(pairs.get(i.value ?? "") ?? "");
     if (j !== undefined) shared.set(k, j);
+    if (shared.has(k) || !expensive(i)) return;
+    const reads = i.operands.map((value) => (defined.has(value) ? pairs.get(value) : value));
+    const matches = tgt.flatMap((other, n) =>
+      i.form === other.form &&
+      reads.length === other.operands.length &&
+      other.operands.every((value, m) => value === reads[m])
+        ? [n]
+        : [],
+    );
+    const only = matches.length === 1 ? matches[0] : undefined;
+    if (only !== undefined) shared.set(k, only);
   });
   // With only the goal's assumptions before it, a cut leaves the goal as its callee.
   const own = firstOwn(src);
