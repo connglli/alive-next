@@ -553,6 +553,11 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
         llvm::RemapInstruction(&I, vmap, flags);
         llvm::RemapDbgRecordRange(M, I.getDbgRecordRange(), vmap, flags);
       }
+    // A copy shares no loop ID with its block, or a cut between them could not put
+    // its halves back together.
+    llvm::Instruction *term = copy->getTerminator();
+    if (llvm::MDNode *id = term->getMetadata(llvm::LLVMContext::MD_loop))
+      term->setMetadata(llvm::LLVMContext::MD_loop, freshLoopID(id));
     for (llvm::BasicBlock *P : from)
       P->getTerminator()->replaceSuccessorWith(B, copy);
     // Each successor once: its phis hold an entry for each edge from the block, which

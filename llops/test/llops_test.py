@@ -871,6 +871,18 @@ class TestEditCopyBlock(Case):
   def test_an_unknown_block_is_refused(self):
     self.bad(self.edit("copy_block", module=F_JOINED, block="%nope", preds=["%a"]), "not_found")
 
+  def test_the_copy_of_a_latch_gets_a_loop_id_of_its_own(self):
+    module = (
+      F_SHARED_EXIT.replace(
+        "br i1 %c, label %loop, label %exit", "br i1 %c, label %loop, label %exit, !llvm.loop !0"
+      )
+      + '\n!0 = distinct !{!0, !1}\n!1 = !{!"llvm.loop.mustprogress"}\n'
+    )
+    r = self.good(self.edit("copy_block", module=module, block="%loop", preds=["%loop"]))
+    ids = re.findall(r"label %exit, !llvm.loop (!\d+)", r["module"])
+    self.assertEqual(len(set(ids)), 2)
+    self.assertEqual(r["module"].count('!{!"llvm.loop.mustprogress"}'), 1)
+
   def test_the_copy_s_debug_information_names_the_copy_s_values(self):
     module = (
       F_JOINED.replace(
