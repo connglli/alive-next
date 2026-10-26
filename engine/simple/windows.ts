@@ -232,6 +232,11 @@ export function bodyOf(module: string): string {
   return lines.slice(start, lines.indexOf("}", start)).join("\n");
 }
 
+/** `text` without loop IDs, which alive2 ignores and LLVM may leave on two loops at once. */
+export function withoutLoopIds(text: string): string {
+  return text.replace(/, !llvm\.loop ![0-9]+/g, "");
+}
+
 /**
  * The window widened back to the earliest instruction, at or after `floor`,
  * that defines a value it reads.

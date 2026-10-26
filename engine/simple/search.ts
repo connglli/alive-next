@@ -18,7 +18,7 @@ import { peel } from "./peel.ts";
 import { refuteFrom, unrolling } from "./refute.ts";
 import { regions } from "./regions.ts";
 import { stagesToward, stepRules } from "./rewrite.ts";
-import { bodies, bodyOf, stepWindows } from "./windows.ts";
+import { bodies, bodyOf, stepWindows, withoutLoopIds } from "./windows.ts";
 
 /** What a search works with. */
 interface Run {
@@ -75,6 +75,7 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   await unrolling(session, llops, root, limits.counterexampleMs);
   if (session.verdict !== "unknown") return session.verdict;
   await dropAttrs(session, llops, root);
+  await dropLoopIds(session, root);
   // A loop the tgt no longer has is peeled and cut away first, and what is left is searched.
   const start = limits.steps ? await peelBounded(session, llops, root) : root;
   if (start !== root && (await session.check(start, limits.rootMs)).outcome === "proved")
@@ -112,6 +113,18 @@ async function dropAttrs(session: Session, llops: Llops, gid: string) {
     return;
   }
   await session.commit({ eager: false });
+}
+
+/** Drops the tgt's loop IDs in a step of its own, which `reshaped` certifies. */
+async function dropLoopIds(session: Session, gid: string) {
+  const body = bodyOf((await session.show(gid)).tgt.text);
+  if (withoutLoopIds(body) === body) return;
+  await session.begin(gid, "tgt");
+  if ((await session.edit({ op: "set_body", body: withoutLoopIds(body) })).kind !== "applied") {
+    await session.abort();
+    return;
+  }
+  await session.commit({ narrow: false, eager: false });
 }
 
 /** Acts on the top goal's answer: a proof closes it, a refutation repairs, goals stack. */

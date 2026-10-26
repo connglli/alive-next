@@ -302,6 +302,40 @@ entry:
     expect(jumps).toHaveLength(1);
   });
 
+  test("drops the tgt's loop IDs, which two of its loops share", async () => {
+    const tgt = `define i32 @f(i32 %n) {
+entry:
+  br label %a
+
+a:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %a ]
+  %i.next = add i32 %i, 1
+  %c = icmp slt i32 %i.next, %n
+  br i1 %c, label %a, label %b, !llvm.loop !0
+
+b:
+  %j = phi i32 [ 0, %a ], [ %j.next, %b ]
+  %j.next = add i32 %j, 1
+  %d = icmp slt i32 %j.next, %n
+  br i1 %d, label %b, label %e, !llvm.loop !0
+
+e:
+  ret i32 %j.next
+}
+
+!0 = distinct !{!0, !1}
+!1 = !{!"llvm.loop.mustprogress"}
+`;
+    const src = tgt.replace("%i.next = add i32", "%i.next = add nsw i32");
+    const session = await start(
+      src,
+      tgt,
+      stub(() => false),
+    );
+    await search(session, llops, { ...limits, cuts: 0 });
+    expect((await session.show("g1")).tgt.text).not.toContain("!llvm.loop");
+  });
+
   test("interposes a stage alive2 cannot decide a jump to, though nothing loops", async () => {
     const stages = await llops.pipelineStages(SPILLED);
     if (!stages.ok) throw new Error(stages.message);

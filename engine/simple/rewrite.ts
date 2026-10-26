@@ -5,7 +5,7 @@
 import type { Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { distance } from "./regions.ts";
-import { bodyOf } from "./windows.ts";
+import { bodyOf, withoutLoopIds } from "./windows.ts";
 
 /** Steps the src of goal `gid` by the verified rules, if together they bring it closer. */
 export async function stepRules(session: Session, llops: Llops, gid: string) {
@@ -33,9 +33,10 @@ export async function stagesToward(llops: Llops, src: string, tgt: string) {
   let [best, end] = [await measured(llops, src, tgt), 0];
   for (const stage of run.ok ? run.stages : []) {
     const canon = await llops.canon(stage.module);
-    if (!canon.ok || bodyOf(canon.module) === bodyOf(stages.at(-1) ?? src)) continue;
-    stages.push(canon.module);
-    const far = await measured(llops, canon.module, tgt);
+    const module = canon.ok ? withoutLoopIds(canon.module) : "";
+    if (!canon.ok || bodyOf(module) === bodyOf(stages.at(-1) ?? src)) continue;
+    stages.push(module);
+    const far = await measured(llops, module, tgt);
     if (far <= best) [best, end] = [far, stages.length];
   }
   return stages.slice(0, end);
