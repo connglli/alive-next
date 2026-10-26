@@ -235,6 +235,27 @@ SEEDS = [
     "declare i32 @h(i32)\n\n",
   ),
   Seed(
+    "nofree_call",
+    ["i32 %x"],
+    "i32",
+    "  %v = call i32 @h(i32 %x)\n  ret i32 %v",
+    "declare i32 @h(i32) nofree\n\n",
+  ),
+  Seed(
+    "abort",
+    ["ptr %p"],
+    "void",
+    "  store i32 0, ptr %p, align 4\n  call void @abort()\n  unreachable",
+    "declare void @abort() nofree noreturn\n\n",
+  ),
+  Seed(
+    "realloc",
+    ["ptr %p"],
+    "void",
+    "  %q = load ptr, ptr %p, align 8\n  %r = call ptr @realloc(ptr %q, i64 8)\n  ret void",
+    "declare ptr @realloc(ptr, i64) nofree\n\n",
+  ),
+  Seed(
     "free",
     ["ptr %p"],
     "void",
@@ -319,6 +340,7 @@ FN_ATTRS = [
   "memory(readwrite, argmem: none)",
   "memory(read, argmem: readwrite)",
   "nofree",
+  "noreturn",
   "willreturn",
 ]
 PARAM_ATTRS = ["readonly", "writeonly", "readnone", "captures(none)"]
@@ -327,6 +349,7 @@ SETS = [
   ("nofree willreturn memory(none)", "readnone captures(none)"),
   ("nofree willreturn memory(argmem: read)", "readonly captures(none)"),
   ("nofree willreturn memory(argmem: readwrite)", "captures(none)"),
+  ("nofree noreturn", "captures(none)"),
 ]
 
 
@@ -392,6 +415,9 @@ REAL = {
   "days": "int days_in_month(int m, int leap) {"
   " static const int d[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};"
   " return d[(unsigned)(m - 1) % 12] + (m == 2 && leap); }",
+  "at": "int at(const int *a, int n, int i) { if (i >= n) __builtin_abort(); return a[i]; }",
+  "fail": "void exit(int) __attribute__((noreturn));"
+  " void fail(int *seen, int code) { *seen = code; if (code) __builtin_abort(); exit(0); }",
   "before": "int before(const int *a, const int *b) { return a < b; }",
   "advance": "const int *advance(const int *p, int n) { return p + n; }",
   "list_sum": "struct node { int v; struct node *next; };"
@@ -421,7 +447,7 @@ def compiled(source: str, flags: list[str]) -> str:
 
 
 PARAM_CHECKED = re.compile(r" (?:readonly|writeonly|readnone|captures\(none\))(?=[ ,)])")
-FN_CHECKED = re.compile(r" (?:nofree|willreturn|memory\([^)]*\))(?= |})")
+FN_CHECKED = re.compile(r" (?:nofree|noreturn|willreturn|memory\([^)]*\))(?= |})")
 
 
 def split(define: str) -> tuple[str, list[str], str]:
@@ -540,6 +566,13 @@ class TestRespected(Case):
       "a read through a writeonly pointer": ("load_arg", "", {0: "writeonly"}),
       "a read through a readnone pointer": ("load_arg", "", {0: "readnone"}),
       "a free under nofree": ("free_loaded", "nofree", {}),
+      "a realloc under nofree, though the call is nofree": ("realloc", "nofree", {}),
+      "a return under noreturn": ("alloca", "noreturn", {}),
+      "a store through an argument under memory(readwrite, argmem: none)": (
+        "store_arg",
+        "memory(readwrite, argmem: none)",
+        {},
+      ),
       "a call that may not return under willreturn": ("unknown_call", "willreturn", {}),
       "a memset of a global under memory(argmem: readwrite)": (
         "memset_global",

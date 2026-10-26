@@ -4513,6 +4513,8 @@ class TestRespected(Case):
       ("writeonly ", "", "  %v = load i32, ptr %p, align 4\n"),
       ("captures(none) ", "", "  %c = icmp eq ptr %p, null\n"),
       ("", "nofree", "  call void @g()\n"),
+      ("", "noreturn", ""),
+      ("", "memory(readwrite, argmem: none)", "  store i32 1, ptr %p, align 4\n"),
       ("", "willreturn", "  call void @llvm.seh.scope.begin()\n"),
       ("", "memory(argmem: read)", "  %v = load volatile i32, ptr %p, align 4\n"),
       ("", "memory(argmem: write)", "  store atomic i32 1, ptr %p seq_cst, align 4\n"),
@@ -4552,6 +4554,95 @@ entry:
 """
     held = self.marked(plain, "%x) {", "%x) willreturn {")
     self.assertTrue(self.answer(plain, held)["respected"])
+
+  def test_noreturn_holds_where_nothing_returns(self):
+    plain = """declare void @abort()
+
+define void @f(i1 %c) {
+entry:
+  br i1 %c, label %stop, label %spin
+
+stop:
+  call void @abort()
+  unreachable
+
+spin:
+  br label %spin
+}
+"""
+    held = self.marked(plain, "(i1 %c) {", "(i1 %c) noreturn {")
+    self.assertTrue(self.answer(plain, held)["respected"])
+    returning = self.marked(READ_LOOP, "%n) {", "%n) noreturn {")
+    self.assertEqual(self.answer(READ_LOOP, returning)["why"], "a return, which noreturn forbids")
+
+  def test_a_call_under_nofree_frees_nothing(self):
+    plain = """declare void @abort() nofree noreturn
+
+declare void @g()
+
+declare ptr @realloc(ptr, i64) nofree
+
+define void @f(ptr %p, i1 %c) {
+entry:
+  br i1 %c, label %stop, label %done
+
+stop:
+  call void @abort()
+  unreachable
+
+done:
+  ret void
+}
+"""
+    held = self.marked(plain, "%c) {", "%c) nofree {")
+    self.assertTrue(self.answer(plain, held)["respected"])
+    # alive2 makes a realloc undefined in a nofree function even when the call is nofree.
+    for call in ["call void @g()", "%q = call ptr @realloc(ptr %p, i64 8)"]:
+      with self.subTest(call):
+        pair = [self.marked(m, "done:\n", f"done:\n  {call}\n") for m in (plain, held)]
+        self.assertIn("a call that may free memory", self.answer(*pair)["why"])
+
+  def test_a_global_is_other_memory(self):
+    plain = """@G = global i32 0
+
+define void @f(ptr %p) {
+entry:
+  store i32 1, ptr @G, align 4
+  ret void
+}
+"""
+    held = self.marked(plain, "(ptr %p) {", "(ptr %p) memory(readwrite, argmem: none) {")
+    self.assertTrue(self.answer(plain, held)["respected"])
+    other = self.marked(held, "memory(readwrite, argmem: none)", "memory(argmem: readwrite)")
+    self.assertFalse(self.answer(plain, other)["respected"])
+
+  def test_assume_touches_no_memory(self):
+    plain = """declare void @llvm.assume(i1)
+
+define i32 @f(ptr %p, i32 %x) {
+entry:
+  %c = icmp ult i32 %x, 10
+  call void @llvm.assume(i1 %c)
+  %v = load i32, ptr %p, align 4
+  ret i32 %v
+}
+"""
+    held = self.marked(plain, "%x) {", "%x) memory(argmem: read) {")
+    self.assertTrue(self.answer(plain, held)["respected"])
+
+  def test_only_attributes_that_follow_a_pointer_watch_its_uses(self):
+    plain = """define i64 @f(ptr %p) {
+entry:
+  %i = ptrtoint ptr %p to i64
+  ret i64 %i
+}
+"""
+    held = self.marked(plain, "(ptr %p) {", "(ptr %p) nofree {")
+    self.assertTrue(self.answer(plain, held)["respected"])
+    for marked in ["(ptr %p) memory(none) {", "(ptr captures(none) %p) {"]:
+      with self.subTest(marked):
+        held = self.marked(plain, "(ptr %p) {", marked)
+        self.assertIn("more than an address", self.answer(plain, held)["why"])
 
   def test_an_argument_pointer_stored_as_a_value(self):
     plain = """define void @f(ptr %p) {
@@ -4595,6 +4686,11 @@ entry:
     edited = self.good(run("edit", {"module": held, "op": "drop_attrs"}))["module"]
     f = self.good(run("validate", {"module": edited}))["functions"]["f"]
     self.assertEqual(f["signature"], "noundef i32(ptr noundef nonnull, i32)")
+
+  def test_drop_attrs_removes_noreturn(self):
+    held = "declare void @abort()\n\ndefine void @f() noreturn {\nentry:\n  call void @abort()\n"
+    edited = self.good(run("edit", {"module": held + "  unreachable\n}\n", "op": "drop_attrs"}))
+    self.assertEqual(self.good(run("validate", {"module": edited["module"]}))["body_attrs"], [])
 
   def test_both_modules_are_needed(self):
     self.bad(run("respected", {"before": READ_LOOP}), "bad_request")

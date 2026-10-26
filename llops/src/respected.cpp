@@ -36,16 +36,26 @@ bool capturesNone(const llvm::Function &F, unsigned k) {
   return captures.isValid() && llvm::capturesNothing(captures.getCaptureInfo());
 }
 
+// Whether parameter `k` of `F` has an attribute this check reads.
+bool attributed(const llvm::Function &F, unsigned k) {
+  auto has = [&](Attr::AttrKind kind) { return F.hasParamAttribute(k, kind); };
+  return capturesNone(F, k) || llvm::any_of(kParamKinds, has);
+}
+
+// Whether `F` has a memory attribute that leaves some memory out.
+bool limitsMemory(const llvm::Function &F) {
+  return F.getMemoryEffects() != llvm::MemoryEffects::unknown();
+}
+
 // Whether `F` has an attribute this check reads.
 bool checksAny(const llvm::Function &F) {
-  bool memory = F.getMemoryEffects() != llvm::MemoryEffects::unknown();
-  if (memory || F.hasFnAttribute(Attr::NoFree) || F.hasFnAttribute(Attr::WillReturn))
+  const Attr::AttrKind kinds[] = {Attr::NoFree, Attr::NoReturn, Attr::WillReturn};
+  auto has = [&](Attr::AttrKind kind) { return F.hasFnAttribute(kind); };
+  if (limitsMemory(F) || llvm::any_of(kinds, has))
     return true;
-  for (unsigned k = 0; k < F.arg_size(); ++k) {
-    auto has = [&](Attr::AttrKind kind) { return F.hasParamAttribute(k, kind); };
-    if (capturesNone(F, k) || llvm::any_of(kParamKinds, has))
+  for (unsigned k = 0; k < F.arg_size(); ++k)
+    if (attributed(F, k))
       return true;
-  }
   return false;
 }
 
@@ -84,6 +94,10 @@ bool allows(const llvm::Function &F, const llvm::Value *root, bool write) {
     llvm::ModRefInfo how = effects.getModRef(where);
     return write ? llvm::isModSet(how) : llvm::isRefSet(how);
   };
+  // alive2 counts an access as argument memory when its pointer comes from an
+  // argument, as LangRef does, so a pointer from a global reaches other memory.
+  if (global)
+    return lets(llvm::IRMemLocation::Other);
   auto *arg = llvm::dyn_cast<llvm::Argument>(root);
   if (!arg)
     return lets(llvm::IRMemLocation::ArgMem) && lets(llvm::IRMemLocation::Other);
@@ -102,13 +116,54 @@ Why escapes(const llvm::Argument &arg) {
   return std::nullopt;
 }
 
+// Whether alive2 takes `call` for a realloc, which in a nofree function it makes
+// undefined on a pointer other than null or a stack slot, whatever the call's own
+// attributes say.
+bool reallocates(const llvm::CallBase &call) {
+  Attr kind = call.getFnAttr(Attr::AllocKind);
+  if (kind.isValid() &&
+      (kind.getAllocKind() & llvm::AllocFnKind::Realloc) != llvm::AllocFnKind::Unknown)
+    return true;
+  const llvm::Function *callee = call.getCalledFunction();
+  return callee && llvm::is_contained({"realloc", "reallocf", "vec_realloc"}, callee->getName());
+}
+
+// Whether `call` touches no memory: an intrinsic whose own table, not its
+// declaration, says so, or llvm.assume, which alive2 makes an assumption.
+bool touchesNothing(const llvm::CallBase &call) {
+  const llvm::Function *callee = call.getCalledFunction();
+  auto id = callee ? callee->getIntrinsicID() : llvm::Intrinsic::not_intrinsic;
+  if (id == llvm::Intrinsic::assume)
+    return true;
+  return id != llvm::Intrinsic::not_intrinsic &&
+         llvm::Intrinsic::getFnAttributes(call.getContext(), id)
+             .getMemoryEffects()
+             .doesNotAccessMemory();
+}
+
+// Why `call` may break an attribute of `F` this check reads, or nothing. alive2
+// reads memory(...) at the function's own accesses and nofree at its own frees,
+// and LangRef over what its callees do too, so a call passes where both keep it.
+Why called(const llvm::Function &F, const llvm::CallBase &call) {
+  bool untouched = touchesNothing(call);
+  if (limitsMemory(F) && !untouched)
+    return "a call that may touch memory: " + textOf(call);
+  bool frees = !call.hasFnAttr(Attr::NoFree) || reallocates(call);
+  if (F.hasFnAttribute(Attr::NoFree) && !untouched && frees)
+    return "a call that may free memory: " + textOf(call);
+  // alive2 reads willreturn as attrs.cpp's kFnBody lists it, on the callee and
+  // the call site, as hasFnAttr does.
+  if (F.hasFnAttribute(Attr::WillReturn) && !call.hasFnAttr(Attr::WillReturn))
+    return "a call that may not return: " + textOf(call);
+  return std::nullopt;
+}
+
 // Why `F`'s own instructions may break an attribute this check reads, or nothing.
 Why broken(const llvm::Function &F) {
   if (!checksAny(F))
     return std::nullopt;
   // alive2 reads willreturn only at calls; in LLVM, a loop that never ends breaks it too.
-  bool returns = F.hasFnAttribute(Attr::WillReturn);
-  if (returns && holdsLoop(F))
+  if (F.hasFnAttribute(Attr::WillReturn) && holdsLoop(F))
     return "a loop, which may not end";
   for (const llvm::Instruction &I : llvm::instructions(F)) {
     const llvm::Value *address = nullptr;
@@ -123,18 +178,10 @@ Why broken(const llvm::Function &F) {
       address = store->getPointerOperand();
       write = true;
     } else if (auto *call = llvm::dyn_cast<llvm::CallBase>(&I)) {
-      // The intrinsic's own table, not the declaration, says what it touches.
-      const llvm::Function *callee = call->getCalledFunction();
-      auto id = callee ? callee->getIntrinsicID() : llvm::Intrinsic::not_intrinsic;
-      if (id == llvm::Intrinsic::not_intrinsic ||
-          !llvm::Intrinsic::getFnAttributes(F.getContext(), id)
-               .getMemoryEffects()
-               .doesNotAccessMemory())
-        return "a call that may touch memory: " + textOf(I);
-      // alive2 reads willreturn as attrs.cpp's kFnBody lists it, on the callee and
-      // the call site, as hasFnAttr does.
-      if (returns && !call->hasFnAttr(Attr::WillReturn))
-        return "a call that may not return: " + textOf(I);
+      if (Why why = called(F, *call))
+        return why;
+    } else if (llvm::isa<llvm::ReturnInst>(I) && F.hasFnAttribute(Attr::NoReturn)) {
+      return "a return, which noreturn forbids";
     } else if (I.mayReadOrWriteMemory()) {
       return "an access other than a plain load or store: " + textOf(I);
     }
@@ -143,8 +190,9 @@ Why broken(const llvm::Function &F) {
         if (!allows(F, root, write))
           return "an access the attributes forbid: " + textOf(I);
   }
+  // Only memory(...) and the parameter attributes follow a pointer from an argument.
   for (const llvm::Argument &arg : F.args())
-    if (arg.getType()->isPtrOrPtrVectorTy())
+    if (arg.getType()->isPtrOrPtrVectorTy() && (limitsMemory(F) || attributed(F, arg.getArgNo())))
       if (Why why = escapes(arg))
         return why;
   return std::nullopt;
@@ -155,6 +203,7 @@ Why broken(const llvm::Function &F) {
 void dropCheckedAttrs(llvm::Function &F) {
   F.removeFnAttr(Attr::Memory);
   F.removeFnAttr(Attr::NoFree);
+  F.removeFnAttr(Attr::NoReturn);
   F.removeFnAttr(Attr::WillReturn);
   for (unsigned k = 0; k < F.arg_size(); ++k) {
     for (Attr::AttrKind kind : kParamKinds)
