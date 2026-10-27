@@ -20,6 +20,25 @@ export async function copyShared(session: Session, llops: Llops, gid: string): P
     await copyInto(session, llops, gid, side, (body) => headers(body)[0]);
 }
 
+/** Copies the first header for its entry edges when both sides have loops. */
+export async function copyHeader(
+  session: Session,
+  llops: Llops,
+  gid: string,
+  side: "src" | "tgt",
+): Promise<boolean> {
+  const body = await bodies(session, llops, gid);
+  if (body.some((instructions) => headers(instructions).length === 0)) return false;
+  const mine = body[side === "src" ? 0 : 1];
+  const header = headers(mine)[0];
+  if (!header) return false;
+  const next = successors(mine);
+  const preds = [...next].flatMap(([from, tos]) =>
+    tos.includes(header) && !reaches(next, header, from) ? [from] : [],
+  );
+  return preds.length > 0 && copied(session, gid, side, { block: header, preds });
+}
+
 /** Copies shared acyclic blocks for code outside the loop `pick` names. */
 export async function copyInto(
   session: Session,

@@ -116,6 +116,50 @@ exit:
 }
 `;
 
+/** The same calls with the loop test at the header or the latch. */
+const ROTATED = {
+  src: `declare void @use(i32)
+
+define void @f() {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %next, %body ]
+  %more = icmp ult i32 %i, 5
+  br i1 %more, label %body, label %exit
+
+body:
+  call void @use(i32 %i)
+  %next = add nuw i32 %i, 1
+  br label %head
+
+exit:
+  ret void
+}
+`,
+  tgt: `declare void @use(i32)
+
+define void @f() {
+entry:
+  br label %body
+
+body:
+  %i = phi i32 [ 0, %entry ], [ %next, %latch ]
+  call void @use(i32 %i)
+  %next = add nuw i32 %i, 1
+  br label %latch
+
+latch:
+  %more = icmp ult i32 %next, 5
+  br i1 %more, label %body, label %exit
+
+exit:
+  ret void
+}
+`,
+};
+
 /** A stand-in that answers each check with what `outcome` says of its src and budget. */
 function answering(outcome: (src: string, asked: number, ms: number) => Outcome): Checker {
   let asked = 0;
@@ -176,6 +220,26 @@ function calls(session: Session): { tool: string; args: Record<string, unknown> 
 /** The tools the run called, in order. */
 const moves = (session: Session) => calls(session).map((call) => call.tool);
 
+/** Closes the run and replays its certificate. */
+function replay(session: Session) {
+  session.finish();
+  const pkg = certify(session.dir, join(session.dir, "certificate"));
+  const replay = spawnSync(
+    "python3",
+    [
+      join(repoRoot(), "kernel/check.py"),
+      pkg,
+      "--llops",
+      toolchain.path("llops"),
+      "--alive-tv",
+      toolchain.path("alive-tv"),
+    ],
+    { encoding: "utf8", timeout: 60_000 },
+  );
+  expect(replay.status, replay.stdout + replay.stderr).toBe(0);
+  expect(replay.stdout).toContain("VERIFIED");
+}
+
 /** A src the optimizer first takes out of memory, and then rewrites. */
 const SPILLED = `define i32 @f(i32 noundef %x) {
 entry:
@@ -202,6 +266,80 @@ describe.skipIf(!built)("search", () => {
         calls(session).some((call) => call.tool === "tx_edit" && call.args.op === "peel"),
       ).toBe(false);
     });
+
+  for (const disabled of [{ cuts: 0 }, { cuts: 1 }, { steps: false }])
+    test(`header copying respects ${JSON.stringify(disabled)}`, async () => {
+      const session = await start(
+        ROTATED.src,
+        ROTATED.tgt,
+        stub(() => false),
+      );
+      expect(
+        await search(session, llops, {
+          ...limits,
+          rules: false,
+          facts: false,
+          cases: false,
+          counterexampleMs: 0,
+          ...disabled,
+        }),
+      ).toBe("unknown");
+      expect(
+        calls(session).some((call) => call.tool === "tx_edit" && call.args.op === "copy_block"),
+      ).toBe(false);
+    });
+
+  test("keeps a successful ordinary loop cut without copying its header", async () => {
+    const session = await start(
+      ROTATED.src,
+      ROTATED.tgt,
+      stub((src) => /@outlined_g\d/.test(src)),
+    );
+    expect(
+      await search(session, llops, {
+        ...limits,
+        rules: false,
+        facts: false,
+        cases: false,
+        counterexampleMs: 0,
+      }),
+    ).toBe("verified");
+    expect(moves(session)).toContain("cut");
+    expect(
+      calls(session).some((call) => call.tool === "tx_edit" && call.args.op === "copy_block"),
+    ).toBe(false);
+  });
+
+  test("restores both programs after unsuccessful header copies", async () => {
+    const session = await start(
+      ROTATED.src,
+      ROTATED.tgt,
+      stub(() => false),
+    );
+    const before = await session.show("g1");
+    expect(
+      await search(session, llops, {
+        ...limits,
+        rules: false,
+        facts: false,
+        cases: false,
+        counterexampleMs: 0,
+      }),
+    ).toBe("unknown");
+    const log = calls(session);
+    const copies = log.flatMap((call, k) =>
+      call.tool === "tx_edit" && call.args.op === "copy_block" ? [k] : [],
+    );
+    expect(copies.length).toBeGreaterThanOrEqual(2);
+    expect(log.findIndex((call) => call.tool === "uncut")).toBeLessThan(copies[0] ?? -1);
+    expect(log.filter((call) => call.tool === "revert").map((call) => call.args.side)).toEqual([
+      "src",
+      "tgt",
+    ]);
+    const after = await session.show("g1");
+    expect(after.src.id).toBe(before.src.id);
+    expect(after.tgt.id).toBe(before.tgt.id);
+  });
 
   test("proves a pair through its windows", async () => {
     const pair = pairs.e2;
@@ -400,6 +538,32 @@ describe.skipIf(!solving)("search with alive-tv", () => {
     });
   };
 
+  test.each([
+    { name: "forward", src: ROTATED.src, tgt: ROTATED.tgt },
+    { name: "reverse", src: ROTATED.tgt, tgt: ROTATED.src },
+  ])(
+    "proves $name rotation through a later cut and replays",
+    async ({ src, tgt }) => {
+      const session = await start(src, tgt, aliveTv);
+      expect(
+        await search(session, llops, {
+          ...limits,
+          rules: false,
+          cases: false,
+          counterexampleMs: 0,
+        }),
+      ).toBe("verified");
+      const log = calls(session);
+      const firstCopy = log.findIndex(
+        (call) => call.tool === "tx_edit" && call.args.op === "copy_block",
+      );
+      expect(firstCopy).toBeGreaterThan(0);
+      expect(log.slice(0, firstCopy).some((call) => call.tool === "uncut")).toBe(true);
+      replay(session);
+    },
+    60_000,
+  );
+
   test.each(["e1", "e1alt", "e2", "e3", "varB"])(
     "verifies %s through its windows",
     async (name) => expect(await run(name)).toBe("verified"),
@@ -488,22 +652,7 @@ exit:
     expect(
       [...session.tree.goals.values()].some((goal) => goal.src_alone && goal.parent !== "g1"),
     ).toBe(true);
-    session.finish();
-    const pkg = certify(session.dir, join(session.dir, "certificate"));
-    const replay = spawnSync(
-      "python3",
-      [
-        join(repoRoot(), "kernel/check.py"),
-        pkg,
-        "--llops",
-        toolchain.path("llops"),
-        "--alive-tv",
-        toolchain.path("alive-tv"),
-      ],
-      { encoding: "utf8", timeout: 60_000 },
-    );
-    expect(replay.status, replay.stdout + replay.stderr).toBe(0);
-    expect(replay.stdout).toContain("VERIFIED");
+    replay(session);
   }, 180_000);
 
   test("proves a stage no step reaches as a goal of its own", async () => {

@@ -1,7 +1,7 @@
 // The simple searcher, as one loop over an agenda of goals. A goal's moves are
 // made in a fixed order (the optimizer's stages on the root, a stage that its
 // windows leave interposed as a goal of its own, windows and rules toward the
-// tgt, a check, then a cut after bounded peeling, a matched loop cut, cuts before an
+// tgt, a check, then a cut after bounded peeling, loop cuts, cuts before an
 // expensive operation, around a region left or dividing expensive operations
 // evenly, then cases) until one proves it or splits it. The goals a split leaves
 // are searched before the next. Every move is a session move, so whatever it
@@ -14,6 +14,7 @@ import { caseOn, tested } from "./cases.ts";
 import { type Assumed, balancedPoints, beforePoints, cutAt, cutLoop, quota } from "./cuts.ts";
 import { strengthenAgainst } from "./facts.ts";
 import type { Limits } from "./limits.ts";
+import { copyHeader } from "./loops.ts";
 import { peel } from "./peel.ts";
 import { refuteFrom, unrolling } from "./refute.ts";
 import { regions } from "./regions.ts";
@@ -256,6 +257,7 @@ async function* moves(
   const at = (point: [string, string]) =>
     halves(run, cuts, () => cutAt(session, llops, gid, limits, point, run.assumed));
   yield halves(run, cuts, () => cutLoop(session, llops, gid, limits, run.assumed));
+  if (limits.steps) yield* copiedHeaders(run, gid, cuts);
   // Read after the loop cut, which may have given the goal's code its own copies of blocks.
   const [src, tgt] = await bodies(session, llops, gid);
   for (const point of beforePoints(src, tgt)) yield at(point);
@@ -293,6 +295,23 @@ function halves(run: Run, cuts: Cuts, cutting: () => ReturnType<typeof cutLoop>)
       goals: [goal(run, made.outer, { cuts }), goal(run, made.callee, { cuts })],
     };
   };
+}
+
+/** Tries each side's header copy as a cut alternative, restoring unsuccessful attempts. */
+async function* copiedHeaders(run: Run, gid: string, cuts: Cuts) {
+  const { session, llops, limits } = run;
+  const before = await session.show(gid);
+  for (const side of ["src", "tgt"] as const) {
+    yield halves(run, cuts, async () => {
+      if (await copyHeader(session, llops, gid, side))
+        return cutLoop(session, llops, gid, limits, run.assumed);
+      return undefined;
+    });
+    // Resuming means the cut was refused or undone; a proved goal leaves the agenda.
+    const after = await session.show(gid);
+    for (const side of ["src", "tgt"] as const)
+      if (after[side].id !== before[side].id) await session.revert(gid, side, before[side].id);
+  }
 }
 
 /** A move that splits goal `gid` by cases on the first of `comparisons`. */

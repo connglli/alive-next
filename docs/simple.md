@@ -44,7 +44,9 @@ A window is outlined as a cut is, and both can carry preconditions: facts about 
 
 ## Loops and invariants
 
-Loop cuts start at the first src header or a shared join that must be isolated first. Shared acyclic blocks get copies for paths outside the loop (`rotated`). A cut at matched headers leaves one iteration with hypothesis calls on its back edges.
+Loop cuts use the first src header and its matched tgt point, or a shared join that must be isolated first. Shared acyclic blocks get copies for paths outside the loop (`rotated`). A header cut leaves one iteration with hypothesis calls on its back edges.
+
+If the ordinary loop cut does not prove the goal, the search tries copying the first header for its entry edges on each side in turn and repeats the cut. Each failed alternative restores both programs. These cuts use the goal's existing budget.
 
 Header casts align the types at a loop cut. The search inserts and hoists a truncation of a wider tgt phi. For a wider src phi used only by a header truncation, it hoists that cast and erases the unused phi. Every step is certified, and unfinished preparation is reverted. Unfolding the other side's iteration or outer aligns unrolled or peeled loops (`unfold`, `peel`).
 
