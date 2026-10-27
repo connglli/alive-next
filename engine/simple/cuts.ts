@@ -344,7 +344,16 @@ export async function cutLoop(
   const at = loopCut(...body);
   if (!at) return undefined;
   const views = limits.steps ? await stepPhis(session, llops, gid, body, at) : undefined;
-  return cut(session, llops, gid, limits, at[0], views?.target ?? at[1], assumed, views?.matches);
+  return cut(
+    session,
+    llops,
+    gid,
+    limits,
+    views?.source ?? at[0],
+    views?.target ?? at[1],
+    assumed,
+    views?.matches,
+  );
 }
 
 /**
