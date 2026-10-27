@@ -31,7 +31,7 @@ import {
 import { strengthenCut } from "../simple/facts.ts";
 import { fill } from "../simple/fill.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
-import { strengthenLoop } from "../simple/loops.ts";
+import { copyShared, strengthenLoop } from "../simple/loops.ts";
 import { peel } from "../simple/peel.ts";
 import { regions } from "../simple/regions.ts";
 import { bodies } from "../simple/windows.ts";
@@ -129,6 +129,77 @@ async function left(session: Session, goals: string[]) {
     goals.map(async (gid) => regions(...(await bodies(session, llops, gid))).length),
   );
 }
+
+describe.skipIf(!built)("copying shared blocks", () => {
+  test.each([
+    ["self loop", "shared", "shared:\n  br i1 %again, label %shared, label %exit"],
+    [
+      "cycle",
+      "shared",
+      "shared:\n  br label %latch\n\nlatch:\n  br i1 %again, label %shared, label %exit",
+    ],
+    [
+      "cycle with two entries",
+      "latch",
+      "shared:\n  br label %latch\n\nlatch:\n  br i1 %again, label %shared, label %exit",
+    ],
+  ])("leaves a shared %s intact", async (_name, outside, cycle) => {
+    const module = `define void @f(i1 noundef %enter, i1 noundef %again) {
+entry:
+  br i1 %enter, label %first, label %${outside}
+
+first:
+  br i1 %again, label %first, label %shared
+
+${cycle}
+
+exit:
+  ret void
+}
+`;
+    const session = await start(module, module);
+    const before = await session.show("g1");
+    await copyShared(session, llops, "g1");
+    const after = await session.show("g1");
+    expect(after.src.id).toBe(before.src.id);
+    expect(after.tgt.id).toBe(before.tgt.id);
+  });
+
+  test("copies an acyclic prefix and cuts at the shared loop", async () => {
+    const module = `define void @f(i1 noundef %enter, i1 noundef %again) {
+entry:
+  br i1 %enter, label %first, label %bridge
+
+first:
+  br i1 %again, label %first, label %bridge
+
+bridge:
+  br label %shared
+
+shared:
+  br i1 %again, label %shared, label %exit
+
+exit:
+  ret void
+}
+`;
+    const session = await start(module, module);
+    const blocks = async () =>
+      (await bodies(session, llops, "g1")).map((body) => new Set(body.map((i) => i.block)).size);
+    const before = await blocks();
+    await copyShared(session, llops, "g1");
+    expect(await blocks()).toEqual(before.map((n) => n + 1));
+    const copied = await session.show("g1");
+    const halves = await cutLoop(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false });
+    if (!halves) throw new Error("expected a cut at the shared loop");
+    const after = await session.show("g1");
+    expect(after.src.id).toBe(copied.src.id);
+    expect(after.tgt.id).toBe(copied.tgt.id);
+    for (const gid of [halves.outer, halves.callee])
+      expect((await session.check(gid)).outcome).toBe("proved");
+    expect(session.verdict).toBe("verified");
+  });
+});
 
 describe.skipIf(!built)("peel", () => {
   test("a region that ends the body is cut at its head", async () => {

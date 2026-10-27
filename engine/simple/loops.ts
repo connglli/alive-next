@@ -1,6 +1,6 @@
-// Loops: where a goal that loops is cut, and the invariants that cut keeps. It
-// is cut at its first header once code outside the header's reach has its own
-// copy of each block it enters, as a rotated loop's guard enters its exit. The
+// Loops: where a goal that loops is cut, and the invariants that cut keeps. A
+// cut starts at the first header or a shared join that must be isolated first.
+// Shared acyclic blocks get copies for paths outside the loop. The
 // cut's candidates include guessed invariants, and Houdini narrows them: each
 // round previews the strengthen and keeps what holds where the loop is entered
 // and what one iteration keeps with the rest assumed. When a round drops
@@ -10,17 +10,17 @@ import type { Session } from "../core/session.ts";
 import type { CutResult } from "../core/state/cuts.ts";
 import type { StrengthenContract } from "../core/state/strengthen.ts";
 import { comparisons, noundefLost, size } from "./facts.ts";
-import { diff, headers, successors } from "./regions.ts";
+import { diff, headers, reaches, successors } from "./regions.ts";
 import { expressionsAt, type Side } from "./relations.ts";
 import { bodies } from "./windows.ts";
 
-/** Gives code outside each side's first loop its own copy of each block it enters there. */
+/** Copies shared acyclic blocks reached by each side's first loop. */
 export async function copyShared(session: Session, llops: Llops, gid: string): Promise<void> {
   for (const side of ["src", "tgt"] as const)
     await copyInto(session, llops, gid, side, (body) => headers(body)[0]);
 }
 
-/** Gives code outside the loop `pick` names its own copy of each block it enters there. */
+/** Copies shared acyclic blocks for code outside the loop `pick` names. */
 export async function copyInto(
   session: Session,
   llops: Llops,
@@ -38,7 +38,7 @@ export async function copyInto(
   }
 }
 
-/** A block the loop at `header` reaches that blocks outside its reach enter too, with those. */
+/** A shared acyclic block reached by `header`, with its outside predecessors. */
 function sharedWith(body: Instruction[], header: string) {
   const next = successors(body);
   const reached = new Set([header]);
@@ -47,7 +47,11 @@ function sharedWith(body: Instruction[], header: string) {
     const preds = [...next].flatMap(([from, tos]) =>
       !reached.has(from) && tos.includes(block) ? [from] : [],
     );
-    if (block !== header && preds.length > 0) return { block, preds };
+    if (block === header || preds.length === 0) continue;
+    // A copy of a block in a cycle still leads back into the cycle, so
+    // repeated copies would only peel iterations without isolating it.
+    if ((next.get(block) ?? []).some((to) => reaches(next, to, block))) continue;
+    return { block, preds };
   }
   return undefined;
 }

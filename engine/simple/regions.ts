@@ -255,7 +255,7 @@ export function dominates(body: Instruction[], over: string, block: string): boo
 }
 
 /** Whether `to` can be reached from `from`. */
-function reaches(next: Map<string, string[]>, from: string, to: string): boolean {
+export function reaches(next: Map<string, string[]>, from: string, to: string): boolean {
   const seen = new Set([from]);
   for (const block of seen) for (const after of next.get(block) ?? []) seen.add(after);
   return seen.has(to);
