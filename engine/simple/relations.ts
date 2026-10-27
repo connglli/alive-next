@@ -1,8 +1,7 @@
-// Linear relations among the values a cut passes, as candidates to strengthen
-// it with. ScalarEvolution gives each value as constants times terms: values it
-// cannot see through and, in a loop, the iterations so far. A combination of
-// parameters whose terms cancel is a relation that holds, such as left == n - i
-// beside a counter i; a value widened to compare it with a wider one is a guess.
+// Relations among cut parameters, proposed from ScalarEvolution. Expressions
+// over other parameters expose opaque terms; linear combinations relate values
+// through shared terms and a loop's iteration count. Comparisons across integer
+// widths are guesses for the checker to prove.
 import type { Comparison, Llops, Predicate, Scev } from "../core/drivers/llops.ts";
 import { build } from "./scev.ts";
 
@@ -18,6 +17,8 @@ export interface Side {
 interface Linear {
   terms: Map<string, bigint>;
   constant: bigint;
+  /** Whether a compound expression remains an uninterpreted term. */
+  opaque: boolean;
 }
 
 /** Parameter `param` as an integer of one width, read as `read`. */
@@ -45,25 +46,59 @@ export async function relationsAt(llops: Llops, sides: Side[], types: string[]) 
   const found = new Map<string, Predicate>();
   for (const side of sides) {
     const trees = await expressionsAt(llops, side);
+    const params = new Map(
+      side.values.flatMap((value, k) =>
+        value && value !== "poison" && /^i\d+$/.test(types[k] ?? "")
+          ? [[value, `!${k}`] as const]
+          : [],
+      ),
+    );
+    const definitions: Predicate[] = [];
     const rows = side.values.flatMap((value, param) => {
       const type = types[param] ?? "";
       if (!value || value === "poison" || !/^i\d+$/.test(type)) return [];
       const named = (name: string): Scev => ({ op: "value", type, value: name });
-      const form = linear(trees[param] ?? named(value), side.loop);
+      const tree = trees[param];
+      const form = linear(tree ?? named(value), side.loop);
+      const defined = form.opaque && tree && definition(tree, param, params);
+      if (defined) definitions.push(defined);
       return [{ ...form, param, read: named(`!${param}`) }];
     });
-    const predicates = [...widths(rows)].flatMap(([type, of]) => related(of, type));
+    const predicates = [
+      ...definitions,
+      ...[...widths(rows)].flatMap(([type, of]) => related(of, type)),
+    ];
     for (const predicate of predicates) found.set(JSON.stringify(predicate), predicate);
   }
   return [...found.values()];
 }
 
+/** A parameter defined by an expression over other parameters, when it can be rebuilt. */
+function definition(tree: Scev, param: number, params: Map<string, string>): Predicate | undefined {
+  let n = 0;
+  const fresh = () => `%def${n++}`;
+  const expression = build(tree, (value) => params.get(value), fresh);
+  if (!expression?.insts.length) return undefined;
+  return {
+    insts: [
+      ...expression.insts,
+      `${fresh()} = icmp eq ${tree.type} !${param}, ${expression.result}`,
+    ],
+  };
+}
+
 /** `node` as constants times terms, with a recurrence of `loop` counting its iterations. */
 function linear(node: Scev, loop?: string): Linear {
-  const term = (key: string) => ({ terms: new Map([[key, 1n]]), constant: 0n });
-  if (node.op === "const") return { terms: new Map(), constant: BigInt(node.value ?? 0) };
+  const term = (key: string, opaque = false) => ({
+    terms: new Map([[key, 1n]]),
+    constant: 0n,
+    opaque,
+  });
+  if (node.op === "const")
+    return { terms: new Map(), constant: BigInt(node.value ?? 0), opaque: false };
   const parts = (node.operands ?? []).map((operand) => linear(operand, loop));
-  if (node.op === "add") return parts.reduce(plus, { terms: new Map(), constant: 0n });
+  if (node.op === "add")
+    return parts.reduce(plus, { terms: new Map(), constant: 0n, opaque: false });
   const [first, second] = parts;
   const constant = (part?: Linear) => part?.terms.size === 0;
   if (node.op === "mul" && parts.length === 2 && first && second && constant(first))
@@ -71,31 +106,34 @@ function linear(node: Scev, loop?: string): Linear {
   const counted = node.op === "addrec" && node.loop === loop && parts.length === 2;
   if (counted && first && second && constant(second))
     return plus(first, times(term(ITERATIONS), second.constant));
-  return term(node.op === "value" ? (node.value ?? "") : JSON.stringify(node));
+  return term(node.op === "value" ? (node.value ?? "") : JSON.stringify(node), node.op !== "value");
 }
 
 /** The sum of two linear forms. */
 function plus(a: Linear, b: Linear): Linear {
   const terms = new Map(a.terms);
   for (const [key, c] of b.terms) terms.set(key, (terms.get(key) ?? 0n) + c);
-  return { terms, constant: a.constant + b.constant };
+  return { terms, constant: a.constant + b.constant, opaque: a.opaque || b.opaque };
 }
 
 /** A linear form times a constant. */
 function times(a: Linear, c: bigint): Linear {
   const terms = new Map([...a.terms].map(([key, x]) => [key, x * c] as const));
-  return { terms, constant: a.constant * c };
+  return { terms, constant: a.constant * c, opaque: a.opaque };
 }
 
-/** The rows of each width, each narrower one also widened by zext and by sext. */
+/** The rows at each integer width, using casts where their widths differ. */
 function widths(rows: Row[]): Map<string, Row[]> {
   const of = new Map<string, Row[]>();
   for (const row of rows) of.set(row.read.type, [...(of.get(row.read.type) ?? []), row]);
   const bits = (type: string) => Number(type.slice(1));
-  for (const wide of [...of.keys()])
-    for (const row of rows.filter((row) => bits(row.read.type) < bits(wide)))
-      for (const op of ["zext", "sext"])
-        of.get(wide)?.push({ ...row, read: { op, type: wide, operands: [row.read] } });
+  for (const type of [...of.keys()])
+    for (const row of rows) {
+      const [from, to] = [bits(row.read.type), bits(type)];
+      const casts = from < to ? ["zext", "sext"] : from > to ? ["trunc"] : [];
+      for (const op of casts)
+        of.get(type)?.push({ ...row, read: { op, type, operands: [row.read] } });
+    }
   return of;
 }
 

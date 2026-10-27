@@ -1,5 +1,5 @@
 // Cuts a goal in two at a point both sides share, passing each value that
-// crosses it as the tgt value the diff matched with it, and strengthens the cut
+// crosses it as its matched tgt value, and strengthens the cut
 // with the facts the analyses know about those values, keeping the ones that
 // hold. A cut at the header of a loop leaves one iteration, whose back edge
 // calls the hypothesis, so the goals it leaves prove by induction, and it is
@@ -10,6 +10,7 @@
 import type { Attrs, Instruction, Llops, OutlineParam, Predicate } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { CutResult } from "../core/state/cuts.ts";
+import { tested } from "./cases.ts";
 import { cutFacts, passedOn, predicatesAt, strengthenCut, union } from "./facts.ts";
 import { fillCut } from "./fill.ts";
 import type { Limits } from "./limits.ts";
@@ -22,6 +23,7 @@ import {
   strengthenLoop,
   unfoldToMatch,
 } from "./loops.ts";
+import { stepPhis } from "./phis.ts";
 import { diff, dominates, headers, storedAt, successors } from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
 import { unbrokenByRuns } from "./runs.ts";
@@ -87,11 +89,13 @@ export async function cut(
   srcCut: string,
   tgtCut: string,
   assumed: Assumed = new Map(),
+  matches?: ReadonlyMap<string, string>,
 ) {
   const preview = await session.cutPreview(gid, srcCut, tgtCut);
   if (preview.kind !== "preview") return undefined;
   const [src, tgt] = await bodies(session, llops, gid);
   const { pairs } = diff(src, tgt);
+  for (const [source, target] of matches ?? []) pairs.set(source, target);
   const slots = new Set(preview.slots?.src ?? []);
   const held = preview.params.map(({ live }, k) =>
     slots.has(k) ? heldAt(src, tgt, pairs, live, srcCut) : undefined,
@@ -101,10 +105,6 @@ export async function cut(
   if (!map) return undefined;
   const made = await session.cut(gid, srcCut, tgtCut, map);
   if (made.kind !== "cut") return undefined;
-  if (!(await fillCut(session, llops, made))) {
-    await session.uncut(gid);
-    return undefined;
-  }
   const view = await session.show(gid);
   const lives = made.params.map(({ live }, k) => held[k]?.read ?? live);
   const images = made.params.map(({ live, tgt }) => (live === "poison" ? tgt : map[live]));
@@ -116,6 +116,10 @@ export async function cut(
   const unfolded = made.detach?.hypothesis
     ? await unfoldToMatch(session, llops, made, sides, limits.unfolds)
     : false;
+  if (!(await fillCut(session, llops, made))) {
+    await session.uncut(gid);
+    return undefined;
+  }
   // The outer keeps the goal's entry, so it assumes what the goal assumes.
   const inherited = assumed.get(gid) ?? [];
   assumed.set(made.children.outer, inherited);
@@ -272,7 +276,8 @@ async function strengthenNewCut(
   const loop = made.detach?.hypothesis !== undefined;
   // At a loop's header, what the tgt knows is a guess the src's iteration may keep too.
   const known = loop ? await predicatesAt(llops, theirs) : [];
-  const guesses = loop ? union(guessInvariants(made.params), { predicates: known }) : {};
+  const guards = loop ? tested(...(await bodies(session, llops, made.children.callee))) : [];
+  const guesses = loop ? union(guessInvariants(made.params, guards), { predicates: known }) : {};
   const own = { predicates: passedOn(inherited, lives) };
   const candidates = union(guesses, facts, relations, own);
   if (!loop) return strengthenCut(session, gid, candidates);
@@ -335,8 +340,11 @@ export async function cutLoop(
   assumed?: Assumed,
 ) {
   if (limits.steps) await copyShared(session, llops, gid);
-  const at = loopCut(...(await bodies(session, llops, gid)));
-  return at ? cut(session, llops, gid, limits, ...at, assumed) : undefined;
+  const body = await bodies(session, llops, gid);
+  const at = loopCut(...body);
+  if (!at) return undefined;
+  const views = limits.steps ? await stepPhis(session, llops, gid, body, at) : undefined;
+  return cut(session, llops, gid, limits, at[0], views?.target ?? at[1], assumed, views?.matches);
 }
 
 /**

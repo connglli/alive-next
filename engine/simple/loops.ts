@@ -5,7 +5,7 @@
 // round previews the strengthen and keeps what holds where the loop is entered
 // and what one iteration keeps with the rest assumed. When a round drops
 // nothing, the strengthen proves that what is left is inductive.
-import type { Instruction, Llops, OutlineParam } from "../core/drivers/llops.ts";
+import type { Comparison, Instruction, Llops, OutlineParam } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import type { CutResult } from "../core/state/cuts.ts";
 import type { StrengthenContract } from "../core/state/strengthen.ts";
@@ -138,9 +138,19 @@ export async function strengthenLoop(
 }
 
 /** Guesses invariants about `params` from Houdini's templates. */
-export function guessInvariants(params: OutlineParam[]): StrengthenContract {
+export function guessInvariants(
+  params: OutlineParam[],
+  guards: Comparison[] = [],
+): StrengthenContract {
   // Templates: Parameter x parameter comparisons, and parameter x itself comparisons.
   const predicates = comparisons(params.map((param) => param.type));
+  for (const guard of guards) {
+    const [lhs, rhs] =
+      typeof guard.lhs === "number" ? [guard.rhs, guard.lhs] : [guard.lhs, guard.rhs];
+    if (typeof lhs !== "string" || typeof rhs !== "number") continue;
+    // An invariant must also hold at the bound where the loop exits.
+    for (const op of ["ule", "uge", "sle", "sge"] as const) predicates.push({ op, lhs, rhs });
+  }
   // Template: Each parameter neither undef nor poison.
   const noundef = Object.fromEntries(params.map((_, i) => [i, { noundef: true }]));
   return { param_attrs: noundef, predicates };

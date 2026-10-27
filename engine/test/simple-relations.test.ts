@@ -76,9 +76,33 @@ entry:
     const side = { module, point: "%6", values, loop: "%bb1" };
     const types = ["i32", "i32", "ptr", "i32", "i32", "i64"];
     const found = (await relationsAt(llops, [side], types)).map((p) => JSON.stringify(p));
-    expect(found).toHaveLength(2);
+    expect(found.some((p) => p.includes("trunc i64 !5 to i32"))).toBe(true);
     expect(
       found.filter((p) => p.includes("zext i32 !0") || p.includes("sext i32 !0")),
     ).toHaveLength(2);
+  });
+
+  test("a cast definition relates parameters of different widths", async () => {
+    const module = `define i16 @f(i8 %n) {
+entry:
+  %bound = zext i8 %n to i16
+  ret i16 %bound
+}
+`;
+    const side = { module, point: "#1", values: ["%n", "%bound"] };
+    expect(await relationsAt(llops, [side], ["i8", "i16"])).toEqual([
+      { insts: ["%def0 = zext i8 !0 to i16", "%def1 = icmp eq i16 !1, %def0"] },
+    ]);
+  });
+
+  test("a definition cannot read a value outside the cut parameters", async () => {
+    const module = `define i16 @f(i8 %n) {
+entry:
+  %bound = zext i8 %n to i16
+  ret i16 %bound
+}
+`;
+    const side = { module, point: "#1", values: ["%bound"] };
+    expect(await relationsAt(llops, [side], ["i16"])).toEqual([]);
   });
 });
