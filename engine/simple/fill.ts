@@ -95,9 +95,15 @@ function holes(mine?: Instruction, theirs?: Instruction): number[] {
   );
 }
 
-/** The src name for a tgt name: its partner if the tgt body defines it, else itself. */
+/** A tgt value's src partner of the same type, with arguments and constants unchanged. */
 function partnerOf(src: Instruction[], tgt: Instruction[]) {
   const back = new Map([...diff(src, tgt).pairs].map(([s, t]) => [t, s]));
-  const theirs = new Set(tgt.flatMap((instruction) => instruction.value ?? []));
-  return (value: string) => (theirs.has(value) ? back.get(value) : value);
+  const types = (body: Instruction[]) =>
+    new Map(body.flatMap((i) => (i.value ? [[i.value, i.type] as const] : [])));
+  const [mine, theirs] = [types(src), types(tgt)];
+  return (value: string) => {
+    if (!theirs.has(value)) return value;
+    const partner = back.get(value);
+    return partner && mine.get(partner) === theirs.get(value) ? partner : undefined;
+  };
 }

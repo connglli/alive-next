@@ -29,6 +29,7 @@ import {
   returnFacts,
 } from "../simple/cuts.ts";
 import { strengthenCut } from "../simple/facts.ts";
+import { fill } from "../simple/fill.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { strengthenLoop } from "../simple/loops.ts";
 import { peel } from "../simple/peel.ts";
@@ -376,6 +377,51 @@ function statuses(session: Session, goals: string[]) {
 }
 
 describe.skipIf(!solving || !running)("cuts with alive-tv", () => {
+  test("filling rebuilds a value when its matched instruction has another type", async () => {
+    const src = `define void @f(i32 %x, i64 %wide) {
+entry:
+  %next = add i32 %x, 1
+  %stop = icmp eq i32 %next, 0
+  br i1 %stop, label %exit, label %pass
+
+pass:
+  br label %call
+
+call:
+  call void @g(i32 %next, i64 poison)
+  br label %exit
+
+exit:
+  ret void
+}
+declare void @g(i32, i64)
+`;
+    const tgt = `define void @f(i32 %x, i64 %wide) {
+entry:
+  %next = add i64 %wide, 1
+  %stop = icmp eq i64 %next, 0
+  br i1 %stop, label %exit, label %narrow
+
+narrow:
+  %low = trunc i64 %next to i32
+  br label %call
+
+call:
+  call void @g(i32 %low, i64 %next)
+  br label %exit
+
+exit:
+  ret void
+}
+declare void @g(i32, i64)
+`;
+    const session = await solved("fill-types", src, tgt);
+    expect(await fill(session, llops, "g1", "g", ["i32", "i64"])).toBe(true);
+    const filled = (await session.show("g1")).src.text;
+    expect(filled).not.toContain("i64 poison");
+    expect(filled).toContain("add i64");
+  });
+
   test("cuts before a product in unmatched blocks using its paired operands", async () => {
     const session = await solved("operands", PRODUCT.src, PRODUCT.tgt);
     const [src, tgt] = await bodies(session, llops, "g1");
