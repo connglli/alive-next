@@ -22,6 +22,7 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Transforms/Utils/SSAUpdater.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include <string>
 #include <utility>
@@ -103,6 +104,26 @@ const llvm::Instruction *usedAfter(llvm::ArrayRef<llvm::BasicBlock *> blocks) {
           return &I;
       }
   return nullptr;
+}
+
+// Later uses need phis where paths from the original and copied blocks meet.
+void mergeCopiedValues(llvm::BasicBlock *B, llvm::BasicBlock *copy, llvm::ValueToValueMapTy &vmap) {
+  llvm::SSAUpdater SSA;
+  for (llvm::Instruction &I : *B) {
+    if (I.getType()->isVoidTy() || I.getType()->isTokenTy())
+      continue;
+    SSA.Initialize(I.getType(), I.getName());
+    SSA.AddAvailableValue(B, &I);
+    SSA.AddAvailableValue(copy, vmap.lookup(&I));
+    for (llvm::Use &U : llvm::make_early_inc_range(I.uses())) {
+      auto *user = llvm::cast<llvm::Instruction>(U.getUser());
+      // A local instruction reads its local definition; a phi reads along an edge.
+      if (!llvm::isa<llvm::PHINode>(user) && user->getParent() == B)
+        continue;
+      SSA.RewriteUse(U);
+    }
+    SSA.UpdateDebugValues(&I);
+  }
 }
 
 // A distinct loop ID of its own with the properties of `id`, for a loop that copies another.
@@ -595,9 +616,12 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     }
     if (llvm::all_of(llvm::predecessors(B), [&](llvm::BasicBlock *P) { return from.contains(P); }))
       return errResponse("invalid", "copy_block: the copy would take every edge into the block");
-    // A value used after the block would need a phi of its own.
-    if (const llvm::Instruction *I = usedAfter(B))
-      return errResponse("invalid", "copy_block: '" + refs.print(*I) + "' is used after the block");
+    for (llvm::Instruction &I : *B)
+      if (I.getType()->isTokenTy() && llvm::any_of(I.users(), [&](llvm::User *U) {
+            return llvm::cast<llvm::Instruction>(U)->getParent() != B;
+          }))
+        return errResponse("invalid", "copy_block: token '" + refs.print(I) +
+                                          "' is used outside the block and cannot be merged");
     llvm::ValueToValueMapTy vmap;
     llvm::BasicBlock *copy = llvm::CloneBasicBlock(B, vmap, "", F);
     // A phi takes its values along the edges into the block, so they stay the block's.
@@ -635,6 +659,7 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
       entering(phi, false);
     for (llvm::PHINode &phi : copy->phis())
       entering(phi, true);
+    mergeCopiedValues(B, copy, vmap);
     return checkedResponse(*M);
   }
 

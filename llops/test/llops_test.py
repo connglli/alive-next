@@ -930,6 +930,14 @@ join:
 
 
 class TestEditCopyBlock(Case):
+  def copied(self, module, block, preds):
+    """Copy a block and check that the result only reshapes control flow."""
+    r = self.good(self.edit("copy_block", module=module, block=block, preds=preds))
+    self.assertTrue(
+      self.good(run("reshaped", {"before": module, "after": r["module"]}))["reshaped"]
+    )
+    return r["module"]
+
   def test_some_predecessors_get_their_own_copy(self):
     r = self.good(self.edit("copy_block", module=F_SHARED_EXIT, block="%exit", preds=["%entry"]))
     self.assertIn("%r = phi i32 [ %i, %loop ]", r["module"])
@@ -948,9 +956,12 @@ class TestEditCopyBlock(Case):
       self.good(run("reshaped", {"before": F_JOINED, "after": r["module"]}))["reshaped"]
     )
 
-  def test_a_value_used_after_the_block_otherwise_is_refused(self):
+  def test_a_value_used_after_the_block_is_merged(self):
     module = F_JOINED.replace("%w = phi i32 [ %v, %mid ]", "%w = add i32 %v, 1")
-    self.bad(self.edit("copy_block", module=module, block="%mid", preds=["%a"]), "invalid")
+    self.copied(module, "%mid", ["%a"])
+
+  def test_a_use_in_an_unreachable_block_needs_no_incoming_value(self):
+    self.copied(with_dead_use(F_JOINED, "%v"), "%mid", ["%a"])
 
   def test_a_block_copied_for_its_own_back_edge_keeps_its_values_on_that_edge(self):
     # The copy's phi takes %i.next along the edge from %loop, where only the
@@ -960,14 +971,118 @@ class TestEditCopyBlock(Case):
       self.good(run("reshaped", {"before": F_SHARED_EXIT, "after": r["module"]}))["reshaped"]
     )
 
-  def test_a_phi_that_takes_the_value_through_another_block_is_refused(self):
+  def test_a_phi_that_takes_the_value_through_another_block_is_repaired(self):
     module = F_JOINED.replace(
       "  br label %join\n\njoin:\n  %w = phi i32 [ %v, %mid ]",
       "  br i1 %c, label %d, label %join\n\nd:\n  br label %join\n\njoin:\n"
       "  %w = phi i32 [ %v, %mid ], [ %v, %d ]",
     )
     self.assertIn("[ %v, %d ]", module)
+    self.copied(module, "%mid", ["%a"])
+
+  def test_a_header_copy_repairs_several_values_in_the_body_and_exit(self):
+    module = """define i32 @f(i32 %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %sum = phi i32 [ 0, %entry ], [ %sum.next, %body ]
+  %twice = mul i32 %i, 2
+  %more = icmp slt i32 %i, %n
+  br i1 %more, label %body, label %exit
+
+body:
+  %sum.next = add i32 %sum, %twice
+  %i.next = add i32 %i, 1
+  br label %head
+
+exit:
+  ret i32 %sum
+}
+"""
+    self.copied(module, "%head", ["%entry"])
+
+  def test_a_header_value_feeding_its_phi_through_the_latch_is_repaired(self):
+    module = """define i32 @f(i32 %n) {
+entry:
+  br label %head
+
+head:
+  %i = phi i32 [ 0, %entry ], [ %next, %latch ]
+  %next = add i32 %i, 1
+  %more = icmp slt i32 %i, %n
+  br i1 %more, label %latch, label %exit
+
+latch:
+  br label %head
+
+exit:
+  ret i32 %i
+}
+"""
+    self.copied(module, "%head", ["%entry"])
+    self.copied(module, "%head", ["%latch"])
+
+  def test_repeated_switch_edges_keep_their_phi_values(self):
+    module = """define i32 @f(i1 %c, i32 %x) {
+entry:
+  br i1 %c, label %a, label %b
+
+a:
+  switch i32 %x, label %mid [ i32 0, label %mid
+                            i32 1, label %mid ]
+
+b:
+  br label %mid
+
+mid:
+  %p = phi i32 [ 1, %a ], [ 1, %a ], [ 1, %a ], [ 2, %b ]
+  %v = add i32 %p, %x
+  br label %join
+
+join:
+  ret i32 %v
+}
+"""
+    self.copied(module, "%mid", ["%a"])
+
+  def test_tokens_must_stay_in_the_block(self):
+    module = """declare token @llvm.call.preallocated.setup(i32)
+declare void @llvm.call.preallocated.teardown(token)
+
+define void @f(i1 %c) {
+entry:
+  br i1 %c, label %a, label %b
+a:
+  br label %mid
+b:
+  br label %mid
+mid:
+  %t = call token @llvm.call.preallocated.setup(i32 1)
+  br label %join
+join:
+  call void @llvm.call.preallocated.teardown(token %t)
+  ret void
+}
+"""
     self.bad(self.edit("copy_block", module=module, block="%mid", preds=["%a"]), "invalid")
+    local = module.replace("  br label %join\njoin:\n", "")
+    self.good(self.edit("copy_block", module=local, block="%mid", preds=["%a"]))
+
+  def test_debug_uses_after_the_block_follow_the_merged_value(self):
+    module = (
+      F_JOINED.replace(
+        "define i32 @f(i1 %c, i32 %x) {", "define i32 @f(i1 %c, i32 %x) !dbg !3 {"
+      ).replace(
+        "%w = phi i32 [ %v, %mid ]",
+        "#dbg_value(i32 %v, !6, !DIExpression(), !7)\n  %w = add i32 %v, 1",
+      )
+      + DEBUG_INFO
+    )
+    after = self.copied(module, "%mid", ["%a"])
+    merged = re.search(r"%w = add i32 (%[\w.]+), 1", after).group(1)
+    self.assertIn(f"#dbg_value(i32 {merged},", after)
 
   def test_every_edge_into_the_block_is_refused(self):
     self.bad(self.edit("copy_block", module=F_JOINED, block="%mid", preds=["%a", "%b"]), "invalid")
