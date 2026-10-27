@@ -5,6 +5,8 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { certify } from "../cert/main.ts";
+import { repoRoot } from "../core/config.ts";
 import { AliveTv, type CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
 import { Llrwt } from "../core/drivers/llrwt.ts";
@@ -186,6 +188,21 @@ entry:
 `;
 
 describe.skipIf(!built)("search", () => {
+  for (const disabled of [{ cuts: 0 }, { steps: false }])
+    test(`bounded peeling respects ${Object.keys(disabled)[0]} being disabled`, async () => {
+      const session = await start(
+        bounded.src,
+        bounded.tgt,
+        stub(() => false),
+      );
+      expect(
+        await search(session, llops, { ...limits, rules: false, facts: false, ...disabled }),
+      ).toBe("unknown");
+      expect(
+        calls(session).some((call) => call.tool === "tx_edit" && call.args.op === "peel"),
+      ).toBe(false);
+    });
+
   test("proves a pair through its windows", async () => {
     const pair = pairs.e2;
     if (!pair) throw new Error("no pair e2");
@@ -399,6 +416,95 @@ describe.skipIf(!solving)("search with alive-tv", () => {
     const session = await start(bounded.src, bounded.tgt, aliveTv);
     expect(await search(session, llops, limits)).toBe("verified");
   }, 120_000);
+
+  test("peels a bound exposed in a later goal and replays the certificate", async () => {
+    // The pointer index width lets indvars expose the small bound after the root's analysis.
+    const layout = `target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-unknown-linux-gnu"
+
+`;
+    const src = `${layout}@buffer = external global [4 x i32], align 4
+
+define void @f(i32 noundef %n) {
+entry:
+  %i = alloca i32, align 4
+  %large = icmp sgt i32 %n, 3
+  br i1 %large, label %exit, label %init
+
+init:
+  store i32 0, ptr %i, align 4
+  br label %head
+
+head:
+  %index = load i32, ptr %i, align 4
+  %more = icmp slt i32 %index, %n
+  br i1 %more, label %body, label %exit
+
+body:
+  %wide = sext i32 %index to i64
+  %at = getelementptr inbounds i32, ptr @buffer, i64 %wide
+  store i32 %index, ptr %at, align 4
+  %next = add nsw i32 %index, 1
+  store i32 %next, ptr %i, align 4
+  br label %head
+
+exit:
+  ret void
+}
+`;
+    const tgt = `${layout}@buffer = external global [4 x i32], align 4
+
+define void @f(i32 noundef %n) {
+entry:
+  %before = sub i32 %n, 1
+  %small = icmp ult i32 %before, 3
+  br i1 %small, label %first, label %exit
+
+first:
+  %bound = zext nneg i32 %n to i64
+  store i32 0, ptr @buffer, align 4
+  %one = icmp eq i64 %bound, 1
+  br i1 %one, label %exit, label %second
+
+second:
+  %p1 = getelementptr i32, ptr @buffer, i32 1
+  store i32 1, ptr %p1, align 4
+  %two = icmp eq i64 %bound, 2
+  br i1 %two, label %exit, label %third
+
+third:
+  %p2 = getelementptr i32, ptr @buffer, i32 2
+  store i32 2, ptr %p2, align 4
+  br label %exit
+
+exit:
+  ret void
+}
+`;
+    const session = await start(src, tgt, aliveTv);
+    expect(
+      await search(session, llops, { ...limits, stages: true, rules: false, counterexampleMs: 0 }),
+    ).toBe("verified");
+    expect(
+      [...session.tree.goals.values()].some((goal) => goal.src_alone && goal.parent !== "g1"),
+    ).toBe(true);
+    session.finish();
+    const pkg = certify(session.dir, join(session.dir, "certificate"));
+    const replay = spawnSync(
+      "python3",
+      [
+        join(repoRoot(), "kernel/check.py"),
+        pkg,
+        "--llops",
+        toolchain.path("llops"),
+        "--alive-tv",
+        toolchain.path("alive-tv"),
+      ],
+      { encoding: "utf8", timeout: 60_000 },
+    );
+    expect(replay.status, replay.stdout + replay.stderr).toBe(0);
+    expect(replay.stdout).toContain("VERIFIED");
+  }, 180_000);
 
   test("proves a stage no step reaches as a goal of its own", async () => {
     // The optimizer divides unsigned and adds nuw since the counter is never

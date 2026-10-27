@@ -32,7 +32,7 @@ Region splices and rule rewrites change the src. Splicing the tgt's region into 
 
 A goal that does not close is split at the first of these that the framework accepts, or first where outside code joins what that point reaches:
 
-* Its first loop header, as the next section says.
+* A loop: peel away a bounded src loop when the src has more loops than the tgt, or try matched headers as the next section describes.
 * Just before one of the last three expensive operations both sides apply, latest first, so that it reads the same operands on both: a multiplication of two variables, a division, a remainder, floating-point arithmetic, a load, or a store. Calls do not count, since every cut adds one.
 * Around the first region its steps left, whether no window could hold the region or alive2 refused its windows. The goal is cut after the region and then at its head, or at its block when it starts with a phi, so that the region stands in a goal of its own. That goal is not cut around a region again.
 * Where both sides agree and its expensive operations divide most evenly between the two halves, trying the three most even points.

@@ -16,14 +16,19 @@ const MOST = 300;
 export async function peelBounded(session: Session, llops: Llops, gid: string): Promise<string> {
   let at = gid;
   for (;;) {
-    const [src, tgt] = await bodies(session, llops, at);
-    const header = outermost(src).at(-1);
-    if (!header || headers(src).length <= headers(tgt).length) return at;
-    const times = await peels(llops, (await session.show(at)).src.text, header);
-    const outer = times && (await peeledAway(session, llops, at, header, times));
-    if (!outer) return at;
-    at = outer;
+    const made = await cutBounded(session, llops, at);
+    if (!made) return at;
+    at = made.outer;
   }
+}
+
+/** Peels and cuts away one bounded src loop when the tgt has fewer loops. */
+export async function cutBounded(session: Session, llops: Llops, gid: string) {
+  const [src, tgt] = await bodies(session, llops, gid);
+  const header = outermost(src).at(-1);
+  if (!header || headers(src).length <= headers(tgt).length) return undefined;
+  const times = await peels(llops, (await session.show(gid)).src.text, header);
+  return times ? peeledAway(session, llops, gid, header, times) : undefined;
 }
 
 /** How many peels leave the loop at `header` one no run enters, or nothing past `MOST`. */
@@ -36,7 +41,7 @@ async function peels(llops: Llops, module: string, header: string) {
 
 /**
  * Peels the loop at `header` of goal `gid` and cuts away what is left: the
- * outer goal, or nothing, with the src as it was, when a step or the cut fails.
+ * two goals, or nothing, with the src as it was, when a step or the cut fails.
  */
 async function peeledAway(
   session: Session,
@@ -59,7 +64,7 @@ async function peeledAway(
   await copyInto(session, llops, gid, "src", leftover);
   const left = leftover((await bodies(session, llops, gid))[0]);
   const made = left ? await session.cut(gid, left) : undefined;
-  if (made?.kind === "cut") return made.children.outer;
+  if (made?.kind === "cut") return made.children;
   await session.revert(gid, "src", before);
   return undefined;
 }

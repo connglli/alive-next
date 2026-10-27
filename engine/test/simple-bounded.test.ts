@@ -1,4 +1,4 @@
-// The loops the tgt no longer has, peeled and cut away before the search.
+// Bounded loops removed by certified peeling and a cut of the src alone.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +9,7 @@ import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { bounded } from "../examples/bounded.ts";
-import { outermost, peelBounded } from "../simple/bounded.ts";
+import { cutBounded, outermost, peelBounded } from "../simple/bounded.ts";
 import { headers } from "../simple/regions.ts";
 import { bodies } from "../simple/windows.ts";
 import { toolchain } from "./toolchain-under-test.ts";
@@ -73,6 +73,45 @@ exit:
 `;
 
 describe.skipIf(!built)("bounded loops", () => {
+  test("one bounded cut leaves another loop for the next move", async () => {
+    const src = `define void @f() {
+entry:
+  %i = alloca i8
+  %j = alloca i8
+  store i8 0, ptr %i
+  store i8 0, ptr %j
+  br label %first
+
+first:
+  %i.old = load i8, ptr %i
+  %i.next = add i8 %i.old, 1
+  store i8 %i.next, ptr %i
+  %more.i = icmp ult i8 %i.next, 2
+  br i1 %more.i, label %first, label %second
+
+second:
+  %j.old = load i8, ptr %j
+  %j.next = add i8 %j.old, 1
+  store i8 %j.next, ptr %j
+  %more.j = icmp ult i8 %j.next, 3
+  br i1 %more.j, label %second, label %exit
+
+exit:
+  ret void
+}
+`;
+    const session = await start(src, "define void @f() {\nentry:\n  ret void\n}\n");
+    let gid = "g1";
+    for (const remaining of [1, 0]) {
+      const made = await cutBounded(session, llops, gid);
+      if (!made) throw new Error("expected a bounded cut");
+      gid = made.outer;
+      const [body] = await bodies(session, llops, gid);
+      expect(headers(body)).toHaveLength(remaining);
+      expect((await session.show(made.callee)).status).toBe("proved");
+    }
+  });
+
   test("a nest counts by its outer loop", async () => {
     const session = await start(NESTED, NESTED);
     const [src] = await bodies(session, llops, "g1");

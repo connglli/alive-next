@@ -1,15 +1,15 @@
 // The simple searcher, as one loop over an agenda of goals. A goal's moves are
 // made in a fixed order (the optimizer's stages on the root, a stage that its
 // windows leave interposed as a goal of its own, windows and rules toward the
-// tgt, a check, then a cut at a loop, before an expensive operation, around a
-// region left, or where the expensive operations divide evenly, then a split by
-// cases) until one proves it or splits it, and the goals a split leaves are
-// searched before the next. Every move is a session move, so whatever it
+// tgt, a check, then a cut after bounded peeling, a matched loop cut, cuts before an
+// expensive operation, around a region left or dividing expensive operations
+// evenly, then cases) until one proves it or splits it. The goals a split leaves
+// are searched before the next. Every move is a session move, so whatever it
 // proves, the kernel replays.
 import type { Comparison, Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { INVERSE } from "../core/state/cases.ts";
-import { peelBounded } from "./bounded.ts";
+import { cutBounded, peelBounded } from "./bounded.ts";
 import { caseOn, tested } from "./cases.ts";
 import { type Assumed, balancedPoints, beforePoints, cutAt, cutLoop, quota } from "./cuts.ts";
 import { strengthenAgainst } from "./facts.ts";
@@ -77,7 +77,7 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   await dropAttrs(session, llops, root);
   await dropLoopIds(session, root);
   // A loop the tgt no longer has is peeled and cut away first, and what is left is searched.
-  const start = limits.steps ? await peelBounded(session, llops, root) : root;
+  const start = limits.steps && limits.cuts > 0 ? await peelBounded(session, llops, root) : root;
   if (start !== root && (await session.check(start, limits.rootMs)).outcome === "proved")
     return session.verdict;
   const { src, tgt } = await session.show(start);
@@ -247,6 +247,12 @@ async function* moves(
   if (limits.steps && steps && limits.rules) yield stepping(() => stepByRules(run, gid));
   // A goal gets a short check before it is cut, and the largest one when nothing cuts it.
   yield checking(run, gid, run.eagerMs);
+  if (limits.steps)
+    yield halves(run, cuts, async () => {
+      const made = await cutBounded(session, llops, gid);
+      if (made) run.assumed.set(made.outer, run.assumed.get(gid) ?? []);
+      return made;
+    });
   const at = (point: [string, string]) =>
     halves(run, cuts, () => cutAt(session, llops, gid, limits, point, run.assumed));
   yield halves(run, cuts, () => cutLoop(session, llops, gid, limits, run.assumed));
