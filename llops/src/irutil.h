@@ -4,6 +4,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/AssemblyAnnotationWriter.h"
 #include "llvm/IR/Function.h"
@@ -107,9 +108,10 @@ bool holdsUndef(const llvm::Module &M);
 // Whether the body holds a loop, which alive-tv answers only as far as it unrolls.
 bool holdsLoop(const llvm::Function &F);
 
-// The first use of a pointer from `v` as more than the address of a load or a
-// store, following GEPs, phis and selects, or nothing when there is none.
-const llvm::User *escapingUse(const llvm::Value &v);
+// The first use outside loads, stores, GEPs, phis, selects and any additional
+// uses `allowed` certifies, or nothing when there is none.
+const llvm::User *escapingUse(const llvm::Value &v,
+                              llvm::function_ref<bool(const llvm::Use &)> allowed = {});
 
 // Values are referenced by the token that names them in printed IR, so the
 // agent can quote back what it reads: "%3" for a slot, "%x" for a name and

@@ -1909,6 +1909,86 @@ declare i32 @k.ih(i32)
     self.built.goal("g1", pair, pair, [], {"kind": "check", "by": "respected"})
     self.refused(self.built.write(), "Final refinement")
 
+  def test_escaped_realloc_cannot_certify_nofree(self):
+    plain = """declare ptr @"\\01realloc"(ptr, i64) nofree
+
+define ptr @f(ptr %p) {
+entry:
+  %r = call ptr @"\\01realloc"(ptr %p, i64 16)
+  ret ptr %r
+}
+"""
+    marked = plain.replace("(ptr %p) {", "(ptr %p) nofree {")
+    pair = {
+      "src": self.built.program(canonical(plain)),
+      "tgt": self.built.program(canonical(marked)),
+    }
+    self.built.goal("g1", pair, pair, [], {"kind": "check", "by": "respected"})
+    self.refused(self.built.write(), "Final refinement")
+
+  def test_recursion_cannot_certify_its_own_willreturn(self):
+    plain = "define void @f() {\nentry:\n  call void @f()\n  ret void\n}\n"
+    marked = plain.replace("@f() {", "@f() willreturn {")
+    pair = {
+      "src": self.built.program(canonical(plain)),
+      "tgt": self.built.program(canonical(marked)),
+    }
+    self.built.goal("g1", pair, pair, [], {"kind": "check", "by": "respected"})
+    self.refused(self.built.write(), "call to the defined function")
+
+  def test_a_call_site_allocation_kind_cannot_hide_reallocation(self):
+    plain = """declare ptr @resize(ptr allocptr, i64) allocsize(1) allockind("realloc,uninitialized") nofree
+
+define ptr @f(ptr %p) {
+entry:
+  %r = call ptr @resize(ptr %p, i64 16) allockind("alloc,uninitialized")
+  ret ptr %r
+}
+"""
+    marked = plain.replace("(ptr %p) {", "(ptr %p) nofree {")
+    pair = {
+      "src": self.built.program(canonical(plain)),
+      "tgt": self.built.program(canonical(marked)),
+    }
+    self.built.goal("g1", pair, pair, [], {"kind": "check", "by": "respected"})
+    self.refused(self.built.write(), "Final refinement")
+
+  def test_partial_capture_contracts_cannot_certify_full_nocapture(self):
+    plain = """declare void @g(ptr captures(address))
+
+define void @f(ptr %p) {
+entry:
+  call void @g(ptr captures(provenance) %p)
+  ret void
+}
+"""
+    marked = plain.replace("@f(ptr %p)", "@f(ptr captures(none) %p)")
+    pair = {
+      "src": self.built.program(canonical(plain)),
+      "tgt": self.built.program(canonical(marked)),
+    }
+    self.built.goal("g1", pair, pair, [], {"kind": "check", "by": "respected"})
+    self.refused(self.built.write(), "Final refinement")
+
+  def test_an_attached_call_prevents_an_unproved_willreturn(self):
+    plain = """@g = global i8 0
+declare ptr @llvm.ptrmask.p0.i64(ptr, i64)
+declare ptr @objc_retainAutoreleasedReturnValue(ptr)
+
+define ptr @f() {
+entry:
+  %p = call ptr @llvm.ptrmask.p0.i64(ptr @g, i64 -1) [ "clang.arc.attachedcall"(ptr @objc_retainAutoreleasedReturnValue) ]
+  ret ptr %p
+}
+"""
+    marked = plain.replace("@f() {", "@f() willreturn {")
+    pair = {
+      "src": self.built.program(canonical(plain)),
+      "tgt": self.built.program(canonical(marked)),
+    }
+    self.built.goal("g1", pair, pair, [], {"kind": "check", "by": "respected"})
+    self.refused(self.built.write(), "Final refinement")
+
   def test_a_goal_checked_as_reshaped_that_changes_a_value(self):
     changed = LOOP_ROTATED.replace("add i32 %i, 1", "add i32 %i, 2")
     pair = {

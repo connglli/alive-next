@@ -242,6 +242,50 @@ SEEDS = [
     "declare i32 @h(i32) nofree\n\n",
   ),
   Seed(
+    "memory_none_call",
+    ["i32 %x"],
+    "i32",
+    "  %v = call i32 @h(i32 %x)\n  ret i32 %v",
+    "declare i32 @h(i32) memory(none)\n\n",
+  ),
+  Seed(
+    "argument_call",
+    ["ptr %p", "ptr %q"],
+    "void",
+    "  call void @h(ptr %p, ptr %q)\n  ret void",
+    "declare void @h(ptr captures(none) readonly, ptr captures(none) writeonly) "
+    "nofree memory(argmem: readwrite)\n\n",
+  ),
+  Seed(
+    "memcpy",
+    ["ptr %p", "ptr %q"],
+    "void",
+    "  call void @llvm.memcpy.p0.p0.i64(ptr %p, ptr %q, i64 4, i1 false)\n  ret void",
+    "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1 immarg)\n\n",
+  ),
+  Seed(
+    "memmove",
+    ["ptr %p", "ptr %q"],
+    "void",
+    "  call void @llvm.memmove.p0.p0.i64(ptr %p, ptr %q, i64 4, i1 false)\n  ret void",
+    "declare void @llvm.memmove.p0.p0.i64(ptr, ptr, i64, i1 immarg)\n\n",
+  ),
+  Seed(
+    "bcmp",
+    ["ptr %p", "ptr %q"],
+    "i32",
+    "  %v = call i32 @bcmp(ptr %p, ptr %q, i64 4)\n  ret i32 %v",
+    "declare i32 @bcmp(ptr captures(none), ptr captures(none), i64) "
+    "nofree memory(argmem: read)\n\n",
+  ),
+  Seed(
+    "strlen",
+    ["ptr %p"],
+    "i64",
+    "  %v = call i64 @strlen(ptr %p)\n  ret i64 %v",
+    "declare i64 @strlen(ptr captures(none)) nofree memory(argmem: read)\n\n",
+  ),
+  Seed(
     "abort",
     ["ptr %p"],
     "void",
@@ -540,6 +584,92 @@ class TestRespected(Case):
 
   def test_seeds(self):
     self.assertAccepted([(seed.program(), after) for seed in SEEDS for after in cases(seed)])
+
+  def test_defined_returns(self):
+    examples = [
+      ("i32", "", "ret i32 0"),
+      ("float", "", "ret float 0.0"),
+      ("float", "", "ret float 0x7FF8000000000000"),
+      ("i32", "i32 noundef %x", "ret i32 %x"),
+      ("i32", "i32 %x", "%v = freeze i32 %x\n  ret i32 %v"),
+      ("{i8, i1}", "", "ret {i8, i1} {i8 3, i1 true}"),
+      ("<2 x i8>", "", "ret <2 x i8> <i8 2, i8 3>"),
+    ]
+    pairs = []
+    for ty, args, body in examples:
+      plain = f"define {ty} @f({args}) {{\nentry:\n  {body}\n}}\n"
+      held = plain.replace("define ", "define noundef ")
+      self.assertTrue(respected(plain, held))
+      self.assertTrue(respected(held, plain))
+      pairs.extend([(plain, held), (held, plain)])
+    for declaration, name in [("@g = global i32 0", "g"), ("declare void @h()", "h")]:
+      plain = f"{declaration}\n\ndefine ptr @f() {{\nentry:\n  ret ptr @{name}\n}}\n"
+      held = plain.replace("define ptr", "define noundef ptr")
+      self.assertTrue(respected(plain, held))
+      pairs.append((plain, held))
+    self.assertProved(pairs)
+
+  def test_poison_return_is_not_noundef_with_undef_disabled(self):
+    plain = "define i32 @f() {\nentry:\n  ret i32 poison\n}\n"
+    held = plain.replace("define i32", "define noundef i32")
+    self.assertEqual(alive2(plain, held), "incorrect")
+    self.assertFalse(respected(plain, held))
+
+  def test_assembler_escapes_preserve_reallocation_effects(self):
+    for name in ["realloc", "reallocf"]:
+      with self.subTest(name):
+        plain = f"""declare ptr @"\\01{name}"(ptr, i64) nofree
+
+define ptr @f(ptr %p) {{
+entry:
+  %r = call ptr @"\\01{name}"(ptr %p, i64 16)
+  ret ptr %r
+}}
+"""
+        held = plain.replace("(ptr %p) {", "(ptr %p) nofree {")
+        self.assertEqual(alive2(plain, held), "incorrect")
+        self.assertFalse(respected(plain, held))
+
+  def test_call_site_flags_do_not_replace_declaration_flags(self):
+    plain = """declare ptr @resize(ptr allocptr, i64) allocsize(1) allockind("realloc,uninitialized") nofree
+
+define ptr @f(ptr %p) {
+entry:
+  %r = call ptr @resize(ptr %p, i64 16) allockind("alloc,uninitialized")
+  ret ptr %r
+}
+"""
+    held = plain.replace("(ptr %p) {", "(ptr %p) nofree {")
+    self.assertEqual(alive2(plain, held), "incorrect")
+    self.assertFalse(respected(plain, held))
+
+  def test_partial_capture_contracts_are_not_combined(self):
+    plain = """declare void @g(ptr captures(address))
+
+define void @f(ptr %p) {
+entry:
+  call void @g(ptr captures(provenance) %p)
+  ret void
+}
+"""
+    held = plain.replace("@f(ptr %p)", "@f(ptr captures(none) %p)")
+    self.assertEqual(alive2(plain, held), "incorrect")
+    self.assertFalse(respected(plain, held))
+
+  def test_attached_calls_have_their_own_return_behavior(self):
+    plain = """@g = global i8 0
+declare ptr @llvm.ptrmask.p0.i64(ptr, i64)
+declare ptr @objc_retainAutoreleasedReturnValue(ptr)
+
+define ptr @f() {
+entry:
+  %p = call ptr @llvm.ptrmask.p0.i64(ptr @g, i64 -1) [ "clang.arc.attachedcall"(ptr @objc_retainAutoreleasedReturnValue) ]
+  ret ptr %p
+}
+"""
+    held = plain.replace("@f() {", "@f() willreturn {")
+    self.assertEqual(alive2(plain, held), "incorrect")
+    self.assertFalse(respected(plain, held))
 
   @unittest.skipUnless(os.path.exists(CLANG), "needs the toolchain's clang")
   def test_real_functions_and_their_mutants(self):

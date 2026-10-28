@@ -5,7 +5,6 @@
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/Analysis/CFG.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/AsmParser/SlotMapping.h"
 #include "llvm/IR/CFG.h"
@@ -333,13 +332,31 @@ bool findUseBeforeDef(llvm::Function &F, llvm::BasicBlock &BB, ValueRefs &refs, 
 } // namespace
 
 bool holdsLoop(const llvm::Function &F) {
-  // Only blocks the entry reaches are searched; the rest never run.
-  llvm::SmallVector<std::pair<const llvm::BasicBlock *, const llvm::BasicBlock *>> back;
-  llvm::FindFunctionBackedges(F, back);
-  return !back.empty();
+  if (F.empty())
+    return false;
+  // Only an edge back into the active path is a cycle; finished joins may be revisited.
+  llvm::SmallPtrSet<const llvm::BasicBlock *, 32> active, done;
+  std::vector<std::pair<const llvm::BasicBlock *, bool>> work{{&F.getEntryBlock(), false}};
+  while (!work.empty()) {
+    auto [block, leaving] = work.back();
+    work.pop_back();
+    if (leaving) {
+      active.erase(block);
+      done.insert(block);
+    } else if (!done.contains(block)) {
+      if (!active.insert(block).second)
+        return true;
+      work.emplace_back(block, true);
+      if (block->getTerminator())
+        for (const llvm::BasicBlock *next : llvm::successors(block))
+          work.emplace_back(next, false);
+    }
+  }
+  return false;
 }
 
-const llvm::User *escapingUse(const llvm::Value &v) {
+const llvm::User *escapingUse(const llvm::Value &v,
+                              llvm::function_ref<bool(const llvm::Use &)> allowed) {
   std::set<const llvm::Value *> seen;
   std::vector<const llvm::Value *> work{&v};
   while (!work.empty()) {
@@ -357,7 +374,7 @@ const llvm::User *escapingUse(const llvm::Value &v) {
       if (llvm::isa<llvm::PHINode>(user) || (llvm::isa<llvm::SelectInst>(user) && at > 0) ||
           (llvm::isa<llvm::GEPOperator>(user) && at == 0))
         work.push_back(user);
-      else
+      else if (!allowed || !allowed(use))
         return user;
     }
   }

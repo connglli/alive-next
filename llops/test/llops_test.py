@@ -326,6 +326,49 @@ exit:
       "recursive_call",
     )
 
+  def test_an_unreachable_cycle_does_not_make_the_function_loop(self):
+    module = "define void @f() {\nentry:\n  ret void\ndead:\n  br label %dead\n}\n"
+    self.assertTrue(self.conforms(module))
+    self.assertFalse(self.cyclic(module))
+    marked = module.replace("@f() {", "@f() willreturn {")
+    self.assertTrue(self.good(run("respected", {"before": module, "after": marked}))["respected"])
+
+  def test_shared_successors_and_repeated_edges_are_not_cycles(self):
+    module = """define void @f(i1 %c) {
+entry:
+  br i1 %c, label %a, label %b
+a:
+  br i1 %c, label %join, label %join
+b:
+  br label %join
+join:
+  ret void
+}
+"""
+    self.assertTrue(self.conforms(module))
+    self.assertFalse(self.cyclic(module))
+    cyclic = module.replace("join:\n  ret void", "join:\n  br label %b")
+    self.assertTrue(self.cyclic(cyclic))
+
+  def test_cycles_with_two_entries_are_found(self):
+    module = """define void @f(i1 %c) {
+entry:
+  br i1 %c, label %a, label %b
+a:
+  br label %b
+b:
+  br label %a
+}
+"""
+    self.assertTrue(self.conforms(module))
+    self.assertTrue(self.cyclic(module))
+
+  def test_a_long_acyclic_path_needs_no_recursive_walk(self):
+    blocks = "".join(f"b{k}:\n  br label %b{k + 1}\n" for k in range(2000))
+    module = "define void @f() {\n" + blocks + "b2000:\n  ret void\n}\n"
+    self.assertTrue(self.conforms(module))
+    self.assertFalse(self.cyclic(module))
+
   def test_two_definitions(self):
     module = F_SIMPLE + F_SIMPLE.replace("@f", "@g")
     r = self.good(run("validate", {"module": module}))
@@ -4852,6 +4895,298 @@ done:
         pair = [self.marked(m, "done:\n", f"done:\n  {call}\n") for m in (plain, held)]
         self.assertIn("a call that may free memory", self.answer(*pair)["why"])
 
+  def test_assembler_escapes_do_not_hide_a_realloc(self):
+    for name in ["realloc", "reallocf", "vec_realloc"]:
+      with self.subTest(name):
+        plain = f"""declare ptr @"\\01{name}"(ptr, i64) nofree
+
+define ptr @f(ptr %p) {{
+entry:
+  %r = call ptr @"\\01{name}"(ptr %p, i64 16)
+  ret ptr %r
+}}
+"""
+        held = self.marked(plain, "(ptr %p) {", "(ptr %p) nofree {")
+        self.assertFalse(self.answer(plain, held)["respected"])
+
+  def test_call_site_allocation_flags_cannot_hide_reallocation(self):
+    for declared, site in [("realloc", "alloc"), ("alloc", "realloc")]:
+      with self.subTest(declared=declared, site=site):
+        plain = f'''declare ptr @resize(ptr allocptr, i64) allocsize(1) allockind("{declared},uninitialized") nofree
+
+define ptr @f(ptr %p) {{
+entry:
+  %r = call ptr @resize(ptr %p, i64 16) allockind("{site},uninitialized")
+  ret ptr %r
+}}
+'''
+        held = self.marked(plain, "(ptr %p) {", "(ptr %p) nofree {")
+        self.assertFalse(self.answer(plain, held)["respected"])
+
+  def test_opaque_call_effects_are_checked(self):
+    plain = """declare i32 @g(i32) memory(none)
+
+define i32 @f(i32 %x) {
+entry:
+  %r = call i32 @g(i32 %x)
+  ret i32 %r
+}
+"""
+    held = self.marked(plain, "(i32 %x) {", "(i32 %x) memory(none) nofree {")
+    self.assertTrue(self.answer(plain, held)["respected"])
+    for effects, allowed in [("read", True), ("write", False), ("readwrite", False)]:
+      with self.subTest(effects):
+        src = plain.replace("memory(none)", f"memory({effects})")
+        tgt = self.marked(src, "(i32 %x) {", "(i32 %x) memory(read) {")
+        self.assertEqual(self.answer(src, tgt)["respected"], allowed)
+
+  def test_a_call_combines_call_site_and_declaration_effects(self):
+    plain = """declare void @g() memory(read)
+
+define void @f() {
+entry:
+  call void @g() memory(write)
+  ret void
+}
+"""
+    held = self.marked(plain, "@f() {", "@f() memory(none) {")
+    self.assertTrue(self.answer(plain, held)["respected"])
+
+  def test_call_arguments_keep_their_access_and_capture_limits(self):
+    plain = """declare void @g(ptr captures(none) readonly, ptr captures(none) writeonly) nofree memory(argmem: readwrite)
+
+define void @f(ptr %p, ptr %q) {
+entry:
+  call void @g(ptr %p, ptr %q)
+  ret void
+}
+"""
+    fn = "(ptr readonly captures(none) %p, ptr writeonly captures(none) %q) nofree memory(argmem: readwrite) {"
+    held = self.marked(plain, "(ptr %p, ptr %q) {", fn)
+    self.assertTrue(self.answer(plain, held)["respected"])
+    for before, after in [
+      ("readonly captures(none) %p", "writeonly captures(none) %p"),
+      ("writeonly captures(none) %q", "readonly captures(none) %q"),
+      ("memory(argmem: readwrite) {", "memory(argmem: read) {"),
+    ]:
+      with self.subTest(after):
+        self.assertFalse(self.answer(plain, held.replace(before, after))["respected"])
+    src = plain.replace("captures(none) readonly", "readonly")
+    tgt = held.replace("captures(none) readonly", "readonly")
+    self.assertFalse(self.answer(src, tgt)["respected"])
+
+  def test_partial_capture_contracts_do_not_imply_the_full_one(self):
+    plain = """declare void @g(ptr captures(address))
+
+define void @f(ptr %p) {
+entry:
+  call void @g(ptr captures(provenance) %p)
+  ret void
+}
+"""
+    held = self.marked(plain, "@f(ptr %p)", "@f(ptr captures(none) %p)")
+    self.assertFalse(self.answer(plain, held)["respected"])
+    for old in ["captures(address)", "captures(provenance)"]:
+      with self.subTest(old):
+        src, tgt = (text.replace(old, "captures(none)") for text in [plain, held])
+        self.assertTrue(self.answer(src, tgt)["respected"])
+
+  def test_operand_bundles_can_add_effects_to_a_memory_free_intrinsic(self):
+    for bundle in ["deopt", "custom"]:
+      with self.subTest(bundle):
+        plain = f'''declare i32 @llvm.umin.i32(i32, i32)
+
+define i32 @f(i32 %x) {{
+entry:
+  %v = call i32 @llvm.umin.i32(i32 %x, i32 5) [ "{bundle}"(i32 %x) ]
+  ret i32 %v
+}}
+'''
+        for attr in ["memory(none)", "nofree", "willreturn"]:
+          held = self.marked(plain, "@f(i32 %x) {", f"@f(i32 %x) {attr} {{")
+          self.assertFalse(self.answer(plain, held)["respected"])
+
+  def test_an_attached_call_must_not_inherit_the_intrinsics_willreturn(self):
+    plain = """@g = global i8 0
+declare ptr @llvm.ptrmask.p0.i64(ptr, i64)
+declare ptr @objc_retainAutoreleasedReturnValue(ptr)
+
+define ptr @f() {
+entry:
+  %p = call ptr @llvm.ptrmask.p0.i64(ptr @g, i64 -1) [ "clang.arc.attachedcall"(ptr @objc_retainAutoreleasedReturnValue) ]
+  ret ptr %p
+}
+"""
+    held = self.marked(plain, "@f() {", "@f() willreturn {")
+    self.assertFalse(self.answer(plain, held)["respected"])
+
+  def test_assumption_bundles_remain_memory_free(self):
+    plain = """declare void @llvm.assume(i1)
+
+define i32 @f(i32 %x) {
+entry:
+  call void @llvm.assume(i1 true) [ "noundef"(i32 %x) ]
+  ret i32 %x
+}
+"""
+    held = self.marked(plain, "@f(i32 %x) {", "@f(i32 %x) nofree willreturn memory(none) {")
+    self.assertTrue(self.answer(plain, held)["respected"])
+
+  def test_copy_operands_determine_memory_effects(self):
+    plain = """@value = constant i32 7
+@result = global i32 0
+declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
+
+define void @f() {
+entry:
+  call void @llvm.memcpy.p0.p0.i64(ptr @result, ptr @value, i64 4, i1 false)
+  ret void
+}
+"""
+    held = self.marked(plain, "@f() {", "@f() nofree memory(write, argmem: none) {")
+    self.assertTrue(self.answer(plain, held)["respected"])
+    for wrong in ["memory(none)", "memory(argmem: readwrite)"]:
+      with self.subTest(wrong):
+        self.assertFalse(
+          self.answer(plain, held.replace("memory(write, argmem: none)", wrong))["respected"]
+        )
+    src = plain.replace("constant i32 7", "global i32 7")
+    tgt = held.replace("constant i32 7", "global i32 7")
+    self.assertFalse(self.answer(src, tgt)["respected"])
+
+  def test_a_memory_intrinsic_cannot_hide_its_accesses_with_attributes(self):
+    plain = """declare void @llvm.memset.p0.i64(ptr, i8, i64, i1) memory(none)
+
+define void @f(ptr %p) {
+entry:
+  call void @llvm.memset.p0.i64(ptr %p, i8 0, i64 4, i1 false)
+  ret void
+}
+"""
+    held = self.marked(plain, "(ptr %p) {", "(ptr readonly %p) memory(none) {")
+    self.assertFalse(self.answer(plain, held)["respected"])
+
+  def test_memory_queries_are_reads_even_with_narrower_attributes(self):
+    for name in ["memcmp", "bcmp"]:
+      with self.subTest(name):
+        plain = f"""declare i32 @{name}(ptr captures(none), ptr captures(none), i64) nofree memory(argmem: read)
+
+define i32 @f(ptr %p, ptr %q) {{
+entry:
+  %r = call i32 @{name}(ptr %p, ptr %q, i64 4)
+  ret i32 %r
+}}
+"""
+        fn = "(ptr readonly captures(none) %p, ptr readonly captures(none) %q) nofree memory(argmem: read) {"
+        held = self.marked(plain, "(ptr %p, ptr %q) {", fn)
+        self.assertTrue(self.answer(plain, held)["respected"])
+        src = plain.replace("memory(argmem: read)", "memory(none)")
+        tgt = self.marked(src, "(ptr %p, ptr %q) {", "(ptr %p, ptr %q) memory(none) {")
+        self.assertFalse(self.answer(src, tgt)["respected"])
+
+  def test_other_library_calls_are_not_treated_as_opaque(self):
+    plain = """declare i32 @puts(ptr captures(none)) memory(none)
+
+define i32 @f(ptr %p) {
+entry:
+  %r = call i32 @puts(ptr %p)
+  ret i32 %r
+}
+"""
+    held = self.marked(plain, "(ptr %p) {", "(ptr %p) memory(none) {")
+    self.assertFalse(self.answer(plain, held)["respected"])
+
+  def test_pointer_observations_do_not_read_the_pointed_memory(self):
+    plain = """define i1 @f(ptr %p) {
+entry:
+  %c = icmp eq ptr %p, null
+  ret i1 %c
+}
+"""
+    for attr in ["readonly", "writeonly", "readnone", "writeonly captures(address_is_null)"]:
+      with self.subTest(attr):
+        held = self.marked(plain, "(ptr %p) {", f"(ptr {attr} %p) memory(none) {{")
+        self.assertTrue(self.answer(plain, held)["respected"])
+    held = self.marked(plain, "(ptr %p)", "(ptr captures(none) %p)")
+    self.assertFalse(self.answer(plain, held)["respected"])
+
+  def test_address_observations_cannot_return_to_pointer_computations(self):
+    plain = """define void @f(ptr %p) {
+entry:
+  %address = ptrtoint ptr %p to i64
+  %q = inttoptr i64 %address to ptr
+  store i32 1, ptr %q
+  ret void
+}
+"""
+    held = self.marked(plain, "(ptr %p)", "(ptr readonly %p)")
+    self.assertFalse(self.answer(plain, held)["respected"])
+
+  def test_defined_return_values_keep_noundef(self):
+    cases = [
+      ("i32", "", "  ret i32 7"),
+      ("float", "", "  ret float 0.0"),
+      ("float", "", "  ret float 0x7FF8000000000000"),
+      ("{i8, i1}", "", "  ret {i8, i1} {i8 3, i1 true}"),
+      ("<2 x i8>", "", "  ret <2 x i8> <i8 2, i8 3>"),
+      ("i32", "i32 noundef %x", "  ret i32 %x"),
+      ("i32", "i32 %x", "  %v = freeze i32 %x\n  ret i32 %v"),
+      ("i32", "", "  br label %loop\nloop:\n  br label %loop"),
+    ]
+    for ty, args, body in cases:
+      with self.subTest(body):
+        plain = f"define {ty} @f({args}) {{\nentry:\n{body}\n}}\n"
+        held = self.marked(plain, f"define {ty}", f"define noundef {ty}")
+        self.assertTrue(self.answer(plain, held)["respected"])
+        self.assertTrue(self.answer(held, plain)["respected"])
+        edited = self.good(self.edit("drop_attrs", module=held))["module"]
+        self.assertNotIn("define noundef", edited)
+
+  def test_noundef_returns_still_refuse_poison(self):
+    cases = [
+      ("i32", "", "  ret i32 poison"),
+      ("i32", "i32 %x", "  ret i32 %x"),
+      ("{i8, i1}", "", "  ret {i8, i1} {i8 poison, i1 true}"),
+      ("i32", "i32 noundef %x", "  %v = add nuw i32 %x, 1\n  ret i32 %v"),
+    ]
+    for ty, args, body in cases:
+      with self.subTest(body):
+        plain = f"define {ty} @f({args}) {{\nentry:\n{body}\n}}\n"
+        held = self.marked(plain, f"define {ty}", f"define noundef {ty}")
+        self.assertFalse(self.answer(plain, held)["respected"])
+        edited = self.good(self.edit("drop_attrs", module=held))["module"]
+        self.assertIn("define noundef", edited)
+
+  def test_global_and_function_addresses_are_defined(self):
+    for declaration, name in [("@g = global i32 0", "g"), ("declare void @h()", "h")]:
+      with self.subTest(name):
+        plain = f"{declaration}\n\ndefine ptr @f() {{\nentry:\n  ret ptr @{name}\n}}\n"
+        held = self.marked(plain, "define ptr", "define noundef ptr")
+        self.assertTrue(self.answer(plain, held)["respected"])
+
+  def test_other_return_attributes_may_poison_a_constant(self):
+    cases = [
+      ("range(i32 0, 2) i32", "i32 3"),
+      ("nonnull ptr", "ptr null"),
+      ("nofpclass(nan) float", "float 0x7FF8000000000000"),
+    ]
+    for ty, value in cases:
+      with self.subTest(ty):
+        plain = f"define {ty} @f() {{\nentry:\n  ret {value}\n}}\n"
+        held = self.marked(plain, "define ", "define noundef ")
+        self.assertFalse(self.answer(plain, held)["respected"])
+        self.assertIn("define noundef", self.good(self.edit("drop_attrs", module=held))["module"])
+
+  def test_a_constant_expression_is_not_a_defined_literal(self):
+    plain = """@a = global [1 x i8] zeroinitializer
+define ptr @f() {
+entry:
+  ret ptr getelementptr inbounds ([1 x i8], ptr @a, i64 0, i64 2)
+}
+"""
+    held = self.marked(plain, "define ptr", "define noundef ptr")
+    self.assertFalse(self.answer(plain, held)["respected"])
+
   def test_a_global_is_other_memory(self):
     plain = """@G = global i32 0
 
@@ -4889,10 +5224,10 @@ entry:
 """
     held = self.marked(plain, "(ptr %p) {", "(ptr %p) nofree {")
     self.assertTrue(self.answer(plain, held)["respected"])
-    for marked in ["(ptr %p) memory(none) {", "(ptr captures(none) %p) {"]:
-      with self.subTest(marked):
-        held = self.marked(plain, "(ptr %p) {", marked)
-        self.assertIn("more than an address", self.answer(plain, held)["why"])
+    held = self.marked(plain, "(ptr %p) {", "(ptr %p) memory(none) {")
+    self.assertTrue(self.answer(plain, held)["respected"])
+    held = self.marked(plain, "(ptr %p) {", "(ptr captures(none) %p) {")
+    self.assertIn("escapes the checked uses", self.answer(plain, held)["why"])
 
   def test_an_argument_pointer_stored_as_a_value(self):
     plain = """define void @f(ptr %p) {
@@ -4903,7 +5238,7 @@ entry:
 }
 """
     held = self.marked(plain, "(ptr %p)", "(ptr captures(none) %p)")
-    self.assertIn("more than an address", self.answer(plain, held)["why"])
+    self.assertIn("escapes the checked uses", self.answer(plain, held)["why"])
 
   def test_a_pointer_from_a_vector_argument(self):
     plain = """define i32 @f(<2 x ptr> %v) {
@@ -4914,7 +5249,7 @@ entry:
 }
 """
     held = self.marked(plain, "(<2 x ptr> %v)", "(<2 x ptr> writeonly %v)")
-    self.assertIn("more than an address", self.answer(plain, held)["why"])
+    self.assertIn("escapes the checked uses", self.answer(plain, held)["why"])
 
   def test_attributes_alive2_ignores_do_not_count(self):
     fn = "(ptr readonly %p, i32 %n) local_unnamed_addr norecurse memory(argmem: read) {"
@@ -4944,6 +5279,18 @@ entry:
 
   def test_both_modules_are_needed(self):
     self.bad(run("respected", {"before": READ_LOOP}), "bad_request")
+
+  def test_a_recursive_call_cannot_assume_the_attribute_being_checked(self):
+    plain = "define void @f() {\nentry:\n  call void @f()\n  ret void\n}\n"
+    for attr in ["willreturn", "memory(none)"]:
+      with self.subTest(attr):
+        held = self.marked(plain, "@f() {", f"@f() {attr} {{")
+        self.bad(run("respected", {"before": plain, "after": held}), "recursive_call")
+
+  def test_undef_is_outside_the_attribute_check(self):
+    plain = "define i32 @f() {\nentry:\n  ret i32 undef\n}\n"
+    held = self.marked(plain, "@f() {", "@f() memory(none) {")
+    self.bad(run("respected", {"before": plain, "after": held}), "undef")
 
   def test_an_ill_formed_module_is_refused(self):
     # The use of %a in %next is not dominated by its definition.

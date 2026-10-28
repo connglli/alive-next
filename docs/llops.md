@@ -98,7 +98,7 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 | `copy_block` | `block`, `preds` | give the edges from `preds` their own copy of `block` |
 | `peel` | `block` | give the edges into the loop `block` heads their own copy of its iteration |
 | `set_body` | `body` | replace the whole body |
-| `drop_attrs` | | remove the attributes `respected` reads from the function |
+| `drop_attrs` | | remove checked body attributes and provably redundant return `noundef` |
 | `flags` | `v`, `flags` | put or remove the flags an instruction can carry |
 | `splice` | `from`, `to`, `with`, `value_map` | put another module's window in place of the one from `from` to `to` |
 
@@ -247,9 +247,19 @@ The two functions are walked together one segment at a time. A segment runs from
 
 Request `{ "before": ..., "after": ... }`, response `{ "ok": true, "respected": true }`, or `{ "ok": true, "respected": false, "why": ... }`.
 
-Whether the function `after` defines is the one `before` defines with attributes added that its own instructions cannot break, so that `after` refines `before` under alive2's semantics without a solver. The attributes it reads are `memory(...)`, `nofree`, `noreturn` and `willreturn` on the function, and `readonly`, `writeonly`, `readnone` and `captures(none)` on its parameters. `before` must be `after` with these attributes removed, as `drop_attrs` removes them.
+Whether `after` refines `before` by adding body attributes that its instructions keep. It checks `memory(...)`, `nofree`, `noreturn` and `willreturn` on the function, and `readonly`, `writeonly`, `readnone` and `captures(none)` on its parameters. Removing these attributes from `after` must leave `before`, apart from ignored attributes and redundant return `noundef`.
 
-alive2 checks these attributes only against the function's own instructions, so the check follows each pointer a load or store uses back through GEPs, phis and selects to the arguments, allocas or globals it may come from. Each access must be one the attributes allow: a stack slot always, a constant global for a load, another global when the function may touch other memory, an argument when it may touch argument memory and the parameter allows it, and anything else only when both argument memory and other memory are allowed. Under `memory(...)` or a parameter attribute, a pointer from an argument may only be the address of a load or store, or flow into a GEP, a phi or a select, and under `memory(...)` every call must be to `llvm.assume` or to an intrinsic that does not touch memory, as LLVM's own table of intrinsics says. Volatile or atomic accesses, other instructions that touch memory, a `ret` under `noreturn`, under `nofree` a call that is not `nofree` or may be a `realloc`, and under `willreturn` a loop or a call without `willreturn`, make the answer `false`.
+Accesses are traced through GEPs, phis and selects to their possible roots. Stack slots permit reads and writes, and constant globals permit reads. Other globals need permission for other memory; arguments need permission for argument memory and for the parameter's access kind. Unknown roots need both argument and other-memory permission. Volatile and atomic loads and stores are refused.
+
+Opaque direct calls combine their declaration and call-site effects, with argument accesses checked at the actual pointer roots. Ordinary memory intrinsics and the library queries `memcmp`, `bcmp` and `strlen` also have their modeled accesses checked, regardless of narrower written attributes. Other library calls, aggregate pointer operands and unsupported parameter effects remain outside this memory check.
+
+Forwarding a constrained pointer to an opaque call requires explicit `captures(none)` on the declaration or call site. Partial capture contracts are not combined, because alive2 ignores them. A used pointer result requires separate reasoning.
+
+Pointer comparisons and conversions may feed pure computations, branches, switches or returns containing no pointers. Their results cannot be stored, passed to calls or converted back to pointers. These observations remain refused under `captures(none)`, which also forbids address capture.
+
+Operand bundles are accepted only as recognized assumptions on `llvm.assume`. Under `nofree`, a call must be shown not to free memory, and reallocation flags on either the declaration or call site cause refusal. Under `willreturn`, loops and calls without `willreturn` are refused. A `ret` violates `noreturn`. Both modules must satisfy the program shape, including its exclusions of recursion and `undef`.
+
+A return `noundef` may differ when every return is visibly non-poison: a literal value, a function or global-variable address, a `freeze` result, or a `noundef` parameter. Aggregate literals are checked element by element. Other meaningful return attributes prevent this check because they may introduce poison. A function with no `ret` keeps `noundef` vacuously. `drop_attrs` removes return `noundef` only when this check proves it redundant.
 
 ## analyze
 

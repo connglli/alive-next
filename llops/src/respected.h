@@ -6,15 +6,12 @@
 
 namespace llops {
 
-// Whether one function is another with attributes added that its own
-// instructions cannot break, so that it refines the other with no solver.
-//
-// alive2 checks memory(...), nofree, willreturn, readonly, writeonly, readnone
-// and captures(none) only against a function's own instructions, and when those
-// cannot break them, the function runs the same with them as without.
+// Whether body attributes hold on the function's accesses, calls and pointer
+// uses, with return noundef also compared where the returned values cannot be
+// poison. A successful check certifies refinement without a solver.
 llvm::json::Object respectedCmd(llvm::json::Object &args);
 
-// Remove the attributes `respected` checks, as the `drop_attrs` edit does.
+// Remove checked body attributes and return noundef where it is proved redundant.
 void dropCheckedAttrs(llvm::Function &F);
 
 } // namespace llops
