@@ -36,7 +36,7 @@ import { copyShared, strengthenLoop } from "../simple/loops.ts";
 import { peel } from "../simple/peel.ts";
 import { regions } from "../simple/regions.ts";
 import { bodies } from "../simple/windows.ts";
-import { JOINED } from "./simple-pairs.ts";
+import { JOINED, SLOTTED } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 const llops = new Llops(toolchain.path("llops"));
@@ -508,6 +508,106 @@ function statuses(session: Session, goals: string[]) {
 }
 
 describe.skipIf(!solving || !running)("cuts with alive-tv", () => {
+  for (const type of ["i8", "i32", "i64"])
+    test(`pairs incoming slot stores with an ${type} phi`, async () => {
+      const session = await solved(
+        "incoming-stores",
+        SLOTTED.src.replaceAll("i32", type),
+        SLOTTED.tgt.replaceAll("i32", type),
+      );
+      const halves = await cutLoop(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false });
+      if (!halves) throw new Error("expected a cut matching the slot with the phi");
+      for (const gid of [halves.outer, halves.callee])
+        expect((await session.check(gid)).outcome).toBe("proved");
+      expect(session.verdict).toBe("verified");
+    });
+
+  test("pairs the last store on each incoming edge through intervening blocks", async () => {
+    const source = SLOTTED.src
+      .replace("  store i32 %a", "  store i32 0, ptr %slot\n  store i32 %a")
+      .replace("  store i32 %b", "  store i32 0, ptr %slot\n  store i32 %b")
+      .replace("  br label %head", "  br label %entry.bridge\nentry.bridge:\n  br label %head");
+    const session = await solved("last-stores", source, SLOTTED.tgt);
+    const halves = await cutLoop(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false });
+    if (!halves) throw new Error("expected a cut matching the last stores");
+    for (const gid of [halves.outer, halves.callee])
+      expect((await session.check(gid)).outcome).toBe("proved");
+  });
+
+  test("pairs slot stores from several back edges", async () => {
+    const signature = (text: string) =>
+      text.replace("i1 noundef %again)", "i32 %c, i1 noundef %which, i1 noundef %again)");
+    const source = signature(SLOTTED.src).replace(
+      "body:\n  store i32 %b, ptr %slot\n  br label %head",
+      "body:\n  br i1 %which, label %left, label %right\nleft:\n  store i32 %b, ptr %slot\n  br label %head\nright:\n  store i32 %c, ptr %slot\n  br label %head",
+    );
+    const target = signature(SLOTTED.tgt)
+      .replace("[ %b, %body ]", "[ %b, %left ], [ %c, %right ]")
+      .replace(
+        "body:\n  br label %head",
+        "body:\n  br i1 %which, label %left, label %right\nleft:\n  br label %head\nright:\n  br label %head",
+      );
+    const session = await solved("several-stores", source, target);
+    const halves = await cutLoop(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false });
+    if (!halves) throw new Error("expected a cut matching every incoming store");
+    for (const gid of [halves.outer, halves.callee])
+      expect((await session.check(gid)).outcome).toBe("proved");
+  });
+
+  test("pairs a stored poison with a poison phi operand", async () => {
+    const session = await solved(
+      "poison-store",
+      SLOTTED.src.replace("store i32 %b", "store i32 poison"),
+      SLOTTED.tgt.replace("[ %b, %body ]", "[ poison, %body ]"),
+    );
+    const halves = await cutLoop(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false });
+    if (!halves) throw new Error("expected a cut matching the stored poison");
+    for (const gid of [halves.outer, halves.callee])
+      expect((await session.check(gid)).outcome).toBe("proved");
+  });
+
+  test("does not pair slot stores through a partial predecessor correspondence", async () => {
+    const bridge = (text: string) =>
+      text.replace("  br label %head", "  br label %entry.bridge\nentry.bridge:\n  br label %head");
+    const session = await start(
+      bridge(SLOTTED.src),
+      bridge(SLOTTED.tgt).replace("[ %a, %entry ]", "[ %a, %entry.bridge ]"),
+    );
+    expect(
+      await cutLoop(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false }),
+    ).toBeUndefined();
+  });
+
+  for (const [label, target] of [
+    ["different incoming values", SLOTTED.tgt.replace("[ %b, %body ]", "[ %a, %body ]")],
+    [
+      "swapped incoming values",
+      SLOTTED.tgt.replace("[ %a, %entry ], [ %b, %body ]", "[ %b, %entry ], [ %a, %body ]"),
+    ],
+    [
+      "a different type",
+      SLOTTED.tgt
+        .replace(
+          "%value = phi i32 [ %a, %entry ], [ %b, %body ]",
+          "%wide = phi i64 [ 0, %entry ], [ 1, %body ]",
+        )
+        .replace("  %result = shl", "  %value = trunc i64 %wide to i32\n  %result = shl"),
+    ],
+  ] as const)
+    test(`does not pair slot stores with ${label}`, async () => {
+      const source =
+        label === "a different type"
+          ? SLOTTED.src
+              .replace("store i32 %a", "store i32 0")
+              .replace("store i32 %b", "store i32 1")
+          : SLOTTED.src;
+      const session = await start(source, target);
+      expect(
+        await cutLoop(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false }),
+      ).toBeUndefined();
+      expect((await session.show("g1")).status).toBe("open");
+    });
+
   test("filling rebuilds a value when its matched instruction has another type", async () => {
     const src = `define void @f(i32 %x, i64 %wide) {
 entry:

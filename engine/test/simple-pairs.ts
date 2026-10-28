@@ -39,6 +39,40 @@ other:
 `,
 };
 
+/** A loop's state in a stack slot or a phi, with different users after the loop. */
+export const SLOTTED = {
+  src: `define i32 @f(i32 %a, i32 %b, i1 noundef %again) {
+entry:
+  %slot = alloca i32
+  store i32 %a, ptr %slot
+  br label %head
+head:
+  %unused = load i32, ptr %slot
+  %value = load i32, ptr %slot
+  br i1 %again, label %body, label %exit
+body:
+  store i32 %b, ptr %slot
+  br label %head
+exit:
+  %result = mul i32 %value, 2
+  ret i32 %result
+}
+`,
+  tgt: `define i32 @f(i32 %a, i32 %b, i1 noundef %again) {
+entry:
+  br label %head
+head:
+  %value = phi i32 [ %a, %entry ], [ %b, %body ]
+  br i1 %again, label %body, label %exit
+body:
+  br label %head
+exit:
+  %result = shl i32 %value, 1
+  ret i32 %result
+}
+`,
+};
+
 export const pairs: Record<string, Pair> = {
   e1: {
     about: "single-instruction substitutions and a commuted mul",

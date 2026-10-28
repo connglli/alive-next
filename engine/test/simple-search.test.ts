@@ -24,7 +24,7 @@ import { unswitch } from "../examples/unswitch.ts";
 import { DEFAULT_LIMITS, type Limits } from "../simple/limits.ts";
 import { refuteFrom } from "../simple/refute.ts";
 import { search } from "../simple/search.ts";
-import { JOINED, PAPER, pairs } from "./simple-pairs.ts";
+import { JOINED, PAPER, pairs, SLOTTED } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 const llops = new Llops(toolchain.path("llops"));
@@ -645,6 +645,21 @@ describe.skipIf(!solving)("search with alive-tv", () => {
     async (name) => expect(await run(name)).toBe("verified"),
     60_000,
   );
+
+  test("pairs incoming slot stores with a loop phi and replays", async () => {
+    const session = await start(SLOTTED.src, SLOTTED.tgt, aliveTv);
+    expect(
+      await search(session, llops, {
+        ...limits,
+        steps: false,
+        facts: false,
+        cases: false,
+        counterexampleMs: 0,
+      }),
+    ).toBe("verified");
+    expect(moves(session)).toContain("cut");
+    replay(session);
+  }, 30_000);
 
   test("verifies varA through the optimizer's stages", async () => {
     // instcombine adds the nsw itself, and the whole-function step to its stage

@@ -25,7 +25,7 @@ import {
   unfoldToMatch,
 } from "./loops.ts";
 import { stepPhis } from "./phis.ts";
-import { diff, dominates, headers, storedAt, successors } from "./regions.ts";
+import { diff, dominates, headers, predecessors, storedAt, successors } from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
 import { unbrokenByRuns } from "./runs.ts";
 import { bodies, partners } from "./windows.ts";
@@ -99,7 +99,7 @@ export async function cut(
   for (const [source, target] of matches ?? []) pairs.set(source, target);
   const slots = new Set(preview.slots?.src ?? []);
   const held = preview.params.map(({ live }, k) =>
-    slots.has(k) ? heldAt(src, tgt, pairs, live, srcCut) : undefined,
+    slots.has(k) ? heldAt(src, tgt, pairs, live, srcCut, tgtCut) : undefined,
   );
   const partners = held.map((slot) => slot?.partner);
   const map = valueMap(preview.params, partners, preview.tgtParams ?? [], pairs, src, tgt, tgtCut);
@@ -207,6 +207,7 @@ function heldAt(
   pairs: Map<string, string>,
   slot: string,
   cut: string,
+  tgtCut: string,
 ): { read: string; partner?: string } {
   const reads = readsAt(src, slot, cut);
   if (reads.length === 0) return { read: "poison", partner: "poison" };
@@ -231,7 +232,45 @@ function heldAt(
   const partner = stored && (src.some((i) => i.value === stored) ? pairs.get(stored) : stored);
   if (stored && fits(partner)) return { read: stored, partner };
   const paired = reads.map((read) => ({ read, partner: readBy(read) }));
-  return paired.find(({ partner }) => partner) ?? { read: reads[0] ?? "poison" };
+  return (
+    paired.find(({ partner }) => partner) ?? {
+      read: reads[0] ?? "poison",
+      partner: storedPhi(src, tgt, pairs, slot, cut, tgtCut, type ?? ""),
+    }
+  );
+}
+
+/** A phi whose incoming values match the last stores on every incoming source edge. */
+function storedPhi(
+  src: Instruction[],
+  tgt: Instruction[],
+  pairs: Map<string, string>,
+  slot: string,
+  srcCut: string,
+  tgtCut: string,
+  type: string,
+) {
+  if (srcCut.startsWith("#") || tgtCut.startsWith("#")) return undefined;
+  const ends = new Map(src.map((i, k) => [i.block, k]));
+  const defined = new Set(src.flatMap((i) => i.value ?? []));
+  const incoming = new Map<string, string>();
+  for (const block of new Set(predecessors(src).get(srcCut))) {
+    const target = pairs.get(block);
+    const value = storedAt(src, slot, ends.get(block) ?? -1, type);
+    const partner = value && (defined.has(value) ? pairs.get(value) : value);
+    if (!target || !partner || (incoming.has(target) && incoming.get(target) !== partner))
+      return undefined;
+    incoming.set(target, partner);
+  }
+  if (incoming.size === 0) return undefined;
+  return tgt.find(
+    (i) =>
+      i.block === tgtCut &&
+      i.phi &&
+      i.type === type &&
+      new Set(i.blocks).size === incoming.size &&
+      i.operands.every((value, k) => incoming.get(i.blocks?.[k] ?? "") === value),
+  )?.value;
 }
 
 /** The loads of stack slot `slot` a path from `cut` uses before it stores into the slot. */
