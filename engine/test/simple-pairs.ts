@@ -1,6 +1,6 @@
-// Small pairs that alive-tv cannot prove as a whole within 300 seconds. `e4` is
-// not a refinement: when %p0 is poison and %p2 is 0, the src returns 0 and the
-// tgt returns poison.
+// Small pairs for the simple searcher. Those in `pairs` resist a whole-function
+// check within 300 seconds. `e4` is not a refinement: when %p0 is poison and %p2
+// is 0, the src returns 0 and the tgt returns poison.
 
 export interface Pair {
   /** What changed. */
@@ -9,6 +9,35 @@ export interface Pair {
   tgt: string;
   refines: boolean;
 }
+
+/** The same division with a shared return or separate returns. */
+export const JOINED = {
+  src: `define i32 @f(i1 noundef %c, i32 noundef %x, i32 noundef %y, i32 noundef %z) {
+entry:
+  br i1 %c, label %work, label %other
+work:
+  %p = mul i32 %x, %y
+  %q = udiv i32 %p, %z
+  br label %join
+other:
+  br label %join
+join:
+  %r = phi i32 [ %q, %work ], [ 0, %other ]
+  ret i32 %r
+}
+`,
+  tgt: `define i32 @f(i1 noundef %c, i32 noundef %x, i32 noundef %y, i32 noundef %z) {
+entry:
+  br i1 %c, label %work, label %other
+work:
+  %p = mul i32 %x, %y
+  %q = udiv i32 %p, %z
+  ret i32 %q
+other:
+  ret i32 0
+}
+`,
+};
 
 export const pairs: Record<string, Pair> = {
   e1: {

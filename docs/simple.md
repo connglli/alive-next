@@ -30,7 +30,7 @@ Region splices and rule rewrites change the src. Splicing the tgt's region into 
 
 ## Cuts and preconditions
 
-A goal that does not close is split at the first of these that the framework accepts, or first where outside code joins what that point reaches:
+A goal that does not close tries the cuts below in order. An instruction cut first tries a shared join reached from that point. If the join has no partner, the search copies shared acyclic blocks for outside paths and retries the instruction cut within the existing cut budget. A failed attempt with copied joins restores both programs.
 
 * A loop: peel away a bounded src loop when the src has more loops than the tgt, or try matched headers as the next section describes.
 * Just before one of the last three expensive operations both sides apply, latest first, so that it reads the same operands on both: a multiplication of two variables, a division, a remainder, floating-point arithmetic, a load, or a store. Calls do not count, since every cut adds one.

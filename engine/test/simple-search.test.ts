@@ -24,7 +24,7 @@ import { unswitch } from "../examples/unswitch.ts";
 import { DEFAULT_LIMITS, type Limits } from "../simple/limits.ts";
 import { refuteFrom } from "../simple/refute.ts";
 import { search } from "../simple/search.ts";
-import { PAPER, pairs } from "./simple-pairs.ts";
+import { JOINED, PAPER, pairs } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 const llops = new Llops(toolchain.path("llops"));
@@ -252,6 +252,82 @@ entry:
 `;
 
 describe.skipIf(!built)("search", () => {
+  for (const side of ["src", "tgt"] as const)
+    test(`proves a cut after copying the ${side}'s unmatched join`, async () => {
+      const [src, tgt] = side === "src" ? [JOINED.src, JOINED.tgt] : [JOINED.tgt, JOINED.src];
+      const session = await start(
+        src.replace("mul i32", "mul nuw i32"),
+        tgt,
+        stub((src) => /@outlined_g\d/.test(src)),
+      );
+      expect(
+        await search(session, llops, {
+          ...limits,
+          rules: false,
+          facts: false,
+          cases: false,
+          counterexampleMs: 0,
+        }),
+      ).toBe("verified");
+      expect(
+        calls(session).filter((call) => call.tool === "tx_edit" && call.args.op === "copy_block"),
+      ).toHaveLength(1);
+      expect(moves(session)).not.toContain("revert");
+      if (solving) replay(session);
+    });
+
+  for (const disabled of [{ cuts: 0 }, { steps: false }])
+    test(`join copying respects ${JSON.stringify(disabled)}`, async () => {
+      const session = await start(
+        JOINED.src.replace("mul i32", "mul nuw i32"),
+        JOINED.tgt,
+        stub(() => false),
+      );
+      expect(
+        await search(session, llops, {
+          ...limits,
+          rules: false,
+          facts: false,
+          cases: false,
+          counterexampleMs: 0,
+          ...disabled,
+        }),
+      ).toBe("unknown");
+      expect(
+        calls(session).some((call) => call.tool === "tx_edit" && call.args.op === "copy_block"),
+      ).toBe(false);
+    });
+
+  for (const side of ["src", "tgt"] as const)
+    test(`restores both programs after a failed cut with copied ${side} joins`, async () => {
+      const [src, tgt] = side === "src" ? [JOINED.src, JOINED.tgt] : [JOINED.tgt, JOINED.src];
+      const session = await start(
+        src.replace("mul i32", "mul nuw i32"),
+        tgt,
+        stub(() => false),
+      );
+      const before = await session.show("g1");
+      expect(
+        await search(session, llops, {
+          ...limits,
+          cuts: 1,
+          rules: false,
+          facts: false,
+          cases: false,
+          counterexampleMs: 0,
+        }),
+      ).toBe("unknown");
+      const log = calls(session);
+      const copied = log.findIndex(
+        (call) => call.tool === "tx_edit" && call.args.op === "copy_block",
+      );
+      expect(copied).toBeGreaterThanOrEqual(0);
+      expect(log.findIndex((call) => call.tool === "revert")).toBeGreaterThan(copied);
+      const after = await session.show("g1");
+      expect(after.src.id).toBe(before.src.id);
+      expect(after.tgt.id).toBe(before.tgt.id);
+    });
+
   for (const disabled of [{ cuts: 0 }, { steps: false }])
     test(`bounded peeling respects ${Object.keys(disabled)[0]} being disabled`, async () => {
       const session = await start(

@@ -39,7 +39,7 @@ export async function copyHeader(
   return preds.length > 0 && copied(session, gid, side, { block: header, preds });
 }
 
-/** Copies shared acyclic blocks for code outside the loop `pick` names. */
+/** Copies shared acyclic blocks for paths outside the region `pick` reaches. */
 export async function copyInto(
   session: Session,
   llops: Llops,

@@ -16,6 +16,7 @@ import { fillCut } from "./fill.ts";
 import type { Limits } from "./limits.ts";
 import {
   blockCut,
+  copyInto,
   copyShared,
   entryFirst,
   guessInvariants,
@@ -311,6 +312,50 @@ export async function cutAt(
 ) {
   const first = joinFirst(...(await bodies(session, llops, gid)), point);
   return first ? cut(session, llops, gid, limits, ...first, assumed) : undefined;
+}
+
+/** Copies unmatched shared joins for outside paths, then retries the instruction cut. */
+export async function cutCopied(
+  session: Session,
+  llops: Llops,
+  gid: string,
+  limits: Limits,
+  point: [string, string],
+  assumed?: Assumed,
+) {
+  const body = await bodies(session, llops, gid);
+  if (!limits.steps || joinFirst(...body, point)) return undefined;
+  const source = await copyAt(session, llops, gid, "src", body[0], point[0]);
+  const target = await copyAt(session, llops, gid, "tgt", body[1], point[1]);
+  if (!source || !target) return undefined;
+  return cutAt(session, llops, gid, limits, [source, target], assumed);
+}
+
+/** Copies shared joins while following the selected instruction through renumbering. */
+async function copyAt(
+  session: Session,
+  llops: Llops,
+  gid: string,
+  side: "src" | "tgt",
+  before: Instruction[],
+  at: string,
+) {
+  let index = Number(at.slice(1));
+  const locate = (after: Instruction[]) => {
+    const selected = before[index];
+    const block = selected && diff(before, after).pairs.get(selected.block);
+    // Copies change phis, but preserve ordinary instructions in the selected block.
+    const own = before.filter((i) => i.block === selected?.block && !i.phi);
+    const position = selected ? own.indexOf(selected) : -1;
+    const current = after.flatMap((i, k) => (i.block === block && !i.phi ? [k] : []));
+    index = current[position] ?? -1;
+    if (after[index]?.form !== selected?.form) index = -1;
+    before = after;
+    return after[index]?.block;
+  };
+  await copyInto(session, llops, gid, side, locate);
+  locate((await bodies(session, llops, gid))[side === "src" ? 0 : 1]);
+  return index >= 0 ? `#${index}` : undefined;
 }
 
 /**

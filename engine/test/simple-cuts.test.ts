@@ -24,6 +24,7 @@ import {
   beforePoints,
   cut,
   cutAt,
+  cutCopied,
   cutLoop,
   joinFirst,
   returnFacts,
@@ -35,6 +36,7 @@ import { copyShared, strengthenLoop } from "../simple/loops.ts";
 import { peel } from "../simple/peel.ts";
 import { regions } from "../simple/regions.ts";
 import { bodies } from "../simple/windows.ts";
+import { JOINED } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
 const llops = new Llops(toolchain.path("llops"));
@@ -131,6 +133,64 @@ async function left(session: Session, goals: string[]) {
 }
 
 describe.skipIf(!built)("copying shared blocks", () => {
+  for (const side of ["src", "tgt"] as const)
+    for (const variant of ["division", "repeated divisions", "store", "two joins"])
+      test(`${side} join copying handles ${variant}`, async () => {
+        let { src, tgt } = JOINED;
+        if (variant === "two joins") {
+          src = src.replace(
+            "  ret i32 %r",
+            "  br label %finish\nfinish:\n  %s = add i32 %r, 1\n  ret i32 %s",
+          );
+          tgt = tgt
+            .replace("  ret i32 %q", "  %s = add i32 %q, 1\n  ret i32 %s")
+            .replace("  ret i32 0", "  %other.s = add i32 0, 1\n  ret i32 %other.s");
+        }
+        const change = (text: string) => {
+          if (variant === "repeated divisions")
+            return text.replace("  %q = udiv", "  %unused = udiv i32 %p, %z\n  %q = udiv");
+          if (variant !== "store") return text;
+          return text
+            .replace("i32 noundef %z)", "i32 noundef %z, ptr %out)")
+            .replace(
+              "  %q = udiv i32 %p, %z",
+              "  %q = udiv i32 %p, %z\n  store i32 %p, ptr %out\n  store i32 %q, ptr %out",
+            );
+        };
+        const session = await start(
+          ...((side === "src" ? [src, tgt] : [tgt, src]).map(change) as [string, string]),
+        );
+        const before = await session.show("g1");
+        const [point] = beforePoints(...(await bodies(session, llops, "g1")));
+        if (!point) throw new Error("expected an instruction cut point");
+        const limits = { ...DEFAULT_LIMITS, facts: false };
+        expect(await cutAt(session, llops, "g1", limits, point)).toBeUndefined();
+        const halves = await cutCopied(session, llops, "g1", limits, point);
+        if (!halves) throw new Error("expected a cut after copying the join");
+        const after = await session.show("g1");
+        expect(after[side].id).not.toBe(before[side].id);
+        const other = side === "src" ? "tgt" : "src";
+        expect(after[other].id).toBe(before[other].id);
+        const [callee] = await bodies(session, llops, halves.callee);
+        const opcode = variant === "store" ? "store" : "udiv";
+        expect(callee[0]?.opcode).toBe(opcode);
+        expect(callee.filter((i) => i.opcode === opcode)).toHaveLength(1);
+        for (const gid of [halves.outer, halves.callee])
+          expect((await session.check(gid)).outcome).toBe("proved");
+        expect(session.verdict).toBe("verified");
+      });
+
+  test("leaves a matched join for the ordinary cut", async () => {
+    const session = await start(JOINED.src, JOINED.src);
+    const before = await session.show("g1");
+    const [point] = beforePoints(...(await bodies(session, llops, "g1")));
+    if (!point) throw new Error("expected an instruction cut point");
+    expect(await cutCopied(session, llops, "g1", DEFAULT_LIMITS, point)).toBeUndefined();
+    const after = await session.show("g1");
+    expect(after.src.id).toBe(before.src.id);
+    expect(after.tgt.id).toBe(before.tgt.id);
+  });
+
   test.each([
     ["self loop", "shared", "shared:\n  br i1 %again, label %shared, label %exit"],
     [
