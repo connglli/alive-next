@@ -34,6 +34,8 @@ interface Run {
   session: Session;
   llops: Llops;
   limits: Limits;
+  /** The goal prepared before bounded peeling. */
+  root: string;
   /** The budget of a check before a cut. */
   eagerMs: number;
   /** The budget of a goal's last check, after its cuts: the largest a check may have. */
@@ -80,10 +82,11 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   const { root, budgets } = await session.status();
   if ((await session.check(root, limits.rootMs)).outcome !== "unknown") return session.verdict;
   const [eagerMs, capMs] = [budgets.eagerCheckMs, budgets.checkCapMs];
-  const run: Run = { session, llops, limits, eagerMs, capMs, assumed: new Map() };
+  const run: Run = { session, llops, limits, root, eagerMs, capMs, assumed: new Map() };
   await unrolling(session, llops, root, limits.counterexampleMs);
   if (session.verdict !== "unknown") return session.verdict;
-  await dropAttrs(session, llops, root);
+  // Prepare the root before bounded peeling can split it.
+  await dropAttrs(session, root);
   await dropLoopIds(session, root);
   // A loop the tgt no longer has is peeled and cut away first, and what is left is searched.
   const start = limits.steps && limits.cuts > 0 ? await peelBounded(session, llops, root) : root;
@@ -113,11 +116,12 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
 }
 
 /** Drops from the tgt the attributes `llops respected` shows its instructions keep. */
-async function dropAttrs(session: Session, llops: Llops, gid: string) {
-  const held = await llops.validate((await session.show(gid)).tgt.text);
-  if (!held.ok || held.body_attrs.length === 0) return;
+async function dropAttrs(session: Session, gid: string) {
+  const view = await session.show(gid);
+  if (view.status !== "open") return;
   await session.begin(gid, "tgt");
-  if ((await session.edit({ op: "drop_attrs" })).kind !== "applied") {
+  const edited = await session.edit({ op: "drop_attrs" });
+  if (edited.kind !== "applied" || edited.text === view.tgt.text) {
     await session.abort();
     return;
   }
@@ -244,6 +248,7 @@ async function* moves(
   { cuts, stages = [], peelable = true, steps = true, comparisons: left }: Start,
 ) {
   const { session, llops, limits } = run;
+  if (gid !== run.root) yield stepping(() => dropAttrs(session, gid));
   yield* walk(run, gid, stages, cuts);
   // Stages that end at the tgt's body have asked the goal's windows toward it already.
   const last = stages.at(-1);

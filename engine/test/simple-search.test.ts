@@ -160,13 +160,15 @@ exit:
 `,
 };
 
-/** A stand-in that answers each check with what `outcome` says of its src and budget. */
-function answering(outcome: (src: string, asked: number, ms: number) => Outcome): Checker {
+/** A stand-in that answers each check with what `outcome` says of its pair and budget. */
+function answering(
+  outcome: (src: string, asked: number, ms: number, tgt: string) => Outcome,
+): Checker {
   let asked = 0;
   return {
-    async check(src, _, options): Promise<CheckResult> {
+    async check(src, tgt, options): Promise<CheckResult> {
       return {
-        outcome: outcome(src, asked++, options?.timeoutMs ?? 0),
+        outcome: outcome(src, asked++, options?.timeoutMs ?? 0, tgt),
         detail: "",
         invocation: { binary: "stub", flags: [], timeoutMs: 0 },
         stdout: "",
@@ -252,6 +254,106 @@ entry:
 `;
 
 describe.skipIf(!built)("search", () => {
+  test("abandons unchanged attribute cleanup without committing a step", async () => {
+    const session = await start(
+      "define i32 @f() { ret i32 0 }",
+      "define i32 @f() { ret i32 1 }",
+      stub(() => false),
+    );
+    const before = await session.show("g1");
+    expect(
+      await search(session, llops, {
+        ...limits,
+        steps: false,
+        cuts: 0,
+        cases: false,
+        counterexampleMs: 0,
+      }),
+    ).toBe("unknown");
+    expect(moves(session)).toContain("tx_abort");
+    expect(moves(session)).not.toContain("tx_commit");
+    expect((await session.show("g1")).tgt.id).toBe(before.tgt.id);
+  });
+
+  test("keeps target attributes when their removal is not certified", async () => {
+    const session = await start(
+      "define void @f(ptr %p) { store i32 0, ptr %p\n ret void }",
+      "define void @f(ptr %p) memory(none) { store i32 1, ptr %p\n ret void }",
+      stub(() => false),
+    );
+    const before = await session.show("g1");
+    expect(
+      await search(session, llops, {
+        ...limits,
+        steps: false,
+        cuts: 0,
+        cases: false,
+        counterexampleMs: 0,
+      }),
+    ).toBe("unknown");
+    expect(moves(session).filter((move) => move === "tx_commit")).toHaveLength(1);
+    expect((await session.show("g1")).tgt.id).toBe(before.tgt.id);
+  });
+
+  test("skips attribute edits on a case already proved", async () => {
+    const src = `define i32 @f(i32 noundef %x) {
+entry:
+  %zero = icmp eq i32 %x, 0
+  br i1 %zero, label %yes, label %no
+yes:
+  ret i32 0
+no:
+  ret i32 1
+}
+`;
+    const session = await start(
+      src,
+      src.replace("ret i32 1", "ret i32 2"),
+      stub(() => false),
+    );
+    expect(
+      await search(session, llops, {
+        ...limits,
+        steps: false,
+        cuts: 0,
+        counterexampleMs: 0,
+      }),
+    ).toBe("unknown");
+    expect(moves(session)).toContain("case");
+    expect(moves(session)).toContain("uncase");
+  });
+
+  test("cleans return-only attributes on a goal left by interposing a stage", async () => {
+    const src = "define noundef i32 @f(i32 noundef %x) { %v = xor i32 %x, %x\n ret i32 %v }";
+    const tgt = "define i32 @f(i32 noundef %x) { ret i32 0 }";
+    let session: Session | undefined;
+    const checker = answering((_src, _asked, _ms, target) =>
+      session && session.tree.goals.size > 1 && !target.includes("define noundef")
+        ? "correct"
+        : "unknown",
+    );
+    session = await start(src, tgt, checker);
+    expect(
+      await search(session, llops, {
+        ...limits,
+        stages: true,
+        rules: false,
+        facts: false,
+        cases: false,
+        counterexampleMs: 0,
+      }),
+    ).toBe("verified");
+    expect(moves(session)).toContain("interpose");
+    let editing: unknown;
+    const cleaned: unknown[] = [];
+    for (const call of calls(session)) {
+      if (call.tool === "tx_begin") editing = call.args.gid;
+      if (call.tool === "tx_edit" && call.args.op === "drop_attrs") cleaned.push(editing);
+    }
+    expect(cleaned.some((gid) => typeof gid === "string" && gid !== "g1")).toBe(true);
+    if (solving) replay(session);
+  }, 30_000);
+
   for (const side of ["src", "tgt"] as const)
     test(`proves a cut after copying the ${side}'s unmatched join`, async () => {
       const [src, tgt] = side === "src" ? [JOINED.src, JOINED.tgt] : [JOINED.tgt, JOINED.src];
@@ -838,6 +940,38 @@ exit:
     const session = await start(src, tgt, aliveTv);
     expect(await search(session, llops, limits)).toBe("verified");
   }, 120_000);
+
+  test("cleans a redundant return attribute without body attributes", async () => {
+    const src = `define i32 @f(i32 noundef %n) {
+entry:
+  br label %head
+head:
+  %i = phi i32 [ 0, %entry ], [ %next, %body ]
+  %more = icmp ult i32 %i, %n
+  br i1 %more, label %body, label %exit
+body:
+  %next = add i32 %i, 1
+  br label %head
+exit:
+  ret i32 0
+}
+`;
+    const tgt = src.replace("define i32", "define noundef i32").replace("add i32", "add nuw i32");
+    const session = await start(src, tgt, aliveTv);
+    const held = await llops.validate((await session.show("g1")).tgt.text);
+    expect(held.ok && held.body_attrs).toEqual([]);
+    expect(
+      await search(session, llops, {
+        ...limits,
+        steps: false,
+        facts: false,
+        cases: false,
+        counterexampleMs: 0,
+      }),
+    ).toBe("verified");
+    expect((await session.show("g1")).tgt.text).not.toContain("define noundef");
+    replay(session);
+  }, 30_000);
 
   test("leaves e4, which is no refinement, unknown", async () => {
     expect(await run("e4")).toBe("unknown");
