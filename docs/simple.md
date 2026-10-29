@@ -8,7 +8,7 @@ A proof has three parts, and the searcher searches for each: a rewrite path, the
 
 | Part | The framework allows | The searcher tries | It does not try |
 | --- | --- | --- | --- |
-| Rewrite path | steps on either side, by transactions or rules, intermediate programs, and reverts | src steps through the optimizer's stages to the tgt, region by region, and by the rules, a stage no step reaches as a goal of its own | tgt rewrite paths |
+| Rewrite path | steps on either side, by transactions or rules, intermediate programs, and reverts | src region rewrites and rules, complete optimizer stages checked or searched as goals | tgt rewrite paths |
 | Cuts and preconditions | cuts wherever both sides agree, with facts or predicates on the new parameters and return, and splits by cases | a loop header, an expensive operation, a region's boundaries, balanced points, a tested comparison; the analyses' facts on the inputs of a window or a cut | facts outside the analyses and predicate templates |
 | Loops and invariants | cuts at a header or an exit, unfolding, invariants | the first header, where the diff matched one; invariants by Houdini | invariants of other forms |
 
@@ -18,7 +18,7 @@ Each open goal starts with target attribute cleanup, including redundant return 
 
 ## Rewrite paths
 
-An unoptimized src and its optimized tgt share few instructions, while consecutive stages of the optimizer share most of theirs. So the path runs through the stages of the toolchain's own `-O3`, and fits a tgt that this pipeline made: the searcher runs `default<O3>` on the src through `llops opt pipeline`, which keeps the program after each pass that changed it, and steps the src toward each stage with a new body up to the last one closest to the tgt, then toward the tgt unless that stage has its body. A stage is only a hint: a step toward it that alive2 refuses is dropped, and no stage is walked when every one is farther than the src.
+An unoptimized src and its optimized tgt share few instructions, while consecutive optimizer stages share most of theirs. The searcher runs `default<O3>` through `llops opt pipeline` and keeps complete modules from the stages that change the body. It follows them up to the last one closest to the tgt, then tries the tgt's windows unless it has already asked them on that goal. A stage is a proposal that requires proof; no stage is walked when every one is farther from the tgt than the src.
 
 Before matching blocks, the search aligns ordinary `tail` markers on calls whose arguments contain no pointer. It proposes a marker on the source's calls only when the target's calls of that function all agree. Each edit is checked in its own window, which lets `reshaped` match calls across different block shapes.
 
@@ -26,7 +26,11 @@ The diff in `regions.ts` then aligns blocks by content and instructions by form,
 
 A region becomes a step through the `splice` edit: a copy of the tgt's code replaces the region in the src. The copy reads the src partners of the values it reads, and the src's later uses read the partners of the values they used, both as the diff pairs them. The commit names the region as its window and does not ask the whole function. A region with one empty side, such as a deleted instruction, takes the shared instruction next to it, so that both windows hold something. A region with a phi or a terminator fits no window and is left to a cut.
 
-When alive2 refuses a window, the searcher grows it backward over the instructions that define the values either side reads, and then tries it with preconditions. For a stage that its windows leave unfinished, it tries one step of the whole function to that stage, until alive2 cannot decide one. Where alive2 refuses or cannot decide that step, as on a program that loops, a stage that neither reaches is interposed between the goal's sides: the step to it becomes a goal of its own, with cuts of its own, which is cut at its loops and given invariants like any goal, and the rest of the goal walks on from it. A walk interposes once, since a later stage holds the same changes.
+When alive2 refuses a window, the searcher grows it backward over the instructions that define the values either side reads, and then tries it with preconditions.
+
+An unfinished intermediate stage is interposed as a complete module, so attribute groups, metadata and declarations retain their context. The source-to-stage goal receives a whole-function check at the default check budget. A proof advances to the remaining goal; an undecided stage can be searched with its own cut budget. Failed attempts are undone, and each walk searches at most one undecided stage.
+
+An undecided solver result stops further whole-stage checks on that walk. `--no-interpose` disables further search of an undecided stage while retaining whole-stage checks.
 
 Region splices and rule rewrites change the src. Splicing the tgt's region into the src asks alive2 about the same two windows as the reverse edit. A rule rewrites wherever it matches, so the search applies the rules only when they reduce the instructions in the differing regions, then tries the windows again. Certified splices and rule rewrites are kept.
 

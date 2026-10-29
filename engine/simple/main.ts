@@ -15,7 +15,7 @@ const USAGE = `usage: bun run simple [options] <src.ll> <tgt.ll> [<directory>]
       --cuts <n>          at least n cuts for the root and each step goal, 16 by default
       --unfolds <n>       allow n unfolds per loop cut, 4 by default
       --no-stages         do not step through the optimizer's stages
-      --no-interpose      do not prove a stage no step reaches as a goal of its own
+      --no-interpose      do not search an undecided optimizer stage
       --no-steps          do not rewrite the src, only cut and check
       --no-rules          do not step the src by the verified rules
       --no-windows        check each step on the whole function

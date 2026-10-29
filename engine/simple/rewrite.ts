@@ -32,8 +32,8 @@ export async function stagesToward(llops: Llops, src: string, tgt: string) {
   const stages: string[] = [];
   let [best, end] = [await measured(llops, src, tgt), 0];
   for (const stage of run.ok ? run.stages : []) {
-    const canon = await llops.canon(stage.module);
-    const module = canon.ok ? withoutLoopIds(canon.module) : "";
+    const canon = await llops.canon(withoutLoopIds(stage.module));
+    const module = canon.ok ? canon.module : "";
     if (!canon.ok || bodyOf(module) === bodyOf(stages.at(-1) ?? src)) continue;
     stages.push(module);
     const far = await measured(llops, module, tgt);

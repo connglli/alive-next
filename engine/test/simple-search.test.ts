@@ -253,6 +253,201 @@ entry:
 }
 `;
 
+/** Optimizer stages supplied as complete modules, with native operations unchanged. */
+function givenStages(stages: string[]) {
+  const driver = new Llops(toolchain.path("llops"));
+  driver.pipelineStages = async () => ({
+    ok: true,
+    stages: stages.map((module) => ({ pass: "fixture", module })),
+  });
+  return driver;
+}
+
+const STAGE_SOURCE = `declare i32 @callee(i32 noundef) nounwind
+declare void @only_source() willreturn memory(read)
+
+define i32 @f(i32 noundef %x) {
+entry:
+  %v = mul i32 %x, 2
+  %r = call i32 @callee(i32 %v) nounwind nofree, !prof !0
+  ret i32 %r
+}
+
+!0 = !{!"branch_weights", i32 1}
+`;
+
+const STAGE_TARGET = `declare i32 @callee(i32 noundef) nounwind
+declare void @only_target() noreturn
+
+define i32 @f(i32 noundef %x) {
+entry:
+  %c = icmp slt i32 %x, 0
+  br i1 %c, label %negative, label %nonnegative, !prof !0
+
+negative:
+  %a = shl i32 %x, 1
+  %b = call i32 @callee(i32 %a) nounwind nofree
+  ret i32 %b
+
+nonnegative:
+  %d = shl i32 %x, 1
+  %e = call i32 @callee(i32 %d) nounwind nofree
+  ret i32 %e
+}
+
+!0 = !{!"branch_weights", i32 10, i32 1}
+`;
+
+const STAGE_MIDDLE = STAGE_TARGET.replaceAll("shl i32 %x, 1", "add i32 %x, %x")
+  .replace("@only_target", "@only_stage")
+  .replace("i32 10, i32 1", "i32 1, i32 10");
+
+const stageLimits = {
+  ...limits,
+  stages: true,
+  cuts: 0,
+  facts: false,
+  rules: false,
+  cases: false,
+  counterexampleMs: 0,
+};
+
+/** The bytes the program store will use for a supplied stage. */
+async function canonical(text: string) {
+  const result = await llops.canon(text);
+  if (!result.ok) throw new Error(result.message);
+  return result.module;
+}
+
+describe.skipIf(!built)("complete optimizer stages", () => {
+  test("keeps stage context and certifies whole transitions without further stage search", async () => {
+    const [source, middle, target] = await Promise.all(
+      [STAGE_SOURCE, STAGE_MIDDLE, STAGE_TARGET].map(canonical),
+    );
+    const questions: { src: string; tgt: string; ms: number }[] = [];
+    const checker = answering((src, _asked, ms, tgt) => {
+      questions.push({ src, tgt, ms });
+      return (src === source && tgt === middle) || (src === middle && tgt === target)
+        ? "correct"
+        : "unknown";
+    });
+    const session = await start(STAGE_SOURCE, STAGE_TARGET, checker);
+    expect(
+      await search(session, givenStages([STAGE_MIDDLE]), { ...stageLimits, interpose: false }),
+    ).toBe("verified");
+    expect(questions.filter((q) => q.tgt === middle).map((q) => q.ms)).toEqual([5_000]);
+    expect(calls(session).some((call) => call.args.op === "set_body")).toBe(false);
+    expect(moves(session)).not.toContain("cut");
+    if (solving) replay(session);
+  }, 30_000);
+
+  for (const disabled of [{ cuts: 0 }, { cuts: 1, interpose: false }])
+    test(`restores an undecided stage when further search is disabled by ${JSON.stringify(disabled)}`, async () => {
+      const session = await start(
+        STAGE_SOURCE,
+        STAGE_TARGET,
+        stub(() => false),
+      );
+      const before = await session.show("g1");
+      expect(
+        await search(session, givenStages([STAGE_MIDDLE]), { ...stageLimits, ...disabled }),
+      ).toBe("unknown");
+      expect(moves(session)).toContain("interpose");
+      expect(moves(session)).toContain("uninterpose");
+      expect(session.tree.goals.size).toBe(1);
+      expect((await session.show("g1")).src.id).toBe(before.src.id);
+    }, 30_000);
+
+  test("a rejected intermediate does not refute the original pair", async () => {
+    const wrong = STAGE_MIDDLE.replaceAll("add i32 %x, %x", "sub i32 %x, %x");
+    const middle = await canonical(wrong);
+    const session = await start(
+      STAGE_SOURCE,
+      STAGE_TARGET,
+      answering((_src, _asked, _ms, tgt) => (tgt === middle ? "incorrect" : "unknown")),
+    );
+    const before = await session.show("g1");
+    expect(await search(session, givenStages([wrong]), stageLimits)).toBe("unknown");
+    expect(session.tree.goals.size).toBe(1);
+    expect((await session.show("g1")).src.id).toBe(before.src.id);
+    expect(moves(session)).toContain("uninterpose");
+  }, 30_000);
+
+  test("a checker error leaves later whole-stage attempts available", async () => {
+    const later = STAGE_MIDDLE.replaceAll("add i32 %x, %x", "mul i32 %x, 2").replace(
+      "@only_stage",
+      "@later_stage",
+    );
+    const [source, first, second, target] = await Promise.all(
+      [STAGE_SOURCE, STAGE_MIDDLE, later, STAGE_TARGET].map(canonical),
+    );
+    const session = await start(
+      STAGE_SOURCE,
+      STAGE_TARGET,
+      answering((src, _asked, _ms, tgt) => {
+        if (tgt === first) return "error";
+        return (src === source && tgt === second) || (src === second && tgt === target)
+          ? "correct"
+          : "unknown";
+      }),
+    );
+    expect(await search(session, givenStages([STAGE_MIDDLE, later]), stageLimits)).toBe("verified");
+    expect(moves(session)).toContain("uninterpose");
+    if (solving) replay(session);
+  }, 30_000);
+
+  test("checks the goal directly when the stage is its target", async () => {
+    const [source, target] = await Promise.all([STAGE_SOURCE, STAGE_TARGET].map(canonical));
+    const session = await start(
+      STAGE_SOURCE,
+      STAGE_TARGET,
+      answering((src, _asked, ms, tgt) =>
+        src === source && tgt === target && ms === 5_000 ? "correct" : "unknown",
+      ),
+    );
+    expect(await search(session, givenStages([STAGE_TARGET]), stageLimits)).toBe("verified");
+    expect(moves(session)).not.toContain("interpose");
+    if (solving) replay(session);
+  }, 30_000);
+
+  test("retries target windows after undoing a proved transition whose remainder failed", async () => {
+    const targetModule = STAGE_SOURCE.replace("mul i32 %x, 2", "shl i32 %x, 1");
+    const [source, middle, target] = await Promise.all(
+      [STAGE_SOURCE, STAGE_MIDDLE, targetModule].map(canonical),
+    );
+    let restored = false;
+    let retried = false;
+    const session = await start(
+      STAGE_SOURCE,
+      targetModule,
+      answering((src, _asked, _ms, tgt) => {
+        if (src === source && tgt === middle) return "correct";
+        if (
+          restored &&
+          src.includes("@outlined_window") &&
+          src.includes("mul i32") &&
+          tgt.includes("shl i32")
+        ) {
+          retried = true;
+          return "correct";
+        }
+        return restored && retried && tgt === target ? "correct" : "unknown";
+      }),
+    );
+    const undo = session.uninterpose.bind(session);
+    session.uninterpose = async (gid) => {
+      const result = await undo(gid);
+      restored ||= result.kind === "uninterposed";
+      return result;
+    };
+    const verdict = await search(session, givenStages([STAGE_MIDDLE, targetModule]), stageLimits);
+    expect(restored).toBe(true);
+    expect(retried).toBe(true);
+    expect(verdict).toBe("verified");
+    if (solving) replay(session);
+  }, 30_000);
+});
+
 describe.skipIf(!built)("search", () => {
   test("abandons unchanged attribute cleanup without committing a step", async () => {
     const session = await start(
@@ -631,8 +826,12 @@ entry:
       stub(() => false),
     );
     await search(session, llops, { ...limits, stages: true, cuts: 0 });
-    const jumps = calls(session).filter((call) => call.args.op === "set_body");
-    expect(jumps).toHaveLength(1);
+    const attempts = calls(session).filter((call) => call.tool === "interpose");
+    expect(attempts).toHaveLength(1);
+    expect(moves(session)).toContain("uninterpose");
+    expect(session.tree.goals.size).toBe(1);
+    const whole = calls(session).filter((call) => call.tool === "check" && call.args.gid !== "g1");
+    expect(whole).toHaveLength(1);
   });
 
   test("drops the tgt's loop IDs, which two of its loops share", async () => {

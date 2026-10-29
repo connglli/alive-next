@@ -9,6 +9,7 @@
 import type { Comparison, Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { INVERSE } from "../core/state/cases.ts";
+import type { CheckGoalResult } from "../core/state/steps.ts";
 import { cutBounded, peelBounded } from "./bounded.ts";
 import { caseOn, tested } from "./cases.ts";
 import {
@@ -249,9 +250,8 @@ async function* moves(
 ) {
   const { session, llops, limits } = run;
   if (gid !== run.root) yield stepping(() => dropAttrs(session, gid));
-  yield* walk(run, gid, stages, cuts);
-  // Stages that end at the tgt's body have asked the goal's windows toward it already.
-  const last = stages.at(-1);
+  const last = yield* walk(run, gid, stages, cuts);
+  // Skip windows already asked toward this goal's target body.
   const view = await session.show(gid);
   const walked = last !== undefined && bodyOf(last) === bodyOf(view.tgt.text);
   // Strengthening a cut checks its goals again, which may have proved this one.
@@ -281,11 +281,13 @@ async function* moves(
 
 /** A move that checks a goal on budget `ms`. */
 function checking(run: Run, gid: string, ms: number): Move {
-  return async () => {
-    const { outcome, check } = await run.session.check(gid, ms);
-    if (outcome === "refuted" && check) return { kind: "refuted", detail: check.detail };
-    return outcome === "proved" ? PROVED : NONE;
-  };
+  return async () => checked(await run.session.check(gid, ms));
+}
+
+/** The move answered by a goal check. */
+function checked({ outcome, check }: CheckGoalResult): Answer {
+  if (outcome === "refuted" && check) return { kind: "refuted", detail: check.detail };
+  return outcome === "proved" ? PROVED : NONE;
 }
 
 /** A move that steps a goal, which leaves it to the moves after. */
@@ -404,15 +406,14 @@ async function stepByRules(run: Run, gid: string) {
   if (await stepRules(session, llops, gid)) await stepWindows(session, llops, gid, limits);
 }
 
-/**
- * The moves that step goal `gid`'s src through `stages`: each stage's windows,
- * then one step of the whole function to it, and a stage neither reaches
- * interposed, so that the step to it is a goal of its own and the rest walks on.
- */
-async function* walk(run: Run, gid: string, stages: string[], cuts: Cuts) {
+/** Try stage windows, then prove each complete stage through an interposed goal. */
+async function* walk(
+  run: Run,
+  gid: string,
+  stages: string[],
+  cuts: Cuts,
+): AsyncGenerator<Move, string | undefined> {
   const { session, llops, limits } = run;
-  // A later stage holds this one's changes, so a jump alive2 cannot decide ends
-  // the jumps, and a step goal left open ends the interposes.
   let [jumping, interposable] = [true, true];
   for (const [k, stage] of stages.entries()) {
     let left = 0;
@@ -420,51 +421,39 @@ async function* walk(run: Run, gid: string, stages: string[], cuts: Cuts) {
       left = (await stepWindows(session, llops, gid, limits, stage)).length;
     });
     if (left === 0) continue;
-    let outcome: string | undefined;
-    if (jumping)
-      yield stepping(async () => {
-        outcome = await jump(session, gid, stage);
-      });
-    if (outcome === "correct") continue;
-    if (outcome === "unknown") jumping = false;
-    // A step alive2 refuses, as on a program that loops, or cannot decide is left to a step
-    // goal, whose sides differ by one stage's changes, so that its cuts pair most points.
-    const provable = interposable && limits.interpose && limits.cuts > 0;
-    if (!provable || (outcome !== "error" && outcome !== "unknown")) continue;
-    yield interposing(run, gid, stages.slice(k), cuts);
-    interposable = false;
+    let advanced = false;
+    yield async (): Promise<Answer> => {
+      const view = await session.show(gid);
+      if (view.status === "proved") return PROVED;
+      if (stage === view.src.text) return NONE;
+      if (stage === view.tgt.text) {
+        if (!jumping) return NONE;
+        const result = await session.check(gid);
+        if (result.check?.outcome === "unknown") jumping = false;
+        return checked(result);
+      }
+      const provable = interposable && limits.interpose && limits.cuts > 0;
+      if (!jumping && !provable) return NONE;
+      const made = await session.interpose(gid, stage);
+      if (made.kind !== "interposed") return NONE;
+      const { lhs, rhs } = made.children;
+      const result = jumping ? await session.check(lhs) : undefined;
+      if (result?.check?.outcome === "unknown") jumping = false;
+      if (result?.outcome === "refuted" || (result?.outcome !== "proved" && !provable)) {
+        await session.uninterpose(gid);
+        return NONE;
+      }
+      advanced = result?.outcome === "proved";
+      interposable = false;
+      const goals = [goal(run, rhs, { stages: stages.slice(k + 1), cuts })];
+      if (!advanced) {
+        const own = quotaOf(limits, await bodies(session, llops, lhs));
+        goals.unshift(goal(run, lhs, { cuts: own, steps: false }));
+      }
+      return { kind: "interposed", goals };
+    };
+    // The right child searches the remaining stages after a proved transition.
+    if (advanced) return stage;
   }
-}
-
-/**
- * A move that interposes the first of `stages` in goal `gid`: the step to it,
- * and the rest from it, which walks the other stages.
- */
-function interposing(run: Run, gid: string, stages: string[], cuts: Cuts): Move {
-  return async () => {
-    const { session, llops } = run;
-    const [stage = "", ...rest] = stages;
-    const { src } = await session.show(gid);
-    const middle = await llops.edit(src.text, { op: "set_body", body: bodyOf(stage) });
-    if (!middle.ok) return NONE;
-    const made = await session.interpose(gid, middle.module);
-    if (made.kind !== "interposed") return NONE;
-    const { lhs, rhs } = made.children;
-    // The step gets cuts of its own, so that a chain of steps spends none of the rest's.
-    const own = quotaOf(run.limits, await bodies(session, llops, lhs));
-    const step = goal(run, lhs, { cuts: own, steps: false });
-    return { kind: "interposed", goals: [step, goal(run, rhs, { stages: rest, cuts })] };
-  };
-}
-
-/** One step of the whole function to `stage`, for what its windows left; how it went. */
-async function jump(session: Session, gid: string, stage: string) {
-  await session.begin(gid, "src");
-  const edited = await session.edit({ op: "set_body", body: bodyOf(stage) });
-  if (edited.kind === "refused") {
-    await session.abort();
-    return undefined;
-  }
-  const step = await session.commit({ narrow: false, eager: false });
-  return step.kind === "certified" ? "correct" : step.check.outcome;
+  return stages.at(-1);
 }
