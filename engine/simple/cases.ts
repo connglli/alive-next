@@ -74,7 +74,7 @@ function operandOf(x: string, defined: Map<string, Instruction>) {
   return /^-?\d+$/.test(x) && Number.isSafeInteger(Number(x)) ? Number(x) : undefined;
 }
 
-/** One key for a comparison, its inverse, and each with its operands swapped. */
+/** One key for a comparison and its inverse, with a constant operand on the right. */
 function keyOf({ op, lhs, rhs }: Comparison): string {
   const [o, l, r] = typeof lhs === "number" ? [SWAPPED[op], rhs, lhs] : [op, lhs, rhs];
   return `${[o, INVERSE[o]].sort()[0]} ${l} ${r}`;
