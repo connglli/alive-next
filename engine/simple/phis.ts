@@ -1,6 +1,6 @@
-// Aligns integer state at loop cuts through certified casts. A wider target
-// gets a narrow view; a source phi used only by a header truncation is replaced
-// by the hoisted truncation. Phi positions keep the value matches stable.
+// Aligns integer loop state matched directly or through casts. A wider target
+// gets a certified narrow view; a source phi used only by a header truncation
+// is replaced by that hoisted cast. Phi positions keep value matches stable.
 import type { Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { diff, headers, isTerminator } from "./regions.ts";
@@ -33,7 +33,17 @@ export async function stepPhis(
     const partner = theirs.get(pairs.get(i.value) ?? "");
     const state = partner?.opcode === "trunc" ? theirs.get(partner.operands[0] ?? "") : partner;
     const k = state ? phis.indexOf(state) : -1;
-    return state && k >= 0 && differ(i, state) ? [{ source, target: k }] : [];
+    if (state && k >= 0 && differ(i, state)) return [{ source, target: k }];
+    // A widened counter can match a source extension instead of its phi.
+    const extended = src.flatMap((cast) => {
+      if (cast.operands[0] !== i.value || (cast.opcode !== "zext" && cast.opcode !== "sext"))
+        return [];
+      const partner = theirs.get(pairs.get(cast.value ?? "") ?? "");
+      const target = partner ? phis.indexOf(partner) : -1;
+      return target >= 0 && partner?.type === cast.type ? [target] : [];
+    });
+    const [target, ...others] = [...new Set(extended)];
+    return target !== undefined && others.length === 0 ? [{ source, target }] : [];
   });
   if (wanted.length === 0) return undefined;
   const matched = new Map<number, number>();

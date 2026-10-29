@@ -24,15 +24,17 @@ export async function stepRules(session: Session, llops: Llops, gid: string) {
 }
 
 /**
- * The stages the optimizer makes of `src` that change its body, canonical, up
- * to the last one closest to `tgt`; none when every stage is farther than `src`.
+ * Proposes canonical stages without removable body attributes, so later cuts
+ * can outline them. Keeps body changes through the last stage closest to `tgt`.
  */
 export async function stagesToward(llops: Llops, src: string, tgt: string) {
   const run = await llops.pipelineStages(src);
   const stages: string[] = [];
   let [best, end] = [await measured(llops, src, tgt), 0];
   for (const stage of run.ok ? run.stages : []) {
-    const canon = await llops.canon(withoutLoopIds(stage.module));
+    const clean = await llops.edit(stage.module, { op: "drop_attrs" });
+    if (!clean.ok) continue;
+    const canon = await llops.canon(withoutLoopIds(clean.module));
     const module = canon.ok ? canon.module : "";
     if (!canon.ok || bodyOf(module) === bodyOf(stages.at(-1) ?? src)) continue;
     stages.push(module);

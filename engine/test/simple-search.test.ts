@@ -518,34 +518,26 @@ no:
     expect(moves(session)).toContain("uncase");
   });
 
-  test("cleans return-only attributes on a goal left by interposing a stage", async () => {
+  test("cleans return-only attributes before proposing a stage", async () => {
     const src = "define noundef i32 @f(i32 noundef %x) { %v = xor i32 %x, %x\n ret i32 %v }";
     const tgt = "define i32 @f(i32 noundef %x) { ret i32 0 }";
-    let session: Session | undefined;
-    const checker = answering((_src, _asked, _ms, target) =>
-      session && session.tree.goals.size > 1 && !target.includes("define noundef")
-        ? "correct"
-        : "unknown",
+    const checker = answering((_src, asked, ms, target) =>
+      asked > 0 && ms === 5_000 && target.includes("define i32 @f(") ? "correct" : "unknown",
     );
-    session = await start(src, tgt, checker);
+    const session = await start(src, tgt, checker);
     expect(
       await search(session, llops, {
         ...limits,
         stages: true,
+        cuts: 0,
         rules: false,
         facts: false,
         cases: false,
         counterexampleMs: 0,
       }),
     ).toBe("verified");
-    expect(moves(session)).toContain("interpose");
-    let editing: unknown;
-    const cleaned: unknown[] = [];
-    for (const call of calls(session)) {
-      if (call.tool === "tx_begin") editing = call.args.gid;
-      if (call.tool === "tx_edit" && call.args.op === "drop_attrs") cleaned.push(editing);
-    }
-    expect(cleaned.some((gid) => typeof gid === "string" && gid !== "g1")).toBe(true);
+    expect(moves(session)).not.toContain("interpose");
+    expect(session.tree.goals.size).toBe(1);
     if (solving) replay(session);
   }, 30_000);
 

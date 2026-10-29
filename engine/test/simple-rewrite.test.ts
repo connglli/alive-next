@@ -59,4 +59,20 @@ describe.skipIf(!built)("stages", () => {
     const [src, tgt] = await Promise.all([canonical(strchr.src), canonical(strchr.tgt)]);
     expect(await stagesToward(llops, src, tgt)).toEqual([]);
   });
+
+  test("proposed stages leave no removable body attributes blocking a cut", async () => {
+    const src = await canonical(bounded.src);
+    const optimized = await llops.pipelineStages(src);
+    if (!optimized.ok) throw new Error(optimized.message);
+    const shapes = await Promise.all(optimized.stages.map((stage) => llops.validate(stage.module)));
+    expect(shapes.some((shape) => shape.ok && shape.body_attrs.length > 0)).toBe(true);
+    const tgt = await canonical(optimized.stages.at(-1)?.module ?? src);
+    const proposed = await stagesToward(llops, src, tgt);
+    expect(proposed.length).toBeGreaterThan(0);
+    for (const stage of proposed) {
+      const shape = await llops.validate(stage);
+      if (!shape.ok) throw new Error(shape.message);
+      expect(shape.body_attrs).toEqual([]);
+    }
+  });
 });

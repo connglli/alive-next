@@ -147,7 +147,64 @@ function replay(session: Session) {
   expect(checked.stdout).toContain("VERIFIED");
 }
 
+/** A narrow counter whose extension, rather than the counter, matches the target phi. */
+function extended(narrow: number, wide: number, signed: boolean, separate: boolean) {
+  const [n, w] = [`i${narrow}`, `i${wide}`];
+  const ext = signed ? "sext" : "zext";
+  const cmp = signed ? "slt" : "ult";
+  const flag = signed ? "nsw" : "nuw";
+  const first = signed ? -2 : 0;
+  const module = (source: boolean) => {
+    const type = source ? n : w;
+    return `define void @f() {
+entry:
+  br label %head
+
+head:
+  %i = phi ${type} [ ${first}, %entry ], [ %next, %${separate ? "body" : "head"} ]
+${separate ? `  %more = icmp ${source ? cmp : "ne"} ${type} %i, 8\n  br i1 %more, label %body, label %exit\n\nbody:\n` : ""}${source ? `  %value = ${ext} ${n} %i to ${w}\n` : ""}  call void @tick(${w} %${source ? "value" : "i"})
+  %next = add ${flag} ${type} %i, 1
+${separate ? "  br label %head" : `  %more = icmp ${source ? cmp : "ne"} ${type} %${source ? "i" : "next"}, ${source ? 7 : 8}\n  br i1 %more, label %head, label %exit`}
+
+exit:
+  ret void
+}
+declare void @tick(${w})
+`;
+  };
+  return { src: module(true), tgt: module(false) };
+}
+
 describe.skipIf(!built)("loop state at different widths", () => {
+  for (const [narrow, wide, signed, separate] of [
+    [8, 16, false, false],
+    [16, 32, true, false],
+    [32, 64, false, true],
+    [8, 16, true, true],
+  ] as const)
+    test(`matches a source ${signed ? "sext" : "zext"} from i${narrow} to i${wide} in the ${separate ? "body" : "header"}`, async () => {
+      const session = await start(extended(narrow, wide, signed, separate));
+      const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+      if (!halves) throw new Error("expected a cut through the source extension");
+      for (const gid of [halves.outer, halves.callee])
+        expect((await session.check(gid)).outcome).toBe("proved");
+      expect(session.verdict).toBe("verified");
+      replay(session);
+    }, 120_000);
+
+  test("matching an extension does not prove different signed values equal", async () => {
+    const programs = extended(8, 16, true, true);
+    programs.src = programs.src.replace("sext i8", "zext i8");
+    const session = await start(programs);
+    const halves = await cutLoop(session, llops, "g1", DEFAULT_LIMITS);
+    if (!halves) throw new Error("expected a cut through the source extension");
+    const outcomes = [];
+    for (const gid of [halves.outer, halves.callee])
+      outcomes.push((await session.check(gid)).outcome);
+    expect(outcomes).toContain("refuted");
+    expect(session.verdict).not.toBe("verified");
+  }, 120_000);
+
   test("aligns source and target views together and replays the certificate", async () => {
     const programs = pair(8, 16);
     programs.src = programs.src
