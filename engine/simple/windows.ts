@@ -235,6 +235,22 @@ export function bodyOf(module: string): string {
   return lines.slice(start, lines.indexOf("}", start)).join("\n");
 }
 
+/**
+ * Whether two modules have the same body once each attribute group their calls name is
+ * written out, so that a pass that only renumbers the groups changes no body.
+ */
+export function sameBody(a: string, b: string): boolean {
+  return attributed(a) === attributed(b);
+}
+
+/** `module`'s body with each attribute group it names replaced by the group's attributes. */
+function attributed(module: string): string {
+  const groups = new Map(
+    [...module.matchAll(/^attributes (#\d+) = \{ (.*) \}$/gm)].map((group) => [group[1], group[2]]),
+  );
+  return bodyOf(module).replace(/#\d+\b/g, (ref) => `{ ${groups.get(ref) ?? ref} }`);
+}
+
 /** `text` without loop IDs, which alive2 ignores and LLVM may leave on two loops at once. */
 export function withoutLoopIds(text: string): string {
   return text.replace(/, !llvm\.loop ![0-9]+/g, "");

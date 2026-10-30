@@ -30,7 +30,7 @@ import { peel } from "./peel.ts";
 import { refuteFrom, unrolling } from "./refute.ts";
 import { regions } from "./regions.ts";
 import { stagesToward, stepRules } from "./rewrite.ts";
-import { bodies, bodyOf, stepWindows, withoutLoopIds } from "./windows.ts";
+import { bodies, bodyOf, sameBody, stepWindows, withoutLoopIds } from "./windows.ts";
 
 /** What a search works with. */
 interface Run {
@@ -256,7 +256,7 @@ async function* moves(
   const last = yield* walk(run, gid, stages, cuts);
   // Skip windows already asked toward this goal's target body.
   const view = await session.show(gid);
-  const walked = last !== undefined && bodyOf(last) === bodyOf(view.tgt.text);
+  const walked = last !== undefined && sameBody(last, view.tgt.text);
   // Strengthening a cut checks its goals again, which may have proved this one.
   yield async () => ((await session.show(gid)).status === "proved" ? PROVED : NONE);
   const toward = () => stepWindows(session, llops, gid, limits);

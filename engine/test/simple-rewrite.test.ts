@@ -5,6 +5,7 @@ import { bounded } from "../examples/bounded.ts";
 import { strchr } from "../examples/strchr.ts";
 import { distance } from "../simple/regions.ts";
 import { stagesToward } from "../simple/rewrite.ts";
+import { sameBody } from "../simple/windows.ts";
 import { pairs } from "./simple-pairs.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
@@ -52,6 +53,27 @@ describe.skipIf(!built)("stages", () => {
     expect(src).toContain("!llvm.loop");
     expect(walk.length).toBeGreaterThan(0);
     expect(walk.filter((stage) => stage.includes("!llvm.loop"))).toEqual([]);
+  });
+
+  test("a pass that only renumbers attribute groups makes no stage", async () => {
+    // inferattrs gives @strlen the first group, so the call's group becomes #1.
+    const src = await canonical(`define i64 @f(ptr %s) {
+entry:
+  %n = call i64 @strlen(ptr %s) #0
+  ret i64 %n
+}
+
+declare i64 @strlen(ptr)
+
+attributes #0 = { nounwind }
+`);
+    const tgt = src.replace(
+      "call i64 @strlen(ptr %0)",
+      "tail call i64 @strlen(ptr noundef nonnull dereferenceable(1) %0)",
+    );
+    const walk = await stagesToward(llops, src, tgt);
+    expect(walk.length).toBeGreaterThan(0);
+    expect(walk.filter((stage, k) => sameBody(stage, walk[k - 1] ?? src))).toEqual([]);
   });
 
   test("no stage is walked when every one is farther than the src", async () => {
