@@ -71,13 +71,9 @@ A module holding an `undef` value is refused with the error code `undef`. Every 
 
 Request `{ "module": "<ir text>" }`, response `{ "ok": true, "module": ..., "body": [ ... ] }`.
 
-The returned module marks each instruction with the comment `; #N`, its [reference](#value-references). The comments leave the program unchanged.
+The module comes back with each instruction of its function marked `; #N`, the [reference](#value-references) that names it, at the column LLVM writes its own comments. Each mark is what `#N` resolves to, and the marks are comments, so the text still parses as the program it marks.
 
-`body[N]` describes instruction `#N`: its `block`, one-line `text`, `opcode`, result `type`, `operands`, `flags`, `form`, and the booleans `commutative` and `phi`. `value` names the result when there is one. A phi also lists its incoming `blocks`.
-
-`calls` and `args` identify a call's callee and arguments. Its tail marker, if any, appears in `flags` as `tail`, `musttail` or `notail`. `pointer_args` reports whether any argument type contains a pointer, including within a vector or aggregate. Operands and arguments use LLVM references or constants.
-
-`form` prints the instruction without its result name, substituting `poison` for values defined by the function and `%_` for blocks. Instructions differing only in those values or blocks share a form.
+`body` lists the same instructions as data, the one at index N in position N: its `block`, `text` on one line, `opcode`, result `type`, `flags`, among them a call's tail marker (`tail`, `musttail` or `notail`), `operands` in LLVM's order, whether it is `commutative`, the `value` it defines if it defines one, whether it is a `phi` and the `blocks` a phi's values come from, and for a call, the function it `calls`, its `args`, and as `pointer_args` whether one of them holds a pointer, alone or in a vector or an aggregate. Operands and arguments are references or constants. The `form` is the text without the result, with `poison` for each operand the function defines and `%_` for each block, which two instructions doing the same to different values or blocks share.
 
 ## edit
 
@@ -87,7 +83,7 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 | --- | --- | --- |
 | `swap` | `a`, `b` | exchange the positions of two instructions |
 | `move` | `v`, `where`, `w` | move `v` before or after `w` |
-| `hoist` | `v` | copy `v` onto incoming edges and merge any result with a phi |
+| `hoist` | `v` | give each edge into the block of `v` its own copy of `v` |
 | `substitute` | `a`, `b` | every use of `a` becomes `b` |
 | `replace` | `v`, `insts` | redefine `v` with an instruction sequence |
 | `insert` | `where`, `w`, `insts` | insert instructions around `w` |
@@ -98,19 +94,17 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 | `copy_block` | `block`, `preds` | give the edges from `preds` their own copy of `block` |
 | `peel` | `block` | give the edges into the loop `block` heads their own copy of its iteration |
 | `set_body` | `body` | replace the whole body |
-| `drop_attrs` | | remove checked body attributes and provably redundant return `noundef` |
+| `drop_attrs` | | remove the attributes `respected` reads from the function |
 | `flags` | `v`, `flags` | put or remove the flags an instruction can carry |
 | `splice` | `from`, `to`, `with`, `value_map` | put another module's window in place of the one from `from` to `to` |
 
 `where` is `"before"` or `"after"`. The terminator cannot be moved, erased or replaced, and nothing can be inserted after it.
 
-`hoist` requires `v` to be the first non-phi instruction in a block with predecessors. Each copy reads the phis' incoming values on its edge, and any result is joined by a phi in the original block.
+`replace` and `insert` take `insts`, an array of instruction lines. The snippet is parsed against the values in scope, so it may use them by reference and define names of its own, which survive the edit.
 
-`replace` and `insert` take instruction lines in the `insts` array, using values in scope and preserving new names.
+A snippet may not shadow a name that already exists. `replace` may reuse the name of the value it replaces, and may not use the value itself.
 
-`replace` may reuse the replaced value's name, but its snippet cannot read that value. Other existing names cannot be shadowed.
-
-Snippets may use globals and call functions. llops declares missing intrinsics such as `llvm.assume`. A snippet cannot name a module's types because its temporary parsing function cannot declare them; `set_body` supports them by reparsing the module.
+A snippet may use the module's global variables and call its functions. When a snippet calls an intrinsic that the module does not declare, llops adds the declaration, which is how a snippet can call `llvm.assume`. A snippet cannot name a type the module declares, because it is parsed in a throwaway function that cannot declare one; `set_body` reparses the whole module and can.
 
 `erase` refuses a value that still has users, leaving the caller to erase or rewrite them first. With `"cascade": true` the operands that become dead go with it, stopping at anything with a side effect; a plain load has none, so a dead one goes.
 
@@ -118,17 +112,13 @@ Snippets may use globals and call functions. llops declares missing intrinsics s
 
 `retype` leaves the definition in the old type, gives the old name to a conversion into the new type, and converts back at every use, with `ext` choosing `zext` or `sext` where a conversion widens. Whether the conversions lose nothing is a claim for the caller's alive2 check.
 
-`copy_block` sends each edge from a block in `preds` to a copy of `block`. The copy's phis keep those edges and the original block's keep the others. Uses outside the block read the corresponding original or copied value, joined by new phis where needed. This supports copying a loop header for its entry edges or separating a shared exit. The step only reshapes control flow and can be certified by `reshaped`.
+`copy_block` sends each edge from a block in `preds` to a copy of `block`. The copy's phis keep those edges and the block's keep the others, and each phi after the block takes from the copy what it takes from the block. A value of the block used outside it gets a phi of its own wherever the copy's value and the block's meet, as LLVM's SSA updater places them. It refuses a token used outside the block, which no phi can join, and a copy that would take every edge into the block. The step only reshapes control flow, which `reshaped` can certify on a program that loops: it is how a loop's exit that the code before the loop also enters becomes the loop's alone.
 
-`copy_block` refuses a copy that would take every edge into the block. It also refuses a token value used outside the block, since tokens cannot be joined by a phi.
+`peel` sends the edges into the loop that `block` heads to a copy of one iteration: each block of the loop, inner loops included, with the copy's back edges going to `block`. The copy's phis keep the entering edges, the header's take the copy's back edges instead, and each phi after the loop takes from the copy what it takes from the loop. It refuses a block that heads no loop and, unlike `copy_block`, a value used outside what it copies other than by a phi on an edge from it. The step only reshapes control flow, and a loop peeled one time more than it can run leaves behind a loop that no run enters.
 
-`peel` sends the edges into the loop that `block` heads to a copy of one iteration: each block of the loop, inner loops included, with the copy's back edges going to `block`. The copy's phis keep the entering edges, the header's take the copy's back edges instead, and each phi after the loop takes from the copy what it takes from the loop. It refuses a block that heads no loop and a value used outside what it copies other than by a phi on an edge from it. The step only reshapes control flow, and a loop peeled one time more than it can run leaves behind a loop that no run enters.
+`hoist` takes the first instruction of a block after its phis and gives each edge into the block its own copy of it, which reads what the block's phis take on that edge, and a phi in the block joins the copies' results. It refuses a terminator, a token and a block that no edge enters or that one enters other than by a branch or a switch. What the block computes first then crosses its entry as a phi, where a cut can pass it.
 
-`flags` sets each named flag to `true` or `false`: `{ "nuw": true, "nsw": false }` adds `nuw` and removes `nsw`. A flag the instruction cannot carry is refused.
-
-Integer flags are `nuw` and `nsw` on `add`, `sub`, `mul`, `shl` and `trunc`; `exact` on supported divisions and shifts; `disjoint` on `or`; and `nneg` on `zext` and `uitofp`. Floating-point instructions take `fast`, `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn` and `reassoc`.
-
-On a call, `tail` sets or removes the ordinary tail marker. Calls marked `musttail` or `notail` are refused.
+`flags` names instruction flags with `true` or `false`, so the same op puts and removes: `{ "nuw": true }` puts `nuw` on and `{ "nsw": false }` takes `nsw` off. `nuw` and `nsw` apply to `add`, `sub`, `mul`, `shl` and `trunc`, `exact` to the divisions and shifts that carry it, `disjoint` to `or`, `nneg` to `zext` and `uitofp`, `fast`, `nnan`, `ninf`, `nsz`, `arcp`, `contract`, `afn` and `reassoc` to floating-point instructions, and `tail`, the ordinary tail marker, to a call that is neither `musttail` nor `notail`. A flag the instruction cannot carry is refused rather than ignored, so the agent never guesses what the IR keeps.
 
 `splice` replaces the instructions from `from` to `to` with a copy of instructions from another module. `with` names them as `{ "module": ..., "from": "<ref>", "to": "<ref>" }`. Each range must lie in one block and hold no phi and no terminator. `value_map` gives each value of this module a partner in the other module. Where the copy reads a value from outside its range, it reads that value's partner in this module instead. Where the rest of the body used a replaced value, it uses that value's partner in the copy. If the copy calls a function that only the other module declares, the declaration comes with it.
 
@@ -247,19 +237,9 @@ The two functions are walked together one segment at a time. A segment runs from
 
 Request `{ "before": ..., "after": ... }`, response `{ "ok": true, "respected": true }`, or `{ "ok": true, "respected": false, "why": ... }`.
 
-Whether `after` refines `before` by adding body attributes that its instructions keep. It checks `memory(...)`, `nofree`, `noreturn` and `willreturn` on the function, and `readonly`, `writeonly`, `readnone` and `captures(none)` on its parameters. Removing these attributes from `after` must leave `before`, apart from ignored attributes and redundant return `noundef`.
+Whether the function `after` defines is the one `before` defines with attributes added that its own instructions cannot break, so that `after` refines `before` under alive2's semantics without a solver. Both modules must have the [program shape](#the-program-shape), which leaves out recursion, and hold no `undef`. The attributes it reads are `memory(...)`, `nofree`, `noreturn` and `willreturn` on the function, and `readonly`, `writeonly`, `readnone` and `captures(none)` on its parameters. `before` must be `after` with these attributes removed, as `drop_attrs` removes them, and either may also have a return `noundef` the other lacks where no return can break it: every `ret` returns a number, a null pointer, an aggregate of those, the address of a function or a global variable, a `freeze` result or a `noundef` parameter, and the return carries no other attribute alive2 reads. `drop_attrs` removes such a `noundef` too.
 
-Accesses are traced through GEPs, phis and selects to their possible roots. Stack slots permit reads and writes, and constant globals permit reads. Other globals need permission for other memory; arguments need permission for argument memory and for the parameter's access kind. Unknown roots need both argument and other-memory permission. Volatile and atomic loads and stores are refused.
-
-Opaque direct calls combine their declaration and call-site effects, with argument accesses checked at the actual pointer roots. Ordinary memory intrinsics and the library queries `memcmp`, `bcmp` and `strlen` also have their modeled accesses checked, regardless of narrower written attributes. Other library calls, aggregate pointer operands and unsupported parameter effects remain outside this memory check.
-
-Forwarding a constrained pointer to an opaque call requires explicit `captures(none)` on the declaration or call site. Partial capture contracts are not combined, because alive2 ignores them. A used pointer result requires separate reasoning.
-
-Pointer comparisons and conversions may feed pure computations, branches, switches or returns containing no pointers. Their results cannot be stored, passed to calls or converted back to pointers. These observations remain refused under `captures(none)`, which also forbids address capture.
-
-Operand bundles are accepted only as recognized assumptions on `llvm.assume`. Under `nofree`, a call must be shown not to free memory, and reallocation flags on either the declaration or call site cause refusal. Under `willreturn`, loops and calls without `willreturn` are refused. A `ret` violates `noreturn`. Both modules must satisfy the program shape, including its exclusions of recursion and `undef`.
-
-A return `noundef` may differ when every return is visibly non-poison: a literal value, a function or global-variable address, a `freeze` result, or a `noundef` parameter. Aggregate literals are checked element by element. Other meaningful return attributes prevent this check because they may introduce poison. A function with no `ret` keeps `noundef` vacuously. `drop_attrs` removes return `noundef` only when this check proves it redundant.
+alive2 checks these attributes only against the function's own instructions, so the check follows each pointer a load or store uses back through GEPs, phis and selects to the arguments, allocas or globals it may come from. Each access must be one the attributes allow: a stack slot always, a constant global for a load, another global when the function may touch other memory, an argument when it may touch argument memory and the parameter allows it, and anything else only when both argument memory and other memory are allowed. A call accesses what its declaration and its call site both allow, through each pointer argument as far as it may touch argument memory and the parameter allows, and those accesses must be ones the attributes allow too: a memory intrinsic accesses its pointer arguments, and `memcmp`, `bcmp` and `strlen` read theirs however they are declared, since alive2 makes them reads. Another library function, which alive2 may replace by an operation of its own, an allocation function, a call with an operand bundle and a call that passes a pointer inside a vector or an aggregate have no such bound, so under `memory(...)` they make the answer `false`, unless they are `llvm.assume` or an intrinsic that does not touch memory, as LLVM's own table of intrinsics says. Under `memory(...)` or a parameter attribute, a pointer from an argument may only be the address of a load or store, flow into a GEP, a phi or a select, go to a call with such a bound that takes it as `captures(none)` by its declaration or its call site and whose pointer result, if it has one, nothing uses, or, where the parameter is not `captures(none)`, feed computations that hold no pointer, touch no memory and call nothing, and whose results only such computations, branches, switches and returns use. Partial `captures` attributes do not count, since alive2 ignores them. Volatile or atomic accesses, other instructions that touch memory, an operand bundle other than an assumption on `llvm.assume`, a `ret` under `noreturn`, under `nofree` a call that may be a `realloc` by its declaration or its call site, or that is not `nofree` unless its bound shows it only reads, and under `willreturn` a loop or a call without `willreturn`, make the answer `false`.
 
 ## analyze
 
