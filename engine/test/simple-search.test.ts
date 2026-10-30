@@ -907,6 +907,48 @@ describe.skipIf(!solving)("search with alive-tv", () => {
     });
   };
 
+  test("promotes storage before the declarations change", async () => {
+    const src = `declare i64 @strlen(ptr noundef) nounwind willreturn memory(read)
+declare void @consume(ptr noundef, i32 noundef)
+
+define void @f(ptr noundef %p) {
+entry:
+  %slot = alloca ptr, align 8
+  store ptr %p, ptr %slot, align 8
+  %value = load ptr, ptr %slot, align 8
+  %length = call i64 @strlen(ptr noundef %value)
+  %size = add i64 %length, 1
+  %narrow = trunc i64 %size to i32
+  call void @consume(ptr noundef %value, i32 noundef %narrow)
+  ret void
+}
+`;
+    const tgt = src
+      .replace("@strlen(ptr noundef)", "@strlen(ptr noundef captures(none))")
+      .replace("memory(read)", "memory(argmem: read)")
+      .replace(
+        "  %slot = alloca ptr, align 8\n  store ptr %p, ptr %slot, align 8\n  %value = load ptr, ptr %slot, align 8\n",
+        "",
+      )
+      .replaceAll("%value", "%p");
+    // alive2 answers every question but those that ask about both changes at once.
+    const silent = answering(() => "unknown");
+    let both = 0;
+    const checker: Checker = {
+      check: (src, tgt, options) => {
+        const promoted = src.includes("alloca ") && !tgt.includes("alloca ");
+        const declared = !src.includes("captures(none)") && tgt.includes("captures(none)");
+        if (!promoted || !declared) return aliveTv.check(src, tgt, options);
+        both++;
+        return silent.check(src, tgt, options);
+      },
+    };
+    const session = await start(src, tgt, checker);
+    expect(await search(session, llops, stageLimits)).toBe("verified");
+    expect(both).toBeGreaterThan(0);
+    replay(session);
+  }, 60_000);
+
   test.each([
     { name: "forward", src: ROTATED.src, tgt: ROTATED.tgt },
     { name: "reverse", src: ROTATED.tgt, tgt: ROTATED.src },

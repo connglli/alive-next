@@ -24,11 +24,21 @@ export async function stepRules(session: Session, llops: Llops, gid: string) {
 }
 
 /**
+ * The pipeline whose stages the src steps toward: the first function passes of
+ * `default<O3>`, then `default<O3>`. It gives declared functions their attributes
+ * before those passes promote private storage, so one of its stages can ask alive2
+ * about both changes at once; run ahead of it, the passes promote storage under the
+ * src's declarations.
+ */
+const STAGES =
+  "function(lower-expect,simplifycfg,sroa<modify-cfg>,early-cse,callsite-splitting),default<O3>";
+
+/**
  * Proposes canonical stages without removable body attributes, so later cuts
  * can outline them. Keeps body changes through the last stage closest to `tgt`.
  */
 export async function stagesToward(llops: Llops, src: string, tgt: string) {
-  const run = await llops.pipelineStages(src);
+  const run = await llops.pipelineStages(src, STAGES);
   const stages: string[] = [];
   let [best, end] = [await measured(llops, src, tgt), 0];
   for (const stage of run.ok ? run.stages : []) {
