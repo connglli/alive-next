@@ -1,7 +1,10 @@
-// Relations among cut parameters, proposed from ScalarEvolution. Expressions
-// over other parameters expose opaque terms; linear combinations relate values
-// through shared terms and a loop's iteration count. Comparisons across integer
-// widths are guesses for the checker to prove.
+// Linear relations among the values a cut passes, as candidates to strengthen
+// it with. ScalarEvolution gives each value as constants times terms: values it
+// cannot see through and, in a loop, the iterations so far. A combination of
+// parameters whose terms cancel is a relation that holds, such as left == n - i
+// beside a counter i, and a parameter it writes as an expression over the others
+// that is not linear equals that expression rebuilt; a value widened or narrowed
+// to compare it with one of another width is a guess.
 import type { Comparison, Llops, Predicate, Scev } from "../core/drivers/llops.ts";
 import { build } from "./scev.ts";
 

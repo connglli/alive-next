@@ -1,6 +1,7 @@
-// Loops: where a goal that loops is cut, and the invariants that cut keeps. A
-// cut starts at the first header or a shared join that must be isolated first.
-// Shared acyclic blocks get copies for paths outside the loop. The
+// Loops: where a goal that loops is cut, and the invariants that cut keeps. It
+// is cut at its first header, or first at a join it shares with outside code,
+// once that code has its own copy of each block it enters that holds no loop, as
+// a rotated loop's guard enters its exit. The
 // cut's candidates include guessed invariants, and Houdini narrows them: each
 // round previews the strengthen and keeps what holds where the loop is entered
 // and what one iteration keeps with the rest assumed. When a round drops

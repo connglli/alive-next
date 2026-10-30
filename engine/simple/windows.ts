@@ -1,6 +1,9 @@
-// Steps a goal's src toward its tgt through small windows. Tail markers are
-// aligned first, then regions are spliced through the values the diff pairs.
-// Refused windows grow over their inputs' definitions before trying preconditions.
+// Steps a goal's src toward its tgt one region at a time, once its calls carry
+// the tgt's tail markers. For each region, the `splice` edit puts the tgt's code
+// in place of the src's, wired through the values the diff pairs. The commit
+// names the region as its window. When alive2 refuses, the window grows backward
+// over the instructions that define the values either side reads, and last, the
+// window is tried again with what the analyses know about those values.
 import type { Instruction, Llops, Predicate } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { stepCalls } from "./calls.ts";

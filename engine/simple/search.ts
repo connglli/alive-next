@@ -1,10 +1,12 @@
 // The simple searcher, as one loop over an agenda of goals. A goal's moves are
-// made in a fixed order (the optimizer's stages on the root, a stage that its
-// windows leave interposed as a goal of its own, windows and rules toward the
-// tgt, a check, then a cut after bounded peeling, loop cuts, cuts before an
-// expensive operation, around a region left or dividing expensive operations
-// evenly, then cases) until one proves it or splits it. The goals a split leaves
-// are searched before the next. Every move is a session move, so whatever it
+// made in a fixed order (the tgt's attributes its body keeps dropped, the
+// optimizer's stages on the root, a stage that its windows leave interposed as a
+// goal of its own, windows and rules toward the tgt, a check, then a cut that
+// peels away a bounded loop, at a loop, again after a header copy, before an
+// expensive operation, around a region left, or where the expensive operations
+// divide evenly, a cut at an instruction again after copying the join it needs,
+// then a split by cases) until one proves it or splits it, and the goals a split
+// leaves are searched before the next. Every move is a session move, so whatever it
 // proves, the kernel replays.
 import type { Comparison, Instruction, Llops } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
@@ -89,7 +91,8 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   // Prepare the root before bounded peeling can split it.
   await dropAttrs(session, root);
   await dropLoopIds(session, root);
-  // A loop the tgt no longer has is peeled and cut away first, and what is left is searched.
+  // A loop the tgt no longer has is peeled and cut away first, and what is left
+  // is searched.
   const start = limits.steps && limits.cuts > 0 ? await peelBounded(session, llops, root) : root;
   if (start !== root && (await session.check(start, limits.rootMs)).outcome === "proved")
     return session.verdict;

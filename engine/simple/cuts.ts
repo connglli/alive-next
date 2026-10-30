@@ -1,5 +1,5 @@
 // Cuts a goal in two at a point both sides share, passing each value that
-// crosses it as its matched tgt value, and strengthens the cut
+// crosses it as the tgt value the diff matched with it, and strengthens the cut
 // with the facts the analyses know about those values, keeping the ones that
 // hold. A cut at the header of a loop leaves one iteration, whose back edge
 // calls the hypothesis, so the goals it leaves prove by induction, and it is
