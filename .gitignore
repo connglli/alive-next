@@ -68,6 +68,8 @@ vcpkg_installed/
 Testing/
 .cache/
 __pycache__/
+.ruff_cache/
+.pytest_cache/
 
 # ours
 node_modules/
@@ -77,5 +79,8 @@ deps/
 sessions/
 config.jsonc
 
-# pi
+# agents
+.agents/
 .pi/
+.claude/
+.codex/
