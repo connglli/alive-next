@@ -13,7 +13,6 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Transforms/Utils/Local.h"
 #include <optional>
 #include <string>
 #include <vector>
@@ -165,6 +164,18 @@ bool takenApart(llvm::CallInst &call, unsigned fields) {
     auto *part = llvm::dyn_cast<llvm::ExtractValueInst>(user);
     return part && part->getNumIndices() == 1 && part->getIndices().front() < fields;
   });
+}
+
+// Drops the inserts that packed a callee's answers once nothing reads them. An insert never
+// has undefined behavior, so dropping one changes nothing, while what computed each part
+// stays as the callee ran it, whether the outer reads it or not.
+void dropPacking(llvm::Value *answer) {
+  auto *insert = llvm::dyn_cast_or_null<llvm::InsertValueInst>(answer);
+  while (insert && insert->use_empty()) {
+    auto *next = llvm::dyn_cast<llvm::InsertValueInst>(insert->getAggregateOperand());
+    insert->eraseFromParent();
+    insert = next;
+  }
 }
 
 // The outer once its callee is back, the declaration dropped and the program
@@ -413,8 +424,7 @@ llvm::json::Object inlineCmd(llvm::json::Object &args) {
   call->eraseFromParent();
   for (auto *load : passed)
     load->eraseFromParent();
-  if (auto *built = llvm::dyn_cast_or_null<llvm::Instruction>(retVal))
-    llvm::RecursivelyDeleteTriviallyDeadInstructions(built);
+  dropPacking(retVal);
   return inlined(outerM, *decl);
 }
 

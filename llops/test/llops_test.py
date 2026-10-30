@@ -2716,6 +2716,25 @@ entry:
     back = self.good(run("inline", request))["module"]
     self.assertEqual(self.canon(back), self.canon(module))
 
+  def test_code_behind_an_answer_the_outer_does_not_read_comes_back(self):
+    # The kernel takes the rebuilt whole to mean what the halves mean, so a division
+    # that is undefined at 0 stays, whether the outer ignores the answer it computes
+    # or never takes the part it fills.
+    head = "define i32 @f(i32 %x) {\nentry:\n"
+    ignored = head + "  %r = call i32 @w(i32 %x)\n  ret i32 %x\n}\n\ndeclare i32 @w(i32)\n"
+    dividing = "  %d = udiv i32 1, %p\n"
+    answer = "define i32 @w(i32 %p) {\nentry:\n" + dividing + "  ret i32 %d\n}\n"
+    unread = head + (
+      "  %r = call { i32, i32 } @w(i32 %x)\n  %a = extractvalue { i32, i32 } %r, 0\n"
+      "  ret i32 %a\n}\n\ndeclare { i32, i32 } @w(i32)\n"
+    )
+    parts = "define { i32, i32 } @w(i32 %p) {\nentry:\n" + dividing
+    parts += "  %s0 = insertvalue { i32, i32 } poison, i32 %p, 0\n"
+    parts += "  %s1 = insertvalue { i32, i32 } %s0, i32 %d, 1\n  ret { i32, i32 } %s1\n}\n"
+    for outer, callee in ((ignored, answer), (unread, parts)):
+      back = self.good(run("inline", {"outer": outer, "callee": callee, "callee_name": "w"}))
+      self.assertEqual(self.body(back["module"]), ["%d = udiv i32 1, %x", "ret i32 %x"])
+
   def test_a_window_cannot_take_the_terminator(self):
     self.bad(run("outline", {"module": F_SIMPLE, "cut": "s", "to": "#2", "callee": "r"}), "invalid")
 

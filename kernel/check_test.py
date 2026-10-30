@@ -2453,6 +2453,51 @@ entry:
     goal["end"] = {"src": step["to"], "tgt": step["to"]}
     self.refused(self.built.write(), "holds a tail call passing a pointer")
 
+  def test_a_window_half_cannot_hide_code_behind_a_part_the_outer_drops(self):
+    # Both halves divide by the argument for a part the outer never reads, so the
+    # src half is undefined at 0, where the step changes what the function returns.
+    # Inlined back, the halves have to keep the division, or each rebuilds a whole
+    # that never divides and the step proves a pair alive2 refutes.
+    head = "define i32 @f(i32 %0) {\nentry:\n"
+    was = head + "  %1 = mul i32 %0, 2\n  %2 = add i32 %1, 1\n  ret i32 %2\n}\n"
+    now = head + (
+      "  %1 = icmp eq i32 %0, 0\n  %2 = mul i32 %0, 2\n  %3 = select i1 %1, i32 5, i32 %2\n"
+      "  %4 = add i32 %3, 1\n  ret i32 %4\n}\n"
+    )
+    outer = head + (
+      "  %1 = call { i32, i32 } @w(i32 %0)\n  %2 = extractvalue { i32, i32 } %1, 0\n"
+      "  %3 = add i32 %2, 1\n  ret i32 %3\n}\n\ndeclare { i32, i32 } @w(i32)\n"
+    )
+
+    def half(body: str) -> str:
+      text = "define { i32, i32 } @w(i32 %0) {\nentry:\n  %d = udiv i32 1, %0\n" + body
+      text += "  %p = insertvalue { i32, i32 } poison, i32 %r, 0\n"
+      text += "  %s = insertvalue { i32, i32 } %p, i32 %d, 1\n  ret { i32, i32 } %s\n}\n"
+      return self.built.program(canonical(text))
+
+    step = {
+      "kind": "window",
+      "side": "src",
+      "from": self.built.program(canonical(was)),
+      "to": self.built.program(canonical(now)),
+      "window": {
+        "callee": "w",
+        "outer": self.built.program(canonical(outer)),
+        "from": half("  %r = mul i32 %0, 2\n"),
+        "to": half(
+          "  %z = icmp eq i32 %0, 0\n  %m = mul i32 %0, 2\n  %r = select i1 %z, i32 5, i32 %m\n"
+        ),
+      },
+    }
+    self.built.goal(
+      "g1",
+      {"src": step["from"], "tgt": step["to"]},
+      {"src": step["to"], "tgt": step["to"]},
+      [step],
+      {"kind": "check"},
+    )
+    self.refused(self.built.write(), "inline the from half; recorded program differs")
+
   def test_an_aggregate_index_alive2_misplaces_is_not_asked(self):
     # alive2 puts the inserted field on a padding and so proves the zero aggregate,
     # which the src does not return; the shape keeps the pair from alive-tv.
