@@ -74,6 +74,8 @@ Hunt these in any document you touch. Four are mechanical, so grep first: the te
 
 Two failures survive every grep, so read the diff for them: a paragraph that grew a second subject, and a passage explaining how you got there rather than what holds.
 
-## Length
+## Quality and length
 
-Relocate first, condense second, accept the length third.
+For documentation, comments, and other prose, prioritize rewriting existing text over appending new text. Integrate changes into the relevant passage and remove repetition, outdated explanations, and unnecessary detail.
+
+Treat length as part of quality. Keep text focused and short enough that users will read it, while preserving the conditions and detail needed for accuracy.
