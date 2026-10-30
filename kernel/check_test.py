@@ -2453,6 +2453,20 @@ entry:
     goal["end"] = {"src": step["to"], "tgt": step["to"]}
     self.refused(self.built.write(), "holds a tail call passing a pointer")
 
+  def test_an_aggregate_index_alive2_misplaces_is_not_asked(self):
+    # alive2 puts the inserted field on a padding and so proves the zero aggregate,
+    # which the src does not return; the shape keeps the pair from alive-tv.
+    head = (
+      'target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-'
+      'n8:16:32:64-S128"\n\ndefine { i8, i64, i8, i24 } @f(i24 noundef %x) {\nentry:\n'
+    )
+    src = head + "  %r = insertvalue { i8, i64, i8, i24 } zeroinitializer, i24 %x, 3\n"
+    src += "  ret { i8, i64, i8, i24 } %r\n}\n"
+    tgt = head + "  ret { i8, i64, i8, i24 } zeroinitializer\n}\n"
+    pair = {"src": self.built.program(canonical(src)), "tgt": self.built.program(canonical(tgt))}
+    self.built.goal("g1", pair, pair, [], {"kind": "check"})
+    self.refused(self.built.write(), "outside the program shape: aggregate_index")
+
   def test_a_step_of_a_kind_the_checker_does_not_know(self):
     pair = {"src": self.src, "tgt": self.tgt}
     self.built.goal("g1", pair, pair, [{"kind": "trust-me"}], {"kind": "check"})

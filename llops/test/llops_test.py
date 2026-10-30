@@ -398,6 +398,54 @@ entry:
     r = self.good(run("validate", {"module": module}))
     self.assertEqual(r["diagnostics"][0]["code"], "recursive_call")
 
+  def test_an_aggregate_index_alive2_misplaces(self):
+    # alive2 puts a padding after each field the next does not follow at once and
+    # finds field k by the paddings among its first k + 1 positions, which in this
+    # struct miss the second padding before field 3. An array of padded elements
+    # puts a padding after each, so its element 2 is the first to move.
+    layout = 'target datalayout = "e-i64:64-i128:128-n8:16:32:64-S128"\n\n'
+
+    def program(ty, element, index, insert=True):
+      inst = (
+        f"%r = insertvalue {ty} %a, {element} %x, {index}\n  ret {ty} %r"
+        if insert
+        else f"%r = extractvalue {ty} %a, {index}\n  ret {element} %r"
+      )
+      ret = ty if insert else element
+      return f"{layout}define {ret} @f({ty} %a, {element} %x) {{\nentry:\n  {inst}\n}}\n"
+
+    struct = "{ i8, i64, i8, i24 }"
+    nested = "{ i32, { i8, i64, i8, i24 } }"
+    cases = [
+      (struct, "i8", "0", True),
+      (struct, "i64", "1", True),
+      (struct, "i8", "2", True),
+      (struct, "i24", "3", False),
+      ("{ i32, ptr }", "ptr", "1", True),
+      ("[4 x i24]", "i24", "1", True),
+      ("[4 x i24]", "i24", "2", False),
+      ("[4 x i24]", "i24", "3", False),
+      ("[4 x i32]", "i32", "3", True),
+      (nested, "i24", "1, 3", False),
+    ]
+    for ty, element, index, placed in cases:
+      for insert in (True, False):
+        with self.subTest(type=ty, index=index, insert=insert):
+          r = self.good(run("validate", {"module": program(ty, element, index, insert)}))
+          codes = [d["code"] for d in r["diagnostics"]]
+          self.assertEqual(r["conforms"], placed, codes)
+          if not placed:
+            self.assertEqual(codes[0], "aggregate_index")
+    # An edit that would leave such an index is refused as well.
+    plain = program(struct, "i8", "2")
+    moved = {
+      "module": plain,
+      "op": "replace",
+      "v": "%r",
+      "insts": [f"%r = insertvalue {struct} %a, i24 0, 3"],
+    }
+    self.bad(run("edit", moved), "aggregate_index")
+
   def test_unsupported_terminator(self):
     module = """define i32 @f(ptr %p) {
 entry:

@@ -20,7 +20,7 @@ The exit status repeats that answer, 0 when ok and 1 when not, so a caller can b
 
 ## The program shape
 
-A program is a module with exactly one defined function, whose body ends every block in `ret`, `br`, `switch` or `unreachable`. Declarations and global variables are free, calls must name a declared function, and inline assembly and indirect calls are refused.
+A program is a module with exactly one defined function, whose body ends every block in `ret`, `br`, `switch` or `unreachable`. Declarations and global variables are free, calls must name a declared function, and inline assembly, indirect calls and an `insertvalue` or `extractvalue` index that alive2 takes for another element are refused.
 
 `validate` reports a departure from that shape as a diagnostic. Every subcommand that rewrites a program reports the first departure as an error instead, and changes nothing.
 
@@ -56,6 +56,7 @@ A response is ok when the module parses. `conforms` says whether it is a program
 | `indirect_call` | the body calls through a pointer |
 | `recursive_call` | the body calls the defined function |
 | `unsupported_attr` | a parameter has an attribute that stops alive2 from checking the function |
+| `aggregate_index` | an `insertvalue` or `extractvalue` index that alive2 takes for another element |
 | `dominance` | a value is used before its definition |
 | `invalid_ir` | the LLVM verifier rejected the module |
 

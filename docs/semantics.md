@@ -20,6 +20,14 @@ alive-next follows alive2's semantics of LLVM IR ([docs/design.md](./design.md))
 
 **alive2.** Any value, and the src's freeze may take the one that matches the tgt's.
 
+### `insertvalue` and `extractvalue` indices
+
+**LangRef.** An index names a field of a struct or an element of an array.
+
+**llubi.** As in the LangRef.
+
+**alive2.** The aggregate gets a padding after each field the next does not follow at once, and after each array element its alignment pads. An index is mapped onto that layout by the paddings at the positions up to the index rather than up to the element, so an element after an earlier padding can be taken for a padding or another element: the program then fails alive2's type check, or alive2 proves a transformation that changes the element. alive-next keeps such an index outside the program shape.
+
 ### A store of poison
 
 **LangRef.** Memory holds poison.

@@ -1080,6 +1080,51 @@ def declared(module: str, fact: dict) -> str:
   return answer["module"]
 
 
+# Aggregates alive2 lays out with paddings, each with the element type at each
+# index, under the target's layout and under one that aligns `i16` to four bytes,
+# which makes an array's padding an `i16` too.
+X86 = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+AGGREGATES = [
+  (X86, "{ i8, i64, i8, i24 }", ["i8", "i64", "i8", "i24"]),
+  (X86, "{ i24, i8, i24, i8 }", ["i24", "i8", "i24", "i8"]),
+  (X86, "{ i8, i16, i8, i32, i8 }", ["i8", "i16", "i8", "i32", "i8"]),
+  (X86, "{ i32, ptr }", ["i32", "ptr"]),
+  (X86, "[4 x i24]", ["i24"] * 4),
+  (X86, "[3 x i8]", ["i8"] * 3),
+  (X86 + "-i16:32", "[4 x i16]", ["i16"] * 4),
+]
+
+
+class TestAggregateIndices(unittest.TestCase):
+  def test_the_shape_admits_just_the_indices_alive2_places(self):
+    """An insert at an index the shape admits is one alive2 sees, so it refutes the
+    zero aggregate; at an index the shape refuses, alive2 proves the zero aggregate
+    or rejects its own translation."""
+    asked = []
+    for layout, ty, elements in AGGREGATES:
+      for k, element in enumerate(elements):
+        head = (
+          f'target datalayout = "{layout}"\n\ndefine {ty} @f({element} noundef %x) {{\nentry:\n'
+        )
+        src = (
+          f"{head}  %r = insertvalue {ty} zeroinitializer, {element} %x, {k}\n  ret {ty} %r\n}}\n"
+        )
+        tgt = f"{head}  ret {ty} zeroinitializer\n}}\n"
+        placed = run("validate", {"module": src})["conforms"]
+        asked.append(((layout, ty, k, placed), (src, tgt)))
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+      said = list(pool.map(lambda pair: alive2(*pair), [pair for _, pair in asked]))
+    misplaced = 0
+    for ((layout, ty, k, placed), _), answer in zip(asked, said, strict=True):
+      with self.subTest(layout=layout, type=ty, index=k):
+        if placed:
+          self.assertEqual(answer, "incorrect")
+        else:
+          misplaced += 1
+          self.assertNotEqual(answer, "incorrect")
+    self.assertTrue(misplaced, "no index was misplaced, so nothing was compared")
+
+
 class TestDeclaredFacts(unittest.TestCase):
   def test_alive2_reads_each_fact_on_a_declaration(self):
     for fact, ty, keeps in KEPT:

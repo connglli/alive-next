@@ -9,6 +9,7 @@
 #include "llvm/AsmParser/SlotMapping.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
@@ -19,6 +20,7 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include <algorithm>
 #include <set>
 
 namespace llops {
@@ -329,6 +331,81 @@ bool findUseBeforeDef(llvm::Function &F, llvm::BasicBlock &BB, ValueRefs &refs, 
   return false;
 }
 
+// Where alive2's layout of `S` holds a padding: after each field that the next
+// field, or the end of `S`, does not follow at once, as llvm_type2alive lays a
+// struct out. A scalable size, which alive2 does not take, leaves no layout.
+std::optional<std::vector<bool>> paddingsOf(const llvm::DataLayout &DL, llvm::StructType *S) {
+  const llvm::StructLayout *layout = DL.getStructLayout(S);
+  std::vector<bool> padding;
+  for (unsigned k = 0, n = S->getNumElements(); k < n; ++k) {
+    llvm::TypeSize at = layout->getElementOffset(k);
+    llvm::TypeSize size = DL.getTypeStoreSize(S->getElementType(k));
+    llvm::TypeSize next = k + 1 == n ? DL.getTypeAllocSize(S) : layout->getElementOffset(k + 1);
+    if (at.isScalable() || size.isScalable() || next.isScalable())
+      return std::nullopt;
+    padding.push_back(false);
+    if (next.getFixedValue() != at.getFixedValue() + size.getFixedValue())
+      padding.push_back(true);
+  }
+  return padding;
+}
+
+// Why alive2 reads or writes another element of an aggregate than `I` names, or
+// nothing. alive2 maps an index onto its layout, which holds paddings, by the
+// paddings at the positions up to the index rather than up to the element, so a
+// padding that comes later in its layout moves the element onto another one.
+std::optional<std::string> misplacedIndex(const llvm::DataLayout &DL, const llvm::Instruction &I) {
+  llvm::Type *T = nullptr;
+  llvm::ArrayRef<unsigned> indices;
+  if (auto *extract = llvm::dyn_cast<llvm::ExtractValueInst>(&I)) {
+    T = extract->getAggregateOperand()->getType();
+    indices = extract->getIndices();
+  } else if (auto *insert = llvm::dyn_cast<llvm::InsertValueInst>(&I)) {
+    T = insert->getType();
+    indices = insert->getIndices();
+  } else {
+    return std::nullopt;
+  }
+  for (unsigned k : indices) {
+    // Where the element is in alive2's layout, and where alive2 looks for it.
+    size_t is = k, sought = k;
+    llvm::Type *element = nullptr;
+    if (auto *S = llvm::dyn_cast<llvm::StructType>(T)) {
+      auto padding = paddingsOf(DL, S);
+      if (!padding)
+        return std::nullopt;
+      for (size_t at = 0, field = 0; at < padding->size(); ++at)
+        if (!(*padding)[at] && field++ == k)
+          is = at;
+      auto upTo = padding->begin() + std::min<size_t>(k + 1, padding->size());
+      sought = k + std::count(padding->begin(), upTo, true);
+      element = S->getElementType(k);
+    } else if (auto *A = llvm::dyn_cast<llvm::ArrayType>(T)) {
+      // An element whose alignment pads it has a padding after it in alive2's layout.
+      element = A->getElementType();
+      llvm::TypeSize size = DL.getTypeStoreSize(element);
+      llvm::TypeSize alloc = DL.getTypeAllocSize(element);
+      if (size.isScalable() || alloc.isScalable())
+        return std::nullopt;
+      if (size != alloc) {
+        is = 2 * k;
+        sought = k + (k + 1) / 2;
+      }
+    } else {
+      return std::nullopt;
+    }
+    if (is != sought) {
+      std::string type;
+      llvm::raw_string_ostream os(type);
+      T->print(os);
+      return "alive2 takes index " + std::to_string(k) + " of '" + type +
+             "' for another element, past a padding it adds";
+    }
+    T = element;
+  }
+  return std::nullopt;
+}
+
 } // namespace
 
 bool holdsLoop(const llvm::Function &F) {
@@ -413,6 +490,14 @@ std::vector<Diag> checkFunction(llvm::Function &F) {
       return diags;
     }
   }
+
+  // alive2 would answer for a program that reads or writes another element.
+  const llvm::DataLayout &DL = F.getParent()->getDataLayout();
+  for (auto &I : llvm::instructions(F))
+    if (auto why = misplacedIndex(DL, I)) {
+      diags.push_back({Diag::Severity::Error, "aggregate_index", *why});
+      return diags;
+    }
 
   if (auto *BB = singleBlock(F)) {
     ValueRefs refs(F);
