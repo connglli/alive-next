@@ -1,11 +1,10 @@
 // Running the simple searcher by hand. It writes the same session directory the
 // agent and the examples write: the trajectory, the store, and the certificate
 // when the run earns one. Each switch turns one of the search's moves off.
-import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { readArgs, readCount, readPair, tryOrExit } from "../core/args.ts";
 import { repoRoot } from "../core/config.ts";
-import { closeRun, stamp, startRun } from "../core/run.ts";
+import { boundRun, closeRun, stamp, startRun } from "../core/run.ts";
 import { DEFAULT_LIMITS, type Limits } from "./limits.ts";
 import { search } from "./search.ts";
 
@@ -34,18 +33,7 @@ const { src, tgt, where } = readPair(flags.rest);
 const dir = where ?? join(repoRoot(), "sessions", `simple-${stamp()}`);
 const { session, llops } = await startRun({ src, tgt, dir });
 console.log(`  ${dir}`);
-// The time given bounds the whole run: when it is up, the checks still
-// running are stopped, since they would outlive the process, and the run
-// closes with what its log holds.
-setTimeout(
-  () => {
-    console.log("  out of time");
-    spawnSync("pkill", ["-P", String(process.pid)]);
-    close();
-    process.exit(0);
-  },
-  started + flags.limits.ms - Date.now(),
-).unref();
+boundRun(flags.limits.ms, started, close);
 try {
   await search(session, llops, flags.limits);
 } catch (error) {

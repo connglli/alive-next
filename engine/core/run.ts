@@ -3,6 +3,7 @@
 // Every way of running starts and closes here. A run gets the drivers the
 // configuration names, and a toolchain that disagrees with itself stops the
 // run rather than a goal, since its failures would read as bad proofs.
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { certify } from "../cert/main.ts";
 import { loadConfig } from "./config.ts";
@@ -66,6 +67,22 @@ export function closeRun(session: Session, started: number) {
   // Both verdicts are delivered as a package; only "unknown" has nothing to hand over.
   if (outcome !== "unknown") lines.push(certify(session.dir, join(session.dir, "certificate")));
   return { outcome, lines };
+}
+
+/**
+ * End the run `ms` after `started`: stop the checks still running, which would
+ * outlive the process, close the run with `close`, and exit.
+ */
+export function boundRun(ms: number, started: number, close: () => void): void {
+  setTimeout(
+    () => {
+      console.log("  out of time");
+      spawnSync("pkill", ["-P", String(process.pid)]);
+      close();
+      process.exit(0);
+    },
+    started + ms - Date.now(),
+  ).unref();
 }
 
 /** A directory name that sorts by when it was made. */
