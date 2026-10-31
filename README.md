@@ -82,7 +82,7 @@ make help                              # every target
 
 make examples                          # prove the worked examples, into sessions/
 
-python3 kernel/check.py sessions/<id>/certificate # independently replay the certificate
+python3 kernel/check.py sessions/<id>/certificate --src a.ll --tgt b.ll # independently replay the certificate of a.ll and b.ll
 
 python3 scripts/visualize.py sessions/<id> # the run as one HTML page
 ```

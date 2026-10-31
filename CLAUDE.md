@@ -58,7 +58,7 @@ cd engine && bun run simple a.ll b.ll     # Search for a proof without a model
 
 # Scenarios and Verification
 make examples                             # Run the worked tutorial scenarios into sessions/
-python3 kernel/check.py sessions/<id>/certificate  # Independently replay certificate
+python3 kernel/check.py sessions/<id>/certificate --src a.ll --tgt b.ll  # Independently replay the certificate of a.ll, b.ll
 python3 scripts/visualize.py sessions/<id> # Generate interactive session.html visualization
 
 # Testing and Code Quality

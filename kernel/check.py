@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Replay a certificate and say whether it holds.
 
-    python3 check.py [<package>] [--alive-tv PATH] [--llops PATH] [--llubi PATH] [--llrwt PATH] [--mlir-translate PATH] [--mlir-opt PATH] [--smt-to MS]
+    python3 check.py [<package>] [--src FILE --tgt FILE] [--alive-tv PATH] [--llops PATH] [--llubi PATH] [--llrwt PATH] [--mlir-translate PATH] [--mlir-opt PATH] [--smt-to MS]
 
 The package is the directory this script sits in unless one is named. What is
 needed besides Python: alive-tv, llubi for a counterexample alive-tv did not
@@ -10,15 +10,17 @@ the subcommands each of them needs. All are taken from the manifest, which recor
 where the run found them and which LLVM each one carried; a path that is not
 there falls back to the name on PATH, and an option overrides both.
 
-Nothing here believes the manifest. For a proof it says which pairs the run
-moved through and this reruns every claim about them: the direction of a check
-comes from the side the step moved, the composition rule for a cut is applied
-here, and a program is read only from a file whose name is its hash. For a
-counterexample it says which pair was refuted, at which input when it names
-one, and by which checker. The pair, put at that input by `llops
-instantiate`, is asked of alive-tv again. One llubi refuted, because alive-tv
-did not decide it, is run again under llubi only where alive-tv still does
-not decide, and this decides for itself whether the two runs diverge.
+Nothing here believes the manifest, not even which pair it is about: the
+verdict names the pair by its programs' hashes, and --src and --tgt hold it to
+two files. For a proof it says which pairs the run moved through and this
+reruns every claim about them: the direction of a check comes from the side the
+step moved, the composition rule for a cut is applied here, and a program is
+read only from a file whose name is its hash. For a counterexample it says
+which pair was refuted, at which input when it names one, and by which checker.
+The pair, put at that input by `llops instantiate`, is asked of alive-tv again.
+One llubi refuted, because alive-tv did not decide it, is run again under llubi
+only where alive-tv still does not decide, and this decides for itself whether
+the two runs diverge.
 """
 
 import argparse
@@ -239,6 +241,21 @@ class Package:
       self.queries += 1
       self.solver_queries += 1
     return summary(done.stdout)
+
+  def claim(self) -> dict:
+    """The pair the verdict is about: the root goal's start, or the pair a counterexample refutes."""
+    if self.verdict == "counterexample":
+      return self.counterexample_pair()
+    return self.goal(self.root_goal())["start"]
+
+  def hold(self, files: dict[str, Path]) -> None:
+    """Refuse a package that is not about the programs in `files`, read as canon prints them."""
+    claim = self.claim()
+    for side, path in files.items():
+      said = f"{path} holds an undef value, which the no-undef model excludes"
+      digest = hashlib.sha256(self.model_gate(path.read_text(), said).encode()).hexdigest()
+      if digest != claim[side]:
+        raise Refused(f"the package is about another pair: its {side} is {claim[side]}, not {path}")
 
   def root_goal(self) -> str:
     """The goal a counterexample refutes, which has to be named."""
@@ -1715,6 +1732,8 @@ def main() -> int:
   parser.add_argument("--llrwt", help="default: where the manifest says, else PATH")
   parser.add_argument("--mlir-translate", help="default: where the manifest says, else PATH")
   parser.add_argument("--mlir-opt", help="default: where the manifest says, else PATH")
+  parser.add_argument("--src", type=Path, help="the src the package has to be about")
+  parser.add_argument("--tgt", type=Path, help="the tgt the package has to be about")
   parser.add_argument("--smt-to", type=int, default=600_000, help="ms per query, default 600000")
   parser.add_argument("-v", "--verbose", action="store_true", help="say what passes too")
   args = parser.parse_args()
@@ -1731,6 +1750,11 @@ def main() -> int:
     package = Package(args.package, named, args.smt_to)
     print(f"checking {args.package}")
     package.say_toolchain()
+    if bool(args.src) != bool(args.tgt):
+      raise Refused("--src and --tgt name the pair together")
+    if args.src:
+      package.hold({"src": args.src, "tgt": args.tgt})
+    claim = package.claim()
     if package.verdict == "counterexample":
       if args.verbose:
         print()
@@ -1753,7 +1777,8 @@ def main() -> int:
     runs = package.queries - package.solver_queries
     ran = f" and {runs} runs" if runs else ""
     print(f"{package.solver_queries} solver queries{ran} in {package.seconds:.1f}s")
-    print("counterexample" if confirmed else f"NOT a counterexample: {why}")
+    pair = f"tgt {claim['tgt']} does not refine src {claim['src']}"
+    print(f"counterexample: {pair}" if confirmed else f"NOT a counterexample: {why}")
     return 0 if confirmed else 1
 
   # Only proofs reach this summary, and replay already validated their root.
@@ -1768,7 +1793,7 @@ def main() -> int:
     )
 
   if confirmed:
-    print(f"VERIFIED - root {root}")
+    print(f"VERIFIED - root {root}: tgt {claim['tgt']} refines src {claim['src']}")
     held_noun = "obligation" if check.held == 1 else "obligations"
     print(f"{check.held} {held_noun} passed · {timing}")
     return 0

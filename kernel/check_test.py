@@ -1598,6 +1598,38 @@ exit:
     self.assertIn("Strengthening replay", done.stdout)
 
 
+class TestPair(Case):
+  """The pair a verdict is about: named in the verdict, and held to the files given."""
+
+  def given(self, src: str, tgt: str) -> list[str]:
+    """The options that give `src` and `tgt` as the files the package has to be about."""
+    paths = (self.dir / "a.ll", self.dir / "b.ll")
+    for path, text in zip(paths, (src, tgt), strict=True):
+      path.write_text(text)
+    binaries = ["--alive-tv", ALIVE_TV, "--llops", LLOPS]
+    return [*binaries, "--src", str(paths[0]), "--tgt", str(paths[1])]
+
+  def test_the_verdict_names_the_pair(self):
+    done = named(self.leaf())
+    self.assertEqual(done.returncode, 0, done.stdout)
+    self.assertIn(f"VERIFIED - root g1: tgt {self.tgt} refines src {self.src}", done.stdout)
+
+  def test_files_of_the_pair_hold_however_they_name_values(self):
+    # canon numbers the values, so the files may name them.
+    named_src = SRC.replace("%0", "%x").replace("%1", "%y")
+    done = run(self.leaf(), *self.given(named_src, TGT))
+    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    self.assertIn("VERIFIED", done.stdout)
+
+  def test_a_package_about_another_pair_is_refused(self):
+    # A program refines itself, so this package proves a pair, but not the one given.
+    pair = {"src": self.tgt, "tgt": self.tgt}
+    self.built.goal("g1", pair, pair, [], {"kind": "check"})
+    done = run(self.built.write(), *self.given(SRC, TGT))
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("about another pair", done.stdout + done.stderr)
+
+
 class TestTampered(Case):
   def test_a_callee_that_breaks_a_function_attribute_it_gains(self):
     # The callee's src frees its argument, which nofree makes UB, so its goal
@@ -2661,6 +2693,16 @@ class TestCounterexample(unittest.TestCase):
 
   def test_a_divergence_at_the_input_is_confirmed(self):
     self.confirmed(self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}]))
+
+  def test_a_counterexample_to_another_pair_is_refused(self):
+    package = self.built.refutation(HALVE, SHIFT, [{"kind": "int", "value": "-3"}])
+    files = (self.dir / "a.ll", self.dir / "b.ll")
+    for path in files:
+      path.write_text(SHIFT)
+    binaries = ["--alive-tv", ALIVE_TV, "--llops", LLOPS, "--llubi", LLUBI]
+    done = run(package, *binaries, "--src", str(files[0]), "--tgt", str(files[1]))
+    self.assertNotEqual(done.returncode, 0, done.stdout)
+    self.assertIn("about another pair", done.stdout + done.stderr)
 
   def test_an_input_they_agree_on_is_refused(self):
     # Rounding parts company below zero only, so 4 halves the same way in
