@@ -283,6 +283,16 @@ describe.skipIf(!built)("the loop", () => {
     expect(calls).toHaveLength(3);
   });
 
+  test("a turn the model failed ends the run, whatever the model would do next", async () => {
+    const failed = { ...turn(""), stopReason: "error" as const, errorMessage: "the stub fails" };
+    const proving = turn("proving", [{ name: "goal_check", arguments: { gid: "g1" } }]);
+    const { session, prove } = await agent([failed, proving]);
+    expect(await prove()).toBe("unknown");
+
+    // Pi's loop stops there itself, so the turn after it never ran.
+    expect(log(session).filter((entry) => entry.kind === "tool_call")).toEqual([]);
+  });
+
   test("a turn that calls nothing is asked to carry on", async () => {
     const { session, prove } = await agent([
       turn("thinking about it"),
