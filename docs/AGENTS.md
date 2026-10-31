@@ -13,12 +13,12 @@ One fact, one home. A second copy is how the two drift apart.
 * [docs/simple.md](./simple.md) holds the simple searcher, the proof writer without a model: how it steps, cuts, and gives up.
 * [docs/agent.md](./agent.md) holds the Pi agent wiring and runtime: custom tool registration and name prefixes (`run_`, `goal_`, `tx_`, `tree_`), sandbox confinement, execution model, session lifecycle, budget enforcement, system prompt, and provider or model configuration.
 * [config.example.jsonc](../config.example.jsonc) holds the template for machine-local settings: toolchain locations, timeouts, and solver options.
-* [.agents/notes/](../.agents/notes/) holds ephemeral rationale and design explorations: trade-off analyses in `designs/`, implementation plans in `implementations/`, and change records in `commits/` that do not belong in durable documentation. Each note should be named in format `YYYY-MM-DD-<short-title>.md`. When a note is completed, prefix it with `completed-`. When a note is deprecated, prefix it with `deprecated-`.
+* [.agents/notes/](../.agents/notes/) is for agents only and holds the details, ephemeral rationale and design explorations: trade-off analyses in `designs/`, implementation plans in `implementations/`, and change records in `commits/` that do not belong in durable documentation. Each note should be named in format `YYYY-MM-DD-<short-title>.md`. When a note is completed, prefix it with `completed-`. When a note is deprecated, prefix it with `deprecated-`.
 * Source files and tests hold the live implementation, type definitions, and invariants: code comments explain why rather than what, and test suites define executable contracts for components.
 
 ## Writing rules
 
-Write for a compiler engineer who has not read the code. Prefer plain English to metaphor. For the specification, it needs to be precise and complete.
+Write for a compiler engineer, a person or an agent, who has not read the code. Prefer plain English to metaphor. For the specification, it needs to be precise and complete.
 
 Document the current state, not the change history. Avoid "previously", "now" and "no longer", and avoid citing commits, branches or review threads in durable prose; name the live mechanism instead. Change stories go in the commit that made them, and their reasoning in a note.
 
@@ -78,4 +78,4 @@ Two failures survive every grep, so read the diff for them: a paragraph that gre
 
 For documentation, comments, and other prose, prioritize rewriting existing text over appending new text. Integrate changes into the relevant passage and remove repetition, outdated explanations, and unnecessary detail.
 
-Treat length as part of quality. Keep text focused and short enough that users will read it, while preserving the conditions and detail needed for accuracy.
+Treat length as part of quality. Keep text simple, easy to follow and short enough that users will read it, yet precise: no document under `docs/` is a detailed reference.
