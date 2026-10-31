@@ -48,7 +48,7 @@ The agent is built upon [Pi](https://github.com/earendil-works/pi).
 
 Start `cd engine; bun x pi` and `/login` to login, or export a provider's key as environment variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `DEEPSEEK_API_KEY`.
 
-To use local OpenAI-compatible servers, such as Ollama or vLLM or llama.cpp, declare them in `~/.pi/agent/models.json` or in `.pi/extensions/`. [docs/agent.md](docs/agent.md#configuration) has the recipe.
+To use local OpenAI-compatible servers, such as Ollama or vLLM or llama.cpp, declare them in `~/.pi/agent/models.json` or in `.pi/extensions/`. [docs/agent.md](docs/agent.md#configuration) shows how.
 
 Use the following commands to list all available models:
 
