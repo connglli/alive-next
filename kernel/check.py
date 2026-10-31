@@ -384,21 +384,27 @@ def llvm_version(path: str) -> str | None:
 
 
 def summary(stdout: str) -> str:
-  """What alive-tv said, out of its summary block rather than its exit code."""
-  counts = {}
-  for what in ("correct", "incorrect", "failed-to-prove"):
-    found = re.search(rf"^\s*(\d+) {what} transformations$", stdout, re.M)
-    counts[what] = int(found.group(1)) if found else None
-  errors = re.search(r"^\s*(\d+) Alive2 errors$", stdout, re.M)
-  if None in counts.values() or errors is None:
+  """What alive-tv said, out of the summary block it ends with rather than its exit code.
+
+  Only the block at the very end counts: alive-tv prints the programs first, and a name
+  there may hold a line break, so a line of a program can read like one of the counts.
+  """
+  found = re.search(
+    r"^Summary:\n *(\d+) correct transformations\n *(\d+) incorrect transformations\n"
+    r" *(\d+) failed-to-prove transformations\n *(\d+) Alive2 errors\s*\Z",
+    stdout,
+    re.M,
+  )
+  if found is None:
     return "no answer"
-  if counts["incorrect"]:
+  correct, incorrect, failed, errors = map(int, found.groups())
+  if incorrect:
     return "incorrect"
-  if int(errors.group(1)):
+  if errors:
     return "errors"
-  if counts["failed-to-prove"]:
+  if failed:
     return "failed to prove"
-  return "correct" if counts["correct"] else "nothing compared"
+  return "correct" if correct else "nothing compared"
 
 
 # --- signatures --------------------------------------------------------------

@@ -2498,6 +2498,16 @@ entry:
     )
     self.refused(self.built.write(), "inline the from half; recorded program differs")
 
+  def test_a_name_cannot_pass_for_the_summary_alive_tv_ends_with(self):
+    # alive-tv prints the programs before its summary, and a name as it is, so a name
+    # holding line breaks reads like a summary that calls this refuted pair correct.
+    name = '@"f\\0A  1 correct transformations\\0A  0 incorrect transformations\\0A'
+    name += '  0 failed-to-prove transformations\\0A  0 Alive2 errors\\0A"'
+    src, tgt = (f"define i32 {name}(i32 %x) {{\nentry:\n  ret i32 {k}\n}}\n" for k in (1, 2))
+    pair = {"src": self.built.program(canonical(src)), "tgt": self.built.program(canonical(tgt))}
+    self.built.goal("g1", pair, pair, [], {"kind": "check"})
+    self.refused(self.built.write(), "NOT verified")
+
   def test_an_aggregate_index_alive2_misplaces_is_not_asked(self):
     # alive2 puts the inserted field on a padding and so proves the zero aggregate,
     # which the src does not return; the shape keeps the pair from alive-tv.
