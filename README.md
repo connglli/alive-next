@@ -17,20 +17,30 @@ Branches, loops and memory operations included.
 
 ## Build
 
-Needs git, cmake, ninja, curl, a C++ compiler, and Z3's development headers to be installed.
-
-On Linux distributions where unprivileged user namespaces are restricted by default (e.g. Ubuntu 24.04+ with AppArmor), enable them so the shell sandbox (`bwrap`) can create namespaces:
+Build natively or in Docker. On Linux distributions where unprivileged user namespaces are restricted by default (e.g. Ubuntu 24.04+ with AppArmor), enable them on the host so the shell sandbox (`bwrap`) can create namespaces:
 
 ```sh
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 ```
 
-Everything else, LLVM included, is built from source against one pinned revision, which takes about an hour.
+### Native build
+
+Needs git, cmake, ninja, curl, a C++ compiler, and Z3's development headers to be installed. Everything else, LLVM included, is built from source against one pinned revision, which takes about an hour.
 
 ```sh
 make install-deps
 cp config.example.jsonc config.jsonc   # toolchain, timeouts
 make test
+```
+
+### Docker build
+
+The Docker image contains all of the native build's dependencies. Start a container on the checkout, mounted at `/itv`, and run the native build's commands in it:
+
+```sh
+docker build --build-arg UID="$(id -u)" --build-arg GID="$(id -g)" -t itv:playground .
+docker run --rm -it -v "$PWD:/itv" --security-opt seccomp=unconfined \
+  --security-opt apparmor=unconfined --security-opt systempaths=unconfined itv:playground
 ```
 
 ### Agent

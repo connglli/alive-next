@@ -1,0 +1,2 @@
+# The image copies nothing from the checkout, so a build sends none of it.
+*
