@@ -79,6 +79,9 @@ deps/
 sessions/
 config.jsonc
 
+# the experiment's own repository, alive-next-experiment
+experiment/
+
 # agents
 .agents/
 .pi/
