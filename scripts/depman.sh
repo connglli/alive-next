@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Provision and inspect what alive-next builds and runs against: the LLVM
-# toolchain (including llrwt), and the host tools (bun with the JS packages,
-# uv with the Python ones).
+# toolchain (including llrwt), and the host tools (elan with the Lean llrwt is
+# built with, bun with the JS packages, uv with the Python ones).
 #
 # alive-tv, llubi and llops all parse and print LLVM IR, and they mean the same
 # thing by a module only when they are built against the same LLVM. So there is
@@ -28,7 +28,7 @@
 # when its have_* check passes, so every subcommand is idempotent and a build
 # that already fits is left alone. FORCE=1 builds regardless.
 #
-# Usage: scripts/depman.sh <install|status|toolchain|llvm-cmakedir|llvm|alive2|llubi|veir|bun|js|uv|py|dev>
+# Usage: scripts/depman.sh <install|status|toolchain|llvm-cmakedir|llvm|alive2|llubi|elan|veir|bun|js|uv|py|dev>
 #
 # TOOLCHAIN, JOBS and FORCE are the environment knobs.
 set -euo pipefail
@@ -95,14 +95,14 @@ require() {
   command -v "$1" >/dev/null 2>&1 || die "'$1' is not on PATH. $2"
 }
 
-# A host tool: on PATH, or where its own installer puts it. bun and uv are
-# installed the way their instructions say, so they land in the same place for
+# A host tool: on PATH, or where its own installer puts it. elan, bun and uv
+# are installed the way their instructions say, so they land in the same place for
 # us as for anything else on the machine, and the second lookup is for the
 # shell that installed one and has not picked up its PATH yet.
 find_tool() {
   local name=$1 candidate
   command -v "$name" 2>/dev/null && return 0
-  for candidate in "$HOME/.bun/bin/$name" "$HOME/.local/bin/$name"; do
+  for candidate in "$HOME/.elan/bin/$name" "$HOME/.bun/bin/$name" "$HOME/.local/bin/$name"; do
     [ -x "$candidate" ] && {
       echo "$candidate"
       return 0
@@ -239,6 +239,23 @@ install_llubi() {
   ninja -C "$LLUBI_BUILD" -j"$JOBS" llubi
 }
 
+# --- elan --------------------------------------------------------------------
+# lake builds llrwt with the Lean that VeIR's lean-toolchain names, which elan
+# fetches on first use, so elan comes with no toolchain of its own.
+have_elan() {
+  local bin
+  bin=$(find_tool elan) || return 1
+  find_tool lake >/dev/null || return 1
+  echo "$bin ($("$bin" --version 2>/dev/null))"
+}
+
+install_elan() {
+  require curl "Install it with your package manager."
+  say "installing elan where its installer puts it"
+  curl -fsSL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh |
+    sh -s -- -y --default-toolchain none
+}
+
 # --- veir / llrwt ------------------------------------------------------------
 # The verified rewriter, a Lean binary running through the toolchain's own
 # mlir-translate and mlir-opt. Built counts as answering --version and
@@ -254,11 +271,10 @@ have_veir() {
 
 install_veir() {
   ensure llvm 0
+  ensure elan 0
   checkout "$VEIR_SRC" "$VEIR_REPO" "$VEIR_PIN"
-  command -v lake >/dev/null 2>&1 ||
-    die "'lake' is not on PATH. Install Lean 4 first."
   say "building llrwt against VeIR $VEIR_PIN"
-  (cd "$VEIR_SRC" && lake build llrwt)
+  (cd "$VEIR_SRC" && "$(find_tool lake)" build llrwt)
 }
 
 # --- llops -------------------------------------------------------------------
@@ -358,7 +374,7 @@ install_dev() {
 }
 
 # --- Driver ------------------------------------------------------------------
-DEP_NAMES=(llvm alive2 llubi veir bun js uv py dev)
+DEP_NAMES=(llvm alive2 llubi elan veir bun js uv py dev)
 
 # ensure <name> <force>. Force is passed rather than read from the environment
 # so that it applies to the dependency that was asked for and not to the ones
@@ -429,7 +445,7 @@ case "${1:-status}" in
   status) status ;;
   toolchain) echo "$TOOLCHAIN" ;;
   llvm-cmakedir) llvm_cmakedir ;;
-  llvm | alive2 | llubi | veir | bun | js | uv | py | dev)
+  llvm | alive2 | llubi | elan | veir | bun | js | uv | py | dev)
     ensure "$1" "${FORCE:-0}"
     case "$1" in llvm | alive2 | llubi | veir) stamp ;; esac
     ;;
