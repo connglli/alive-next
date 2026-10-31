@@ -62,9 +62,9 @@ It does not describe the tools. Pi sends each tool's description and schema with
 
 ## Watching a run
 
-`engine/agent/main.ts` draws a run one way: Pi's `InteractiveMode`, its TUI, which takes the session runtime and brings the transcript, the model picker and `/login` with it. What a watcher sees there is in the trajectory too, so a run that was not watched loses nothing.
+`engine/agent/main.ts` draws a run with Pi's `InteractiveMode`, its TUI, which takes the session runtime and brings the transcript, the model picker and `/login` with it. What a watcher sees there is in the trajectory too, so a run that was not watched loses nothing.
 
-A caller that wants the loop without a screen has `createAgent`, whose `prove` works until the run settles and says how it went. `agent.ts` builds a session runtime and draws nothing, so drawing stays the entry point's business.
+Under `-p` it draws nothing and runs `prove`, which works until the run settles, and `--max-seconds` bounds the whole process, a turn in flight included. `agent.ts` builds a session runtime and draws nothing, so drawing stays the entry point's business.
 
 A run sends its opening turn as it opens, which is what makes it a run. `--pause` puts that turn in the editor unsent instead, so the screen where a model is picked and a thinking level is set is reached before anything is spent. It is written there from the `session_start` handler, since Pi fires that once its screen is up, which is the first moment there is an editor to write to.
 

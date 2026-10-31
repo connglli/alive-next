@@ -1,4 +1,4 @@
-// Running the agent by hand.
+// Running the agent, by hand or, with -p, without a terminal.
 //
 // The same session directory an example writes, produced by a model instead of
 // a script: the trajectory, the store, and the certificate when it earns one.
@@ -12,7 +12,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 import { readArgs, readCount, readPair, tryOrExit } from "../core/args.ts";
 import { repoRoot } from "../core/config.ts";
-import { closeRun, stamp, startRun } from "../core/run.ts";
+import { boundRun, closeRun, stamp, startRun } from "../core/run.ts";
 import { createProofAssistant, createServices } from "./agent.ts";
 import type { Limits } from "./budget.ts";
 import { chooseModel, listAvailableModels, THINKING_LEVELS } from "./model.ts";
@@ -24,6 +24,7 @@ const USAGE = `usage: bun run agent [options] <src.ll> <tgt.ll> [<directory>]
       --thinking <level> ${THINKING_LEVELS.join(", ")}
       --list-models      what this machine can reach, then stop
       --pause            open with the opening turn unsent, for enter to send
+  -p, --print            run with no TUI, then print how it went
       --max-steps <n>    stop after n turns, unbounded by default
       --max-seconds <n>  stop after n seconds, unbounded by default
   -h, --help
@@ -36,6 +37,7 @@ const NOTHING_AVAILABLE = `Error: no model this machine can reach. Any one of th
   export ANTHROPIC_API_KEY=...      or the variable your provider uses
   .pi/extensions/                   to declare a local server of your own`;
 
+const started = Date.now();
 const flags = tryOrExit(() => parseArgs(process.argv.slice(2)));
 if (flags.help) {
   console.log(USAGE);
@@ -91,8 +93,8 @@ const choice = tryOrExit(() =>
 
 mkdirSync(scratch, { recursive: true });
 const { session, config } = await startRun({ src, tgt, dir, eager: true });
+if (flags.print) console.log(`  ${dir}`);
 
-const started = Date.now();
 let summary: string | undefined;
 let closed: string | undefined;
 
@@ -122,6 +124,18 @@ process.on("exit", () => {
   if (summary) process.stdout.write(`${summary}\n`);
 });
 
+// Without a terminal, the opening turn goes at once and the run works until it
+// ends, and --max-seconds bounds the whole process, a turn in flight included.
+if (flags.print) {
+  if (flags.limits.maxSeconds) boundRun(flags.limits.maxSeconds * 1000, started, finishRun);
+  try {
+    await agent.prove();
+  } catch (error) {
+    console.log(`  stopped: ${(error as Error).message}`);
+  }
+  process.exit(0);
+}
+
 // A run sends its opening turn and starts working. `--pause` holds that turn
 // back in the editor instead, where enter sends it, so a model can be picked,
 // a thinking level set or the pair read before any of it is paid for.
@@ -143,6 +157,7 @@ interface Flags {
   limits: Limits;
   listModels?: boolean;
   pause?: boolean;
+  print?: boolean;
   help?: boolean;
   /** The positional arguments, in the order they were given. */
   rest: string[];
@@ -157,12 +172,14 @@ function parseArgs(args: string[]): Flags {
     else if (arg === "--thinking") flags.thinking = parseThinkingLevel(value());
     else if (arg === "--list-models") flags.listModels = true;
     else if (arg === "--pause") flags.pause = true;
+    else if (arg === "-p" || arg === "--print") flags.print = true;
     else if (arg === "--max-steps") flags.limits.maxSteps = readCount(arg, value());
     else if (arg === "--max-seconds") flags.limits.maxSeconds = readCount(arg, value());
     else if (arg === "-h" || arg === "--help") flags.help = true;
     else return false;
     return true;
   });
+  if (flags.print && flags.pause) throw new Error("--pause needs the TUI, which -p runs without");
   return flags;
 }
 

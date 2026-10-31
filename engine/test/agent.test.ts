@@ -6,7 +6,7 @@
 // model, so none of it waits for one: the stub answers with the turns a model
 // would have taken, and the same test runs on a machine with no server.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, AssistantMessage, Model, ToolCall } from "@earendil-works/pi-ai";
@@ -21,6 +21,7 @@ import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import type { Checker } from "../core/state/steps.ts";
 import { parse } from "../core/state/trajectory.ts";
+import { countdown } from "../examples/countdown.ts";
 import { strengthReduce } from "../examples/strength-reduce.ts";
 import { toolchain } from "./toolchain-under-test.ts";
 
@@ -318,4 +319,45 @@ describe.skipIf(!built)("the loop", () => {
     const said = JSON.stringify(log(session).filter((entry) => entry.kind === "message"));
     expect(said).toContain("no goal g9");
   });
+});
+
+describe.skipIf(!built)("a run without a terminal", () => {
+  test("-p ends the whole run on its clock, a turn in flight included", async () => {
+    // A model that takes the request and never answers, so only the clock ends the turn.
+    let asked = false;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        asked = true;
+        return new Promise<Response>(() => {});
+      },
+    });
+    // Pi's own directory holds that model alone, so the run reads nobody's configuration.
+    const pi = join(dir, "pi");
+    mkdirSync(pi, { recursive: true });
+    const stub = {
+      baseUrl: `http://127.0.0.1:${server.port}/v1`,
+      api: "openai-completions",
+      apiKey: "unused",
+      models: [{ id: "stub" }],
+    };
+    writeFileSync(join(pi, "models.json"), JSON.stringify({ providers: { stub } }));
+    // A loop the start check cannot settle, so the model is asked.
+    const [src, tgt] = [join(dir, "src.ll"), join(dir, "tgt.ll")];
+    writeFileSync(src, countdown.src);
+    writeFileSync(tgt, countdown.tgt);
+    const main = join(import.meta.dir, "..", "agent", "main.ts");
+    const args = ["-p", "--model", "stub/stub", "--max-seconds", "6", src, tgt, join(dir, "run")];
+    const run = Bun.spawn([process.execPath, main, ...args], {
+      env: { ...process.env, PI_CODING_AGENT_DIR: pi },
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const said = await new Response(run.stdout).text();
+    expect(await run.exited).toBe(0);
+    server.stop(true);
+    expect(asked).toBe(true);
+    expect(said).toContain("out of time");
+    expect(said).toMatch(/unknown in \d+ms/);
+  }, 60_000);
 });
