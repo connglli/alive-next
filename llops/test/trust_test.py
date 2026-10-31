@@ -2,12 +2,17 @@
 """The llops subcommands the kernel trusts, checked against alive2.
 
 Each test asks llops and alive-tv about the same programs, and fails where
-llops trusts what alive2 does not back: a pair `reshaped` or `respected`
+llops trusts what alive2 does not back: a canonical form alive2 does not prove
+the program it was made of, a fact `assume` puts somewhere else or that alive2
+does not read as undefined where it fails, a pair `reshaped` or `respected`
 accepts that alive2 does not prove, an attribute llops treats otherwise than
-alive2 does, a fact `attrs` puts on a declaration that alive2 does not read
-at a call, or a poison input `instantiate` takes where alive2 makes it UB.
-alive-tv runs as the kernel runs it, and its answer is read by the kernel's
-own code. Run through `make test-trust`, or directly:
+alive2 does, a fact `attrs` puts on a declaration that alive2 does not read at
+a call, a poison input `instantiate` takes where alive2 makes it UB, a cut
+that does not put back the program it was made of, a loop alive2 tells apart
+from itself with one iteration peeled, a run llubi finds diverging on a pair
+alive2 proves, or a run llubi finishes otherwise than clang's build of the
+same harness. alive-tv runs as the kernel runs it, and its answer is read by
+the kernel's own code. Run through `make test-trust`, or directly:
 
     python3 llops/test/trust_test.py
 """
@@ -16,6 +21,7 @@ import functools
 import importlib.util
 import itertools
 import os
+import random
 import re
 import subprocess
 import tempfile
@@ -41,6 +47,8 @@ def tool(variable: str, *where: str) -> str:
 ALIVE_TV = tool("ALIVE_TV", "alive2", "build", "alive-tv")
 LLVM = os.path.join("llvm-project", "build")
 CLANG = tool("CLANG", LLVM, "bin", "clang")
+OPT = tool("OPT", LLVM, "bin", "opt")
+LLUBI = tool("LLUBI", "llubi-legacy", "build", "llubi")
 LLVM_AS = tool("LLVM_AS", LLVM, "bin", "llvm-as")
 ATTRIBUTES = tool("ATTRIBUTES", LLVM, "include", "llvm", "IR", "Attributes.inc")
 
@@ -51,13 +59,15 @@ check = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(check)
 
 
-def alive2(src: str, tgt: str, unroll: int = 0) -> str:
+def alive2(src: str, tgt: str, unroll: int = 0, tgt_unroll: int | None = None) -> str:
   """What alive-tv says about `tgt` refining `src`, asked as the kernel asks.
 
   The kernel never asks about a loop. Here a loop is followed for `unroll`
-  iterations, so a pair with one is proved only that far.
+  iterations, or in the tgt for `tgt_unroll` when it is given, so a pair with
+  one is proved only that far.
   """
-  unrolled = [f"--src-unroll={unroll}", f"--tgt-unroll={unroll}"] if unroll else []
+  tgt_unroll = unroll if tgt_unroll is None else tgt_unroll
+  unrolled = [f"--src-unroll={unroll}", f"--tgt-unroll={tgt_unroll}"] if unroll else []
   with tempfile.TemporaryDirectory() as scratch:
     paths = []
     for name, text in (("src.ll", src), ("tgt.ll", tgt)):
@@ -867,6 +877,359 @@ class TestReshaped(Case):
     mutants = [(changed, after) for before, after in steps for changed in edited(before)]
     mutants += [(before, changed) for before, after in steps for changed in edited(after)]
     self.assertProved(steps + accepted(reshaped, mutants))
+
+
+def rewritten(module: str) -> str:
+  """The same program written otherwise: every value and block named by LLVM's
+  instnamer, the first function's blocks after its entry in reverse order, and
+  each of its phis' incoming pairs reversed."""
+  named = subprocess.run(
+    [OPT, "-S", "-passes=instnamer"], input=module, capture_output=True, text=True, check=True
+  ).stdout
+  lines = named.split("\n")
+  start = next(k for k, line in enumerate(lines) if line.startswith("define "))
+  end = lines.index("}", start)
+  body = lines[start + 1 : end]
+  cuts = [0] + [k for k, line in enumerate(body) if k and re.match(r"[\w.$-]+:", line)]
+  blocks = [body[a:b] for a, b in zip(cuts, [*cuts[1:], len(body)], strict=True)]
+
+  def flipped(line: str) -> str:
+    phi = re.match(r"(.*= phi [^\[]+)(\[.*\])$", line)
+    return phi[1] + ", ".join(reversed(re.findall(r"\[[^\]]*\]", phi[2]))) if phi else line
+
+  body = [flipped(line) for block in [blocks[0], *reversed(blocks[1:])] for line in block]
+  return "\n".join([*lines[: start + 1], *body, *lines[end:]])
+
+
+def programs() -> list[str]:
+  """Each real function as clang makes it at -O0 and at -O3, where canon takes it."""
+  levels = [["-O0", "-Xclang", "-disable-O0-optnone"], *(["-O3", *flags] for flags in FLAGS)]
+  made = [compiled(source, level) for source in REAL.values() for level in levels]
+  return [module for module in made if run("canon", {"module": module}).get("ok")]
+
+
+class TestCanon(Case):
+  """The kernel takes two equal canonical texts for one program, and a file the user
+  names for what canon prints of it."""
+
+  @unittest.skipUnless(os.path.exists(CLANG) and os.path.exists(OPT), "needs clang and opt")
+  def test_canonical_forms_mean_what_the_programs_do(self):
+    pairs = []
+    for module in programs():
+      form = canonical(module)
+      pairs += [(module, form), (form, module)]
+    self.assertProved(pairs)
+
+  @unittest.skipUnless(os.path.exists(CLANG) and os.path.exists(OPT), "needs clang and opt")
+  def test_a_program_written_otherwise_prints_the_same(self):
+    for module in programs():
+      with self.subTest(module=module):
+        self.assertEqual(canonical(rewritten(module)), canonical(module))
+
+  @unittest.skipUnless(os.path.exists(CLANG) and os.path.exists(OPT), "needs clang and opt")
+  def test_a_mutant_printed_as_its_program_means_the_same(self):
+    # A mutant canon prints as the program it changed would be taken for that
+    # program, so alive2 has to say each refines the other.
+    same = []
+    for module in programs():
+      form = canonical(module)
+      for mutant in edited(form):
+        answer = run("canon", {"module": mutant})
+        if answer.get("ok") and answer["module"] == form:
+          same += [(mutant, form), (form, mutant)]
+    self.assertProved(same)
+
+
+# The call passes `%n & 7`, so a range of [0, 8) fails at the start, about %n,
+# and holds before the call, about what the call is passed.
+MASKED = """declare void @g(i32, ptr)
+
+define void @f(i32 noundef %n, ptr PTR %p) {
+entry:
+  %m = and i32 %n, 7
+  call void @g(i32 %m, ptr %p)
+  ret void
+}
+"""
+FIRST_EIGHT = [
+  {"fact": {"range": {"min": 0, "max": 8}}, "of": "!0"},
+  {"op": "ult", "lhs": "!0", "rhs": 8},
+]
+# Each fact about the pointer, with the attributes under which it always holds.
+ABOUT_POINTER = [
+  ({"noundef": True}, "noundef"),
+  ({"nonnull": True}, "noundef nonnull"),
+  ({"align": 8}, "noundef align 8"),
+  ({"dereferenceable": 4}, "noundef dereferenceable(4)"),
+]
+
+
+def assumed(module: str, at: str, assertion: dict) -> str:
+  """The module with `assertion` assumed at the start of @f or before its call of @g."""
+  anchor = {"at": at, "fn": "f" if at == "start" else "g"}
+  return run("assume", {"module": module, "anchor": anchor, "assertions": [assertion]})["module"]
+
+
+class TestAssume(unittest.TestCase):
+  """A check that a fact holds asks whether the program with it assumed refines the one
+  without, which alive2 refutes exactly where the assume makes the fact undefined."""
+
+  def asked(self, module: str, at: str, assertion: dict, holds: bool):
+    said = alive2(module, assumed(module, at, assertion))
+    with self.subTest(at=at, assertion=assertion, holds=holds):
+      self.assertEqual(said, "correct" if holds else "incorrect")
+
+  def test_a_fact_lands_where_it_is_asked(self):
+    module = MASKED.replace("PTR ", "")
+    for assertion in FIRST_EIGHT:
+      self.asked(module, "start", assertion, holds=False)
+      self.asked(module, "before_calls", assertion, holds=True)
+
+  def test_a_fact_about_a_pointer_holds_where_its_attributes_say(self):
+    for fact, attributes in ABOUT_POINTER:
+      for at, which in (("start", "!1"), ("before_calls", "!1")):
+        assertion = {"fact": fact, "of": which}
+        self.asked(MASKED.replace("PTR ", ""), at, assertion, holds=False)
+        self.asked(MASKED.replace("PTR", attributes), at, assertion, holds=True)
+
+
+def detached(module: str, block: str) -> dict:
+  """`module` with `block` and what it reaches moved into @k, or why llops will not."""
+  return run("detach", {"module": module, "side": "src", "block": block, "callee": "k"})
+
+
+def reattaching(half: dict, outer: str | None = None) -> dict:
+  """The request that puts `half`'s callee back into its outer, or into `outer`."""
+  request = {"outer": outer or half["outer"], "callee": half["callee"], "callee_name": "k"}
+  request |= {"phis": half["phis"], "slots": half.get("slots", [])}
+  return request | ({"hypothesis": half["hypothesis"]} if "hypothesis" in half else {})
+
+
+def rebuilt(module: str) -> list[str]:
+  """What putting back each cut llops makes of `module` gives: every window of one
+  instruction and every suffix outlined then inlined, and every block detached then
+  reattached, or nothing where putting one back is refused."""
+  body = run("number", {"module": module})["body"]
+  made = []
+  for k in range(len(body)):
+    for at in ({"cut": f"#{k}", "to": f"#{k}"}, {"cut": f"#{k}"}):
+      half = run("outline", {"module": module, "side": "src", "callee": "w", **at})
+      if half.get("ok"):
+        request = {"outer": half["outer"], "callee": half["callee"], "callee_name": "w"}
+        request["slots"] = half.get("slots", [])
+        made.append(run("inline", request).get("module", ""))
+  for block in sorted({i["block"] for i in body} - {"%entry"}):
+    half = detached(module, block)
+    if half.get("ok"):
+      made.append(run("reattach", reattaching(half)).get("module", ""))
+  return made
+
+
+def peeled(module: str) -> list[str]:
+  """`module` with one iteration of a loop put before it, for each loop: its header
+  detached, the outer unfolded once, and the loop reattached."""
+  body = run("number", {"module": module})["body"]
+  made = []
+  for block in sorted({i["block"] for i in body} - {"%entry"}):
+    half = detached(module, block)
+    if not half.get("ok") or "hypothesis" not in half:
+      continue
+    request = {"module": half["outer"], "callee": half["callee"], "hypothesis": half["hypothesis"]}
+    unfolded = run("unfold", request)
+    if unfolded.get("ok"):
+      made.append(run("reattach", reattaching(half, unfolded["module"])).get("module", ""))
+  return made
+
+
+class TestRoundTrips(unittest.TestCase):
+  """The kernel rebuilds a cut by inline or reattach and takes it as faithful when it
+  prints as the program it was made of; an unfold puts an iteration where its loop is."""
+
+  @unittest.skipUnless(os.path.exists(CLANG), "needs the toolchain's clang")
+  def test_every_cut_puts_back_the_program(self):
+    forms = [canonical(module) for module in programs()]
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+      made = list(pool.map(rebuilt, forms))
+    for form, backs in zip(forms, made, strict=True):
+      for back in backs:
+        with self.subTest(module=form):
+          self.assertEqual(canonical(back) if back else "", form)
+
+  @unittest.skipUnless(os.path.exists(CLANG), "needs the toolchain's clang")
+  def test_an_iteration_put_before_its_loop_means_the_same(self):
+    # A peeled loop runs one iteration more before its loop, so the original is
+    # followed one iteration further where it has to cover the peeled one's runs.
+    forms = [canonical(module) for module in programs()]
+    pairs = [(form, peel) for form in forms for peel in peeled(form)]
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+      ahead = list(pool.map(lambda pair: alive2(*pair, unroll=3, tgt_unroll=2), pairs))
+      behind = list(pool.map(lambda pair: alive2(pair[1], pair[0], unroll=2), pairs))
+    for (form, peel), *said in zip(pairs, ahead, behind, strict=True):
+      with self.subTest(module=form, peeled=peel):
+        self.assertNotIn("incorrect", said)
+    self.assertIn("correct", ahead + behind)
+
+
+def entry_of(module: str) -> tuple[str, list[str]]:
+  """The function a program defines, and the types of its parameters."""
+  functions = run("validate", {"module": module})["functions"]
+  name = next(name for name, fn in functions.items() if fn["defined"])
+  return name, [param["type"] for param in functions[name]["params"]]
+
+
+def drawn(types: list[str], rng: random.Random, small: bool = False) -> list[dict] | None:
+  """An input for parameters of `types`: edge values and random integers, or small ones
+  when `small` is set, and a buffer of random bytes for a pointer; nothing for a type
+  llops takes no input of."""
+  args = []
+  for type in types:
+    if type == "ptr":
+      bytes_ = [rng.randrange(256) for _ in range(64)]
+      args.append({"kind": "bytes", "bytes": bytes_, "align": 16})
+    elif re.fullmatch(r"i(\d+)", type):
+      bits = int(type[1:])
+      edges = [0, 1, -1, 2 ** (bits - 1) - 1, -(2 ** (bits - 1))] if bits > 1 else [0, -1]
+      wide = rng.randrange(-(2 ** (bits - 1)), 2 ** (bits - 1))
+      value = rng.randrange(-8, 9) if small else rng.choice([*edges, wide])
+      args.append({"kind": "int", "value": str(value if bits > 1 else value & 1)})
+    else:
+      return None
+  return args
+
+
+def ran(module: str, entry: str, args: list[dict]) -> tuple[dict, list] | None:
+  """What llubi says one run of `entry` on `args` did, as the kernel reads it, and what
+  in the program llubi treats otherwise than alive2."""
+  harness = run("harness", {"module": module, "entry": entry, "args": args})
+  if not harness.get("ok"):
+    return None
+  flags = ["--verbose", "--fill-uninitialized-mem-with-poison", "--store-poison-is-ub=false"]
+  done = subprocess.run(
+    [LLUBI, "-", *flags], input=harness["module"], capture_output=True, text=True, timeout=60
+  )
+  return check.read_run(done.stderr), harness.get("differences", [])
+
+
+def proved_loop_free() -> list[tuple[str, str]]:
+  """Each step of the -O3 pipeline on a real function that never loops, and the whole
+  pipeline on it, where alive2 proves the step."""
+  pairs = []
+  for source in REAL.values():
+    start = canonical(compiled(source, ["-O0", "-Xclang", "-disable-O0-optnone"]))
+    if run("validate", {"module": compiled(source, ["-O3"])})["cyclic"]:
+      continue
+    stages = run("opt", {"what": "pipeline", "module": start})["stages"]
+    modules = [start, *(canonical(stage["module"]) for stage in stages)]
+    pairs += [(a, b) for a, b in zip(modules, modules[1:], strict=False) if a != b]
+    pairs.append((start, modules[-1]))
+  pairs = list(dict.fromkeys(pairs))
+  with ThreadPoolExecutor(os.cpu_count()) as pool:
+    said = list(pool.map(lambda pair: alive2(*pair), pairs))
+  return [pair for pair, answer in zip(pairs, said, strict=True) if answer == "correct"]
+
+
+class TestAlive2AgainstLlubi(unittest.TestCase):
+  """alive2 is the largest part of the trusted base; llubi, an interpreter written apart
+  from it, runs what alive2 proves on inputs drawn at random."""
+
+  @unittest.skipUnless(os.path.exists(CLANG) and os.path.exists(LLUBI), "needs clang and llubi")
+  def test_what_alive2_proves_runs_the_same_under_llubi(self):
+    rng = random.Random(0)
+    runs = 0
+    for src, tgt in proved_loop_free():
+      entry, types = entry_of(src)
+      for _ in range(8):
+        args = drawn(types, rng)
+        if args is None:
+          break
+        before, after = ran(src, entry, args), ran(tgt, entry, args)
+        # A src llubi runs otherwise than alive2 would make the runs differ by itself.
+        if before is None or after is None or before[1]:
+          continue
+        diverged, why = check.divergence(before[0], after[0])
+        runs += 1
+        with self.subTest(src=src, tgt=tgt, args=args):
+          self.assertFalse(diverged, why)
+    self.assertGreater(runs, 0)
+
+
+def natively(harness: dict) -> tuple[str, dict[str, int]]:
+  """How the harness ends when clang compiles it and it runs, and each integer it
+  observes, printed by a `printf` after the load that observes it."""
+  names, lines = harness["observations"], []
+  for line in harness["module"].split("\n"):
+    lines.append(line)
+    load = re.match(r"\s*(%obs\.[\w.]+) = load i(\d+), ", line)
+    if load:
+      name, bits = load[1], int(load[2])
+      wide = name if bits == 64 else f"%wide.{len(lines)}"
+      if bits < 64:
+        lines.append(f"  {wide} = {'zext' if bits == 1 else 'sext'} i{bits} {name} to i64")
+      at = names.index(name)
+      # Named, since an unnamed result would take the number of a value after it.
+      lines.append(
+        f"  %said.{at} = call i32 (ptr, ...) @printf(ptr @observed, i32 {at}, i64 {wide})"
+      )
+  lines += [
+    '@observed = private constant [9 x i8] c"%d=%lld\\0A\\00"',
+    "declare i32 @printf(ptr, ...)",
+  ]
+  with tempfile.TemporaryDirectory() as scratch:
+    exe = os.path.join(scratch, "run")
+    built = subprocess.run(
+      [CLANG, "-x", "ir", "-", "-o", exe], input="\n".join(lines), capture_output=True, text=True
+    )
+    if built.returncode:
+      return "unbuilt", {}
+    try:
+      done = subprocess.run([exe], capture_output=True, text=True, timeout=10)
+    except subprocess.TimeoutExpired:
+      return "timed out", {}
+  if done.returncode:
+    return "crashed", {}
+  pairs = (line.split("=") for line in done.stdout.split())
+  return "returned", {names[int(at)]: int(value) for at, value in pairs}
+
+
+def interpreted(value: str) -> int | None:
+  """An integer llubi observed, as it prints one (`i8 -6`, `i1 T`), or nothing for
+  poison or a pointer, whose address is llubi's own."""
+  said = re.fullmatch(r"i\d+ (-?\d+|T|F)", value.strip())
+  if not said:
+    return None
+  return {"T": 1, "F": 0}[said[1]] if said[1] in ("T", "F") else int(said[1])
+
+
+class TestLlubiAgainstNative(unittest.TestCase):
+  """A counterexample llubi confirms rests on what llubi says a run did; clang compiles
+  the same harness, and where llubi says it returned, the run does what llubi says."""
+
+  @unittest.skipUnless(os.path.exists(CLANG) and os.path.exists(LLUBI), "needs clang and llubi")
+  def test_a_run_llubi_finishes_ends_as_the_native_one(self):
+    rng = random.Random(0)
+    compared = 0
+    for module in programs():
+      # Addresses are llubi's own, so what a pointer's address decides differs: the bytes
+      # it is written to, an integer made of it, and how it compares with another.
+      if re.search(r"store ptr |ptrtoint|icmp (samesign )?\w+ ptr ", module):
+        continue
+      entry, types = entry_of(module)
+      for _ in range(3):
+        args = drawn(types, rng, small=True)
+        harness = run("harness", {"module": module, "entry": entry, "args": args}) if args else {}
+        if not harness.get("ok") or harness.get("differences"):
+          break
+        said = ran(module, entry, args)
+        if said is None or said[0]["outcome"] != "returned":
+          continue
+        ended, values = natively(harness)
+        compared += 1
+        with self.subTest(module=module, args=args):
+          self.assertEqual(ended, "returned")
+          for name, value in said[0]["observations"].items():
+            if interpreted(value) is not None and name in values:
+              self.assertEqual(values[name], interpreted(value), name)
+    self.assertGreater(compared, 0)
 
 
 # Every attribute LLVM defines is listed in its build, with the places it may

@@ -2530,6 +2530,17 @@ entry:
     )
     self.refused(self.built.write(), "inline the from half; recorded program differs")
 
+  def test_a_dropped_step_leaves_the_chain_short_of_its_end(self):
+    # The step is what brings the src to the end pair, so without it the chain
+    # ends where the goal started.
+    middle = self.built.program(SRC.replace("mul i32 %0, 2", "add i32 %0, %0"))
+    step = {"kind": "check", "side": "src", "from": self.src, "to": middle}
+    start, end = {"src": self.src, "tgt": self.tgt}, {"src": middle, "tgt": self.tgt}
+    self.built.goal("g1", start, end, [step], {"kind": "check"})
+    package = self.built.write()
+    self.built.bend(lambda manifest: manifest["goals"]["g1"]["steps"].clear())
+    self.refused(package, "not the end pair")
+
   def test_a_name_cannot_pass_for_the_summary_alive_tv_ends_with(self):
     # alive-tv prints the programs before its summary, and a name as it is, so a name
     # holding line breaks reads like a summary that calls this refuted pair correct.
