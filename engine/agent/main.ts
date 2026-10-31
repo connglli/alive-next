@@ -16,6 +16,7 @@ import { boundRun, closeRun, stamp, startRun } from "../core/run.ts";
 import { createProofAssistant, createServices } from "./agent.ts";
 import type { Limits } from "./budget.ts";
 import { chooseModel, listAvailableModels, THINKING_LEVELS } from "./model.ts";
+import { PrintMode } from "./print-mode.ts";
 
 const USAGE = `usage: bun run agent [options] <src.ll> <tgt.ll> [<directory>]
 
@@ -24,7 +25,7 @@ const USAGE = `usage: bun run agent [options] <src.ll> <tgt.ll> [<directory>]
       --thinking <level> ${THINKING_LEVELS.join(", ")}
       --list-models      what this machine can reach, then stop
       --pause            open with the opening turn unsent, for enter to send
-  -p, --print            run with no TUI, then print how it went
+  -p, --print            run with no TUI, printing each message and how it went
       --max-steps <n>    stop after n turns, unbounded by default
       --max-seconds <n>  stop after n seconds, unbounded by default
   -h, --help
@@ -124,15 +125,11 @@ process.on("exit", () => {
   if (summary) process.stdout.write(`${summary}\n`);
 });
 
-// Without a terminal, the opening turn goes at once and the run works until it
-// ends, and --max-seconds bounds the whole process, a turn in flight included.
+// Without a terminal, the run prints rather than draws, and --max-seconds
+// bounds the whole process, a turn in flight included.
 if (flags.print) {
   if (flags.limits.maxSeconds) boundRun(flags.limits.maxSeconds * 1000, started, finishRun);
-  try {
-    await agent.prove();
-  } catch (error) {
-    console.log(`  stopped: ${(error as Error).message}`);
-  }
+  await new PrintMode(agent).run();
   process.exit(0);
 }
 

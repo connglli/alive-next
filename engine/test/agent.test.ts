@@ -5,7 +5,7 @@
 // and that the run stops when it is settled or spent. None of that is about a
 // model, so none of it waits for one: the stub answers with the turns a model
 // would have taken, and the same test runs on a machine with no server.
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,8 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createProofAssistant, createServices } from "../agent/agent.ts";
 import { Budget } from "../agent/budget.ts";
+import { PrintMode } from "../agent/print-mode.ts";
+import { TASK_INSTRUCTION } from "../agent/prompt.ts";
 import type { CheckResult } from "../core/drivers/alive2.ts";
 import { Llops } from "../core/drivers/llops.ts";
 import type { Llrwt } from "../core/drivers/llrwt.ts";
@@ -357,7 +359,47 @@ describe.skipIf(!built)("a run without a terminal", () => {
     expect(await run.exited).toBe(0);
     server.stop(true);
     expect(asked).toBe(true);
+    expect(said).toContain("user says:");
     expect(said).toContain("out of time");
     expect(said).toMatch(/unknown in \d+ms/);
   }, 60_000);
+});
+
+describe.skipIf(!built)("what a run without a terminal prints", () => {
+  /** What PrintMode prints of a run of these turns. */
+  async function printed(turns: AssistantMessage[], maxSteps?: number): Promise<string[]> {
+    const assistant = await agent(turns, maxSteps);
+    const lines: string[] = [];
+    const quiet = spyOn(console, "log").mockImplementation((line?: unknown) => {
+      lines.push(String(line));
+    });
+    try {
+      await new PrintMode(assistant).run();
+    } finally {
+      quiet.mockRestore();
+    }
+    return lines;
+  }
+
+  test("each message under who did what, its body indented past the run's own lines", async () => {
+    const lines = await printed([
+      turn("proving", [{ name: "goal_check", arguments: { gid: "g1" } }]),
+    ]);
+    expect(lines.slice(0, 7)).toEqual([
+      "user says:",
+      `    ${TASK_INSTRUCTION}`,
+      "assistant says:",
+      "    proving",
+      "assistant calls goal_check:",
+      '    {"gid":"g1"}',
+      "goal_check answers:",
+    ]);
+    expect(lines.filter((line) => line.startsWith(" ") && !line.startsWith("    "))).toEqual([]);
+  });
+
+  test("a turn that failed says why", async () => {
+    const failed = { ...turn(""), stopReason: "error" as const, errorMessage: "the stub fails" };
+    const lines = await printed([failed], 1);
+    expect(lines.slice(2)).toEqual(["assistant fails:", "    the stub fails"]);
+  });
 });
