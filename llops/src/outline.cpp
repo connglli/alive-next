@@ -269,6 +269,11 @@ llvm::json::Object outlineCmd(llvm::json::Object &args) {
   llvm::Function *callee = moveOut(M, *BB, window, inside, *calleeName, params, out);
   if (auto d = frameDependence(*callee, *F, /*window=*/true))
     return errResponse(d->code, d->message);
+  // Moved code can be invalid where it lands, such as a lifetime marker whose
+  // slot stays in the outer, so both halves pass the verifier, as a cut's do in
+  // the shape check.
+  if (auto diags = checkModule(M); !diags.empty())
+    return errResponse(diags.front().code, diags.front().message);
   for (unsigned i = 0; i < paramInfo.size(); ++i)
     (*paramInfo[i].getAsObject())["param"] =
         "%" + std::next(callee->arg_begin(), i)->getName().str();

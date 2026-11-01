@@ -2748,6 +2748,23 @@ entry:
     )
     self.assertEqual(self.canon(back["module"]), self.canon(F_MEMORY))
 
+  def test_a_window_that_parts_a_lifetime_marker_from_its_slot_is_refused(self):
+    # The marker would mark the callee's parameter, which LLVM's verifier rejects.
+    module = """define void @f(i32 %x) {
+entry:
+  %s = alloca i32, align 4
+  call void @llvm.lifetime.start.p0(ptr %s)
+  store i32 %x, ptr %s, align 4
+  call void @llvm.lifetime.end.p0(ptr %s)
+  ret void
+}
+
+declare void @llvm.lifetime.start.p0(ptr captures(none))
+declare void @llvm.lifetime.end.p0(ptr captures(none))
+"""
+    r = run("outline", {"module": module, "cut": "#3", "to": "#3", "callee": "r"})
+    self.assertIn("lifetime", self.bad(r, "invalid_ir")["error"]["message"])
+
   def test_a_window_that_hands_out_two_values_answers_with_both(self):
     module = """define i32 @f(i32 %x) {
 entry:
