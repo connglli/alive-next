@@ -730,6 +730,30 @@ entry:
         self.assertEqual(alive2(*pair), "incorrect")
         self.assertFalse(respected(*pair))
 
+  def test_programs_without_their_lifetime_markers(self):
+    # A slot read after it starts again, one a call may write, and one stored again.
+    head = "define i32 @f(i32 %x) {\nentry:\n  %s = alloca i32, align 4\n"
+    start = "  call void @llvm.lifetime.start.p0(ptr %s)\n"
+    end = "  call void @llvm.lifetime.end.p0(ptr %s)\n"
+    store, load = "  store i32 %x, ptr %s, align 4\n", "  %v = load i32, ptr %s, align 4\n"
+    tail = "  ret i32 %v\n}\n\ndeclare void @g(ptr)\n"
+    tail += "\ndeclare void @llvm.lifetime.start.p0(ptr captures(none))\n"
+    tail += "\ndeclare void @llvm.lifetime.end.p0(ptr captures(none))\n"
+    reread = head + start + store + end + start + load + end + tail
+    called = head + start + store + "  call void @g(ptr %s)\n" + load + end + tail
+    restored = head + start + store + end + start + store + load + end + tail
+    pairs = []
+    for module in (reread, called, restored):
+      plain = run("edit", {"module": module, "op": "drop_lifetimes"})
+      self.assertTrue(plain.get("ok"), plain)
+      pairs.append((module, plain["module"]))
+    self.assertEqual(accepted(respected, pairs), pairs)
+    self.assertProved(pairs)
+    # Without only the second start, the second store is to a dead slot.
+    once = head + start + store + end + store + load + end + tail
+    self.assertEqual(alive2(restored, once), "incorrect")
+    self.assertFalse(respected(restored, once))
+
 
 def canonical(module: str) -> str:
   """The module as the store keeps it."""

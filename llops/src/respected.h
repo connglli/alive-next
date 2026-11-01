@@ -2,6 +2,7 @@
 #pragma once
 
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/JSON.h"
 
 namespace llops {
@@ -13,5 +14,8 @@ llvm::json::Object respectedCmd(llvm::json::Object &args);
 
 // Remove checked body attributes and return noundef where it is proved redundant.
 void dropCheckedAttrs(llvm::Function &F);
+
+// Remove every lifetime marker and the declarations that leaves unused.
+void dropLifetimeMarkers(llvm::Module &M);
 
 } // namespace llops

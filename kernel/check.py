@@ -605,9 +605,8 @@ class Check:
   ) -> None:
     """Ask the checker `by` names whether `tgt` refines `src`.
 
-    alive-tv answers with a solver. A pair whose tgt only reshapes the
-    control flow of its src, or only adds attributes its instructions
-    respect, is asked of the llops command of that name, with no solver.
+    alive-tv answers with a solver, and llops's `reshaped` and `respected`
+    without one.
     """
     if by == "alive2":
       self.asked(gid, side, check, src, tgt, notes)

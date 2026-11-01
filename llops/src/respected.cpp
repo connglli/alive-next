@@ -54,6 +54,18 @@ bool limitsMemory(const llvm::Function &F) {
   return F.getMemoryEffects() != llvm::MemoryEffects::unknown();
 }
 
+// Whether `F` declares llvm.lifetime.start or llvm.lifetime.end.
+bool lifetimeMarker(const llvm::Function &F) {
+  llvm::Intrinsic::ID id = F.getIntrinsicID();
+  return id == llvm::Intrinsic::lifetime_start || id == llvm::Intrinsic::lifetime_end;
+}
+
+// Whether `M` marks the life of a stack slot anywhere.
+bool marksLifetimes(const llvm::Module &M) {
+  return llvm::any_of(M,
+                      [](const llvm::Function &F) { return lifetimeMarker(F) && !F.use_empty(); });
+}
+
 // Whether `F` has an attribute this check reads.
 bool checksAny(const llvm::Function &F) {
   const Attr::AttrKind kinds[] = {Attr::NoFree, Attr::NoReturn, Attr::WillReturn};
@@ -404,6 +416,18 @@ void dropCheckedAttrs(llvm::Function &F) {
   dropRedundantNoundef(F);
 }
 
+void dropLifetimeMarkers(llvm::Module &M) {
+  for (llvm::Function &F : llvm::make_early_inc_range(M)) {
+    if (!lifetimeMarker(F))
+      continue;
+    for (llvm::User *U : llvm::make_early_inc_range(F.users()))
+      if (auto *I = llvm::dyn_cast<llvm::Instruction>(U))
+        I->eraseFromParent();
+    if (F.use_empty())
+      F.eraseFromParent();
+  }
+}
+
 llvm::json::Object respectedCmd(llvm::json::Object &args) {
   auto beforeText = args.getString("before");
   auto afterText = args.getString("after");
@@ -433,6 +457,13 @@ llvm::json::Object respectedCmd(llvm::json::Object &args) {
   dropRedundantNoundef(*before);
   dropIgnoredAttrs(*beforeMwc->mod);
   dropIgnoredAttrs(*afterMwc->mod);
+  // A slot without markers stays alive with what it holds, so dropping them all
+  // refines the program; dropping some can leave a slot dead where a later
+  // start revived it, so `after` must hold none.
+  if (!marksLifetimes(*afterMwc->mod)) {
+    dropLifetimeMarkers(*beforeMwc->mod);
+    dropLifetimeMarkers(*afterMwc->mod);
+  }
   if (printModule(*beforeMwc->mod) != printModule(*afterMwc->mod))
     why = "the two programs differ in more than the attributes this check reads";
 

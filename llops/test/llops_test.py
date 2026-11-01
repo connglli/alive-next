@@ -5437,6 +5437,39 @@ entry:
     f = self.good(run("validate", {"module": edited}))["functions"]["f"]
     self.assertEqual(f["signature"], "noundef i32(ptr noundef nonnull, i32)")
 
+  # A slot that lives twice, once for each store.
+  LIVES_TWICE = """define void @f(i32 %x) {
+entry:
+  %s = alloca i32, align 4
+  call void @llvm.lifetime.start.p0(ptr %s)
+  store i32 %x, ptr %s, align 4
+  call void @llvm.lifetime.end.p0(ptr %s)
+  call void @llvm.lifetime.start.p0(ptr %s)
+  store i32 %x, ptr %s, align 4
+  call void @llvm.lifetime.end.p0(ptr %s)
+  ret void
+}
+
+declare void @llvm.lifetime.start.p0(ptr captures(none))
+
+declare void @llvm.lifetime.end.p0(ptr captures(none))
+"""
+
+  def test_a_program_without_its_lifetime_markers_refines_it(self):
+    edited = run("edit", {"module": self.LIVES_TWICE, "op": "drop_lifetimes"})
+    plain = self.good(edited)["module"]
+    self.assertNotIn("lifetime", plain)
+    self.assertTrue(self.answer(self.LIVES_TWICE, plain)["respected"])
+    # Markers make the slot dead where the program without them used it.
+    self.assertFalse(self.answer(plain, self.LIVES_TWICE)["respected"])
+
+  def test_dropping_only_some_lifetime_markers_is_not_respected(self):
+    # Without the second start, the second store writes to a dead slot.
+    end = "  call void @llvm.lifetime.end.p0(ptr %s)\n"
+    second = end + "  call void @llvm.lifetime.start.p0(ptr %s)\n"
+    once = self.marked(self.LIVES_TWICE, second, end)
+    self.assertFalse(self.answer(self.LIVES_TWICE, once)["respected"])
+
   def test_drop_attrs_removes_noreturn(self):
     held = "declare void @abort()\n\ndefine void @f() noreturn {\nentry:\n  call void @abort()\n"
     edited = self.good(run("edit", {"module": held + "  unreachable\n}\n", "op": "drop_attrs"}))

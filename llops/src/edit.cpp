@@ -838,6 +838,11 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
     return checkedResponse(*M);
   }
 
+  if (*op == "drop_lifetimes") {
+    dropLifetimeMarkers(*M);
+    return checkedResponse(*M);
+  }
+
   if (*op == "flags") {
     auto v = args.getString("v");
     auto flags = args.getObject("flags");

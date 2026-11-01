@@ -578,6 +578,32 @@ entry:
 }
 """
 
+# A slot that lives twice, once for each store, and the same without its markers.
+LIVES_TWICE = """define void @f(i32 %x) {
+entry:
+  %s = alloca i32, align 4
+  call void @llvm.lifetime.start.p0(ptr %s)
+  store i32 %x, ptr %s, align 4
+  call void @llvm.lifetime.end.p0(ptr %s)
+  call void @llvm.lifetime.start.p0(ptr %s)
+  store i32 %x, ptr %s, align 4
+  call void @llvm.lifetime.end.p0(ptr %s)
+  ret void
+}
+
+declare void @llvm.lifetime.start.p0(ptr captures(none))
+
+declare void @llvm.lifetime.end.p0(ptr captures(none))
+"""
+UNMARKED = """define void @f(i32 %x) {
+entry:
+  %s = alloca i32, align 4
+  store i32 %x, ptr %s, align 4
+  store i32 %x, ptr %s, align 4
+  ret void
+}
+"""
+
 
 @unittest.skipUnless(HAVE, "needs alive-tv and llops")
 class Case(unittest.TestCase):
@@ -1038,6 +1064,14 @@ class TestGolden(Case):
     step = {"kind": "check", "side": "tgt", "from": marked, "to": plain, "by": "respected"}
     end = {"src": plain, "tgt": plain}
     self.built.goal("g1", {"src": plain, "tgt": marked}, end, [step], {"kind": "check"})
+    self.verified(self.built.write())
+
+  def test_a_src_step_that_drops_every_lifetime_marker_verifies(self):
+    marked = self.built.program(canonical(LIVES_TWICE))
+    plain = self.built.program(canonical(UNMARKED))
+    step = {"kind": "check", "side": "src", "from": marked, "to": plain, "by": "respected"}
+    pair = {"src": plain, "tgt": plain}
+    self.built.goal("g1", {"src": marked, "tgt": plain}, pair, [step], {"kind": "check"})
     self.verified(self.built.write())
 
   def test_a_step_that_only_reshapes_control_flow_verifies_on_either_side(self):
@@ -1922,6 +1956,17 @@ declare i32 @k.ih(i32)
     step = {"kind": "check", "side": "tgt", "from": marked, "to": plain, "by": "respected"}
     end = {"src": plain, "tgt": plain}
     self.built.goal("g1", {"src": plain, "tgt": marked}, end, [step], {"kind": "check"})
+    self.refused(self.built.write(), "Chain step")
+
+  def test_a_step_checked_as_respected_that_drops_only_some_lifetime_markers(self):
+    # Without the second start, the second store writes to a dead slot.
+    marked = self.built.program(canonical(LIVES_TWICE))
+    end = "  call void @llvm.lifetime.end.p0(ptr %s)\n"
+    once = LIVES_TWICE.replace(end + "  call void @llvm.lifetime.start.p0(ptr %s)\n", end)
+    once = self.built.program(canonical(once))
+    step = {"kind": "check", "side": "src", "from": marked, "to": once, "by": "respected"}
+    pair = {"src": once, "tgt": once}
+    self.built.goal("g1", {"src": marked, "tgt": once}, pair, [step], {"kind": "check"})
     self.refused(self.built.write(), "Chain step")
 
   def test_a_step_checked_as_reshaped_that_changes_a_value(self):
