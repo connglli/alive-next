@@ -19,6 +19,7 @@
 #include "respected.h"
 #include "validate.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -60,6 +61,13 @@ int respond(llvm::json::Object resp) {
   return ok ? 0 : 1;
 }
 
+// LLVM's parser aborts on a broken module that carries the current debug-info
+// version. Turned off, broken IR reaches llops's own checks, which report it.
+void answerBrokenModules() {
+  const char *args[] = {"llops", "-disable-auto-upgrade-debug-info"};
+  llvm::cl::ParseCommandLineOptions(2, args);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -88,6 +96,8 @@ int main(int argc, char **argv) {
   auto *args = parsed->getAsObject();
   if (!args)
     return respond(llops::errResponse("bad_request", "the request must be a JSON object"));
+
+  answerBrokenModules();
 
   if (cmd == "validate")
     return respond(llops::validateCmd(*args));

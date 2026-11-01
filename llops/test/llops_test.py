@@ -280,6 +280,26 @@ b:
 """
     self.assertTrue(self.good(run("validate", {"module": kept}))["conforms"])
 
+  def test_broken_ir_with_a_debug_info_version_is_answered(self):
+    # LLVM's parser aborts on a broken module that carries the current version,
+    # as a module clang builds with -g does, even with its debug info stripped.
+    version = '\n!llvm.module.flags = !{!0}\n!0 = !{i32 2, !"Debug Info Version", i32 3}\n'
+    broken = """define void @r(ptr %p) {
+entry:
+  call void @llvm.lifetime.end.p0(ptr %p)
+  ret void
+}
+
+declare void @llvm.lifetime.end.p0(ptr captures(none))
+"""
+    r = self.good(run("validate", {"module": broken + version}))
+    self.assertFalse(r["conforms"])
+    self.assertEqual(r["diagnostics"][0]["code"], "invalid_ir")
+    outer = "define void @f(ptr %q) {\nentry:\n  call void @r(ptr %q)\n  ret void\n}\n"
+    outer += "\ndeclare void @r(ptr)\n" + version
+    request = {"outer": outer, "callee": broken + version, "callee_name": "r"}
+    self.bad(run("inline", request), "invalid_ir")
+
   def test_parameter_attributes_alive2_refuses(self):
     for attr in ["noalias", "nest", '"foo"']:
       module = f"define i32 @f(ptr {attr} %p) {{\nentry:\n  ret i32 0\n}}\n"
