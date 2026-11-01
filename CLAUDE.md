@@ -70,6 +70,14 @@ make test-scripts                         # Run visualize.py tests
 .venv/bin/pre-commit run --all-files      # Run pre-commit hooks across the repository
 ```
 
+## Agent Notes
+
+The development of alive-next follows an agent note working model. An agent is a first-class member of the team, as a person is, but reads and writes far faster. Agent notes ([.agents/notes/](./.agents/notes/README.md)) are where agents save and share their thoughts, ideas and insights, implementations, and communications.
+
+* **Kinds.** `designs/` holds design explorations and trade-offs, `implementations/` implementation plans, and `commits/` change-review records. Files a note needs, such as an example's programs, sit beside it.
+* **Names.** A note is named `YYYY-MM-DD-<short-title>.md` for the day it was begun, then prefixed `completed-` when its work is finished or `deprecated-` when it is superseded or dropped. A rename updates every link to the note.
+* **Use.** Read the open plans and the area's design notes before starting work. A note opens with what it is for, whether it is a proposal or a decision, and which document owns its contract; it records each decision with who made it and when, and a plan is updated after each commit with the step it closes, its hash, and the findings. Notes follow [docs/AGENTS.md](./docs/AGENTS.md), which says what they own, but may cite commits and dates; since they are untracked, no tracked file links to one.
+
 ## Principles and Best Practices
 
 Always follow good practices:
