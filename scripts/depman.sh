@@ -409,6 +409,7 @@ status() {
   fi
   printf '\npins: llvm %s, alive2 %s, llubi %s, veir %s\n' "$LLVM_PIN" "$ALIVE2_PIN" "$LLUBI_PIN" "$VEIR_PIN"
   [ "$missing" = 0 ] || printf "run 'make install-deps' to build what is missing\n"
+  return "$missing"
 }
 
 # What was built and from what, written where the engine looks for it. A run

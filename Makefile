@@ -29,7 +29,7 @@ LLOPS_BUILD := $(TOOLCHAIN)/llops/build
 help:
 	@echo "dependencies"
 	@echo "  install-deps   build the toolchain and the host tools, then llops"
-	@echo "  deps-status    report what is built, and where"
+	@echo "  deps-status    report what is built and where; fail if any is missing"
 	@echo "  deps-<name>    build one of: llvm alive2 llubi elan veir bun js uv py dev"
 	@echo "                 (dev adds the check tools and this clone's git hooks)"
 	@echo "                 (FORCE=1 rebuilds one that is already there)"
