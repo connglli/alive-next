@@ -213,6 +213,7 @@ export type EditOp =
   | { op: "peel"; block: Ref }
   | { op: "set_body"; body: string }
   | { op: "drop_attrs" }
+  | { op: "drop_lifetimes" }
   | { op: "flags"; v: Ref; flags: Record<string, boolean> }
   | {
       op: "splice";

@@ -151,9 +151,8 @@ export type CheckStepResult =
       /** In order: the step, then the discharge when the eager check proved it. */
       effects: Effect[];
       /**
-       * Who checked it: alive2, or with no solver `llops reshaped` when the
-       * step only reshapes control flow, and `llops respected` when it only
-       * changes attributes the instructions respect.
+       * Who checked it: alive2, or with no solver `llops reshaped` or
+       * `llops respected`.
        */
       by: "alive2" | "reshaped" | "respected";
       /** What was asked: the window the edit touched, or the whole. */
@@ -350,8 +349,8 @@ export class Steps {
 
   /**
    * Replace one side of a goal with a new program, if a checker agrees that
-   * the goal's claim survives: `llops reshaped` or `llops respected` when the
-   * step only reshapes control flow or changes attributes, and otherwise
+   * the goal's claim survives: `llops reshaped` or `llops respected` when they
+   * need no solver, and otherwise
    * alive2, on the window the edit touched and then on the whole. On refusal
    * the head does not move and the reason comes back for the agent to work with.
    */
@@ -371,8 +370,7 @@ export class Steps {
       // Nothing moved, so there is nothing to certify and nothing to record.
       return { kind: "refused", check: unasked("the edits leave the program as it was") };
     }
-    // A step that only reshapes control flow, or only changes attributes the
-    // instructions respect, needs no solver, loops or not.
+    // Some steps llops certifies with no solver, loops or not.
     const free = await this.withoutSolver(orient(side, beforeText, afterText));
     if ("by" in free) {
       const step: Effect = { effect: "step", gid, side, to: after, how: "check", by: free.by };

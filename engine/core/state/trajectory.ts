@@ -87,8 +87,8 @@ export type Effect =
       how: "rewrite" | "check" | "unfold";
       /**
        * Who checked the step when `how` is "check": alive2, which is also what
-       * an absent `by` means, or `llops reshaped` or `llops respected` when
-       * the step only reshapes control flow or changes attributes.
+       * an absent `by` means, or `llops reshaped` or `llops respected`,
+       * which need no solver.
        */
       by?: "alive2" | "reshaped" | "respected";
       /**
