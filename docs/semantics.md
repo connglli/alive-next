@@ -102,7 +102,7 @@ alive-next follows alive2's semantics of LLVM IR ([docs/design.md](./design.md))
 
 **llubi.** Ignored.
 
-**alive2.** Ignored.
+**alive2.** Refused in a src: the function is not checked. Ignored in a tgt.
 
 ## Parameters
 

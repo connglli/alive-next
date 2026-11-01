@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Render a session directory as one self-contained HTML page.
 
-    python3 scripts/visualize.py sessions/<id> [-o page.html]
-
 The page needs no server: the trajectory, the programs it
 refers to and a goal tree per event are embedded in it. Syntax
 highlighting loads Highlight.js and its theme from a pinned CDN;
@@ -12,6 +10,9 @@ The fold below is the same one engine/core/state/goals.ts applies, so the two ca
 drift. What keeps them honest is the verdict: a session that ends in one is
 checked against the verdict this fold arrives at, and a mismatch is reported
 rather than rendered.
+
+E.g. python3 scripts/visualize.py sessions/<id>
+     python3 scripts/visualize.py sessions/<id> -o page.html
 """
 
 import argparse

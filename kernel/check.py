@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Replay a certificate and say whether it holds.
 
-    python3 check.py [<package>] [--src FILE --tgt FILE] [--alive-tv PATH] [--llops PATH] [--llubi PATH] [--llrwt PATH] [--mlir-translate PATH] [--mlir-opt PATH] [--smt-to MS]
-
 The package is the directory this script sits in unless one is named. What is
 needed besides Python: alive-tv, llubi for a counterexample alive-tv did not
 decide, llrwt for a proof that rewrites with pre-proved rules, and llops for
@@ -21,6 +19,9 @@ The pair, put at that input by `llops instantiate`, is asked of alive-tv again.
 One llubi refuted, because alive-tv did not decide it, is run again under llubi
 only where alive-tv still does not decide, and this decides for itself whether
 the two runs diverge.
+
+E.g. python3 check.py
+     python3 kernel/check.py sessions/<id>/certificate --src a.ll --tgt b.ll
 """
 
 import argparse
