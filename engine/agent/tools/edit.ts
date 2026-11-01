@@ -78,6 +78,13 @@ export const Op = Type.Union(
       },
     ),
     Type.Object(
+      { op: Type.Literal("drop_lifetimes") },
+      {
+        description:
+          "Remove every llvm.lifetime.start and llvm.lifetime.end, which no cut or window may move away from its stack slot. On the src it commits without a solver.",
+      },
+    ),
+    Type.Object(
       {
         op: Type.Literal("splice"),
         from: Ref,
