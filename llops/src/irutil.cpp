@@ -458,6 +458,26 @@ const llvm::User *escapingUse(const llvm::Value &v,
   return nullptr;
 }
 
+namespace {
+
+// The kind of a metadata attachment on `I` that alive2 refuses in a src, or nothing: the
+// type-based alias information clang gives an optimized build, which alive2 does not model.
+// Either side of a goal is the src of some query, a tgt step's or an interposed goal's, so
+// neither side may carry one.
+std::optional<std::string> refusedMetadata(const llvm::Instruction &I) {
+  static const llvm::StringRef refused[] = {"tbaa", "tbaa.struct"};
+  llvm::SmallVector<std::pair<unsigned, llvm::MDNode *>> attached;
+  I.getAllMetadataOtherThanDebugLoc(attached);
+  llvm::SmallVector<llvm::StringRef> names;
+  I.getContext().getMDKindNames(names);
+  for (const auto &entry : attached)
+    if (llvm::is_contained(refused, names[entry.first]))
+      return names[entry.first].str();
+  return std::nullopt;
+}
+
+} // namespace
+
 std::vector<Diag> checkFunction(llvm::Function &F) {
   std::vector<Diag> diags;
 
@@ -468,6 +488,13 @@ std::vector<Diag> checkFunction(llvm::Function &F) {
                          "alive2 does not check '" + A.getAsString() + "' on a parameter"});
         return diags;
       }
+
+  for (auto &I : llvm::instructions(F))
+    if (auto kind = refusedMetadata(I)) {
+      diags.push_back({Diag::Severity::Error, "unsupported_metadata",
+                       "alive2 does not check '!" + *kind + "' on an instruction"});
+      return diags;
+    }
 
   // Calls must go to a declared function: a call to the one defined function
   // is recursion, and an indirect call has no callee to check against.

@@ -232,6 +232,54 @@ attributes #0 = { nounwind "frame-pointer"="all" }
 """
     self.assertEqual(self.good(run("validate", {"module": inputs}))["body_attrs"], [])
 
+  def test_metadata_alive2_refuses(self):
+    loaded = """define i32 @f(ptr %p) {
+entry:
+  %v = load i32, ptr %p, align 4, !tbaa !0
+  ret i32 %v
+}
+
+!0 = !{!1, !1, i64 0}
+!1 = !{!"int", !2, i64 0}
+!2 = !{!"root"}
+"""
+    copied = """declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
+
+define void @f(ptr %d, ptr %s) {
+entry:
+  call void @llvm.memcpy.p0.p0.i64(ptr %d, ptr %s, i64 4, i1 false), !tbaa.struct !0
+  ret void
+}
+
+!0 = !{i64 0, i64 4, !1}
+!1 = !{!2, !2, i64 0}
+!2 = !{!"int", !3, i64 0}
+!3 = !{!"root"}
+"""
+    for kind, module in [("tbaa", loaded), ("tbaa.struct", copied)]:
+      r = self.good(run("validate", {"module": module}))
+      self.assertFalse(r["conforms"], kind)
+      self.assertEqual(r["diagnostics"][0]["code"], "unsupported_metadata", kind)
+      self.assertIn(f"'!{kind}'", r["diagnostics"][0]["message"])
+    # What alive2 reads, such as !range and !noundef, or ignores, such as !prof, conforms.
+    kept = """define i32 @f(ptr %p, i1 %c) {
+entry:
+  %v = load i32, ptr %p, align 4, !range !0, !noundef !1
+  br i1 %c, label %a, label %b, !prof !2
+
+a:
+  ret i32 %v
+
+b:
+  ret i32 0
+}
+
+!0 = !{i32 0, i32 10}
+!1 = !{}
+!2 = !{!"branch_weights", i32 1, i32 2}
+"""
+    self.assertTrue(self.good(run("validate", {"module": kept}))["conforms"])
+
   def test_parameter_attributes_alive2_refuses(self):
     for attr in ["noalias", "nest", '"foo"']:
       module = f"define i32 @f(ptr {attr} %p) {{\nentry:\n  ret i32 0\n}}\n"
