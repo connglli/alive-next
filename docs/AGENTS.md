@@ -12,6 +12,7 @@ One fact, one home. A second copy is how the two drift apart.
 * [docs/llops.md](./llops.md) holds the contract for the native C++ LLVM binary: the JSON-over-stdin/stdout protocol, exit codes, the program shape, value reference syntax (`%slot`, `%name`, `#index`), and every subcommand.
 * [docs/simple.md](./simple.md) holds the simple searcher, the proof writer without a model: how it steps, cuts, and gives up.
 * [docs/agent.md](./agent.md) holds the Pi agent wiring and runtime: custom tool registration and name prefixes (`run_`, `goal_`, `tx_`, `tree_`), sandbox confinement, execution model, session lifecycle, budget enforcement, system prompt, and provider or model configuration.
+* [docs/faq.md](./faq.md) holds short answers to common questions, each linking to the documents that own its facts.
 * [config.example.jsonc](../config.example.jsonc) holds the template for machine-local settings: toolchain locations, timeouts, and solver options.
 * [Agent notes](../.agents/notes/README.md) are the source of truth for working plans, investigations, unresolved design decisions, and review findings. Accepted behavior and implemented contracts belong in the owning document or source; a note links to that home and keeps the reasoning behind it. The Agent Notes section of [AGENTS.md](../AGENTS.md#agent-notes) says how notes are kept.
 * Source files and tests hold the live implementation, type definitions, and invariants: code comments explain why rather than what, and test suites define executable contracts for components.

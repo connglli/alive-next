@@ -106,3 +106,4 @@ python3 scripts/visualize.py sessions/<id> # the run as one HTML page
 * [docs/llops.md](docs/llops.md): the native binary's interface.
 * [docs/agent.md](docs/agent.md): how the agent is wired.
 * [docs/simple.md](docs/simple.md): how the simple searcher searches.
+* [docs/faq.md](docs/faq.md): short answers to common questions.
