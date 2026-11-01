@@ -1,5 +1,6 @@
 // The simple searcher, as one loop over an agenda of goals. A goal's moves are
-// made in a fixed order (the tgt's attributes its body keeps dropped, the
+// made in a fixed order (the src's lifetime markers and the tgt's attributes
+// its body keeps dropped, the
 // optimizer's stages on the root, a stage that its windows leave interposed as a
 // goal of its own, windows and rules toward the tgt, a check, then a cut that
 // peels away a bounded loop, at a loop, again after a header copy, before an
@@ -89,6 +90,7 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   await unrolling(session, llops, root, limits.counterexampleMs);
   if (session.verdict !== "unknown") return session.verdict;
   // Prepare the root before bounded peeling can split it.
+  await dropLifetimes(session, root);
   await dropAttrs(session, root);
   await dropLoopIds(session, root);
   // A loop the tgt no longer has is peeled and cut away first, and what is left
@@ -138,6 +140,17 @@ async function dropLoopIds(session: Session, gid: string) {
   if (withoutLoopIds(body) === body) return;
   await session.begin(gid, "tgt");
   if ((await session.edit({ op: "set_body", body: withoutLoopIds(body) })).kind !== "applied") {
+    await session.abort();
+    return;
+  }
+  await session.commit({ narrow: false, eager: false });
+}
+
+/** Drops the src's lifetime markers in a step of its own, which `respected` certifies. */
+async function dropLifetimes(session: Session, gid: string) {
+  if (!(await session.show(gid)).src.text.includes("call void @llvm.lifetime.")) return;
+  await session.begin(gid, "src");
+  if ((await session.edit({ op: "drop_lifetimes" })).kind !== "applied") {
     await session.abort();
     return;
   }

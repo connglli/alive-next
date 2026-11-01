@@ -860,6 +860,36 @@ e:
     expect((await session.show("g1")).tgt.text).not.toContain("!llvm.loop");
   });
 
+  test("drops the src's lifetime markers in a step no solver checks", async () => {
+    const plain = `define void @f(i32 %x) {
+entry:
+  %s = alloca i32, align 4
+  store i32 %x, ptr %s, align 4
+  call void @g(ptr %s)
+  ret void
+}
+
+declare void @g(ptr)
+`;
+    const markers =
+      "\ndeclare void @llvm.lifetime.start.p0(ptr captures(none))\n" +
+      "\ndeclare void @llvm.lifetime.end.p0(ptr captures(none))\n";
+    const src =
+      plain
+        .replace("  store i32", "  call void @llvm.lifetime.start.p0(ptr %s)\n  store i32")
+        .replace("  ret void", "  call void @llvm.lifetime.end.p0(ptr %s)\n  ret void") + markers;
+    // The tgt also splits a block, so neither `respected` nor `reshaped` proves
+    // the pair until a step drops the src's markers, and alive2 proves nothing.
+    const tgt = plain.replace("  call void @g", "  br label %next\n\nnext:\n  call void @g");
+    const session = await start(
+      src,
+      tgt,
+      stub(() => false),
+    );
+    expect(await search(session, llops, { ...limits, cuts: 0 })).toBe("verified");
+    expect((await session.show("g1")).src.text).not.toContain("lifetime");
+  });
+
   test("interposes a stage alive2 cannot decide a jump to, though nothing loops", async () => {
     const stages = await llops.pipelineStages(SPILLED);
     if (!stages.ok) throw new Error(stages.message);
