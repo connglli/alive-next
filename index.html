@@ -10,14 +10,14 @@
     href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%2327313e'/%3E%3Ctext x='8' y='24' font-family='monospace' font-size='26' fill='white'%3Ea%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="./syntax.3a9a5def8b9c311e5ae43abde85c63133185eed4f0d9f67fea4b00a8308cf066.css">
   <link rel="stylesheet" href="./theme.3694c93cf6bb93f483758db43d2469197c7f80c1c1fc8896fbdc4fb28384c81d.css">
-  <link rel="stylesheet" href="./style.0c7df5cf233f4514c128d57e03f5fdbc282273dc66ded7c44358edf438d5e1c7.css">
-  <script type="module" src="./app.ae9c59ab3f1a20b30da0fcccc52faaa36369b764adb3e18a3d3da069b6f8dc87.js"></script>
+  <link rel="stylesheet" href="./style.0ec772101982e640cbcdc7303f507f717a72dab3c6b1c782158523c54c1d96f5.css">
+  <script type="module" src="./app.eac476f1e07965ffa3809dd82365ea2fa3d8c66e0f1a99dc8d15d99e223648f9.js"></script>
 </head>
 
 <body>
   <header class="masthead">
     <a class="brand" href="./">alive<span>-next</span></a>
-    <span class="subtitle">Interactive Translation Validation for LLVM</span>
+    <span class="subtitle">Interactive Translation Validation for LLVM · d2c8d5e</span>
     <nav class="project-links" aria-label="Project links">
       <a href="https://github.com/connglli/alive-next" target="_blank" rel="noreferrer">alive-next ↗</a>
       <a href="https://github.com/AliveToolkit/alive2" target="_blank" rel="noreferrer">alive2 ↗</a>
@@ -88,7 +88,14 @@
         <p id="no-checks" class="hint">No checks yet. Identical programs can close structurally.</p>
       </section>
       <section id="view-goals" class="view" hidden>
-        <p class="hint">Select a goal to inspect its current source and target.</p>
+        <div class="goal-toolbar">
+          <p class="hint">Select a goal to inspect its current source and target.</p>
+          <div class="goal-actions">
+            <button id="show-details" disabled>Show details</button>
+            <button id="save-session" title="Download session and module as ZIP" disabled>Save</button>
+          </div>
+        </div>
+        <p id="save-error" class="hint" role="alert" hidden></p>
         <div id="goals"></div>
       </section>
       <footer class="pane-footer"><span id="activity">No undef · poison supported</span><span id="limit"></span>
@@ -109,6 +116,13 @@
         <pre id="inspect-tgt"></pre>
       </section>
     </div>
+  </dialog>
+  <dialog id="details" aria-labelledby="details-title">
+    <header>
+      <h2 id="details-title">Session details</h2><button id="close-details">Close</button>
+    </header>
+    <p id="details-status" class="hint" role="status"></p>
+    <iframe id="details-frame" title="Session visualizer" hidden></iframe>
   </dialog>
 </body>
 

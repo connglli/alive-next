@@ -461,6 +461,20 @@ button.primary:hover:enabled {
   padding: 2px 14px 14px;
 }
 
+.goal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-right: 14px;
+}
+
+.goal-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .goal {
   border: 1px solid var(--line);
   border-left: 3px solid var(--blue);
@@ -546,6 +560,28 @@ dialog header {
   height: 1px;
   overflow: hidden;
   clip-path: inset(50%);
+}
+
+#details {
+  width: 96vw;
+  height: 94dvh;
+  max-height: 94dvh;
+}
+
+#details[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+#details header {
+  flex-shrink: 0;
+}
+
+#details-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
 }
 
 @keyframes pulse {
