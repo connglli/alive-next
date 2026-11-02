@@ -82,6 +82,9 @@ config.jsonc
 # the experiment's own repository, alive-next-experiment
 experiment/
 
+# the web's distribution
+web-dist/
+
 # agents
 .agents/
 .pi/

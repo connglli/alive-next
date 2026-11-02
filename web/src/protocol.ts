@@ -28,7 +28,14 @@ export interface Standing {
 
 export type Verdict = "verified" | "counterexample" | "unknown";
 
+export interface ReportSource {
+  trajectory: string[];
+  programs: Record<string, string>;
+}
+
 export type WorkerMessage =
+  | { type: "trajectory"; line: string }
+  | { type: "program"; hash: string; text: string }
   | { type: "exec"; id: number; request: Execution }
   | { type: "kill"; id: number }
   | { type: "progress"; state: Standing; activity: string }

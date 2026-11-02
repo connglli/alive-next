@@ -10,6 +10,8 @@ The build reads LLVM, alive2 and llubi source checkouts from the toolchain selec
 
 Downloads and compiled tools are cached under `web/build/`. The packager generates a replacement in a temporary directory before replacing `web/dist/`; failure preserves the working site. Scripts, workers, manifests, styles and checker assets have content-addressed filenames to prevent caches from mixing builds.
 
+The header identifies the build's Git revision, with a `-dirty` suffix for uncommitted tracked changes.
+
 ### Toolchain patches
 
 The tool builder applies the following patches to isolated source checkouts under `web/build/`. It reuses already-applied patches on repeated builds. The engine and native toolchain remain unchanged.
@@ -24,9 +26,15 @@ The Z3 build also uses `-Dsmt=z3_smt` to separate its private SMT namespace from
 
 [src/alive-simple.worker.ts](./src/alive-simple.worker.ts) provides a command/result interface around the existing session and searcher. The build maps their file, path, OS, hashing and process operations to browser adapters in [src/platform/](./src/platform/). Session files and trajectories stay in memory. The UI displays snapshots of the session's goal tree.
 
+Show details opens a snapshot using the visualizer's own HTML, CSS and JavaScript from `scripts/visualize_ui.*`. The page retains the session's trajectory and immutable programs so the view remains available after Stop. [src/visualizer-data.ts](./src/visualizer-data.ts) uses the engine's goal replay to prepare the visualizer's data, with difflib's Python-compatible unified diffs. Snapshot preparation runs in a separate worker; the resulting page lives in an iframe so its styles and inspector stay isolated. Its highlighter and styles are embedded for offline viewing.
+
+Save in Goal tree downloads a ZIP snapshot containing the original `module.ll`, `session/trajectory.jsonl`, all immutable programs under `session/store/`, and a standalone `session/session.html`. For a proved or refuted root, [src/certificate.ts](./src/certificate.ts) uses the native manifest builder to include `session/certificate/` with the manifest, its required programs and the unchanged `kernel/check.py`. Required programs are checked against their hashes before packaging. Unknown runs retain the session snapshot and explain the absent certificate in `README.txt`.
+
+[src/archive.ts](./src/archive.ts) packages these files in the same worker used by Show details. The original log lines preserve their hash chain, and the extracted session directory can be passed to `scripts/visualize.py`. The certificate is independently replayable with Python and native checker binaries; the ZIP's README gives the command. Editing the input or starting another run cancels an unfinished download.
+
 The Checks view records completed alive2, `llops respected` and `llops reshaped` attempts with their elapsed time and raw output, including attempts that do not prove refinement. Its counter includes all three checker types. Other llops commands perform parsing, editing or analysis and are omitted from this view.
 
-The page owns checker workers so it can terminate them even when a synchronous Wasm call blocks the search. Worker termination enforces the overall wall-clock limit. Run budgets are validated in the UI and worker, with shared definitions in [src/limits.ts](./src/limits.ts). The search disables verified-rule rewriting. Refutations require alive2; concrete llubi replay and certificate downloads are outside the browser interface.
+The page owns checker workers so it can terminate them even when a synchronous Wasm call blocks the search. Worker termination enforces the overall wall-clock limit. Run budgets are validated in the UI and worker, with shared definitions in [src/limits.ts](./src/limits.ts). The search disables verified-rule rewriting. Refutations require alive2; concrete llubi replay is outside the browser interface.
 
 The [web llops entry point](./cmake/llops-main.cpp) uses LLVM to parse and verify the combined input module before splitting it. The split preserves shared declarations, globals and attributes, gives both entries a common name, and rejects ordinary or metadata references to the entries before removing either body.
 
@@ -51,6 +59,7 @@ After building, run the browser-code and packaging checks from `web/`:
 ```sh
 bun run check
 bun run test:limits
+bun run test:visualizer
 bun run test:build
 ```
 
@@ -60,7 +69,7 @@ With the Python server running, test the UI with an installed Chrome or Chromium
 bun run test:browser
 ```
 
-Set `CHROME_BIN` when the executable is not `/usr/bin/google-chrome`, or `WEB_TEST_URL` to test another served URL. Browser regressions cover proofs, counterexamples, invalid input, splitting, goal inspection, cancellation, decomposition, asset retries, input invalidation and the mobile layout. Packaging regressions check that failed builds preserve the site.
+Set `CHROME_BIN` when the executable is not `/usr/bin/google-chrome`, or `WEB_TEST_URL` to test another served URL. Browser regressions cover proofs, counterexamples, invalid input, splitting, goal inspection, cancellation, decomposition, asset retries, input invalidation and the mobile layout. The details adapter is compared against the native visualizer's regression sessions. Packaging regressions check that failed builds preserve the site.
 
 ## GitHub Pages
 

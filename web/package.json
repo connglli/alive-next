@@ -6,10 +6,13 @@
     "check": "../engine/node_modules/.bin/tsc --noEmit -p tsconfig.json",
     "test:build": "node test/build.mjs",
     "test:limits": "bun test test/limits.test.ts",
+    "test:visualizer": "bun test test/visualizer.test.ts",
     "test:browser": "node test/browser.mjs"
   },
   "dependencies": {
     "@noble/hashes": "2.4.0",
+    "difflib": "0.2.4",
+    "fflate": "0.8.3",
     "highlight.js": "11.12.0"
   },
   "devDependencies": {

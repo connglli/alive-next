@@ -6,6 +6,11 @@ const files = new Map<string, string>();
 const directories = new Set<string>(["/", "/tmp"]);
 let serial = 0;
 let appended: ((path: string, text: string) => void) | undefined;
+let written: ((path: string, text: string) => void) | undefined;
+
+export function observeWrites(listener: (path: string, text: string) => void) {
+  written = listener;
+}
 
 // Trajectory appends expose progress without changing the engine's logger.
 export function observeAppends(listener: (path: string, text: string) => void) {
@@ -32,7 +37,10 @@ export function readFileSync(path: string): string {
 
 export function writeFileSync(path: string, data: string | Uint8Array) {
   mkdirSync(dirname(path));
-  files.set(join(path), typeof data === "string" ? data : new TextDecoder().decode(data));
+  const text = typeof data === "string" ? data : new TextDecoder().decode(data);
+  const key = join(path);
+  files.set(key, text);
+  written?.(key, text);
 }
 
 export function appendFileSync(path: string, data: string) {

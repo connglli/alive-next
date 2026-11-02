@@ -1,3 +1,5 @@
+import { detailsView } from "./details.ts";
+import { download } from "./download.ts";
 import { examples } from "./examples.ts";
 import { highlight } from "./highlight.ts";
 import {
@@ -9,7 +11,15 @@ import {
   TIMEOUT_SECONDS,
   validateBudget,
 } from "./limits.ts";
-import type { Execution, ProcessResult, Standing, Verdict, WorkerMessage } from "./protocol.ts";
+import type {
+  Execution,
+  ProcessResult,
+  ReportSource,
+  Standing,
+  Verdict,
+  WorkerMessage,
+} from "./protocol.ts";
+import { requestReport } from "./report.ts";
 import { Runtime } from "./runtime.ts";
 
 interface Check extends ProcessResult {
@@ -32,6 +42,47 @@ const timeout = element<HTMLSelectElement>("budget");
 const customTimeout = element<HTMLInputElement>("custom-budget");
 const cuts = element<HTMLInputElement>("cuts");
 const unfolds = element<HTMLInputElement>("unfolds");
+const showDetails = element<HTMLButtonElement>("show-details");
+const saveSession = element<HTMLButtonElement>("save-session");
+const saveError = element("save-error");
+let saving: ReturnType<typeof requestReport> | undefined;
+const details = detailsView(
+  element<HTMLDialogElement>("details"),
+  element<HTMLIFrameElement>("details-frame"),
+  element("details-status"),
+);
+let report: ReportSource = { trajectory: [], programs: {} };
+showDetails.onclick = () => details.open(report);
+element("close-details").onclick = () => details.close();
+
+function saveControl() {
+  saveSession.disabled = !report.trajectory.length || saving !== undefined;
+  saveSession.textContent = saving ? "Saving…" : "Save";
+}
+
+saveSession.onclick = async () => {
+  saveError.hidden = true;
+  let current: ReturnType<typeof requestReport> | undefined;
+  try {
+    current = requestReport({ kind: "save", source: report, module: editor.value });
+    saving = current;
+    saveControl();
+    const response = await current.result;
+    if (saving !== current) return;
+    if (!("archive" in response)) throw new Error("Cannot read the session archive");
+    download(new Blob([response.archive], { type: "application/zip" }), "alive-next-session.zip");
+  } catch (error) {
+    if (saving === current) {
+      saveError.textContent = String(error instanceof Error ? error.message : error);
+      saveError.hidden = false;
+    }
+  } finally {
+    if (saving === current) {
+      saving = undefined;
+      saveControl();
+    }
+  }
+};
 
 // Use the same defaults and bounds as the worker's budget validation.
 for (const seconds of TIMEOUT_SECONDS)
@@ -81,6 +132,13 @@ function release() {
 }
 
 function clearResults() {
+  details.close();
+  saving?.cancel();
+  saving = undefined;
+  report = { trajectory: [], programs: {} };
+  saveControl();
+  saveError.hidden = true;
+  showDetails.disabled = true;
   checks.length = 0;
   element("checks").replaceChildren();
   element("check-count").textContent = "0";
@@ -325,7 +383,13 @@ function start() {
     if (worker !== current) return;
 
     const message = event.data;
-    if (message.type === "exec") {
+    if (message.type === "program") {
+      report.programs[message.hash] = message.text;
+    } else if (message.type === "trajectory") {
+      report.trajectory.push(message.line);
+      showDetails.disabled = false;
+      saveControl();
+    } else if (message.type === "exec") {
       try {
         const result = await runtime.execute(message.id, message.request);
         if (worker !== current) return;
@@ -436,12 +500,7 @@ element<HTMLInputElement>("file").onchange = async () => {
 };
 
 element("save").onclick = () => {
-  const url = URL.createObjectURL(new Blob([editor.value], { type: "text/plain" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "module.ll";
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  download(new Blob([editor.value], { type: "text/plain" }), "module.ll");
 };
 
 const splitter = element("splitter");

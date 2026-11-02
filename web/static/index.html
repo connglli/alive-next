@@ -17,7 +17,7 @@
 <body>
   <header class="masthead">
     <a class="brand" href="./">alive<span>-next</span></a>
-    <span class="subtitle">Interactive Translation Validation for LLVM</span>
+    <span class="subtitle">Interactive Translation Validation for LLVM · __REVISION__</span>
     <nav class="project-links" aria-label="Project links">
       <a href="https://github.com/connglli/alive-next" target="_blank" rel="noreferrer">alive-next ↗</a>
       <a href="https://github.com/AliveToolkit/alive2" target="_blank" rel="noreferrer">alive2 ↗</a>
@@ -88,7 +88,14 @@
         <p id="no-checks" class="hint">No checks yet. Identical programs can close structurally.</p>
       </section>
       <section id="view-goals" class="view" hidden>
-        <p class="hint">Select a goal to inspect its current source and target.</p>
+        <div class="goal-toolbar">
+          <p class="hint">Select a goal to inspect its current source and target.</p>
+          <div class="goal-actions">
+            <button id="show-details" disabled>Show details</button>
+            <button id="save-session" title="Download session and module as ZIP" disabled>Save</button>
+          </div>
+        </div>
+        <p id="save-error" class="hint" role="alert" hidden></p>
         <div id="goals"></div>
       </section>
       <footer class="pane-footer"><span id="activity">No undef · poison supported</span><span id="limit"></span>
@@ -109,6 +116,13 @@
         <pre id="inspect-tgt"></pre>
       </section>
     </div>
+  </dialog>
+  <dialog id="details" aria-labelledby="details-title">
+    <header>
+      <h2 id="details-title">Session details</h2><button id="close-details">Close</button>
+    </header>
+    <p id="details-status" class="hint" role="status"></p>
+    <iframe id="details-frame" title="Session visualizer" hidden></iframe>
   </dialog>
 </body>
 

@@ -6,7 +6,7 @@ import { Session } from "../../engine/core/session.ts";
 import { DEFAULT_LIMITS } from "../../engine/simple/limits.ts";
 import { search } from "../../engine/simple/search.ts";
 import { CHECK_MS, INPUT_BYTES, INPUT_LABEL, validateBudget } from "./limits.ts";
-import { observeAppends } from "./platform/fs.ts";
+import { observeAppends, observeWrites } from "./platform/fs.ts";
 import { spawnWith } from "./platform/process.ts";
 import type { Execution, ProcessResult, Standing, WorkerMessage } from "./protocol.ts";
 
@@ -50,7 +50,15 @@ function standing(): Standing {
   };
 }
 
-observeAppends((_path, text) => {
+// Mirror immutable programs and log entries once so Stop cannot discard the history.
+observeWrites((path, text) => {
+  const hash = /^\/run\/store\/([a-f0-9]{64})\.ll$/.exec(path)?.[1];
+  if (hash) send({ type: "program", hash, text });
+});
+
+observeAppends((path, text) => {
+  if (path !== "/run/trajectory.jsonl") return;
+  send({ type: "trajectory", line: text });
   const event = JSON.parse(text) as { kind: string; tool?: string };
   if (event.kind !== "tool_result") return;
 
