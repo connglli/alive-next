@@ -1,0 +1,10 @@
+{
+  "extends": "../engine/tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "allowJs": true,
+    "checkJs": true,
+    "typeRoots": ["../engine/node_modules/@types"]
+  },
+  "include": ["src", "scripts/bundle-site.ts"]
+}

@@ -10,6 +10,8 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        # Patch hunks must retain the upstream lines byte for byte.
+        exclude_types: [diff]
       - id: end-of-file-fixer
       - id: mixed-line-ending
       - id: check-merge-conflict

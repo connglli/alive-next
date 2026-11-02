@@ -107,3 +107,4 @@ python3 scripts/visualize.py sessions/<id> # the run as one HTML page
 * [docs/agent.md](docs/agent.md): how the agent is wired.
 * [docs/simple.md](docs/simple.md): how the simple searcher searches.
 * [docs/faq.md](docs/faq.md): short answers to common questions.
+* [web/README.md](web/README.md): build, serve and use the web interface.

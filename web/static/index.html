@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Check LLVM IR refinement with alive-simple, locally in your browser.">
+  <title>alive-next</title>
+  <link rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%2327313e'/%3E%3Ctext x='8' y='24' font-family='monospace' font-size='26' fill='white'%3Ea%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./syntax.css">
+  <link rel="stylesheet" href="./theme.css">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.js"></script>
+</head>
+
+<body>
+  <header class="masthead">
+    <a class="brand" href="./">alive<span>-next</span></a>
+    <span class="subtitle">Interactive Translation Validation for LLVM</span>
+    <nav class="project-links" aria-label="Project links">
+      <a href="https://github.com/connglli/alive-next" target="_blank" rel="noreferrer">alive-next ↗</a>
+      <a href="https://github.com/AliveToolkit/alive2" target="_blank" rel="noreferrer">alive2 ↗</a>
+      <span class="browser-label"><span class="dot"></span> Runs in your browser</span>
+    </nav>
+  </header>
+  <main id="workspace">
+    <section class="pane source-pane" aria-labelledby="source-heading">
+      <header class="pane-heading">
+        <h1 id="source-heading">LLVM IR</h1><span class="language">LLVM 22.1</span>
+      </header>
+      <div class="source-toolbar">
+        <label class="sr-only" for="examples">Load example</label>
+        <select id="examples">
+          <option value="">Examples…</option>
+        </select>
+        <button id="load">Load .ll</button><input id="file" type="file" accept=".ll,.txt" hidden>
+        <button id="save">Save</button>
+      </div>
+      <div class="editor">
+        <pre id="lines" aria-hidden="true">1</pre>
+        <pre id="highlight" aria-hidden="true"></pre>
+        <textarea id="ir" aria-label="LLVM IR module defining src and tgt" wrap="off" spellcheck="false"
+          autocapitalize="off" autocomplete="off"></textarea>
+      </div>
+      <footer class="pane-footer"><span>Define <code>@src</code> and <code>@tgt</code> with matching types.</span><span
+          id="size"></span></footer>
+    </section>
+    <div id="splitter" role="separator" aria-label="Resize source and output panes" aria-orientation="vertical"
+      aria-valuemin="25" aria-valuemax="75" aria-valuenow="50" tabindex="0"></div>
+    <section class="pane output-pane" aria-labelledby="output-heading">
+      <header class="pane-heading">
+        <h2 id="output-heading">alive-simple</h2><span class="language">WebAssembly</span>
+      </header>
+      <div class="run-toolbar">
+        <button id="run" class="primary" title="Run (Ctrl or Command + Enter)">▶ Run</button>
+        <button id="stop" disabled>■ Stop</button>
+        <label for="budget">Timeout</label>
+        <select id="budget"></select>
+        <span id="custom-budget-control" hidden><input id="custom-budget" type="number" min="0.001" step="0.001"
+            required aria-label="Custom timeout in seconds"><span>s</span></span>
+        <label for="cuts" title="Minimum cut quota per root or step goal; 0 disables cuts">Cuts</label>
+        <input id="cuts" type="number" min="0" step="1" required>
+        <label for="unfolds" title="Maximum unfolds per loop cut; 0 disables unfolding">Unfolds</label>
+        <input id="unfolds" type="number" min="0" step="1" required>
+        <span id="elapsed">Ctrl/⌘ + Enter</span>
+      </div>
+      <nav class="tabs" aria-label="Output view">
+        <button data-view="result" aria-pressed="true">Output</button>
+        <button data-view="checks" aria-pressed="false">Checks <span id="check-count">0</span></button>
+        <button data-view="goals" aria-pressed="false">Goal tree <span id="goal-count">0</span></button>
+      </nav>
+      <div id="status" class="status ready" role="status" aria-live="polite"><strong id="verdict">Ready</strong><span
+          id="status-detail">Write a pair of functions, then run the refinement check.</span></div>
+      <section id="view-result" class="view">
+        <pre id="output">; Does @tgt refine @src?
+;
+; alive-simple searches for a proof using alive2,
+; local rewrites, and decomposition into smaller goals.
+;
+; The first run downloads about 29 MB of checker assets.
+; Later runs reuse them in this tab.
+;
+; Use alive-next when alive2 itself fails within 1min.</pre>
+      </section>
+      <section id="view-checks" class="view" hidden>
+        <ol id="checks" aria-label="Refinement checks"></ol>
+        <p id="no-checks" class="hint">No checks yet. Identical programs can close structurally.</p>
+      </section>
+      <section id="view-goals" class="view" hidden>
+        <p class="hint">Select a goal to inspect its current source and target.</p>
+        <div id="goals"></div>
+      </section>
+      <footer class="pane-footer"><span id="activity">No undef · poison supported</span><span id="limit"></span>
+      </footer>
+    </section>
+  </main>
+  <dialog id="inspector" aria-labelledby="inspect-title">
+    <header>
+      <h2 id="inspect-title">Goal</h2><button id="close-inspector">Close</button>
+    </header>
+    <div class="pair">
+      <section>
+        <h3>Source</h3>
+        <pre id="inspect-src"></pre>
+      </section>
+      <section>
+        <h3>Target</h3>
+        <pre id="inspect-tgt"></pre>
+      </section>
+    </div>
+  </dialog>
+</body>
+
+</html>

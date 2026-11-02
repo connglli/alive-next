@@ -1,0 +1,6 @@
+diff --git a/llvm_util/llvm2alive.cpp b/llvm_util/llvm2alive.cpp
+--- a/llvm_util/llvm2alive.cpp
++++ b/llvm_util/llvm2alive.cpp
+@@ -2052 +2052 @@
+-      if (end_ptr != name.end())
++      if (end_ptr != name.data() + name.size())

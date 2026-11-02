@@ -1,0 +1,482 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index d01004c..90b2ec3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2 +2 @@
+-cmake_minimum_required(VERSION 3.4)
++cmake_minimum_required(VERSION 3.5)
+diff --git a/scripts/mk_genfile_common.py b/scripts/mk_genfile_common.py
+index ef73e5f..8aa3c60 100644
+--- a/scripts/mk_genfile_common.py
++++ b/scripts/mk_genfile_common.py
+@@ -142 +142 @@ def mk_z3consts_py_internal(api_files, output_dir):
+-                words = re.split('[^\-a-zA-Z0-9_]+', line)
++                words = re.split('[^\\-a-zA-Z0-9_]+', line)
+@@ -230 +230 @@ def mk_z3consts_dotnet_internal(api_files, output_dir):
+-                words = re.split('[^\-a-zA-Z0-9_]+', line)
++                words = re.split('[^\\-a-zA-Z0-9_]+', line)
+@@ -318 +318 @@ def mk_z3consts_java_internal(api_files, package_name, output_dir):
+-                words = re.split('[^\-a-zA-Z0-9_]+', line)
++                words = re.split('[^\\-a-zA-Z0-9_]+', line)
+@@ -444 +444 @@ def mk_z3consts_ml_internal(api_files, output_dir):
+-                words = re.split('[^\-a-zA-Z0-9_]+', line)
++                words = re.split('[^\\-a-zA-Z0-9_]+', line)
+@@ -577 +577 @@ def mk_def_file_internal(defname, dll_name, export_header_files):
+-                words = re.split('\W+', line)
++                words = re.split('\\W+', line)
+@@ -621,3 +621,3 @@ def mk_gparams_register_modules_internal(h_files_full_path, path):
+-    reg_pat = re.compile('[ \t]*REG_PARAMS\(\'([^\']*)\'\)')
+-    reg_mod_pat = re.compile('[ \t]*REG_MODULE_PARAMS\(\'([^\']*)\', *\'([^\']*)\'\)')
+-    reg_mod_descr_pat = re.compile('[ \t]*REG_MODULE_DESCRIPTION\(\'([^\']*)\', *\'([^\']*)\'\)')
++    reg_pat = re.compile('[ \t]*REG_PARAMS\\(\'([^\']*)\'\\)')
++    reg_mod_pat = re.compile('[ \t]*REG_MODULE_PARAMS\\(\'([^\']*)\', *\'([^\']*)\'\\)')
++    reg_mod_descr_pat = re.compile('[ \t]*REG_MODULE_DESCRIPTION\\(\'([^\']*)\', *\'([^\']*)\'\\)')
+@@ -695,2 +695,2 @@ def mk_install_tactic_cpp_internal(h_files_full_path, path):
+-    tactic_pat   = re.compile('[ \t]*ADD_TACTIC\(.*\)')
+-    probe_pat    = re.compile('[ \t]*ADD_PROBE\(.*\)')   
++    tactic_pat   = re.compile('[ \t]*ADD_TACTIC\\(.*\\)')
++    probe_pat    = re.compile('[ \t]*ADD_PROBE\\(.*\\)')   
+@@ -762 +762 @@ def mk_mem_initializer_cpp_internal(h_files_full_path, path):
+-    initializer_pat      = re.compile('[ \t]*ADD_INITIALIZER\(\'([^\']*)\'\)')
++    initializer_pat      = re.compile('[ \t]*ADD_INITIALIZER\\(\'([^\']*)\'\\)')
+@@ -764,2 +764,2 @@ def mk_mem_initializer_cpp_internal(h_files_full_path, path):
+-    initializer_prio_pat = re.compile('[ \t]*ADD_INITIALIZER\(\'([^\']*)\',[ \t]*(-?[0-9]*)\)')
+-    finalizer_pat        = re.compile('[ \t]*ADD_FINALIZER\(\'([^\']*)\'\)')
++    initializer_prio_pat = re.compile('[ \t]*ADD_INITIALIZER\\(\'([^\']*)\',[ \t]*(-?[0-9]*)\\)')
++    finalizer_pat        = re.compile('[ \t]*ADD_FINALIZER\\(\'([^\']*)\'\\)')
+diff --git a/scripts/mk_util.py b/scripts/mk_util.py
+index 2c584ff..4b0292e 100644
+--- a/scripts/mk_util.py
++++ b/scripts/mk_util.py
+@@ -18 +18 @@ from fnmatch import fnmatch
+-import distutils.sysconfig
++import sysconfig
+@@ -51 +51,5 @@ JAR=None
+-PYTHON_PACKAGE_DIR=distutils.sysconfig.get_python_lib(prefix=getenv("PREFIX", None))
++def get_python_lib(prefix=None):
++    paths = {"base": prefix, "platbase": prefix} if prefix else None
++    return sysconfig.get_path("purelib", vars=paths)
++
++PYTHON_PACKAGE_DIR=get_python_lib(prefix=getenv("PREFIX", None))
+@@ -383 +387 @@ def check_java():
+-        open_pat = re.compile("\[search path for class files: (.*)\]")
++        open_pat = re.compile("\\[search path for class files: (.*)\\]")
+@@ -775 +779 @@ def extract_c_includes(fname):
+-    system_inc_pat  = re.compile("[ \t]*#include[ \t]*\<.*\>[ \t]*")
++    system_inc_pat  = re.compile("[ \t]*#include[ \t]*\\<.*\\>[ \t]*")
+@@ -1614 +1618 @@ class PythonInstallComponent(Component):
+-        if PYTHON_PACKAGE_DIR != distutils.sysconfig.get_python_lib():
++        if PYTHON_PACKAGE_DIR != get_python_lib():
+@@ -1719 +1723 @@ class DotNetDLLComponent(Component):
+-    <Compile Include="..\%s\*.cs;*.cs" Exclude="bin\**;obj\**;**\*.xproj;packages\**" />
++    <Compile Include="..\\%s\\*.cs;*.cs" Exclude="bin\\**;obj\\**;**\\*.xproj;packages\\**" />
+@@ -2211 +2215 @@ class DotNetExampleComponent(ExampleComponent):
+-    <Compile Include="..\%s/*.cs" />
++    <Compile Include="..\\%s/*.cs" />
+@@ -2213 +2217 @@ class DotNetExampleComponent(ExampleComponent):
+-      <HintPath>..\Microsoft.Z3.dll</HintPath>
++      <HintPath>..\\Microsoft.Z3.dll</HintPath>
+@@ -2646 +2650 @@ def mk_config():
+-            print('Python version: %s' % distutils.sysconfig.get_python_version())
++            print('Python version: %s' % sysconfig.get_python_version())
+@@ -3094 +3098 @@ def mk_vs_proj_property_groups(f, name, target_ext, type):
+-    f.write('  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />\n')
++    f.write('  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.Default.props" />\n')
+@@ -3105 +3109 @@ def mk_vs_proj_property_groups(f, name, target_ext, type):
+-    f.write('  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />\n')
++    f.write('  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.props" />\n')
+@@ -3108 +3112 @@ def mk_vs_proj_property_groups(f, name, target_ext, type):
+-    f.write('    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists(\'$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props\')" Label="LocalAppDataPlatform" />  </ImportGroup>\n')
++    f.write('    <Import Project="$(UserRootDir)\\Microsoft.Cpp.$(Platform).user.props" Condition="exists(\'$(UserRootDir)\\Microsoft.Cpp.$(Platform).user.props\')" Label="LocalAppDataPlatform" />  </ImportGroup>\n')
+@@ -3111 +3115 @@ def mk_vs_proj_property_groups(f, name, target_ext, type):
+-    f.write('    <OutDir Condition="\'$(Configuration)|$(Platform)\'==\'Debug|Win32\'">$(SolutionDir)\$(ProjectName)\$(Configuration)\</OutDir>\n')
++    f.write('    <OutDir Condition="\'$(Configuration)|$(Platform)\'==\'Debug|Win32\'">$(SolutionDir)\\$(ProjectName)\\$(Configuration)\\</OutDir>\n')
+@@ -3114 +3118 @@ def mk_vs_proj_property_groups(f, name, target_ext, type):
+-    f.write('    <OutDir Condition="\'$(Configuration)|$(Platform)\'==\'Release|Win32\'">$(SolutionDir)\$(ProjectName)\$(Configuration)\</OutDir>\n')
++    f.write('    <OutDir Condition="\'$(Configuration)|$(Platform)\'==\'Release|Win32\'">$(SolutionDir)\\$(ProjectName)\\$(Configuration)\\</OutDir>\n')
+@@ -3119 +3123 @@ def mk_vs_proj_property_groups(f, name, target_ext, type):
+-    f.write('        <IntDir>$(ProjectName)\$(Configuration)\</IntDir>\n')
++    f.write('        <IntDir>$(ProjectName)\\$(Configuration)\\</IntDir>\n')
+@@ -3122 +3126 @@ def mk_vs_proj_property_groups(f, name, target_ext, type):
+-    f.write('    <IntDir>$(ProjectName)\$(Configuration)\</IntDir>\n')
++    f.write('    <IntDir>$(ProjectName)\\$(Configuration)\\</IntDir>\n')
+@@ -3199 +3203 @@ def mk_vs_proj(name, components):
+-    f.write('  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />\n')
++    f.write('  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />\n')
+@@ -3240 +3244 @@ def mk_vs_proj_dll(name, components):
+-    f.write('  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />\n')
++    f.write('  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />\n')
+diff --git a/scripts/update_api.py b/scripts/update_api.py
+index 56ef503..ea34fd3 100755
+--- a/scripts/update_api.py
++++ b/scripts/update_api.py
+@@ -105 +105 @@ def def_Types(api_files):
+-    pat1 = re.compile(" *def_Type\(\'(.*)\',[^\']*\'(.*)\',[^\']*\'(.*)\'\)[ \t]*")
++    pat1 = re.compile(" *def_Type\\(\'(.*)\',[^\']*\'(.*)\',[^\']*\'(.*)\'\\)[ \t]*")
+diff --git a/src/ast/pp.cpp b/src/ast/pp.cpp
+index e307989..7f0fa01 100644
+--- a/src/ast/pp.cpp
++++ b/src/ast/pp.cpp
+@@ -69 +69 @@ void pp(std::ostream & out, format * f, ast_manager & m, params_ref const & _p)
+-    unsigned ribbon_pos = 0;
++    [[maybe_unused]] unsigned ribbon_pos = 0;
+diff --git a/src/ast/rewriter/bool_rewriter.cpp b/src/ast/rewriter/bool_rewriter.cpp
+index f21b2c5..5f01d90 100644
+--- a/src/ast/rewriter/bool_rewriter.cpp
++++ b/src/ast/rewriter/bool_rewriter.cpp
+@@ -525 +525 @@ bool bool_rewriter::local_ctx_simp(unsigned num_args, expr * const * args, expr_
+-    unsigned rounds = 0;
++    [[maybe_unused]] unsigned rounds = 0;
+diff --git a/src/ast/rewriter/hoist_rewriter.cpp b/src/ast/rewriter/hoist_rewriter.cpp
+index 4116945..2b523c5 100644
+--- a/src/ast/rewriter/hoist_rewriter.cpp
++++ b/src/ast/rewriter/hoist_rewriter.cpp
+@@ -62 +62 @@ br_status hoist_rewriter::mk_or(unsigned num_args, expr * const * es, expr_ref &
+-    unsigned round = 0;
++    [[maybe_unused]] unsigned round = 0;
+diff --git a/src/ast/rewriter/inj_axiom.cpp b/src/ast/rewriter/inj_axiom.cpp
+index bdf7842..354ae24 100644
+--- a/src/ast/rewriter/inj_axiom.cpp
++++ b/src/ast/rewriter/inj_axiom.cpp
+@@ -55 +55 @@ bool simplify_inj_axiom(ast_manager & m, quantifier * q, expr_ref & result) {
+-                unsigned num_vars = 1;
++                [[maybe_unused]] unsigned num_vars = 1;
+diff --git a/src/math/lp/column_info.h b/src/math/lp/column_info.h
+index 1dc0c60..9cbeea6 100644
+--- a/src/math/lp/column_info.h
++++ b/src/math/lp/column_info.h
+@@ -50 +50 @@ public:
+-            (!m_lower_bound_is_set || m_lower_bound == c.m_low_bound) &&
++            (!m_lower_bound_is_set || m_lower_bound == c.m_lower_bound) &&
+diff --git a/src/math/lp/emonics.cpp b/src/math/lp/emonics.cpp
+index 5b3ae64..9f0e495 100644
+--- a/src/math/lp/emonics.cpp
++++ b/src/math/lp/emonics.cpp
+@@ -542 +542 @@ bool emonics::invariant() const {
+-                bool found = false;
++                [[maybe_unused]] bool found = false;
+diff --git a/src/math/lp/int_solver.cpp b/src/math/lp/int_solver.cpp
+index 9b11f88..0dfc0c5 100644
+--- a/src/math/lp/int_solver.cpp
++++ b/src/math/lp/int_solver.cpp
+@@ -349 +349 @@ bool int_solver::get_freedom_interval_for_column(unsigned j, bool & inf_l, impq
+-    unsigned rounds = 0;
++    [[maybe_unused]] unsigned rounds = 0;
+diff --git a/src/math/lp/static_matrix.h b/src/math/lp/static_matrix.h
+index a429268..9f4df5d 100644
+--- a/src/math/lp/static_matrix.h
++++ b/src/math/lp/static_matrix.h
+@@ -83 +83 @@ public:
+-        ref operator=(ref & v) { m_matrix.set(m_row, m_col, v.m_matrix.get(v.m_row, v.m_col)); return *this; }
++        ref operator=(ref & v) { m_matrix.set(m_row, m_col, v.m_matrix.get_elem(v.m_row, v.m_col)); return *this; }
+diff --git a/src/math/lp/static_matrix_def.h b/src/math/lp/static_matrix_def.h
+index 45d5d6d..4491c2d 100644
+--- a/src/math/lp/static_matrix_def.h
++++ b/src/math/lp/static_matrix_def.h
+@@ -93 +93 @@ static_matrix<T, X>::static_matrix(static_matrix const &A, unsigned * /* basis *
+-            set(col.var(), m, A.get_value_of_column_cell(col));
++            set(col.var(), m, A.get_val(col));
+diff --git a/src/math/lp/tail_matrix.h b/src/math/lp/tail_matrix.h
+index 2047e8c..3ff7fcf 100644
+--- a/src/math/lp/tail_matrix.h
++++ b/src/math/lp/tail_matrix.h
+@@ -41,0 +42 @@ public:
++#ifdef Z3DEBUG
+@@ -48,0 +50 @@ public:
++#endif
+diff --git a/src/math/polynomial/polynomial.cpp b/src/math/polynomial/polynomial.cpp
+index b85ac1c..4758498 100644
+--- a/src/math/polynomial/polynomial.cpp
++++ b/src/math/polynomial/polynomial.cpp
+@@ -3630 +3630 @@ namespace polynomial {
+-            unsigned counter = 0;
++            [[maybe_unused]] unsigned counter = 0;
+@@ -4174 +4174 @@ namespace polynomial {
+-            unsigned counter   = 0;
++            [[maybe_unused]] unsigned counter   = 0;
+diff --git a/src/model/model_evaluator.cpp b/src/model/model_evaluator.cpp
+index 23bab17..1108dc3 100644
+--- a/src/model/model_evaluator.cpp
++++ b/src/model/model_evaluator.cpp
+@@ -549 +549 @@ struct evaluator_cfg : public default_rewriter_cfg {
+-        bool are_values = true;
++        [[maybe_unused]] bool are_values = true;
+diff --git a/src/muz/ddnf/ddnf.cpp b/src/muz/ddnf/ddnf.cpp
+index ad19948..e8b2443 100644
+--- a/src/muz/ddnf/ddnf.cpp
++++ b/src/muz/ddnf/ddnf.cpp
+@@ -688 +688 @@ namespace datalog {
+-            unsigned idx = 0;
++            [[maybe_unused]] unsigned idx = 0;
+diff --git a/src/muz/rel/dl_product_relation.cpp b/src/muz/rel/dl_product_relation.cpp
+index 52c168f..681ddf8 100644
+--- a/src/muz/rel/dl_product_relation.cpp
++++ b/src/muz/rel/dl_product_relation.cpp
+@@ -1005 +1005 @@ namespace datalog {
+-        unsigned old_remain = old_sz;
++        [[maybe_unused]] unsigned old_remain = old_sz;
+diff --git a/src/nlsat/nlsat_evaluator.cpp b/src/nlsat/nlsat_evaluator.cpp
+index f7b8f27..7754c38 100644
+--- a/src/nlsat/nlsat_evaluator.cpp
++++ b/src/nlsat/nlsat_evaluator.cpp
+@@ -294,2 +294,2 @@ namespace nlsat {
+-                unsigned total_num_sections = 0;
+-                unsigned total_num_signs = 0;
++                [[maybe_unused]] unsigned total_num_sections = 0;
++                [[maybe_unused]] unsigned total_num_signs = 0;
+diff --git a/src/opt/opt_lns.cpp b/src/opt/opt_lns.cpp
+index ba5a071..cae9e67 100644
+--- a/src/opt/opt_lns.cpp
++++ b/src/opt/opt_lns.cpp
+@@ -177 +177 @@ namespace opt {
+-            unsigned num_disjoint = 0;
++            [[maybe_unused]] unsigned num_disjoint = 0;
+diff --git a/src/qe/qe_lite.cpp b/src/qe/qe_lite.cpp
+index 58fe3b2..dcf4cdb 100644
+--- a/src/qe/qe_lite.cpp
++++ b/src/qe/qe_lite.cpp
+@@ -2166 +2166 @@ namespace fm {
+-                unsigned eliminated = 0;
++                [[maybe_unused]] unsigned eliminated = 0;
+diff --git a/src/sat/sat_clause_use_list.cpp b/src/sat/sat_clause_use_list.cpp
+index 7ca0aa2..04b851e 100644
+--- a/src/sat/sat_clause_use_list.cpp
++++ b/src/sat/sat_clause_use_list.cpp
+@@ -25 +25 @@ namespace sat {
+-        unsigned sz = 0;
++        [[maybe_unused]] unsigned sz = 0;
+@@ -30 +30 @@ namespace sat {
+-        unsigned redundant = 0;
++        [[maybe_unused]] unsigned redundant = 0;
+diff --git a/src/sat/sat_drat.cpp b/src/sat/sat_drat.cpp
+index 982b6bb..bf882b9 100644
+--- a/src/sat/sat_drat.cpp
++++ b/src/sat/sat_drat.cpp
+@@ -492 +492 @@ namespace sat {
+-                unsigned num_undef = 0, num_true = 0;
++                [[maybe_unused]] unsigned num_undef = 0, num_true = 0;
+diff --git a/src/sat/sat_integrity_checker.cpp b/src/sat/sat_integrity_checker.cpp
+index 3453884..30f38db 100644
+--- a/src/sat/sat_integrity_checker.cpp
++++ b/src/sat/sat_integrity_checker.cpp
+@@ -115 +115 @@ namespace sat {
+-        unsigned num_frozen = 0;
++        [[maybe_unused]] unsigned num_frozen = 0;
+diff --git a/src/sat/sat_local_search.cpp b/src/sat/sat_local_search.cpp
+index 0b3c2f7..8c32370 100644
+--- a/src/sat/sat_local_search.cpp
++++ b/src/sat/sat_local_search.cpp
+@@ -583 +583 @@ namespace sat {
+-        unsigned reflipped = 0;
++        [[maybe_unused]] unsigned reflipped = 0;
+diff --git a/src/sat/sat_model_converter.cpp b/src/sat/sat_model_converter.cpp
+index 656270f..65455a2 100644
+--- a/src/sat/sat_model_converter.cpp
++++ b/src/sat/sat_model_converter.cpp
+@@ -162 +162 @@ namespace sat {
+-            literal_vector::const_iterator itbegin = it;
++            [[maybe_unused]] literal_vector::const_iterator itbegin = it;
+diff --git a/src/sat/sat_simplifier.cpp b/src/sat/sat_simplifier.cpp
+index faa9408..78a6339 100644
+--- a/src/sat/sat_simplifier.cpp
++++ b/src/sat/sat_simplifier.cpp
+@@ -290 +290 @@ namespace sat {
+-        unsigned nm = 0;
++        [[maybe_unused]] unsigned nm = 0;
+diff --git a/src/sat/sat_solver.cpp b/src/sat/sat_solver.cpp
+index d923014..5e47dd3 100644
+--- a/src/sat/sat_solver.cpp
++++ b/src/sat/sat_solver.cpp
+@@ -4373 +4373 @@ namespace sat {
+-        unsigned num_units = 0, num_iterations = 0;
++        [[maybe_unused]] unsigned num_units = 0, num_iterations = 0;
+@@ -4468 +4468 @@ namespace sat {
+-            unsigned num_assigned = 0;
++            [[maybe_unused]] unsigned num_assigned = 0;
+@@ -4696 +4696 @@ namespace sat {
+-        unsigned num_ext = 0;
++        [[maybe_unused]] unsigned num_ext = 0;
+diff --git a/src/sat/smt/bv_internalize.cpp b/src/sat/smt/bv_internalize.cpp
+index e3c193f..7b0f964 100644
+--- a/src/sat/smt/bv_internalize.cpp
++++ b/src/sat/smt/bv_internalize.cpp
+@@ -657 +657 @@ namespace bv {
+-        unsigned arg_sz = get_bv_size(v_arg);
++        [[maybe_unused]] unsigned arg_sz = get_bv_size(v_arg);
+diff --git a/src/sat/smt/euf_model.cpp b/src/sat/smt/euf_model.cpp
+index 5ac8e7c..cb3ea2c 100644
+--- a/src/sat/smt/euf_model.cpp
++++ b/src/sat/smt/euf_model.cpp
+@@ -259 +259 @@ namespace euf {
+-        bool first = true;
++        [[maybe_unused]] bool first = true;
+diff --git a/src/sat/smt/fpa_solver.cpp b/src/sat/smt/fpa_solver.cpp
+index ef2fd73..207c8f8 100644
+--- a/src/sat/smt/fpa_solver.cpp
++++ b/src/sat/smt/fpa_solver.cpp
+@@ -119 +119 @@ namespace fpa {
+-        app* a = to_app(e);
++        [[maybe_unused]] app* a = to_app(e);
+diff --git a/src/sat/smt/pb_solver.cpp b/src/sat/smt/pb_solver.cpp
+index 33fd1c4..e4e7709 100644
+--- a/src/sat/smt/pb_solver.cpp
++++ b/src/sat/smt/pb_solver.cpp
+@@ -2762 +2762 @@ namespace pb {
+-        unsigned c2_exclusive = 0;
++        [[maybe_unused]] unsigned c2_exclusive = 0;
+@@ -3376 +3376 @@ namespace pb {
+-        unsigned num_max_level = 0;
++        [[maybe_unused]] unsigned num_max_level = 0;
+diff --git a/src/sat/smt/q_mam.cpp b/src/sat/smt/q_mam.cpp
+index 000f768..448c99b 100644
+--- a/src/sat/smt/q_mam.cpp
++++ b/src/sat/smt/q_mam.cpp
+@@ -3798 +3798 @@ namespace q {
+-            unsigned lbl = 0;
++            [[maybe_unused]] unsigned lbl = 0;
+diff --git a/src/smt/diff_logic.h b/src/smt/diff_logic.h
+index ee1dbd6..11c1e67 100644
+--- a/src/smt/diff_logic.h
++++ b/src/smt/diff_logic.h
+@@ -570 +570 @@ public:
+-        static unsigned num_conflicts = 0;
++        [[maybe_unused]] static unsigned num_conflicts = 0;
+@@ -1874 +1874 @@ public:
+-                    unsigned length = 0;
++                    [[maybe_unused]] unsigned length = 0;
+diff --git a/src/smt/dyn_ack.cpp b/src/smt/dyn_ack.cpp
+index 42844f5..a1e2b5e 100644
+--- a/src/smt/dyn_ack.cpp
++++ b/src/smt/dyn_ack.cpp
+@@ -297 +297 @@ namespace smt {
+-        unsigned num_deleted = 0;
++        [[maybe_unused]] unsigned num_deleted = 0;
+@@ -523 +523 @@ namespace smt {
+-        unsigned num_deleted = 0;
++        [[maybe_unused]] unsigned num_deleted = 0;
+diff --git a/src/smt/smt_lookahead.cpp b/src/smt/smt_lookahead.cpp
+index 8de3f2f..6674b41 100644
+--- a/src/smt/smt_lookahead.cpp
++++ b/src/smt/smt_lookahead.cpp
+@@ -82 +82 @@ namespace smt {
+-        unsigned nf = 0, nc = 0, ns = 0, n = 0;
++        [[maybe_unused]] unsigned nf = 0, nc = 0, ns = 0, n = 0;
+diff --git a/src/smt/smt_parallel.h b/src/smt/smt_parallel.h
+index 07b0401..2857b6f 100644
+--- a/src/smt/smt_parallel.h
++++ b/src/smt/smt_parallel.h
+@@ -26 +26 @@ namespace smt {
+-        context& ctx;
++        [[maybe_unused]] context& ctx;
+diff --git a/src/smt/theory_arith_aux.h b/src/smt/theory_arith_aux.h
+index f152c24..d27aefd 100644
+--- a/src/smt/theory_arith_aux.h
++++ b/src/smt/theory_arith_aux.h
+@@ -1545 +1545 @@ namespace smt {
+-        unsigned round = 0;
++        [[maybe_unused]] unsigned round = 0;
+diff --git a/src/smt/theory_bv.cpp b/src/smt/theory_bv.cpp
+index c714b17..82468a1 100644
+--- a/src/smt/theory_bv.cpp
++++ b/src/smt/theory_bv.cpp
+@@ -1857 +1857 @@ namespace smt {
+-            unsigned      num_bits = 0;
++            [[maybe_unused]] unsigned      num_bits = 0;
+diff --git a/src/smt/theory_lra.cpp b/src/smt/theory_lra.cpp
+index abe10d0..bb0e0b4 100644
+--- a/src/smt/theory_lra.cpp
++++ b/src/smt/theory_lra.cpp
+@@ -3403 +3403 @@ public:
+-        static unsigned s_count = 0;
++        [[maybe_unused]] static unsigned s_count = 0;
+diff --git a/src/smt/theory_pb.cpp b/src/smt/theory_pb.cpp
+index 8cef18a..9fea348 100644
+--- a/src/smt/theory_pb.cpp
++++ b/src/smt/theory_pb.cpp
+@@ -2102 +2102 @@ namespace smt {
+-        unsigned sum = 0, maxsum = 0;
++        [[maybe_unused]] unsigned sum = 0, maxsum = 0;
+diff --git a/src/smt/theory_seq.cpp b/src/smt/theory_seq.cpp
+index 436752a..347a3ff 100644
+--- a/src/smt/theory_seq.cpp
++++ b/src/smt/theory_seq.cpp
+@@ -1560 +1560 @@ bool theory_seq::check_ubv_string(expr* e) {
+-    expr* n = nullptr;
++    [[maybe_unused]] expr* n = nullptr;
+diff --git a/src/smt/theory_str.cpp b/src/smt/theory_str.cpp
+index e5c1469..74fad77 100644
+--- a/src/smt/theory_str.cpp
++++ b/src/smt/theory_str.cpp
+@@ -2463 +2463 @@ namespace smt {
+-                int pos = 0;
++                [[maybe_unused]] int pos = 0;
+@@ -4055 +4055 @@ namespace smt {
+-            int pos = 1;
++            [[maybe_unused]] int pos = 1;
+@@ -4484 +4484 @@ namespace smt {
+-        int pos = 1;
++        [[maybe_unused]] int pos = 1;
+@@ -5525 +5525 @@ namespace smt {
+-            for (auto const &itor : groundedMap[node]) {
++            for ([[maybe_unused]] auto const &itor : groundedMap[node]) {
+@@ -6367 +6367 @@ namespace smt {
+-                        int and_count = 1;
++                        [[maybe_unused]] int and_count = 1;
+diff --git a/src/tactic/core/cofactor_elim_term_ite.cpp b/src/tactic/core/cofactor_elim_term_ite.cpp
+index eda079e..d94d41d 100644
+--- a/src/tactic/core/cofactor_elim_term_ite.cpp
++++ b/src/tactic/core/cofactor_elim_term_ite.cpp
+@@ -447 +447 @@ struct cofactor_elim_term_ite::imp {
+-                unsigned step = 0;
++                [[maybe_unused]] unsigned step = 0;
+@@ -524 +524 @@ struct cofactor_elim_term_ite::imp {
+-            unsigned step = 0;
++            [[maybe_unused]] unsigned step = 0;
+diff --git a/src/tactic/fd_solver/smtfd_solver.cpp b/src/tactic/fd_solver/smtfd_solver.cpp
+index 4ebb078..ee47ba0 100644
+--- a/src/tactic/fd_solver/smtfd_solver.cpp
++++ b/src/tactic/fd_solver/smtfd_solver.cpp
+@@ -1041 +1041 @@ namespace smtfd {
+-            unsigned r = 0;
++            [[maybe_unused]] unsigned r = 0;
+diff --git a/src/util/parray.h b/src/util/parray.h
+index 0c3173f..8bfb57d 100644
+--- a/src/util/parray.h
++++ b/src/util/parray.h
+@@ -313 +313 @@ public:
+-        unsigned r;
++        [[maybe_unused]] unsigned r;
+diff --git a/src/util/rlimit.h b/src/util/rlimit.h
+index 9be53cd..2fb69be 100644
+--- a/src/util/rlimit.h
++++ b/src/util/rlimit.h
+@@ -21,0 +22,3 @@ Revision History:
++#ifdef __EMSCRIPTEN__
++#include "util/scoped_timer.h"
++#endif
+@@ -54 +57,6 @@ public:
+-    inline bool not_canceled() const { return (m_cancel == 0 && m_count <= m_limit) || m_suspend; }
++    inline bool not_canceled() const {
++#ifdef __EMSCRIPTEN__
++        scoped_timer::poll();
++#endif
++        return (m_cancel == 0 && m_count <= m_limit) || m_suspend;
++    }
+diff --git a/src/util/scoped_timer.cpp b/src/util/scoped_timer.cpp
+index e144cf6..50c2b3d 100644
+--- a/src/util/scoped_timer.cpp
++++ b/src/util/scoped_timer.cpp
+@@ -22,0 +23,3 @@ Revision History:
++#ifdef __EMSCRIPTEN__
++#include "z3-timer.inc"
++#else
+@@ -157,0 +161 @@ void scoped_timer::finalize() {
++#endif
+diff --git a/src/util/scoped_timer.h b/src/util/scoped_timer.h
+index 95920b7..38ef253 100644
+--- a/src/util/scoped_timer.h
++++ b/src/util/scoped_timer.h
+@@ -30,0 +31,3 @@ public:
++#ifdef __EMSCRIPTEN__
++    static void poll();
++#endif

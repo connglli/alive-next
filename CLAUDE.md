@@ -41,6 +41,7 @@ A flawed proposal wastes search budget, but can never compromise soundness or yi
 * **External Checkers:** Pinned revisions of `alive-tv` (SMT refinement checker), `llubi` (UB-aware interpreter), and `llrwt` (verified rewriter built from VeIR), compiled from source against the toolchain's LLVM.
 * **Verification Kernel (`kernel/`):** The kernel independently replays and validates certificate packages.
 * **Visualization Scripts (`scripts/visualize.py`):** The script renders an interactive, self-contained HTML page of the execution trajectory.
+* **Web interface (`web/`):** A non-intrusive static frontend that calls alive-simple as a standalone tool. Keep browser adapters, WebAssembly build settings and port patches under `web/`. Web-only work must preserve native CLI behavior and leave `engine/`, `llops/` and `kernel/` unchanged. [web/README.md](./web/README.md) covers usage; [web/DEVELOPERS.md](./web/DEVELOPERS.md) covers implementation and development.
 
 ### Common Workflows
 

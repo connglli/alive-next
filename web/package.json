@@ -1,0 +1,18 @@
+{
+  "name": "alive-next-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "../engine/node_modules/.bin/tsc --noEmit -p tsconfig.json",
+    "test:build": "node test/build.mjs",
+    "test:limits": "bun test test/limits.test.ts",
+    "test:browser": "node test/browser.mjs"
+  },
+  "dependencies": {
+    "@noble/hashes": "2.4.0",
+    "highlight.js": "11.12.0"
+  },
+  "devDependencies": {
+    "playwright-core": "1.57.0"
+  }
+}

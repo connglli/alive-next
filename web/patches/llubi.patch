@@ -1,0 +1,6 @@
+diff --git a/ubi.cpp b/ubi.cpp
+--- a/ubi.cpp
++++ b/ubi.cpp
+@@ -1177 +1177 @@
+-    VolatileMemHash += Size << 32;
++    VolatileMemHash += uint64_t(Size) << 32;
