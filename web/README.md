@@ -25,6 +25,17 @@ python3 -m http.server 8000 --directory web/dist
 
 Open http://localhost:8000/ and provide an LLVM IR module defining `@src` and `@tgt` with matching function types.
 
+## Serve remotely
+
+Commit the built site to the local `web` branch from the repository root:
+
+```sh
+./web/deploy.sh
+git push -f origin web:web
+```
+
+Open https://connglli.github.io/alive-next/ and provide an LLVM IR module defining `@src` and `@tgt` with matching function types.
+
 ## Developers
 
 [DEVELOPERS.md](./DEVELOPERS.md) saves implementation, toolchain, tests and publishing documentation.

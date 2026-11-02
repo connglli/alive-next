@@ -137,6 +137,7 @@ async function generate() {
     .replace('href="./theme.css"', `href="./${theme}"`)
     .replace('href="./style.css"', `href="./${style}"`);
   await writeFile(join(staging, "index.html"), html);
+  await writeFile(join(staging, "revision.txt"), `${revision}\n`);
 
   // The distributed checker binaries carry their upstream license notices.
   const native = execFileSync(join(root, "scripts/depman.sh"), ["toolchain"], {

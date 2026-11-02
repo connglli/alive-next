@@ -64,6 +64,7 @@ bun run test:limits
 bun run test:controllers
 bun run test:visualizer
 bun run test:build
+bun run test:deploy
 ```
 
 With the Python server running, test the UI with an installed Chrome or Chromium:
@@ -79,6 +80,8 @@ Set `CHROME_BIN` when the executable is not `/usr/bin/google-chrome`, or `WEB_TE
 Keep source on `main` and publish the built site from a separate `web` branch at https://connglli.github.io/alive-next/.
 
 1. From the repository root on the source branch, run `./web/build.sh`.
-2. Copy the contents of `web/dist/` to the root of the `web` branch, including `.nojekyll`. `index.html` must be at the branch root.
-3. Commit and push the publishing branch when ready.
+2. Run `./web/deploy.sh`. It creates or updates the local `web` branch with exactly the contents of `web/dist/`, including `.nojekyll`, and commits them as `chore: update the web site with <revision>`. The revision comes from the build's `revision.txt`.
+3. Run `git push -f origin web:web` when ready to publish.
 4. In Settings → Pages → Build and deployment, set Source to Deploy from a branch, select `web` and `/(root)`, then Save.
+
+Deployment uses a temporary Git index and leaves the source checkout and its staged changes intact. It refuses to update `web` while that branch is checked out in any worktree, skips commits when its files already match, and never pushes.

@@ -22,6 +22,9 @@ async function snapshot(directory) {
 }
 
 const html = await readFile(join(dist, "index.html"), "utf8");
+const revision = (await readFile(join(dist, "revision.txt"), "utf8")).trim();
+assert.match(revision, /^[a-f0-9]+(?:-dirty)?$/);
+assert.ok(html.includes(`LLVM · ${revision}</span>`));
 for (const match of html.matchAll(/(?:src|href)="\.\/([^"/][^"]*)"/g)) {
   await readFile(join(dist, match[1]));
   assert.match(match[1], /\.[a-f0-9]{64}\.(js|css)$/);
