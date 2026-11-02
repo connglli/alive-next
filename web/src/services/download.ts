@@ -4,5 +4,6 @@ export function download(blob: Blob, filename: string) {
   link.href = url;
   link.download = filename;
   link.click();
+  // The browser starts consuming the object URL asynchronously after the click.
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

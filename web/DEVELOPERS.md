@@ -24,6 +24,8 @@ The Z3 build also uses `-Dsmt=z3_smt` to separate its private SMT namespace from
 
 ## Runtime
 
+[src/app.ts](./src/app.ts) wires user actions and state updates. [Views](./src/views/) own DOM rendering and event bindings; [controllers](./src/controllers/) own session lifecycles, file reads and export cancellation. [Services](./src/services/) provide checker execution, report-worker requests and downloads. [src/state.ts](./src/state.ts) defines the run lifecycle and checker records independently of the DOM. Views receive state and callbacks rather than locating controllers or workers through globals.
+
 [src/alive-simple.worker.ts](./src/alive-simple.worker.ts) provides a command/result interface around the existing session and searcher. The build maps their file, path, OS, hashing and process operations to browser adapters in [src/platform/](./src/platform/). Session files and trajectories stay in memory. The UI displays snapshots of the session's goal tree.
 
 Show details opens a snapshot using the visualizer's own HTML, CSS and JavaScript from `scripts/visualize_ui.*`. The page retains the session's trajectory and immutable programs so the view remains available after Stop. [src/visualizer-data.ts](./src/visualizer-data.ts) uses the engine's goal replay to prepare the visualizer's data, with difflib's Python-compatible unified diffs. Snapshot preparation runs in a separate worker; the resulting page lives in an iframe so its styles and inspector stay isolated. Its highlighter and styles are embedded for offline viewing.
@@ -59,6 +61,7 @@ After building, run the browser-code and packaging checks from `web/`:
 ```sh
 bun run check
 bun run test:limits
+bun run test:controllers
 bun run test:visualizer
 bun run test:build
 ```

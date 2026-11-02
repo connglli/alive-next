@@ -6,6 +6,7 @@
     "check": "../engine/node_modules/.bin/tsc --noEmit -p tsconfig.json",
     "test:build": "node test/build.mjs",
     "test:limits": "bun test test/limits.test.ts",
+    "test:controllers": "bun test test/controllers.test.ts",
     "test:visualizer": "bun test test/visualizer.test.ts",
     "test:browser": "node test/browser.mjs"
   },

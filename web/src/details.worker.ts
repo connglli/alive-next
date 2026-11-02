@@ -1,5 +1,5 @@
 import { sessionArchive } from "./archive.ts";
-import type { ReportRequest } from "./report.ts";
+import type { ReportRequest } from "./protocol.ts";
 import { visualizerData } from "./visualizer-data.ts";
 
 self.onmessage = async (event: MessageEvent<ReportRequest>) => {

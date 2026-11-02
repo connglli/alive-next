@@ -1,4 +1,4 @@
-import type { Execution, ProcessResult, Tool } from "./protocol.ts";
+import type { Execution, ProcessResult, Tool } from "../protocol.ts";
 
 type Assets = Record<Tool, { glue: string; wasm: string }>;
 
@@ -102,6 +102,7 @@ export class Runtime {
       this.jobs.set(id, job);
       this.load(request.tool)
         .then(({ module, glue }) => {
+          // A download can finish after this checker request has been cancelled.
           if (!active()) return;
 
           const worker = new Worker(new URL(TOOL_WORKER_FILE, import.meta.url), { type: "module" });
@@ -120,6 +121,7 @@ export class Runtime {
   }
 
   kill(id: number) {
+    // Return a process exit so checker drivers can finish their timeout handling.
     this.jobs.get(id)?.finish({ exit: 143, stdout: "", stderr: "Stopped", ms: 0 });
   }
 

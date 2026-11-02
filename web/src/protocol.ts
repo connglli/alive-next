@@ -33,6 +33,12 @@ export interface ReportSource {
   programs: Record<string, string>;
 }
 
+export type ReportRequest =
+  | { kind: "view"; source: ReportSource }
+  | { kind: "save"; source: ReportSource; module: string };
+
+export type ReportResponse = { html: string } | { archive: ArrayBuffer };
+
 export type WorkerMessage =
   | { type: "trajectory"; line: string }
   | { type: "program"; hash: string; text: string }
