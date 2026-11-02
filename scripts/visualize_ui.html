@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.12.0/styles/github.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.12.0/highlight.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.12.0/languages/llvm.min.js"></script>
+<style>__CSS__</style>
+</head>
+<body>
+<header class="masthead">
+  <div class="session-heading">
+    <div class="eyebrow">ALIVE-NEXT EXPLORER</div>
+    <h1>__TITLE__</h1>
+  </div>
+  <p id="summary"></p>
+  <span id="verdict" class="badge"></span>
+  <button id="view-counterexample" class="small-button" hidden>
+    View counterexample ↗
+  </button>
+</header>
+
+<div id="warning" class="warning" role="alert" hidden></div>
+
+<main class="workspace">
+  <aside class="panel trajectory-panel" aria-labelledby="trajectory-title">
+    <header class="panel-heading trajectory-heading">
+      <div>
+        <div class="eyebrow">01 / SESSION HISTORY</div>
+        <h2 id="trajectory-title">Trajectory</h2>
+      </div>
+      <span id="event-count" class="counter"></span>
+    </header>
+
+    <div class="trajectory-controls">
+      <input id="search" type="search"
+             placeholder="Search events, goals, rules…"
+             aria-label="Search trajectory">
+
+      <details class="filter-disclosure">
+        <summary>Filter event types</summary>
+        <div id="filters"></div>
+      </details>
+
+      <div class="playback">
+        <button id="previous" class="icon-button"
+                title="Previous event" aria-label="Previous event">←</button>
+        <input id="scrubber" type="range" min="0" value="0"
+               aria-label="Selected trajectory event">
+        <button id="next" class="icon-button"
+                title="Next event" aria-label="Next event">→</button>
+      </div>
+
+      <div class="playback-caption">
+        <span id="position"></span>
+        <span>← → to navigate</span>
+      </div>
+
+      <button id="inspect-event" class="small-button inspect-event-button">
+        Inspect event ↗
+      </button>
+    </div>
+
+    <ol id="timeline" aria-label="Trajectory events"></ol>
+    <div id="no-events" class="empty" hidden>No matching events.</div>
+  </aside>
+
+  <div class="right-column">
+    <section class="panel graph-panel" aria-labelledby="graph-title">
+      <header class="panel-heading graph-heading" id="graph-heading">
+        <div>
+          <div class="eyebrow">02 / DERIVATION STRUCTURE</div>
+          <h2 id="graph-title">Goal Tree</h2>
+        </div>
+        <span id="graph-position" class="counter"></span>
+      </header>
+
+      <div class="graph-toolbar">
+        <label class="toggle">
+          <input id="all-revisions" type="checkbox">
+          Show every revision
+        </label>
+
+        <div class="legend" aria-label="Goal statuses">
+          <span class="status open">Open</span>
+          <span class="status split">Split</span>
+          <span class="status proved">Proved</span>
+          <span class="status refuted">Refuted</span>
+        </div>
+
+        <div class="zoom-controls">
+          <button id="zoom-out" class="icon-button"
+                  aria-label="Zoom out">−</button>
+          <span id="zoom-value">100%</span>
+          <button id="zoom-in" class="icon-button"
+                  aria-label="Zoom in">+</button>
+          <button id="fit" class="small-button">Fit</button>
+        </div>
+      </div>
+
+      <div id="viewport" tabindex="0"
+           aria-label="Goal graph. Scroll to navigate; select a state or transition to inspect it.">
+        <div id="stage">
+          <div id="canvas">
+            <svg id="wires" class="wires"
+                 xmlns="http://www.w3.org/2000/svg"
+                 aria-label="Goal transitions"></svg>
+            <div id="cards"></div>
+          </div>
+        </div>
+      </div>
+
+      <footer class="graph-footer">
+        <span>Click a state or transition to inspect it</span>
+        <span>Drag background to pan · Ctrl/⌘ + wheel to zoom</span>
+      </footer>
+    </section>
+  </div>
+</main>
+
+<dialog id="inspector-dialog" aria-labelledby="dialog-title">
+  <header class="panel-heading inspector-heading" id="inspector-heading">
+    <div>
+      <div class="eyebrow">SELECTED OBJECT / DETAILS</div>
+      <h2 id="dialog-title">Inspector</h2>
+    </div>
+    <button id="close-dialog" class="small-button">
+      Close ✕
+    </button>
+  </header>
+
+  <nav class="inspector-tabs" aria-label="Inspector view">
+    <button data-view="changes" aria-pressed="true">Changes</button>
+    <button data-view="state" aria-pressed="false">Full state</button>
+    <button data-view="counterexample" aria-pressed="false">Counterexample</button>
+    <button data-view="raw" aria-pressed="false">Event JSON</button>
+  </nav>
+
+  <div id="dialog-content" class="inspector-content"></div>
+</dialog>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>__JS__</script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+:root {
+  color-scheme: light;
+  --background: #f3f5fa;
+  --surface: #ffffff;
+  --text: #243047;
+  --muted: #748096;
+  --line: #e2e7f0;
+  --purple: #7355c5;
+  --purple-soft: #f2edfc;
+  --blue: #3978b9;
+  --blue-soft: #edf5fd;
+  --green: #278466;
+  --green-soft: #eaf7f1;
+  --amber: #a57724;
+  --amber-soft: #fcf4e4;
+  --red: #ba5260;
+  --red-soft: #fceef0;
+  --shadow: 0 5px 20px #26345408, 0 1px 3px #26345405;
+  --source-heading: linear-gradient(105deg, #eee8fa, #faf8fe);
+  --source-heading-text: #5f4a9b;
+  --target-heading: linear-gradient(105deg, #e9f2fb, #f8fbfe);
+  --target-heading-text: #356b99;
+  --inspector-heading: linear-gradient(105deg, #e9f4ef, #f8fcfa);
+  --inspector-heading-text: #42746c;
+  --focus: #9a85dd;
+  --panel-radius: 15px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  /* biome-ignore lint/complexity/noImportantStyles: hidden must override component layout rules. */
+  display: none !important;
+}
+body {
+  margin: 0;
+  color: var(--text);
+  background: var(--background);
+  font:
+    13px / 1.5 Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+/* Keep the highlighter theme from changing code layout or pane backgrounds. */
+.syntax-code {
+  font: inherit;
+}
+
+.syntax-code.hljs {
+  display: inline;
+  padding: 0;
+  overflow: visible;
+  color: inherit;
+  background: transparent;
+}

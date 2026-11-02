@@ -330,9 +330,8 @@ class TestPage(Case):
     self.session.append({"kind": "verdict", "outcome": "verified"})
 
   def test_no_string_in_the_script_runs_off_its_line(self):
-    # The script is a Python string, so a newline meant for JavaScript has
-    # to arrive escaped. When it does not, the page carries a string
-    # literal split across two lines and nothing on it runs.
+    # The page embeds JavaScript as source; escaped newlines must stay escaped
+    # rather than splitting a quoted literal across physical lines.
     page = visualize.render(self.session.write())
     script = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
     for number, line in enumerate(script.splitlines(), start=1):
