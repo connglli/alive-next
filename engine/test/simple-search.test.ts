@@ -470,6 +470,41 @@ describe.skipIf(!built)("search", () => {
     expect((await session.show("g1")).tgt.id).toBe(before.tgt.id);
   });
 
+  test("abandons a cleanup whose text differs only in a join's listed predecessors", async () => {
+    // Printing reverses this join's predecessor list without changing the IR.
+    const joined = (value: number) => `define i32 @f(i1 %c) {
+entry:
+  br i1 %c, label %a, label %b
+
+a:
+  br label %join
+
+b:
+  br label %join
+
+join:
+  %r = phi i32 [ 0, %a ], [ ${value}, %b ]
+  ret i32 %r
+}
+`;
+    const session = await start(
+      joined(1),
+      joined(2),
+      stub(() => false),
+    );
+    expect(
+      await search(session, llops, {
+        ...limits,
+        steps: false,
+        cuts: 0,
+        cases: false,
+        counterexampleMs: 0,
+      }),
+    ).toBe("unknown");
+    expect(moves(session)).toContain("tx_abort");
+    expect(moves(session)).not.toContain("tx_commit");
+  });
+
   test("keeps target attributes when their removal is not certified", async () => {
     const session = await start(
       "define void @f(ptr %p) { store i32 0, ptr %p\n ret void }",

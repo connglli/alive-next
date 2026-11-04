@@ -91,7 +91,7 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   if (session.verdict !== "unknown") return session.verdict;
   // Prepare the root before bounded peeling can split it.
   await dropLifetimes(session, root);
-  await dropAttrs(session, root);
+  await dropAttrs(session, llops, root);
   await dropLoopIds(session, root);
   // A loop the tgt no longer has is peeled and cut away first, and what is left
   // is searched.
@@ -122,12 +122,15 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
 }
 
 /** Drops from the tgt the attributes `llops respected` shows its instructions keep. */
-async function dropAttrs(session: Session, gid: string) {
+async function dropAttrs(session: Session, llops: Llops, gid: string) {
   const view = await session.show(gid);
   if (view.status !== "open") return;
   await session.begin(gid, "tgt");
   const edited = await session.edit({ op: "drop_attrs" });
-  if (edited.kind !== "applied" || edited.text === view.tgt.text) {
+  // Edits may print predecessor lists in a different order than the store.
+  // Compare canonical modules so printing alone cannot trigger a commit.
+  const canon = edited.kind === "applied" ? await llops.canon(edited.text) : undefined;
+  if (!canon?.ok || canon.module === view.tgt.text) {
     await session.abort();
     return;
   }
@@ -265,7 +268,7 @@ async function* moves(
   { cuts, stages = [], peelable = true, steps = true, comparisons: left }: Start,
 ) {
   const { session, llops, limits } = run;
-  if (gid !== run.root) yield stepping(() => dropAttrs(session, gid));
+  if (gid !== run.root) yield stepping(() => dropAttrs(session, llops, gid));
   const last = yield* walk(run, gid, stages, cuts);
   // Skip windows already asked toward this goal's target body.
   const view = await session.show(gid);
