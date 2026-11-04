@@ -4,7 +4,7 @@
 export interface Limits {
   /** Wall-clock time for the whole search. */
   ms: number;
-  /** The budget of the first check of the root's original pair. */
+  /** The budget of root checks before and after preparation. */
   rootMs: number;
   /** Time to look for a counterexample to a root that loops, which turns up quickly. */
   counterexampleMs: number;

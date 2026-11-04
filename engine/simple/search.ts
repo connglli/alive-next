@@ -90,7 +90,9 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   await unrolling(session, llops, root, limits.counterexampleMs);
   if (session.verdict !== "unknown") return session.verdict;
   // Prepare the root before bounded peeling can split it.
-  await dropLifetimes(session, root);
+  const dropped = await dropLifetimes(session, root);
+  if (dropped && (await session.check(root, limits.rootMs)).outcome === "proved")
+    return session.verdict;
   await dropAttrs(session, llops, root);
   await dropLoopIds(session, root);
   // A loop the tgt no longer has is peeled and cut away first, and what is left
@@ -151,13 +153,13 @@ async function dropLoopIds(session: Session, gid: string) {
 
 /** Drops the src's lifetime markers in a step of its own, which `respected` certifies. */
 async function dropLifetimes(session: Session, gid: string) {
-  if (!(await session.show(gid)).src.text.includes("call void @llvm.lifetime.")) return;
+  if (!(await session.show(gid)).src.text.includes("call void @llvm.lifetime.")) return false;
   await session.begin(gid, "src");
   if ((await session.edit({ op: "drop_lifetimes" })).kind !== "applied") {
     await session.abort();
-    return;
+    return false;
   }
-  await session.commit({ narrow: false, eager: false });
+  return (await session.commit({ narrow: false, eager: false })).kind === "certified";
 }
 
 /** Acts on the top goal's answer: a proof closes it, a refutation repairs, goals stack. */

@@ -940,6 +940,85 @@ declare void @g(ptr)
   }, 60_000);
 });
 
+describe.skipIf(!built)("root check after lifetime cleanup", () => {
+  const src = `define i32 @f(i32 %x) {
+entry:
+  %s = alloca i32, align 4
+  call void @llvm.lifetime.start.p0(ptr %s)
+  store i32 %x, ptr %s, align 4
+  %v = load i32, ptr %s, align 4
+  call void @llvm.lifetime.end.p0(ptr %s)
+  ret i32 %v
+}
+
+declare void @llvm.lifetime.start.p0(ptr captures(none))
+declare void @llvm.lifetime.end.p0(ptr captures(none))
+`;
+  const tgt = "define i32 @f(i32 %x) { ret i32 %x }";
+  const onlyChecks = { ...limits, steps: false, cuts: 0, cases: false, counterexampleMs: 0 };
+
+  test("proves the cleaned root on its initial budget before further preparation", async () => {
+    const session = await start(
+      src,
+      tgt,
+      answering((source, _asked, ms) =>
+        !source.includes("lifetime") && ms === limits.rootMs ? "correct" : "unknown",
+      ),
+    );
+    expect(await search(session, llops, onlyChecks)).toBe("verified");
+    expect(
+      calls(session)
+        .filter((call) => call.tool === "check")
+        .map((call) => call.args.timeout_ms),
+    ).toEqual([limits.rootMs, limits.rootMs]);
+    expect(
+      calls(session)
+        .filter((call) => call.tool === "tx_edit")
+        .map((call) => call.args.op),
+    ).toEqual(["drop_lifetimes"]);
+    if (solving) replay(session);
+  });
+
+  for (const [reason, source] of [
+    ["the source has no markers", SPILLED],
+    ["the drop is not certified", src.replace("%x) {", "%x) noreturn {")],
+  ] as const)
+    test(`skips the extra root check when ${reason}`, async () => {
+      const session = await start(
+        source,
+        tgt,
+        stub(() => false),
+      );
+      const before = await session.show("g1");
+      expect(await search(session, llops, onlyChecks)).toBe("unknown");
+      expect((await session.show("g1")).src.id).toBe(before.src.id);
+      expect(
+        calls(session).filter(
+          (call) => call.tool === "check" && call.args.timeout_ms === limits.rootMs,
+        ),
+      ).toHaveLength(1);
+    });
+
+  for (const outcome of ["unknown", "incorrect"] as const)
+    test(`continues searching when the cleaned root check is ${outcome}`, async () => {
+      const session = await start(
+        src,
+        tgt,
+        answering((source) => (source.includes("lifetime") ? "unknown" : outcome)),
+      );
+      expect(await search(session, llops, onlyChecks)).toBe("unknown");
+      expect(
+        calls(session).filter(
+          (call) => call.tool === "check" && call.args.timeout_ms === limits.rootMs,
+        ),
+      ).toHaveLength(2);
+      expect(
+        calls(session).some((call) => call.tool === "tx_edit" && call.args.op === "drop_attrs"),
+      ).toBe(true);
+      expect(moves(session)).toContain("give_up");
+    });
+});
+
 describe.skipIf(!solving)("bun run simple", () => {
   test("ends the whole run when its time is up, and leaves no check running", async () => {
     // varA's root check alone takes its whole budget, so the time runs out in it.
