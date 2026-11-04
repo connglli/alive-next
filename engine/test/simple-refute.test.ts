@@ -20,4 +20,19 @@ i32 %#3 = #x0000000a (10)
       { type: "i8", value: undefined, poison: true },
     ]);
   });
+
+  test("named inputs follow the supplied signature rather than their printed order", () => {
+    const detail = `Example:
+i1 %condition = #x0 (0)
+i32 %value = poison
+
+Source:
+i32 %result = #x00000000 (0)
+`;
+    expect(inputsOf(detail, ["%value", "%condition"])).toEqual([
+      { type: "i32", value: undefined, poison: true },
+      { type: "i1", value: 0n },
+    ]);
+    expect(inputsOf(detail)).toEqual([]);
+  });
 });

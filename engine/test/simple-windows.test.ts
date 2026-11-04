@@ -94,6 +94,22 @@ async function arrived(session: Session) {
   return view.src.text === view.tgt.text;
 }
 
+/** Replays the proof that closed the session's root. */
+function replay(session: Session) {
+  const certificate = certify(session.dir, join(session.dir, "certificate"));
+  const replay = Bun.spawnSync([
+    "python3",
+    join(repoRoot(), "kernel/check.py"),
+    certificate,
+    "--llops",
+    toolchain.path("llops"),
+    "--alive-tv",
+    toolchain.path("alive-tv"),
+  ]);
+  expect(replay.stdout.toString()).toContain("VERIFIED - root g1");
+  expect(replay.exitCode).toBe(0);
+}
+
 /** The splices actually sent to llops, with its answers. */
 function splices(session: Session) {
   const seen: { from: string; to: string; kind: string }[] = [];
@@ -389,6 +405,88 @@ entry:
 });
 
 describe.skipIf(!solving)("windows with alive-tv", () => {
+  const masked = (prefix: string, args: string, declarations = "") => `define i32 @f(${args}) {
+entry:
+${prefix}
+  %r = select i1 %c, i32 %v, i32 0
+  ret i32 %r
+}
+${declarations}`;
+  const multiplied = (src: string) =>
+    src.replace(
+      "  %r = select i1 %c, i32 %v, i32 0",
+      "  %bit = zext i1 %c to i32\n  %r = mul i32 %v, %bit",
+    );
+  const conditional = masked("  %v = select i1 %c, i32 %x, i32 1", "i1 noundef %c, i32 %x");
+
+  for (const [name, src, limits] of [
+    [
+      "growth retains the condition under which an input is poison",
+      conditional,
+      { ...grow(1), facts: false },
+    ],
+    [
+      "facts about another input exclude a poison counterexample",
+      masked(
+        "  call void @llvm.assume(i1 %c)\n  br label %body\n\nbody:",
+        "i1 %c, i32 %v",
+        "\ndeclare void @llvm.assume(i1)\n",
+      ),
+      grow(0),
+    ],
+  ] as const)
+    test(name, async () => {
+      const defined = await llops.analyze(src, "defined", "%r");
+      expect(defined.ok && defined.facts.find((f) => f.value === "%v")?.not_poison).toBe(false);
+      const checks: CheckResult[] = [];
+      const checker: Checker = {
+        async check(a, b, options) {
+          const result = await aliveTv.check(a, b, options);
+          checks.push(result);
+          return result;
+        },
+      };
+      const session = await start("recoverable-poison", checker, 5_000, {
+        about: "",
+        refines: true,
+        src,
+        tgt: multiplied(src),
+      });
+      expect(await stepWindows(session, llops, "g1", limits)).toEqual([]);
+      expect(checks[0]?.outcome).toBe("incorrect");
+      expect(checks[0]?.detail).toContain(" = poison");
+      expect((await session.check("g1")).outcome).toBe("proved");
+      replay(session);
+    }, 30_000);
+
+  for (const [name, src, tgt, refines] of [
+    [
+      "poison",
+      masked("", "i1 noundef %c, i32 %v"),
+      multiplied(masked("", "i1 noundef %c, i32 %v")),
+      false,
+    ],
+    ["a computed poison input", conditional, multiplied(conditional), true],
+    [
+      "a concrete integer",
+      "define i32 @f(i32 noundef %x) { %r = add i32 %x, 1\n ret i32 %r }",
+      "define i32 @f(i32 noundef %x) { %r = add i32 %x, 2\n ret i32 %r }",
+      false,
+    ],
+  ] as const)
+    test(`skips facts that leave the counterexample with ${name} possible`, async () => {
+      const session = await start("unchanged-counterexample", aliveTv, 5_000, {
+        about: "",
+        refines,
+        src,
+        tgt,
+      });
+      const edits = splices(session);
+      expect(await stepWindows(session, llops, "g1", grow(0))).toHaveLength(1);
+      expect(edits).toHaveLength(1);
+      expect(edits[0]?.kind).toBe("applied");
+    }, 30_000);
+
   test("an unpaired output can acquire its partner by growing the window", async () => {
     const src = separated(`  %p = add i32 %x, 1
   call void @sep()
@@ -458,18 +556,7 @@ exit:
     const checked = await session.check("g1");
     expect(checked.outcome).toBe("proved");
     expect(checked.by).toBe("reshaped");
-    const certificate = certify(session.dir, join(session.dir, "certificate"));
-    const replay = Bun.spawnSync([
-      "python3",
-      join(repoRoot(), "kernel/check.py"),
-      certificate,
-      "--llops",
-      toolchain.path("llops"),
-      "--alive-tv",
-      toolchain.path("alive-tv"),
-    ]);
-    expect(replay.stdout.toString()).toContain("VERIFIED - root g1");
-    expect(replay.exitCode).toBe(0);
+    replay(session);
   }, 60_000);
 
   test("tail markers step inside a loop beside a changed branch", async () => {

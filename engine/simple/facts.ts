@@ -12,6 +12,7 @@ import type {
   Comparison,
   Fact,
   Llops,
+  OutlineParam,
   Predicate,
 } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
@@ -38,6 +39,72 @@ export async function factsAt(
     out[value] = { noundef: true, ...(range ? { range } : {}), ...pointer };
   }
   return out;
+}
+
+/** Whether every proposed fact is known to hold on a window's counterexample. */
+export function factsHoldOn(
+  detail: string,
+  params: OutlineParam[],
+  preconditions: Preconditions,
+  predicates: Predicate[],
+): boolean {
+  const inputs = inputsOf(
+    detail,
+    params.map((p) => p.param),
+  );
+  const index = (live: string) => params.findIndex((p) => p.live === live);
+  const known = (k: number) => params[k] !== undefined && inputs[k]?.type === params[k]?.type;
+  const attributesHold = Object.entries(preconditions).every(([live, attrs]) => {
+    const k = index(live);
+    const input = inputs[k];
+    if (!input || !known(k)) return false;
+    return Object.entries(attrs).every(([name, value]) =>
+      name === "noundef" && value === true
+        ? input.value !== undefined
+        : name === "range" && rangeHoldsOn(input, value),
+    );
+  });
+  const rename = (ref: string | number) => {
+    if (typeof ref === "number") return ref;
+    const k = index(ref);
+    return known(k) ? `!${k}` : undefined;
+  };
+  return (
+    attributesHold &&
+    predicates.every((predicate) => {
+      if ("insts" in predicate) return false;
+      const [lhs, rhs] = [rename(predicate.lhs), rename(predicate.rhs)];
+      if (typeof lhs !== "string" || rhs === undefined) return false;
+      if (typeof rhs === "number" && !Number.isSafeInteger(rhs)) return false;
+      if (
+        typeof rhs === "string" &&
+        inputs[Number(lhs.slice(1))]?.type !== inputs[Number(rhs.slice(1))]?.type
+      )
+        return false;
+      return holdsOn({ ...predicate, lhs, rhs }, inputs) === true;
+    })
+  );
+}
+
+/** Whether an integer counterexample is known to lie in a half-open range. */
+function rangeHoldsOn(input: Input, range: unknown): boolean {
+  if (!range || typeof range !== "object") return false;
+  const { min, max } = range as { min?: unknown; max?: unknown };
+  const bits = Number(input.type.match(/^i(\d+)$/)?.[1]);
+  if (
+    !bits ||
+    input.value === undefined ||
+    typeof min !== "number" ||
+    !Number.isSafeInteger(min) ||
+    typeof max !== "number" ||
+    !Number.isSafeInteger(max)
+  )
+    return false;
+  const low = BigInt.asUintN(bits, BigInt(min));
+  const high = BigInt.asUintN(bits, BigInt(max));
+  const value = BigInt.asUintN(bits, input.value);
+  if (low === high) return false;
+  return low < high ? low <= value && value < high : low <= value || value < high;
 }
 
 /**

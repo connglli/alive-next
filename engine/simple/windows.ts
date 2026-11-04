@@ -3,11 +3,12 @@
 // in place of the src's, wired through the values the diff pairs. The commit
 // names the region as its window. When alive2 refuses, the window grows backward
 // over the instructions that define the values either side reads, and last, the
-// window is tried again with what the analyses know about those values.
+// window is tried again with what the analyses know about those values, when
+// that may rule out its counterexample.
 import type { Instruction, Llops, Predicate } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { stepCalls } from "./calls.ts";
-import { factsAt } from "./facts.ts";
+import { factsAt, factsHoldOn } from "./facts.ts";
 import type { Limits } from "./limits.ts";
 import { diff, dominates, isTerminator, type Region, regions } from "./regions.ts";
 import { relationsAt } from "./relations.ts";
@@ -121,18 +122,22 @@ function floor(src: Instruction[], found: Region[], region: Region): number {
 async function step(run: Run, region: Region, floor: number) {
   let at: Region | undefined = region;
   let spliced = false;
+  let refutation: string | undefined;
   for (let layer = 0; at && layer <= run.limits.growth; layer++) {
     const tried = await attempt(run, at, false);
-    if (layer === 0) spliced = tried.spliced ?? false;
+    if (layer === 0) {
+      spliced = tried.spliced ?? false;
+      refutation = tried.refutation;
+    }
     if (tried.certified || !run.limits.windows) return tried.certified;
     const numbered = await run.llops.number((await run.session.show(run.gid)).src.text);
     at = numbered.ok ? grown(numbered.body, at, tried.reads, floor) : undefined;
   }
-  return spliced && run.limits.facts && (await attempt(run, region, true)).certified;
+  return spliced && run.limits.facts && (await attempt(run, region, true, refutation)).certified;
 }
 
 /** One commit of a region's window, with facts about what it reads when asked. */
-async function attempt(run: Run, at: Region, withFacts: boolean) {
+async function attempt(run: Run, at: Region, withFacts: boolean, refutation?: string) {
   const { session, llops, gid } = run;
   const view = await session.show(gid);
   const tgtText = run.toward ?? view.tgt.text;
@@ -145,6 +150,13 @@ async function attempt(run: Run, at: Region, withFacts: boolean) {
   const predicates = withFacts ? await relatedReads(llops, text, from, reads, src) : [];
   const known = Object.keys(preconditions).length > 0;
   if (withFacts && !known && predicates.length === 0) return { certified: false, reads };
+  if (refutation) {
+    // The outline supplies parameter names and order, which differ from read order.
+    // Extra target inputs are absent here, so facts about them leave the retry open.
+    const outlined = await llops.outlineWindow(text, from, `#${at.src.at(-1)}`, "facts_window");
+    if (outlined.ok && factsHoldOn(refutation, outlined.params, preconditions, predicates))
+      return { certified: false, reads };
+  }
   await session.begin(gid, "src");
   const edited = await session.edit({
     op: "splice",
@@ -169,7 +181,15 @@ async function attempt(run: Run, at: Region, withFacts: boolean) {
     ? { window, whole: false, eager: false, ...given }
     : { narrow: false, eager: false };
   const result = await session.commit(options);
-  return { certified: result.kind === "certified", reads, spliced: true };
+  return {
+    certified: result.kind === "certified",
+    reads,
+    spliced: true,
+    refutation:
+      result.kind === "refused" && result.narrowed?.outcome === "incorrect"
+        ? result.narrowed.detail
+        : undefined,
+  };
 }
 
 /** The relations ScalarEvolution shows among the values a window reads, named by them. */

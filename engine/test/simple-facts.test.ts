@@ -11,7 +11,15 @@ import type { Llrwt } from "../core/drivers/llrwt.ts";
 import { Session } from "../core/session.ts";
 import type { Interpreter } from "../core/state/counterexamples.ts";
 import { type Checker, timeoutsFrom } from "../core/state/steps.ts";
-import { cutFacts, factsAt, passedOn, union, violated } from "../simple/facts.ts";
+import {
+  cutFacts,
+  factsAt,
+  factsHoldOn,
+  type Preconditions,
+  passedOn,
+  union,
+  violated,
+} from "../simple/facts.ts";
 import { DEFAULT_LIMITS } from "../simple/limits.ts";
 import { stepWindows } from "../simple/windows.ts";
 import { toolchain } from "./toolchain-under-test.ts";
@@ -32,6 +40,86 @@ const solving =
     .version()
     .then(() => true)
     .catch(() => false));
+
+describe("facts on a counterexample", () => {
+  const params = [
+    { live: "%v", param: "%payload", type: "i8" },
+    { live: "%c", param: "%condition", type: "i1" },
+    { live: "%limit", param: "%bound", type: "i8" },
+  ];
+  const detail = (value: string) => `Example:
+i1 %condition = #x0 (0)
+i8 %payload = ${value}
+i8 %bound = #x08 (8)
+
+`;
+
+  test("facts about another input can admit or exclude a poison counterexample", () => {
+    const poison = detail("poison");
+    expect(factsHoldOn(poison, params, { "%c": { noundef: true } }, [])).toBe(true);
+    expect(factsHoldOn(poison, params, { "%v": { noundef: true } }, [])).toBe(false);
+    expect(
+      factsHoldOn(
+        poison,
+        params,
+        {
+          "%c": { noundef: true, range: { min: -1, max: 0 } },
+        },
+        [],
+      ),
+    ).toBe(false);
+  });
+
+  test("ranges use half-open bounds and wrap at the input's width", () => {
+    for (const [value, min, max, held] of [
+      [0, 0, 10, true],
+      [9, 0, 10, true],
+      [10, 0, 10, false],
+      [255, -16, 16, true],
+      [0, -16, 16, true],
+      [16, -16, 16, false],
+      [239, -16, 16, false],
+    ] as const) {
+      const attrs = { "%v": { noundef: true, range: { min, max } } };
+      expect([
+        value,
+        min,
+        max,
+        factsHoldOn(detail(`#x${value.toString(16)}`), params, attrs, []),
+      ]).toEqual([value, min, max, held]);
+    }
+  });
+
+  test("every comparison must hold, with both operands known", () => {
+    const input = detail("#x04 (4)");
+    expect(factsHoldOn(input, params, {}, [{ op: "ule", lhs: "%v", rhs: "%limit" }])).toBe(true);
+    expect(factsHoldOn(input, params, {}, [{ op: "ule", lhs: "%v", rhs: 3 }])).toBe(false);
+    expect(
+      factsHoldOn(detail("poison"), params, {}, [{ op: "eq", lhs: "%v", rhs: "%limit" }]),
+    ).toBe(false);
+    expect(factsHoldOn(input, params, {}, [{ op: "eq", lhs: "%v", rhs: "%c" }])).toBe(false);
+  });
+
+  test("unmapped inputs and facts that cannot be evaluated leave the retry open", () => {
+    const input = detail("#x04 (4)");
+    const unknown: Preconditions[] = [
+      { "%extra": { noundef: true } },
+      { "%v": { align: 4 } },
+      { "%v": { range: { min: "0", max: "8" } } },
+    ];
+    for (const attrs of unknown) expect(factsHoldOn(input, params, attrs, [])).toBe(false);
+    expect(factsHoldOn(input, params, {}, [{ insts: ["%same = icmp eq i8 %v, %v"] }])).toBe(false);
+    expect(factsHoldOn("unreadable", params, { "%v": { noundef: true } }, [])).toBe(false);
+    expect(
+      factsHoldOn(
+        input.replace("i8 %payload", "i32 %payload"),
+        params,
+        { "%v": { noundef: true } },
+        [],
+      ),
+    ).toBe(false);
+  });
+});
 
 describe.skipIf(!built)("facts", () => {
   test("come from the analyses, for values that cannot be poison", async () => {

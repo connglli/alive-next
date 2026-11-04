@@ -9,7 +9,7 @@ import { headers } from "./regions.ts";
 import { bodies } from "./windows.ts";
 
 /** An input in alive2's example: its type, its parameter, and its bits or poison. */
-const INPUT = /^(\S+) .*?%#(\d+) = (?:#x([0-9a-f]+)|(poison)$)?/;
+const INPUT = /^(\S+) .*?(%.*) = (?:#x([0-9a-f]+)|(poison)$)?/;
 
 /** A counterexample's input: its type, and its bits or that it is poison. */
 export interface Input {
@@ -18,15 +18,17 @@ export interface Input {
   poison?: boolean;
 }
 
-/** The inputs of alive2's counterexample `detail`, by parameter. */
-export function inputsOf(detail: string): Input[] {
+/** The counterexample's inputs in parameter order, using supplied names for named parameters. */
+export function inputsOf(detail: string, names?: string[]): Input[] {
   const inputs: Input[] = [];
   const example = detail.match(/Example:\n([\s\S]*?)\n\n/)?.[1] ?? "";
   for (const line of example.split("\n")) {
-    const [, type, k, hex, poison] = line.match(INPUT) ?? [];
+    const [, type, name, hex, poison] = line.match(INPUT) ?? [];
     const value = hex ? BigInt(`0x${hex}`) : undefined;
-    if (!type || !k) continue;
-    inputs[Number(k)] = poison ? { type, value, poison: true } : { type, value };
+    if (!type || !name) continue;
+    const k = names ? names.indexOf(name) : Number(name.match(/^%#(\d+)$/)?.[1] ?? -1);
+    if (k < 0) continue;
+    inputs[k] = poison ? { type, value, poison: true } : { type, value };
   }
   return inputs;
 }
