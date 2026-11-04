@@ -94,6 +94,164 @@ async function arrived(session: Session) {
   return view.src.text === view.tgt.text;
 }
 
+/** The splices actually sent to llops, with its answers. */
+function splices(session: Session) {
+  const seen: { from: string; to: string; kind: string }[] = [];
+  const edit = session.edit.bind(session);
+  session.edit = async (op) => {
+    const result = await edit(op);
+    if (op.op === "splice") seen.push({ from: op.from, to: op.to, kind: result.kind });
+    return result;
+  };
+  return seen;
+}
+
+/** A straight-line body whose calls keep its regions apart. */
+function separated(body: string, type = "i32") {
+  return `define ${type} @f(i32 noundef %x) {
+entry:
+${body}
+}
+
+declare void @sep()
+declare void @sep2()
+declare void @use(i32)
+`;
+}
+
+describe.skipIf(!built)("splice wiring", () => {
+  const examples = [
+    {
+      name: "an unpaired live output",
+      src: separated(`  %a = add i32 %x, 1
+  %b = add i32 %x, 2
+  call void @sep()
+  call void @use(i32 %a)
+  ret i32 %b`),
+      tgt: separated(`  %b = add i32 %x, 3
+  call void @sep()
+  call void @use(i32 0)
+  ret i32 %b`),
+      kept: ["#3", "#3"],
+    },
+    {
+      name: "paired values of different types",
+      src: separated(
+        `  %a = add i32 %x, 1
+  call void @sep()
+  %p = zext i32 %a to i64
+  ret i64 %p`,
+        "i64",
+      ),
+      tgt: separated(
+        `  %a = sext i32 %x to i64
+  call void @sep()
+  %p = add i64 %a, 1
+  ret i64 %p`,
+        "i64",
+      ),
+      kept: [],
+    },
+    {
+      name: "a copied input defined after the window",
+      src: separated(`  call void @sep()
+  %r = mul i32 %x, 2
+  call void @sep2()
+  %a = sub i32 %x, -1
+  call void @use(i32 %a)
+  ret i32 %r`),
+      tgt: separated(`  %a = add i32 %x, 1
+  call void @sep()
+  %r = add i32 %a, 1
+  call void @sep2()
+  call void @use(i32 %a)
+  ret i32 %r`),
+      kept: ["#0", "#0"],
+    },
+    {
+      name: "two live outputs paired with one target value",
+      src: separated(`  %a = add i32 %x, 1
+  %b = add i32 %x, 1
+  call void @sep()
+  call void @use(i32 %a)
+  call void @use(i32 %b)
+  ret i32 0`),
+      tgt: separated(`  %a = add i32 %x, 1
+  call void @sep()
+  call void @use(i32 %a)
+  call void @use(i32 %a)
+  ret i32 0`),
+      kept: [],
+    },
+  ];
+
+  for (const { name, src, tgt, kept } of examples)
+    test(`skips ${name} before sending the edit`, async () => {
+      const session = await start(
+        "wiring",
+        windowsOnly(() => false),
+        5_000,
+        {
+          about: "",
+          refines: false,
+          src,
+          tgt,
+        },
+      );
+      const edits = splices(session);
+      await stepWindows(session, llops, "g1", grow(1));
+      expect(edits.filter((edit) => edit.kind === "refused")).toEqual([]);
+      expect(edits.map((edit) => edit.from)).toEqual(kept);
+    });
+
+  test("a native edit refusal is not retried with facts", async () => {
+    const src = `@g = external global i32
+${separated("  %r = add i32 %x, 1\n  ret i32 %r")}`;
+    const tgt =
+      "@g = external global i64\n" +
+      separated("  %a = load i32, ptr @g\n  %r = add i32 %x, %a\n  ret i32 %r");
+    const session = await start(
+      "refused",
+      windowsOnly(() => false),
+      5_000,
+      {
+        about: "",
+        refines: false,
+        src,
+        tgt,
+      },
+    );
+    const edits = splices(session);
+    await stepWindows(session, llops, "g1", grow(1));
+    expect(edits).toEqual([{ from: "#0", to: "#0", kind: "refused" }]);
+  });
+
+  test("a refused grown splice leaves the original window its retry with facts", async () => {
+    const src =
+      "@g = external global i32\n" +
+      separated("  %a = load i32, ptr @g\n  %r = add i32 %a, %x\n  ret i32 %r");
+    const tgt = src.replace("global i32", "global i64").replace("add i32", "xor i32");
+    const session = await start(
+      "grown",
+      windowsOnly(() => false),
+      5_000,
+      {
+        about: "",
+        refines: false,
+        src,
+        tgt,
+      },
+    );
+    const edits = splices(session);
+    await stepWindows(session, llops, "g1", grow(1));
+    expect(edits).toEqual([
+      { from: "#1", to: "#1", kind: "applied" },
+      { from: "#0", to: "#1", kind: "refused" },
+      { from: "#1", to: "#1", kind: "applied" },
+    ]);
+  });
+});
+
 describe.skipIf(!built)("windows", () => {
   test("a tail step preserves the source call's attributes", async () => {
     const src = `declare void @h(i32)
@@ -231,6 +389,24 @@ entry:
 });
 
 describe.skipIf(!solving)("windows with alive-tv", () => {
+  test("an unpaired output can acquire its partner by growing the window", async () => {
+    const src = separated(`  %p = add i32 %x, 1
+  call void @sep()
+  %r = or i32 %p, 0
+  ret i32 %r`);
+    const tgt = src.replace("  %r = or i32 %p, 0\n", "").replace("ret i32 %r", "ret i32 %p");
+    const session = await start("grown-output", aliveTv, 5_000, {
+      about: "",
+      refines: true,
+      src,
+      tgt,
+    });
+    const edits = splices(session);
+    expect(await stepWindows(session, llops, "g1", grow(1))).toEqual([]);
+    expect(edits).toEqual([{ from: "#0", to: "#2", kind: "applied" }]);
+    expect(await arrived(session)).toBe(true);
+  }, 30_000);
+
   test("tail markers let reshaped match calls across a loop rotation", async () => {
     const src = `declare void @h(i32)
 

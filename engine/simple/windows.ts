@@ -9,7 +9,7 @@ import type { Session } from "../core/session.ts";
 import { stepCalls } from "./calls.ts";
 import { factsAt } from "./facts.ts";
 import type { Limits } from "./limits.ts";
-import { diff, isTerminator, type Region, regions } from "./regions.ts";
+import { diff, dominates, isTerminator, type Region, regions } from "./regions.ts";
 import { relationsAt } from "./relations.ts";
 
 /** A goal being stepped, toward its tgt unless `toward` names another program. */
@@ -117,16 +117,18 @@ function floor(src: Instruction[], found: Region[], region: Region): number {
   return start;
 }
 
-/** Certifies one region as a step: its window, then grown windows, then its window with facts. */
+/** Tries a region, grown windows, then its original splice with facts if the edit was accepted. */
 async function step(run: Run, region: Region, floor: number) {
   let at: Region | undefined = region;
+  let spliced = false;
   for (let layer = 0; at && layer <= run.limits.growth; layer++) {
     const tried = await attempt(run, at, false);
-    if (tried.certified || !tried.reads || !run.limits.windows) return tried.certified;
+    if (layer === 0) spliced = tried.spliced ?? false;
+    if (tried.certified || !run.limits.windows) return tried.certified;
     const numbered = await run.llops.number((await run.session.show(run.gid)).src.text);
     at = numbered.ok ? grown(numbered.body, at, tried.reads, floor) : undefined;
   }
-  return run.limits.facts && (await attempt(run, region, true)).certified;
+  return spliced && run.limits.facts && (await attempt(run, region, true)).certified;
 }
 
 /** One commit of a region's window, with facts about what it reads when asked. */
@@ -135,9 +137,8 @@ async function attempt(run: Run, at: Region, withFacts: boolean) {
   const view = await session.show(gid);
   const tgtText = run.toward ?? view.tgt.text;
   const [src, tgt] = await bodies(session, llops, gid, run.toward);
-  const wiring = wire(src, tgt, at, run.pairs);
-  if (!wiring) return { certified: false };
-  const { map, reads } = wiring;
+  const { map, reads } = wire(src, tgt, at, run.pairs);
+  if (!map) return { certified: false, reads };
   const from = `#${at.src[0]}`;
   const text = view.src.text;
   const preconditions = withFacts ? await factsAt(llops, text, from, reads) : {};
@@ -152,9 +153,8 @@ async function attempt(run: Run, at: Region, withFacts: boolean) {
     with: { module: tgtText, from: `#${at.tgt[0]}`, to: `#${at.tgt.at(-1)}` },
     value_map: map,
   });
-  // A replaced value used later that has no partner refuses the splice, and a
-  // wider window may hold the instructions that use it.
-  if (edited.kind === "refused") {
+  // Preconditions cannot repair an edit that llops refuses.
+  if (edited.kind !== "applied") {
     await session.abort();
     return { certified: false, reads };
   }
@@ -169,7 +169,7 @@ async function attempt(run: Run, at: Region, withFacts: boolean) {
     ? { window, whole: false, eager: false, ...given }
     : { narrow: false, eager: false };
   const result = await session.commit(options);
-  return { certified: result.kind === "certified", reads };
+  return { certified: result.kind === "certified", reads, spliced: true };
 }
 
 /** The relations ScalarEvolution shows among the values a window reads, named by them. */
@@ -193,8 +193,9 @@ async function relatedReads(
 }
 
 /**
- * The value map that splices region `at`, from the diff's pairs, and the src
- * values both windows read, or nothing when a read has no partner.
+ * The splice's reads and its map, if all required pairs have matching types
+ * and its inputs are available. Keep the reads when pairing fails so the
+ * window can still grow.
  */
 function wire(src: Instruction[], tgt: Instruction[], at: Region, pairs: Map<string, string>) {
   // The diff pairs instructions before what they read, so a tgt value's first
@@ -204,28 +205,52 @@ function wire(src: Instruction[], tgt: Instruction[], at: Region, pairs: Map<str
   const valuesOf = (body: Instruction[], indices: number[]) =>
     new Set(indices.flatMap((k) => body[k]?.value ?? []));
   const [mine, theirs] = [valuesOf(src, at.src), valuesOf(tgt, at.tgt)];
-  const defined = new Set(tgt.flatMap((i) => i.value ?? []));
+  const definitions = (body: Instruction[]) =>
+    new Map(body.flatMap((i, k) => (i.value ? [[i.value, k] as const] : [])));
+  const [own, other] = [definitions(src), definitions(tgt)];
+  const first = at.src[0] ?? -1;
+  const block = src[first]?.block;
   // Values and arguments are named with `%`; constants and functions are not.
   const named = (ref: string) => ref.startsWith("%");
   const map: Record<string, string> = {};
   const reads = new Set<string>();
+  let valid = true;
+  const bind = (x: string, y: string) => {
+    valid &&= map[x] === undefined || map[x] === y;
+    valid &&= src[own.get(x) ?? -1]?.type === tgt[other.get(y) ?? -1]?.type;
+    map[x] = y;
+  };
   for (const k of at.src)
     for (const x of src[k]?.operands ?? []) if (named(x) && !mine.has(x)) reads.add(x);
-  for (const k of at.tgt)
-    for (const y of tgt[k]?.operands ?? []) {
-      if (!named(y) || theirs.has(y)) continue;
-      // An argument is its own partner, since both sides have the same ones.
-      const x = defined.has(y) ? back.get(y) : y;
-      if (!x) return undefined;
-      map[x] = y;
-      reads.add(x);
+  const copied = new Set(at.tgt.flatMap((k) => tgt[k]?.operands ?? []));
+  for (const y of copied) {
+    if (!named(y) || theirs.has(y)) continue;
+    // An argument is its own partner, since both sides have the same ones.
+    const x = other.has(y) ? back.get(y) : y;
+    if (!x) {
+      valid = false;
+      continue;
     }
+    bind(x, y);
+    reads.add(x);
+    const index = own.get(x) ?? -1;
+    const definition = src[index];
+    if (definition)
+      valid &&=
+        definition.block === block
+          ? index < first
+          : block !== undefined && dominates(src, definition.block, block);
+  }
   const later = new Set(src.flatMap((i, k) => (at.src.includes(k) ? [] : i.operands)));
   for (const s of mine) {
+    if (!later.has(s)) continue;
     const t = pairs.get(s);
-    if (later.has(s) && t && theirs.has(t)) map[s] = t;
+    if (!t || !theirs.has(t)) valid = false;
+    else bind(s, t);
   }
-  return { map, reads: [...reads] };
+  const values = Object.values(map);
+  valid &&= new Set(values).size === values.length;
+  return { map: valid ? map : undefined, reads: [...reads] };
 }
 
 /** The text `set_body` takes: the lines after `entry:` up to the closing brace on its own line. */
