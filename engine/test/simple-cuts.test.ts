@@ -371,6 +371,29 @@ entry:
     expect(beforePoints(...(await bodies(session, llops, "g1")))).toEqual([["#1", "#1"]]);
   });
 
+  test("a cut goes before a floating-point intrinsic both sides call", async () => {
+    // The src keeps its argument in a stack slot; the tgt reads it directly.
+    const src = `define double @f(double noundef %x) {
+  %slot = alloca double, align 8
+  store double %x, ptr %slot, align 8
+  %v = load double, ptr %slot, align 8
+  %r = call double @llvm.sqrt.f64(double %v)
+  ret double %r
+}
+
+declare double @llvm.sqrt.f64(double)
+`;
+    const tgt = `define double @f(double noundef %x) {
+  %r = call double @llvm.sqrt.f64(double %x)
+  ret double %r
+}
+
+declare double @llvm.sqrt.f64(double)
+`;
+    const session = await start(src, tgt);
+    expect(beforePoints(...(await bodies(session, llops, "g1")))).toEqual([["#3", "#0"]]);
+  });
+
   test("no cut goes before an operation only the goal's assumptions precede", async () => {
     const src = `define i32 @f(i32 %x, i32 %y) {
 entry:

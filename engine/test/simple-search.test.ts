@@ -1388,6 +1388,25 @@ exit:
     expect(moves(session)).toContain("case");
   }, 180_000);
 
+  test("verifies a sqrt of a value kept in a stack slot by a cut before the sqrt", async () => {
+    // alive2 gets no answer about the whole pair in a minute; both calls of the cut are the same.
+    const sqrt = (body: string) => `define double @f(double noundef %x) {
+${body}}
+
+declare double @llvm.sqrt.f64(double)
+`;
+    const src = sqrt(`  %slot = alloca double, align 8
+  store double %x, ptr %slot, align 8
+  %v = load double, ptr %slot, align 8
+  %r = call double @llvm.sqrt.f64(double %v)
+  ret double %r
+`);
+    const tgt = sqrt("  %r = tail call double @llvm.sqrt.f64(double %x)\n  ret double %r\n");
+    const session = await start(src, tgt, aliveTv);
+    expect(await search(session, llops, limits)).toBe("verified");
+    expect(moves(session)).toContain("cut");
+  }, 120_000);
+
   test("verifies the paper's straight-line pair by a cut and its facts", async () => {
     const session = await start(PAPER.src, PAPER.tgt, aliveTv);
     expect(await search(session, llops, limits)).toBe("verified");

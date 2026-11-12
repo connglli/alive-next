@@ -39,8 +39,9 @@ import { unbrokenByRuns } from "./runs.ts";
 import { bodies, partners } from "./windows.ts";
 
 /**
- * The operations that make alive2's questions hard. Calls are not among them:
- * every cut adds one, so counting them would let cuts go on forever.
+ * The operations that make alive2's questions hard. Calls of floating-point
+ * intrinsics are among them, and other calls are not: every cut adds one, so
+ * counting them would let cuts go on forever.
  */
 const EXPENSIVE = new Set([
   "mul",
@@ -57,11 +58,15 @@ const EXPENSIVE = new Set([
   "store",
 ]);
 
+/** A floating-point type, alone or in a vector. */
+const FLOAT = /^(<\d+ x )?(half|bfloat|float|double|x86_fp80|fp128|ppc_fp128)>?$/;
+
 /** How many points a cut before an expensive operation or a balanced cut tries. */
 const TRIES = 3;
 
 /** Whether `i` is one of those operations, a multiplication only when both factors vary. */
 function expensive(i?: Instruction): boolean {
+  if (i?.calls?.startsWith("@llvm.")) return FLOAT.test(i.type);
   if (!i || !EXPENSIVE.has(i.opcode)) return false;
   return i.opcode !== "mul" || i.operands.every((operand) => operand.startsWith("%"));
 }
