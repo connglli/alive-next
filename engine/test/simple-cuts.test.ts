@@ -2,7 +2,7 @@
 // its own, cutting where a goal's expensive operations divide evenly, and
 // strengthening a cut with what the analyses know or a loop's invariants.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AliveTv, type CheckResult } from "../core/drivers/alive2.ts";
@@ -576,6 +576,15 @@ function solved(name: string, src: string, tgt: string) {
   });
 }
 
+/** The tools the run called, in order. */
+function tools(session: Session) {
+  const lines = readFileSync(join(session.dir, "trajectory.jsonl"), "utf8").split("\n");
+  return lines.filter(Boolean).flatMap((line) => {
+    const entry = JSON.parse(line);
+    return entry.kind === "tool_call" ? [entry.tool] : [];
+  });
+}
+
 /** The status of each of `goals`. */
 function statuses(session: Session, goals: string[]) {
   return goals.map((gid) => session.tree.goals.get(gid)?.status);
@@ -761,6 +770,34 @@ entry:
     if (!halves) throw new Error("expected a cut");
     expect(statuses(session, [halves.outer, halves.callee])).toEqual(["proved", "proved"]);
   }, 60_000);
+
+  test("a cut whose callee a short check proves gets no facts", async () => {
+    // The callee is the same on both sides, though the analyses offer noundef for %x.
+    const src = `define i32 @f(i32 noundef %x, i32 noundef %y) {
+entry:
+  %a = add nuw i32 %x, %y
+  %b = udiv i32 %a, %x
+  ret i32 %b
+}
+`;
+    const session = await solved("proved", src, src.replace("add nuw", "add"));
+    const halves = await cut(session, llops, "g1", DEFAULT_LIMITS, "#1", "#1");
+    if (!halves) throw new Error("expected a cut");
+    expect(statuses(session, [halves.callee])).toEqual(["proved"]);
+    expect(tools(session)).not.toContain("strengthen");
+  }, 60_000);
+
+  test("a strengthen alive2 cannot answer is not asked fact by fact", async () => {
+    // Every check gets no answer here, as one about a large outer may.
+    const session = await start(PRODUCT.src, PRODUCT.src.replace("mul i32", "mul nsw i32"));
+    const point = beforePoints(...(await bodies(session, llops, "g1")))[0];
+    const halves =
+      point && (await cutAt(session, llops, "g1", { ...DEFAULT_LIMITS, facts: false }, point));
+    if (!halves) throw new Error("expected a cut");
+    const candidates = { param_attrs: { 0: { noundef: true }, 1: { noundef: true } } };
+    expect(await strengthenCut(session, "g1", candidates)).toEqual([]);
+    expect(tools(session)).not.toContain("strengthen_preview");
+  });
 
   test("a cut keeps noundef when a pointer fact beside it does not prove", async () => {
     // The tgt drops a freeze of the pointer the callee is passed, which needs

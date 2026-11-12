@@ -149,12 +149,13 @@ export async function predicatesAt(llops: Llops, side: Side) {
 
 /**
  * Strengthens cut `gid` with the candidates that hold: all of them at once,
- * and when that is refused, the ones a preview finds hold.
+ * and when alive2 refutes that, the ones a preview finds hold.
  */
 export async function strengthenCut(session: Session, gid: string, candidates: StrengthenContract) {
   if (size(candidates) === 0) return [];
-  if ((await session.strengthen(gid, candidates)).kind === "strengthened")
-    return candidates.predicates ?? [];
+  const all = await session.strengthen(gid, candidates);
+  if (all.kind === "strengthened") return candidates.predicates ?? [];
+  if (all.kind !== "refused" || all.check?.outcome !== "incorrect") return [];
   const holds = await holding(session, gid, candidates);
   if (size(holds) === 0 || size(holds) === size(candidates)) return [];
   const landed = (await session.strengthen(gid, holds)).kind === "strengthened";

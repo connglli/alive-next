@@ -339,11 +339,15 @@ async function strengthenNewCut(
   inherited: Predicate[],
   unfolded: boolean,
 ) {
+  const loop = made.detach?.hypothesis !== undefined;
+  // Proving facts asks about the whole outer, so a short check of the callee comes first.
+  const { eagerCheckMs } = (await session.status()).budgets;
+  if (!loop && (await session.check(made.children.callee, eagerCheckMs)).outcome === "proved")
+    return [];
   const lives = mine.values.map((value = "") => value);
   const facts = await cutFacts(llops, mine.module, mine.point, lives);
   const types = made.params.map((param) => param.type);
   const relations = { predicates: await relationsAt(llops, [mine, theirs], types) };
-  const loop = made.detach?.hypothesis !== undefined;
   // At a loop's header, what the tgt knows is a guess the src's iteration may keep too.
   const known = loop ? await predicatesAt(llops, theirs) : [];
   const guards = loop ? tested(...(await bodies(session, llops, made.children.callee))) : [];
