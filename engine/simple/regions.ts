@@ -360,7 +360,7 @@ function slotsMarked(body: Instruction[]): Instruction[] {
 }
 
 /** The allocas of the entry block that only loads and stores into them use. */
-function slotsOf(body: Instruction[]): Set<string> {
+export function slotsOf(body: Instruction[]): Set<string> {
   const entry = body[0]?.block;
   const slots = new Set(
     body.flatMap((i) => (i.opcode === "alloca" && i.block === entry && i.value ? [i.value] : [])),

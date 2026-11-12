@@ -25,7 +25,15 @@ import {
   unfoldToMatch,
 } from "./loops.ts";
 import { stepPhis } from "./phis.ts";
-import { diff, dominates, headers, predecessors, storedAt, successors } from "./regions.ts";
+import {
+  diff,
+  dominates,
+  headers,
+  predecessors,
+  slotsOf,
+  storedAt,
+  successors,
+} from "./regions.ts";
 import { relationsAt, type Side } from "./relations.ts";
 import { unbrokenByRuns } from "./runs.ts";
 import { bodies, partners } from "./windows.ts";
@@ -64,7 +72,7 @@ export function quota(src: Instruction[], tgt: Instruction[]): number {
   return Math.min(count(src) + headers(src).length, count(tgt) + headers(tgt).length);
 }
 
-/** Where `body`'s own instructions begin, past the ones stating what its goal assumes. */
+/** Where `body`'s own instructions begin, past its assumptions and stack slot setup. */
 export function firstOwn(body: Instruction[]): number {
   const users = new Map(body.map((i) => [i.value, [] as Instruction[]]));
   for (const i of body) for (const operand of i.operands) users.get(operand)?.push(i);
@@ -74,8 +82,30 @@ export function firstOwn(body: Instruction[]): number {
     const states = uses.length > 0 && uses.every((user) => stating.has(user));
     if (i.calls === "@llvm.assume" || states) stating.add(i);
   }
-  const own = body.findIndex((i) => !stating.has(i));
+  const slots = slotsOf(body);
+  const opens = (i: Instruction) =>
+    i.opcode === "alloca" || (i.opcode === "store" && slots.has(i.operands[1] ?? ""));
+  const own = body.findIndex((i) => !stating.has(i) && !opens(i));
   return own < 0 ? body.length : own;
+}
+
+/** Whether a cut before an instruction of `body` leaves all its code in the outer. */
+function passingOn(body: Instruction[]): (k: number) => boolean {
+  const slots = slotsOf(body);
+  const calls = (i: Instruction) => i.calls !== undefined && !i.calls.startsWith("@llvm.");
+  const passes = (i: Instruction) =>
+    i.opcode === "load" ? slots.has(i.operands[0] ?? "") : i.opcode === "ret" || calls(i);
+  return (k) => {
+    const rest = body.slice(k).filter((i) => i.block === body[k]?.block);
+    return rest.every(passes) && rest.filter(calls).length <= 1;
+  };
+}
+
+/** Whether a cut at a point of `src` and `tgt` leaves some of the goal in each half. */
+function dividing(src: Instruction[], tgt: Instruction[]): (point: [number, number]) => boolean {
+  const own = firstOwn(src);
+  const [mine, theirs] = [passingOn(src), passingOn(tgt)];
+  return ([i, j]) => i > own && !(mine(i) && theirs(j));
 }
 
 /** The predicates each goal assumes at its entry, by goal. */
@@ -465,10 +495,9 @@ export function beforePoints(src: Instruction[], tgt: Instruction[]): [string, s
     const only = matches.length === 1 ? matches[0] : undefined;
     if (only !== undefined) shared.set(k, only);
   });
-  // With only the goal's assumptions before it, a cut leaves the goal as its callee.
-  const own = firstOwn(src);
   return [...shared]
-    .filter(([i, j]) => i > own && expensive(src[i]) && src[i]?.opcode === tgt[j]?.opcode)
+    .filter(([i, j]) => expensive(src[i]) && src[i]?.opcode === tgt[j]?.opcode)
+    .filter(dividing(src, tgt))
     .sort(([a], [b]) => b - a)
     .slice(0, TRIES)
     .map(([i, j]) => [`#${i}`, `#${j}`]);
@@ -494,7 +523,8 @@ export function balancedPoints(src: Instruction[], tgt: Instruction[]): [string,
   const total = src.filter((i) => expensive(i)).length;
   const kept = (k: number) => total - moved(src, k);
   return [...partners(src, tgt, regions)]
-    .filter(([i, j]) => i > 0 && j >= 0 && !src[i]?.phi && !tgt[j]?.phi)
+    .filter(([i, j]) => j >= 0 && !src[i]?.phi && !tgt[j]?.phi)
+    .filter(dividing(src, tgt))
     .map(([i, j]) => ({ i, j, gap: Math.abs(total - 2 * kept(i)), kept: kept(i) }))
     .filter((point) => point.kept > 0 && point.kept < total)
     .sort((a, b) => a.gap - b.gap)

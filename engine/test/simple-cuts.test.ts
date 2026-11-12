@@ -387,6 +387,80 @@ declare void @llvm.assume(i1 noundef)
     expect(beforePoints(...(await bodies(session, llops, "g1")))).toEqual([["#3", "#3"]]);
   });
 
+  test("no cut goes before an operation only stack slot stores precede", async () => {
+    const src = `define float @f(ptr %p, float %x) {
+entry:
+  %s = alloca float
+  store float %x, ptr %s
+  %a = load float, ptr %p
+  %v = load float, ptr %s
+  %r = fadd float %a, %v
+  ret float %r
+}
+`;
+    const session = await start(src, src.replace("fadd float %a", "fadd nnan float %a"));
+    const body = await bodies(session, llops, "g1");
+    expect(beforePoints(...body)).toEqual([
+      ["#4", "#4"],
+      ["#3", "#3"],
+    ]);
+    expect(balancedPoints(...body).map(([at]) => at)).not.toContain("#2");
+  });
+
+  /** A function that ends by loading a stack slot and passing it to `callee`. */
+  const passing = (callee: string) => `define i32 @f(ptr %p, i32 %x) {
+entry:
+  %s = alloca i32
+  %a = load i32, ptr %p
+  %b = add i32 %a, %x
+  store i32 %b, ptr %s
+  %v = load i32, ptr %s
+  %r = call i32 ${callee}(i32 %v)
+  ret i32 %r
+}
+
+declare i32 ${callee}(i32)
+`;
+
+  test("no cut goes before a stack slot load that only a call follows", async () => {
+    const src = passing("@g");
+    const session = await start(src, src.replace("add i32", "add nsw i32"));
+    const body = await bodies(session, llops, "g1");
+    expect(beforePoints(...body)).toEqual([["#3", "#3"]]);
+    expect(balancedPoints(...body)).toEqual([["#3", "#3"]]);
+  });
+
+  test("a cut goes before a stack slot load that an intrinsic follows", async () => {
+    const src = passing("@llvm.ctpop.i32");
+    const session = await start(src, src.replace("add i32", "add nsw i32"));
+    expect(beforePoints(...(await bodies(session, llops, "g1")))[0]).toEqual(["#4", "#4"]);
+  });
+
+  test("an outer is not cut again before the load that passes a stack slot", async () => {
+    const src = `define i32 @f(ptr %p, ptr %q, i32 %x) {
+entry:
+  %s = alloca i32
+  store i32 %x, ptr %s
+  %a = load i32, ptr %p
+  %c = load i32, ptr %q
+  %d = add i32 %a, %c
+  %v = load i32, ptr %s
+  %r = add i32 %v, %d
+  ret i32 %r
+}
+`;
+    const session = await start(src, src.replace("add i32 %v", "add nsw i32 %v"));
+    const [point] = beforePoints(...(await bodies(session, llops, "g1")));
+    expect(point).toEqual(["#5", "#5"]);
+    const limits = { ...DEFAULT_LIMITS, facts: false };
+    const halves = point && (await cut(session, llops, "g1", limits, ...point));
+    if (!halves) throw new Error("expected a cut before the load of the slot");
+    // The outer loads the slot again to pass its value to the callee, then returns.
+    const [outer, its] = await bodies(session, llops, halves.outer);
+    expect(outer.slice(5).map((i) => i.opcode)).toEqual(["load", "call", "ret"]);
+    expect(beforePoints(outer, its)).toEqual([["#3", "#3"]]);
+  });
+
   test("unmatched operations with different operands do not become cut points", async () => {
     const tgt = PRODUCT.tgt.replace("mul i32 %p, %z", "mul i32 %y, %z");
     const session = await start(PRODUCT.src, tgt);
