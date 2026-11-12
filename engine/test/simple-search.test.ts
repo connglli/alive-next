@@ -790,6 +790,18 @@ no:
     expect(moves(session)).toContain("uncut");
   });
 
+  test("searches a cut's callee first, and undoes the cut once the callee fails", async () => {
+    // Only the outer of a cut is proved, so the callee runs out of moves.
+    const outer = (t: string) => t.includes("define i32 @f(") && t.includes("call i32 @outlined_g");
+    const session = await start(DIVIDES, DIVIDES.replace("add nuw", "add"), stub(outer));
+    expect(await search(session, llops, { ...limits, cuts: 1, facts: false })).toBe("unknown");
+    expect(moves(session)).toContain("uncut");
+    const checked = calls(session)
+      .filter((call) => call.tool === "check")
+      .map((c) => c.args.gid);
+    expect(checked).not.toContain("g2");
+  });
+
   test("gives a goal's last check the largest budget", async () => {
     // The whole function proves only past the default budget, which is 5 s here.
     const whole = (t: string) => t.includes("define i32 @f(") && !t.includes("call");

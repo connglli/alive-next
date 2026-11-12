@@ -112,7 +112,7 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
     if (top.undo) await settle(run, agenda, top);
     else {
       const next = await top.moves.next();
-      if (next.done) agenda.pop();
+      if (next.done) await undo(run, agenda, top);
       else await learn(run, agenda, await next.value());
     }
   }
@@ -222,7 +222,7 @@ async function settle(run: Run, agenda: Goal[], g: Goal) {
   else g.undo = undefined;
 }
 
-/** Undoes the split that left `g`, which proves no refuted goal; a root stays open. */
+/** Undoes the split that left `g`, which cannot close once `g` fails; a root stays open. */
 async function undo(run: Run, agenda: Goal[], g: Goal) {
   const parent = g.parent;
   if (!parent || !(await undone(run, parent))) {
@@ -324,9 +324,10 @@ function halves(run: Run, cuts: Cuts, cutting: () => ReturnType<typeof cutLoop>)
   return async () => {
     const made = cuts.left > 0 && (await cutting());
     if (!made) return NONE;
+    // A callee that fails undoes the cut, so it is searched before the outer.
     return {
       kind: "cut",
-      goals: [goal(run, made.outer, { cuts }), goal(run, made.callee, { cuts })],
+      goals: [goal(run, made.callee, { cuts }), goal(run, made.outer, { cuts })],
     };
   };
 }
@@ -415,7 +416,10 @@ function peeled(run: Run, gid: string, cuts: Cuts): Move {
     const made = region && (await peel(session, llops, gid, limits, region, run.assumed));
     if (!made || made.goals.length < 2) return NONE;
     const peelable = (id: string) => id !== made.region;
-    const goals = made.goals.map((id) => goal(run, id, { cuts, peelable: peelable(id) }));
+    // In reverse body order, each callee is searched before the outer it was cut from.
+    const goals = [...made.goals]
+      .reverse()
+      .map((id) => goal(run, id, { cuts, peelable: peelable(id) }));
     return { kind: "cut", goals };
   };
 }
