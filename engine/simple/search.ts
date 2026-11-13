@@ -57,6 +57,8 @@ interface Run {
   assumed: Assumed;
   /** The check of the prepared root beside the search, when one runs. */
   query?: Query;
+  /** The sides whose attributes no step could drop, by side and program, not asked again. */
+  kept: Set<string>;
 }
 
 /** A check of the prepared root that runs beside the search. */
@@ -107,14 +109,23 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   const { root, budgets } = await session.status();
   if ((await session.check(root, limits.rootMs)).outcome !== "unknown") return session.verdict;
   const [eagerMs, capMs] = [budgets.eagerCheckMs, Math.min(limits.capMs, budgets.checkCapMs)];
-  const run: Run = { session, llops, limits, root, eagerMs, capMs, assumed: new Map() };
+  const run: Run = {
+    session,
+    llops,
+    limits,
+    root,
+    eagerMs,
+    capMs,
+    assumed: new Map(),
+    kept: new Set(),
+  };
   await unrolling(session, llops, root, limits.counterexampleMs);
   if (session.verdict !== "unknown") return session.verdict;
   // Prepare the root before bounded peeling can split it.
   const dropped = await dropLifetimes(session, root);
   if (dropped && (await session.check(root, limits.rootMs)).outcome === "proved")
     return session.verdict;
-  await dropAttrs(session, llops, root);
+  await dropAttrs(run, root);
   await dropLoopIds(session, root);
   // Where a check may outlast the search's own, alive2 asks about the root beside it.
   if (budgets.checkCapMs > capMs) run.query = await asking(session, root, budgets.checkCapMs);
@@ -194,12 +205,17 @@ async function unsplit(session: Session, gid: string) {
  * Drops from the tgt the attributes `llops respected` shows its instructions keep,
  * and from either side, in a step alive2 checks, the others that keep it from a cut.
  */
-async function dropAttrs(session: Session, llops: Llops, gid: string) {
+async function dropAttrs(run: Run, gid: string) {
+  const { session, llops, kept } = run;
   if ((await session.show(gid)).status !== "open") return;
   await dropping(session, llops, gid, "tgt", { op: "drop_attrs" });
-  for (const side of ["tgt", "src"] as const)
-    if (await refusing(llops, (await session.show(gid))[side].text, side))
-      await dropping(session, llops, gid, side, { op: "drop_attrs", all: true });
+  for (const side of ["tgt", "src"] as const) {
+    const { hash, text } = (await session.show(gid))[side];
+    // A goal a split leaves often keeps a side, which alive2 would be asked about again.
+    if (kept.has(`${side} ${hash}`) || !(await refusing(llops, text, side))) continue;
+    if (!(await dropping(session, llops, gid, side, { op: "drop_attrs", all: true })))
+      kept.add(`${side} ${hash}`);
+  }
 }
 
 /** Whether attributes refuse a cut on `side`: on the tgt, after `drop_attrs`. */
@@ -210,7 +226,7 @@ async function refusing(llops: Llops, module: string, side: "src" | "tgt") {
   return (await undropped(llops, module, held)).length > 0;
 }
 
-/** Commits `op` on one side of goal `gid`, unless it leaves that side as it was. */
+/** Whether `op` on one side of goal `gid` landed, which it does not when it changes nothing. */
 async function dropping(
   session: Session,
   llops: Llops,
@@ -226,9 +242,9 @@ async function dropping(
   const canon = edited.kind === "applied" ? await llops.canon(edited.text) : undefined;
   if (!canon?.ok || canon.module === before) {
     await session.abort();
-    return;
+    return false;
   }
-  await session.commit({ eager: false });
+  return (await session.commit({ eager: false })).kind === "certified";
 }
 
 /** Drops the tgt's loop IDs in a step of its own, which `reshaped` certifies. */
@@ -362,7 +378,7 @@ async function* moves(
   { cuts, stages = [], peelable = true, steps = true, comparisons: left }: Start,
 ) {
   const { session, llops, limits } = run;
-  if (gid !== run.root) yield stepping(() => dropAttrs(session, llops, gid));
+  if (gid !== run.root) yield stepping(() => dropAttrs(run, gid));
   const last = yield* walk(run, gid, stages, cuts);
   // Skip windows already asked toward this goal's target body.
   const view = await session.show(gid);

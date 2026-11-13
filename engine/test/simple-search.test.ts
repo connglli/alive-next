@@ -546,6 +546,48 @@ join:
     expect((await session.show("g1")).tgt.id).toBe(before.tgt.id);
   });
 
+  test("asks once about dropping a side's attributes when alive2 does not answer", async () => {
+    // The walk interposes mem2reg's stage, whose goal keeps the root's src with noreturn.
+    const session = await start(
+      `define void @f(ptr noundef %p, i32 %x) noreturn {
+entry:
+  %s = alloca i32, align 4
+  store i32 %x, ptr %s, align 4
+  %v = load i32, ptr %s, align 4
+  store i32 %v, ptr %p, align 4
+  call void @g()
+  unreachable
+}
+
+declare void @g() noreturn
+`,
+      `define void @f(ptr noundef writeonly initializes((0, 4)) %p, i32 %x) noreturn {
+entry:
+  store i32 %x, ptr %p, align 4
+  call void @g()
+  unreachable
+}
+
+declare void @g() noreturn
+`,
+      stub(() => false),
+    );
+    await search(session, llops, { ...limits, stages: true, counterexampleMs: 0 });
+    // Each side and program a step dropping all attributes started from.
+    const asked: string[] = [];
+    let [begun, all] = ["", false];
+    const log = readFileSync(join(session.dir, "trajectory.jsonl"), "utf8").split("\n");
+    for (const e of log.filter(Boolean).map((line) => JSON.parse(line))) {
+      if (e.kind === "tool_result" && e.tool === "tx_begin")
+        [begun, all] = [`${e.result.side} ${e.result.from}`, false];
+      if (e.kind === "tool_call" && e.tool === "tx_edit") all = e.args.all === true;
+      if (e.kind === "tool_result" && e.tool === "tx_commit" && all) asked.push(begun);
+    }
+    expect(moves(session)).toContain("interpose");
+    expect(asked.length).toBeGreaterThan(1);
+    expect(new Set(asked).size).toBe(asked.length);
+  });
+
   test("skips attribute edits on a case already proved", async () => {
     const src = `define i32 @f(i32 noundef %x) {
 entry:
