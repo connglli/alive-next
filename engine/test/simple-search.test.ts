@@ -901,6 +901,25 @@ entry:
     expect(moves(session).filter((move) => move === "tx_commit").length).toBeGreaterThan(0);
   });
 
+  test("asks about mem2reg's stage on the whole function, before any window", async () => {
+    const stages = await llops.pipelineStages(SPILLED);
+    if (!stages.ok) throw new Error(stages.message);
+    const tgt = stages.stages.at(-1)?.module ?? SPILLED;
+    // Everything but the first question, the root's, is proved.
+    const session = await start(
+      SPILLED,
+      tgt,
+      stub((_, asked) => asked > 0),
+    );
+    expect(await search(session, llops, { ...limits, stages: true })).toBe("verified");
+    const log = calls(session);
+    const interposed = log.findIndex((call) => call.tool === "interpose");
+    expect(interposed).toBeGreaterThan(-1);
+    const windows = log.filter((call) => call.tool === "tx_commit" && call.args.window);
+    expect(windows.length).toBeGreaterThan(0);
+    expect(log.slice(0, interposed).filter((call) => windows.includes(call))).toEqual([]);
+  });
+
   test("asks no window again toward a tgt the stages end at", async () => {
     const src = "define i32 @f(i32 %x) {\nentry:\n  %m = mul i32 %x, 8\n  ret i32 %m\n}\n";
     const stages = await llops.pipelineStages(src);

@@ -36,7 +36,7 @@ describe.skipIf(!built)("stages", () => {
     const tgt = await canonical(o1.ok ? (o1.stages.at(-1)?.module ?? "") : "");
     const walk = await stagesToward(llops, src, tgt);
     expect(walk.length).toBeLessThan(o3.ok ? o3.stages.length : 0);
-    expect(distance(await body(walk.at(-1) ?? ""), await body(tgt))).toBe(0);
+    expect(distance(await body(walk.at(-1)?.module ?? ""), await body(tgt))).toBe(0);
   });
 
   test("a stage keeps no loop ID", async () => {
@@ -52,7 +52,7 @@ describe.skipIf(!built)("stages", () => {
     const walk = await stagesToward(llops, src, tgt);
     expect(src).toContain("!llvm.loop");
     expect(walk.length).toBeGreaterThan(0);
-    expect(walk.filter((stage) => stage.includes("!llvm.loop"))).toEqual([]);
+    expect(walk.filter((stage) => stage.module.includes("!llvm.loop"))).toEqual([]);
   });
 
   test("a pass that only renumbers attribute groups makes no stage", async () => {
@@ -73,7 +73,33 @@ attributes #0 = { nounwind }
     );
     const walk = await stagesToward(llops, src, tgt);
     expect(walk.length).toBeGreaterThan(0);
-    expect(walk.filter((stage, k) => sameBody(stage, walk[k - 1] ?? src))).toEqual([]);
+    expect(walk.filter((stage, k) => sameBody(stage.module, walk[k - 1]?.module ?? src))).toEqual(
+      [],
+    );
+  });
+
+  test("mem2reg's stage comes first and leaves a struct slot that memcpy fills", async () => {
+    const src = await canonical(`define i32 @f(i32 noundef %x, ptr noundef %p) {
+entry:
+  %x.addr = alloca i32, align 4
+  %s = alloca { i32, i32 }, align 4
+  store i32 %x, ptr %x.addr, align 4
+  call void @llvm.memcpy.p0.p0.i64(ptr align 4 %s, ptr align 4 %p, i64 8, i1 false)
+  %f = getelementptr inbounds { i32, i32 }, ptr %s, i32 0, i32 1
+  %y = load i32, ptr %f, align 4
+  %v = load i32, ptr %x.addr, align 4
+  %r = add nsw i32 %v, %y
+  ret i32 %r
+}
+
+declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
+`);
+    const o3 = await llops.pipelineStages(src);
+    const tgt = await canonical(o3.ok ? (o3.stages.at(-1)?.module ?? "") : "");
+    const [first, ...rest] = await stagesToward(llops, src, tgt);
+    expect(first?.pass).toBe("mem2reg");
+    expect(first?.module.match(/= alloca /g)).toHaveLength(1);
+    expect(rest.some((stage) => !stage.module.includes("alloca"))).toBe(true);
   });
 
   test("no stage is walked when every one is farther than the src", async () => {
@@ -92,7 +118,7 @@ attributes #0 = { nounwind }
     const proposed = await stagesToward(llops, src, tgt);
     expect(proposed.length).toBeGreaterThan(0);
     for (const stage of proposed) {
-      const shape = await llops.validate(stage);
+      const shape = await llops.validate(stage.module);
       if (!shape.ok) throw new Error(shape.message);
       expect(shape.body_attrs).toEqual([]);
     }

@@ -2,7 +2,7 @@
 // tried off the session and certified only if it lowers the distance, the
 // number of instructions where the two sides differ. The verified rules
 // certify a src step by their own proofs, so trying them asks alive2 nothing.
-import type { Llops } from "../core/drivers/llops.ts";
+import type { Llops, Stage } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { distance } from "./regions.ts";
 import { sameBody, withoutLoopIds } from "./windows.ts";
@@ -24,30 +24,31 @@ export async function stepRules(session: Session, llops: Llops, gid: string) {
 }
 
 /**
- * The pipeline whose stages the src steps toward: the first function passes of
- * `default<O3>`, then `default<O3>`. It gives declared functions their attributes
- * before those passes promote private storage, so one of its stages can ask alive2
- * about both changes at once; run ahead of it, the passes promote storage under the
- * src's declarations.
+ * The pipeline whose stages the src steps toward: `mem2reg`, the first function
+ * passes of `default<O3>`, then `default<O3>`. It gives declared functions their
+ * attributes before those passes promote private storage, so one of its stages can
+ * ask alive2 about both changes at once; run ahead of it, the passes promote storage
+ * under the src's declarations, `mem2reg` first, so that alive2 is asked about the
+ * slots it promotes apart from the struct slots SROA splits.
  */
 const STAGES =
-  "function(lower-expect,simplifycfg,sroa<modify-cfg>,early-cse,callsite-splitting),default<O3>";
+  "function(mem2reg,lower-expect,simplifycfg,sroa<modify-cfg>,early-cse,callsite-splitting),default<O3>";
 
 /**
  * Proposes canonical stages without removable body attributes, so later cuts
  * can outline them. Keeps body changes through the last stage closest to `tgt`.
  */
-export async function stagesToward(llops: Llops, src: string, tgt: string) {
+export async function stagesToward(llops: Llops, src: string, tgt: string): Promise<Stage[]> {
   const run = await llops.pipelineStages(src, STAGES);
-  const stages: string[] = [];
+  const stages: Stage[] = [];
   let [best, end] = [await measured(llops, src, tgt), 0];
-  for (const stage of run.ok ? run.stages : []) {
-    const clean = await llops.edit(stage.module, { op: "drop_attrs" });
+  for (const { pass, module: made } of run.ok ? run.stages : []) {
+    const clean = await llops.edit(made, { op: "drop_attrs" });
     if (!clean.ok) continue;
     const canon = await llops.canon(withoutLoopIds(clean.module));
     const module = canon.ok ? canon.module : "";
-    if (!canon.ok || sameBody(module, stages.at(-1) ?? src)) continue;
-    stages.push(module);
+    if (!canon.ok || sameBody(module, stages.at(-1)?.module ?? src)) continue;
+    stages.push({ pass, module });
     const far = await measured(llops, module, tgt);
     if (far <= best) [best, end] = [far, stages.length];
   }

@@ -14,6 +14,7 @@ import {
   type EditOp,
   type Instruction,
   type Llops,
+  type Stage,
   undropped,
 } from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
@@ -335,7 +336,7 @@ async function undone(run: Run, g: Goal): Promise<boolean> {
 /** What a goal starts with: its cuts, the stages left to walk, and what it skips. */
 interface Start {
   cuts: Cuts;
-  stages?: string[];
+  stages?: Stage[];
   /** False for a peeled region, which is not peeled again. */
   peelable?: boolean;
   /** False for a step goal, whose windows the walk has just asked. */
@@ -529,17 +530,20 @@ async function stepByRules(run: Run, gid: string) {
 async function* walk(
   run: Run,
   gid: string,
-  stages: string[],
+  stages: Stage[],
   cuts: Cuts,
 ): AsyncGenerator<Move, string | undefined> {
   const { session, llops, limits } = run;
   let [jumping, interposable] = [true, true];
-  for (const [k, stage] of stages.entries()) {
-    let left = 0;
-    yield stepping(async () => {
-      left = (await stepWindows(session, llops, gid, limits, () => decided(run), stage)).length;
-    });
-    if (left === 0) continue;
+  for (const [k, { pass, module: stage }] of stages.entries()) {
+    // mem2reg changes only stack slots, and no window sees the stores of a slot it reads.
+    if (pass !== "mem2reg") {
+      let left = 0;
+      yield stepping(async () => {
+        left = (await stepWindows(session, llops, gid, limits, () => decided(run), stage)).length;
+      });
+      if (left === 0) continue;
+    }
     let advanced = false;
     yield async (): Promise<Answer> => {
       const view = await session.show(gid);
@@ -574,5 +578,5 @@ async function* walk(
     // The right child searches the remaining stages after a proved transition.
     if (advanced) return stage;
   }
-  return stages.at(-1);
+  return stages.at(-1)?.module;
 }
