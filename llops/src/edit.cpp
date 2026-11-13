@@ -1,5 +1,6 @@
 #include "edit.h"
 
+#include "attrs.h"
 #include "irutil.h"
 #include "respected.h"
 #include "snippet.h"
@@ -307,6 +308,26 @@ llvm::json::Object splice(llvm::json::Object &args, CmdShape &shape) {
   for (auto *I : llvm::reverse(window))
     I->eraseFromParent();
   return checkedResponse(M);
+}
+
+// Remove every attribute alive2 applies to `F`'s own instructions. `respected`
+// cannot check them all, so a step that removes them is asked of alive2.
+void dropBodyAttrs(llvm::Function &F) {
+  llvm::AttributeSet fn = F.getAttributes().getFnAttrs();
+  for (const llvm::Attribute &A : fn) {
+    if (fnAttrMeaning(A) != AttrMeaning::Body)
+      continue;
+    if (A.isStringAttribute())
+      F.removeFnAttr(A.getKindAsString());
+    else
+      F.removeFnAttr(A.getKindAsEnum());
+  }
+  for (unsigned k = 0; k < F.arg_size(); ++k) {
+    llvm::AttributeSet param = F.getAttributes().getParamAttrs(k);
+    for (const llvm::Attribute &A : param)
+      if (paramAttrMeaning(A) == AttrMeaning::Body)
+        F.removeParamAttr(k, A.getKindAsEnum());
+  }
 }
 
 } // namespace
@@ -834,7 +855,12 @@ llvm::json::Object editCmd(llvm::json::Object &args) {
   }
 
   if (*op == "drop_attrs") {
+    auto all = args.getBoolean("all");
+    if (args.get("all") && !all)
+      return errResponse("bad_request", "drop_attrs: 'all' must be true or false");
     dropCheckedAttrs(*F);
+    if (all.value_or(false))
+      dropBodyAttrs(*F);
     return checkedResponse(*M);
   }
 

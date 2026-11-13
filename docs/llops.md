@@ -96,7 +96,7 @@ Request `{ "module": ..., "op": "<op>", ... }`, response `{ "ok": true, "module"
 | `copy_block` | `block`, `preds` | give the edges from `preds` their own copy of `block` |
 | `peel` | `block` | give the edges into the loop `block` heads their own copy of its iteration |
 | `set_body` | `body` | replace the whole body |
-| `drop_attrs` | | remove the attributes `respected` reads from the function |
+| `drop_attrs` | `all` | remove the attributes `respected` reads from the function, or with `all` every one alive2 applies to its own instructions |
 | `drop_lifetimes` | | remove the function's lifetime markers |
 | `flags` | `v`, `flags` | put or remove the flags an instruction can carry |
 | `splice` | `from`, `to`, `with`, `value_map` | put another module's window in place of the one from `from` to `to` |

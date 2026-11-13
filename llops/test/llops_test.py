@@ -5475,6 +5475,20 @@ declare void @llvm.lifetime.end.p0(ptr captures(none))
     edited = self.good(run("edit", {"module": held + "  unreachable\n}\n", "op": "drop_attrs"}))
     self.assertEqual(self.good(run("validate", {"module": edited["module"]}))["body_attrs"], [])
 
+  def test_drop_attrs_with_all_removes_every_body_attribute(self):
+    # respected reads no initializes, so drop_attrs keeps it unless asked for all.
+    held = (
+      "define void @f(ptr noundef writeonly initializes((0, 4)) %p) {\n"
+      "entry:\n  store i32 0, ptr %p, align 4\n  ret void\n}\n"
+    )
+    plain = self.good(run("edit", {"module": held, "op": "drop_attrs"}))["module"]
+    self.assertIn("initializes", plain)
+    edited = self.good(run("edit", {"module": held, "op": "drop_attrs", "all": True}))["module"]
+    shape = self.good(run("validate", {"module": edited}))
+    self.assertEqual(shape["body_attrs"], [])
+    self.assertEqual(shape["functions"]["f"]["signature"], "void(ptr noundef)")
+    self.bad(run("edit", {"module": held, "op": "drop_attrs", "all": "yes"}), "bad_request")
+
   def test_both_modules_are_needed(self):
     self.bad(run("respected", {"before": READ_LOOP}), "bad_request")
 
