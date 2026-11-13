@@ -271,6 +271,8 @@ export interface CheckGoalResult {
    * was wanted, and the result is where a caller tells the two apart.
    */
   cappedFromMs?: number;
+  /** The goal changed while alive2 was asked, so the answer in `check` lands nothing. */
+  changed?: boolean;
 }
 
 export class Steps {

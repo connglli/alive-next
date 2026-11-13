@@ -73,6 +73,19 @@ class Maybe implements Checker {
   }
 }
 
+/** A checker that agrees, holding back its answer about `held` until `release`. */
+class Holding implements Checker {
+  held = "";
+  private waiting: (() => void)[] = [];
+  release() {
+    for (const go of this.waiting.splice(0)) go();
+  }
+  async check(src: string): Promise<CheckResult> {
+    if (src === this.held) await new Promise<void>((go) => this.waiting.push(go));
+    return new YesMan().check();
+  }
+}
+
 /** Nothing here reports a counterexample, so nothing runs a program. */
 const noRun: Interpreter = {
   run() {
@@ -184,6 +197,35 @@ describe.skipIf(!built || !running)("executing a goal", () => {
     );
     expect(result).toMatchObject({ result: { kind: "executed", outcome: "returned" } });
     expect(JSON.stringify(result)).not.toContain("phi i32");
+  });
+});
+
+describe.skipIf(!built)("checking a goal", () => {
+  test("a check whose goal another move cut while alive2 worked lands nothing", async () => {
+    const checker = new Holding();
+    const run = await Session.start({
+      dir: join(dir, "session"),
+      src: cut.src,
+      tgt: cut.tgt,
+      llops,
+      checker,
+      interp: noRun,
+      rewriter: unrewriting,
+    });
+    checker.held = (await run.show("g1")).src.text;
+    const asked = run.check("g1");
+    expect((await run.cut("g1", "%2", "%2", { "%0": "%0", "%1": "%1" })).kind).toBe("cut");
+    checker.release();
+    const result = await asked;
+    expect(result).toMatchObject({ outcome: "unknown", changed: true, effects: [] });
+    expect(result.check?.outcome).toBe("correct");
+    expect(run.tree.goals.get("g1")?.status).toBe("split");
+  });
+
+  test("a check whose goal stayed as it was lands its answer", async () => {
+    const run = await session();
+    expect(await run.check("g1")).toMatchObject({ outcome: "proved", effects: [{ gid: "g1" }] });
+    expect(run.verdict).toBe("verified");
   });
 });
 

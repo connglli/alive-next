@@ -77,12 +77,17 @@ export function boundRun(ms: number, started: number, close: () => void): void {
   setTimeout(
     () => {
       console.log("  out of time");
-      spawnSync("pkill", ["-P", String(process.pid)]);
+      stopChecks();
       close();
       process.exit(0);
     },
     started + ms - Date.now(),
   ).unref();
+}
+
+/** Stop the checks still running, which would outlive the process. */
+export function stopChecks(): void {
+  spawnSync("pkill", ["-P", String(process.pid)]);
 }
 
 /** A directory name that sorts by when it was made. */

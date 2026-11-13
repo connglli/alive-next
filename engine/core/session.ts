@@ -474,9 +474,13 @@ export class Session {
    * searched for a counterexample, over the first `unroll` iterations.
    */
   check(gid: string, timeoutMs?: number, unroll?: number): Promise<CheckGoalResult> {
-    return this.act("check", { gid, timeout_ms: timeoutMs, unroll }, (tree) =>
-      this.steps.checkGoal(tree, gid, timeoutMs, unroll),
-    );
+    return this.act("check", { gid, timeout_ms: timeoutMs, unroll }, async (tree) => {
+      const asked = pairOf(tree, gid);
+      const result = await this.steps.checkGoal(tree, gid, timeoutMs, unroll);
+      // An answer about a goal another move changed meanwhile is about an old pair.
+      if (pairOf(this.tree, gid) === asked) return result;
+      return { ...result, outcome: "unknown", effects: [], changed: true };
+    });
   }
 
   /**
@@ -871,6 +875,12 @@ function nameOf(tree: Tree, hash: Hash): ProgramId {
   const id = tree.programs.get(hash);
   if (!id) throw new Error(`the tree has no name for ${hash}`);
   return id;
+}
+
+/** A goal's status and the heads of its sides, or nothing once the goal is gone. */
+function pairOf(tree: Tree, gid: string): string | undefined {
+  const goal = tree.goals.get(gid);
+  return goal && `${goal.status} ${head(goal, "src")} ${head(goal, "tgt")}`;
 }
 
 function goalOf(tree: Tree, gid: string): Goal {
