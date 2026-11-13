@@ -71,10 +71,10 @@ export const Op = Type.Union(
       },
     ),
     Type.Object(
-      { op: Type.Literal("drop_attrs") },
+      { op: Type.Literal("drop_attrs"), all: Type.Optional(Type.Boolean()) },
       {
         description:
-          "Remove the function's memory, nofree, willreturn, readonly, writeonly, readnone and captures(none) attributes, among those that keep it from being cut.",
+          "Remove the function's memory, nofree, willreturn, readonly, writeonly, readnone and captures(none) attributes, among those that keep it from being cut, or with `all` every one of those, such as initializes.",
       },
     ),
     Type.Object(
