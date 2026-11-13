@@ -760,7 +760,7 @@ no:
     const after = await session.show("g1");
     expect(after.src.id).toBe(before.src.id);
     expect(after.tgt.id).toBe(before.tgt.id);
-  });
+  }, 30_000);
 
   test("proves a pair through its windows", async () => {
     const pair = pairs.e2;

@@ -512,6 +512,26 @@ export function beforePoints(src: Instruction[], tgt: Instruction[]): [string, s
     .map(([i, j]) => [`#${i}`, `#${j}`]);
 }
 
+/**
+ * Where both sides keep a block, latest first, whatever operations they share:
+ * a cut there moves the block and all it reaches, its phis passed as values. A
+ * loop's header is left to the loop's cut.
+ */
+export function blockPoints(src: Instruction[], tgt: Instruction[]): [string, string][] {
+  const divides = dividing(src, tgt);
+  const loops = new Set(headers(src));
+  // The block's own code starts after its phis, which become the callee's parameters.
+  const start = (body: Instruction[], block: string) =>
+    body.findIndex((i) => i.block === block && !i.phi);
+  const points = new Map<string, [string, string]>();
+  for (const block of [...new Set(src.map((i) => i.block))].slice(1).reverse()) {
+    const at = blockCut(src, tgt, block);
+    if (!at || loops.has(at[0]) || !divides([start(src, at[0]), start(tgt, at[1])])) continue;
+    points.set(at.join(), [...at]);
+  }
+  return [...points.values()].slice(0, TRIES);
+}
+
 /** How many expensive operations a cut before `body[k]` moves: all that it reaches. */
 function moved(body: Instruction[], k: number): number {
   const next = successors(body);

@@ -4,11 +4,11 @@
 // optimizer's stages on the root, a stage that its windows leave interposed as a
 // goal of its own, windows and rules toward the tgt, a check, then a cut that
 // peels away a bounded loop, at a loop, again after a header copy, before an
-// expensive operation, around a region left, or where the expensive operations
-// divide evenly, a cut at an instruction again after copying the join it needs,
-// then a split by cases) until one proves it or splits it, and the goals a split
-// leaves are searched before the next. Every move is a session move, so whatever it
-// proves, the kernel replays.
+// expensive operation, around a region left, where the expensive operations
+// divide evenly, or at a block both sides keep, a cut at an instruction again
+// after copying the join it needs, then a split by cases) until one proves it or
+// splits it, and the goals a split leaves are searched before the next. Every
+// move is a session move, so whatever it proves, the kernel replays.
 import {
   type Comparison,
   type EditOp,
@@ -25,6 +25,8 @@ import {
   type Assumed,
   balancedPoints,
   beforePoints,
+  blockPoints,
+  cut,
   cutAt,
   cutCopied,
   cutLoop,
@@ -378,6 +380,8 @@ async function* moves(
   for (const point of beforePoints(src, tgt)) yield* atPoint(run, gid, cuts, point);
   if (peelable) yield peeled(run, gid, cuts);
   for (const point of balancedPoints(src, tgt)) yield* atPoint(run, gid, cuts, point);
+  for (const at of blockPoints(src, tgt))
+    yield halves(run, cuts, () => cut(session, llops, gid, limits, ...at, run.assumed));
   const comparisons = limits.cases ? (left ?? tested(src, tgt, run.assumed.get(gid))) : [];
   for (const k of comparisons.keys()) yield casing(run, gid, cuts, comparisons.slice(k));
   yield checking(run, gid, run.capMs);

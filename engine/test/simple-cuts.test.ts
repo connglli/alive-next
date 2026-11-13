@@ -22,6 +22,7 @@ import { unfold } from "../examples/unfold.ts";
 import {
   balancedPoints,
   beforePoints,
+  blockPoints,
   cut,
   cutAt,
   cutCopied,
@@ -97,6 +98,27 @@ declare i32 @h(i32)
 declare void @g(i32, i32)
 `,
 };
+
+/** Two branches joined by a phi, with no expensive operation. */
+const DIAMOND = `define i32 @f(i32 %a, i32 %b, i1 %c) {
+entry:
+  %x = add i32 %a, %b
+  br i1 %c, label %left, label %right
+
+left:
+  %y = shl i32 %x, 1
+  br label %join
+
+right:
+  %z = sub i32 %x, %b
+  br label %join
+
+join:
+  %p = phi i32 [ %y, %left ], [ %z, %right ]
+  %r = xor i32 %p, 7
+  ret i32 %r
+}
+`;
 
 let dir: string;
 beforeEach(() => {
@@ -528,6 +550,22 @@ early:
     const [again] = beforePoints(outer, its);
     if (!again) throw new Error("expected a point before the multiply in the outer");
     expect(joinFirst(outer, its, again)).toEqual(again);
+  });
+
+  test("a cut goes at a block both sides keep, though they share no expensive operation", async () => {
+    // A cut at either branch must start at the join, which the other branch enters too.
+    const session = await start(DIAMOND, DIAMOND.replace("shl i32 %x, 1", "add i32 %x, %x"));
+    const body = await bodies(session, llops, "g1");
+    const join = (side: (typeof body)[0]) => side.find((i) => i.phi)?.block ?? "";
+    expect(beforePoints(...body)).toEqual([]);
+    expect(blockPoints(...body)).toEqual([[join(body[0]), join(body[1])]]);
+  });
+
+  test("no cut goes at a join that only returns its phi", async () => {
+    // The callee would hold nothing of its own.
+    const src = DIAMOND.replace("  %r = xor i32 %p, 7\n  ret i32 %r", "  ret i32 %p");
+    const session = await start(src, src.replace("shl i32 %x, 1", "add i32 %x, %x"));
+    expect(blockPoints(...(await bodies(session, llops, "g1")))).toEqual([]);
   });
 
   test("a balanced cut counts what its point reaches", async () => {
