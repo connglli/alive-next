@@ -212,7 +212,7 @@ export type EditOp =
   | { op: "copy_block"; block: Ref; preds: Ref[] }
   | { op: "peel"; block: Ref }
   | { op: "set_body"; body: string }
-  | { op: "drop_attrs" }
+  | { op: "drop_attrs"; all?: boolean }
   | { op: "drop_lifetimes" }
   | { op: "flags"; v: Ref; flags: Record<string, boolean> }
   | {
@@ -589,15 +589,15 @@ export async function unoutlinable(
   const remedy =
     kept.length === 0
       ? " until the drop_attrs edit removes them"
-      : `, and no edit removes ${kept.join(", ")}`;
+      : `, and only the drop_attrs edit with all removes ${kept.join(", ")}`;
   return (
     `${what} has ${held.join(", ")}, which alive2 applies only to its own instructions, ` +
     `so none may move into another function${remedy}`
   );
 }
 
-/** Of the attributes `held`, those the drop_attrs edit leaves, which no edit removes. */
-async function undropped(llops: Llops, module: Module, held: string[]): Promise<string[]> {
+/** Of the attributes `held`, those the drop_attrs edit leaves unless it removes all. */
+export async function undropped(llops: Llops, module: Module, held: string[]): Promise<string[]> {
   const dropped = await llops.edit(module, { op: "drop_attrs" });
   const result = dropped.ok ? await llops.validate(dropped.module) : undefined;
   return result?.ok ? [...new Set(result.body_attrs)] : held;

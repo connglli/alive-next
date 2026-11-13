@@ -328,7 +328,7 @@ exit:
     }
   });
 
-  test("names the attributes no edit removes", async () => {
+  test("names the attributes only the drop_attrs edit with all removes", async () => {
     const held = PROGRAM.replace("%y) {", "%y) nofree null_pointer_is_valid {");
     const map = { "%2": "%2", "%0": "%0" };
     const result = await new Cuts(store, llops).cut(
@@ -339,7 +339,7 @@ exit:
       map,
     );
     expect(result.kind === "refused" && result.message).toContain(
-      "and no edit removes null_pointer_is_valid",
+      "and only the drop_attrs edit with all removes null_pointer_is_valid",
     );
   });
 
