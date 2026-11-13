@@ -73,6 +73,27 @@ entry:
 }
 `;
 
+/** A sqrt of a stack slot's value, a pair alive2 does not answer in a minute. */
+const SQRT = {
+  src: `define double @f(double noundef %x) {
+  %slot = alloca double, align 8
+  store double %x, ptr %slot, align 8
+  %v = load double, ptr %slot, align 8
+  %r = call double @llvm.sqrt.f64(double %v)
+  ret double %r
+}
+
+declare double @llvm.sqrt.f64(double)
+`,
+  tgt: `define double @f(double noundef %x) {
+  %r = tail call double @llvm.sqrt.f64(double %x)
+  ret double %r
+}
+
+declare double @llvm.sqrt.f64(double)
+`,
+};
+
 /**
  * A pair whose tgt's nuw needs m >= a, which the umax gives before a cut at the
  * division and no analysis states; the callee's counterexample asks for it.
@@ -1051,6 +1072,27 @@ describe.skipIf(!solving)("bun run simple", () => {
     // A check still running would name files in the temporary directory.
     expect(spawnSync("pgrep", ["-f", dir]).stdout.toString()).toBe("");
   }, 30_000);
+
+  test("stops the check beside the search once the search proves the root", async () => {
+    const [src, tgt, run] = [join(dir, "src.ll"), join(dir, "tgt.ll"), join(dir, "run")];
+    writeFileSync(src, SQRT.src);
+    writeFileSync(tgt, SQRT.tgt);
+    const started = Date.now();
+    const argv = ["simple/main.ts", "--seconds", "120", "--no-stages", src, tgt, run];
+    const child = Bun.spawn(["bun", "run", ...argv], {
+      cwd: join(import.meta.dir, ".."),
+      env: { ...process.env, TMPDIR: dir },
+      stdout: "pipe",
+    });
+    const out = await new Response(child.stdout).text();
+    await child.exited;
+    expect(out).toContain("verified in");
+    expect(Date.now() - started).toBeLessThan(90_000);
+    expect(spawnSync("pgrep", ["-f", dir]).stdout.toString()).toBe("");
+    // The run's log ends with its verdict, and not with the check it stopped.
+    const log = readFileSync(join(run, "trajectory.jsonl"), "utf8").trim().split("\n");
+    expect(JSON.parse(log.at(-1) ?? "{}").kind).toBe("verdict");
+  }, 120_000);
 });
 
 describe.skipIf(!solving)("search with alive-tv", () => {
@@ -1388,21 +1430,42 @@ exit:
     expect(moves(session)).toContain("case");
   }, 180_000);
 
-  test("verifies a sqrt of a value kept in a stack slot by a cut before the sqrt", async () => {
-    // alive2 gets no answer about the whole pair in a minute; both calls of the cut are the same.
-    const sqrt = (body: string) => `define double @f(double noundef %x) {
-${body}}
+  test("proves the prepared root by a check beside the search, which replays", async () => {
+    // Only a check of the whole function longer than a minute gets an answer,
+    // once the search has cut the root, so the answer is about an old pair.
+    const whole = (t: string) => t.includes("define i32 @f(") && !t.includes("@outlined");
+    const silent = answering(() => "unknown");
+    const cut = async () => {
+      while (session.tree.goals.get("g1")?.status !== "split") await Bun.sleep(10);
+    };
+    const checker: Checker = {
+      check: async (src, tgt, options) => {
+        if (!whole(src) || (options?.timeoutMs ?? 0) <= 60_000)
+          return silent.check(src, tgt, options);
+        await cut();
+        return aliveTv.check(src, tgt, options);
+      },
+    };
+    const session: Session = await Session.start({
+      dir: join(dir, "run"),
+      src: DIVIDES,
+      tgt: DIVIDES.replace("add nuw", "add"),
+      llops,
+      checker,
+      interp: llubi,
+      rewriter: {} as Llrwt,
+      timeouts: timeoutsFrom({ checkDefaultMs: 5_000, checkCapMs: 600_000 }),
+    });
+    expect(await search(session, llops, limits)).toBe("verified");
+    const asked = calls(session).flatMap(({ tool, args }) => (tool === "check" ? [args] : []));
+    expect(asked.filter((args) => Number(args.timeout_ms) > 60_000)).toHaveLength(1);
+    expect(moves(session)).toContain("uncut");
+    replay(session);
+  }, 120_000);
 
-declare double @llvm.sqrt.f64(double)
-`;
-    const src = sqrt(`  %slot = alloca double, align 8
-  store double %x, ptr %slot, align 8
-  %v = load double, ptr %slot, align 8
-  %r = call double @llvm.sqrt.f64(double %v)
-  ret double %r
-`);
-    const tgt = sqrt("  %r = tail call double @llvm.sqrt.f64(double %x)\n  ret double %r\n");
-    const session = await start(src, tgt, aliveTv);
+  test("verifies a sqrt of a value kept in a stack slot by a cut before the sqrt", async () => {
+    // Both calls of the cut's callee are the same.
+    const session = await start(SQRT.src, SQRT.tgt, aliveTv);
     expect(await search(session, llops, limits)).toBe("verified");
     expect(moves(session)).toContain("cut");
   }, 120_000);

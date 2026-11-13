@@ -48,6 +48,16 @@ interface Run {
   assumed: Assumed;
 }
 
+/** A check of the prepared root that runs beside the search. */
+interface Query {
+  /** The prepared root's programs, which alive2 is asked about. */
+  pair: { src: string; tgt: string };
+  /** Settles once alive2 answers. */
+  done: Promise<void>;
+  /** Whether alive2 proved the pair. */
+  proved?: boolean;
+}
+
 /** How many cuts a goal, and the goals its cuts leave, may still make. */
 interface Cuts {
   left: number;
@@ -85,7 +95,7 @@ const UNDO = { cut: "uncut", interposed: "uninterpose", cased: "uncase" } as con
 export async function search(session: Session, llops: Llops, limits: Limits) {
   const { root, budgets } = await session.status();
   if ((await session.check(root, limits.rootMs)).outcome !== "unknown") return session.verdict;
-  const [eagerMs, capMs] = [budgets.eagerCheckMs, budgets.checkCapMs];
+  const [eagerMs, capMs] = [budgets.eagerCheckMs, Math.min(limits.capMs, budgets.checkCapMs)];
   const run: Run = { session, llops, limits, root, eagerMs, capMs, assumed: new Map() };
   await unrolling(session, llops, root, limits.counterexampleMs);
   if (session.verdict !== "unknown") return session.verdict;
@@ -95,6 +105,9 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
     return session.verdict;
   await dropAttrs(session, llops, root);
   await dropLoopIds(session, root);
+  // Where a check may outlast the search's own, alive2 asks about the root beside it.
+  const query =
+    budgets.checkCapMs > capMs ? await asking(session, root, budgets.checkCapMs) : undefined;
   // A loop the tgt no longer has is peeled and cut away first, and what is left
   // is searched.
   const start = limits.steps && limits.cuts > 0 ? await peelBounded(session, llops, root) : root;
@@ -106,7 +119,7 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   const cuts = quotaOf(limits, await bodies(session, llops, start));
   const agenda = [goal(run, start, { stages, cuts })];
   // A check of the root's original pair may decide the run on the way.
-  while (agenda.length > 0 && session.verdict === "unknown") {
+  while (agenda.length > 0 && session.verdict === "unknown" && !query?.proved) {
     const top = agenda[agenda.length - 1] as Goal;
     // A goal a split landed on comes back once the goals it left, above it, are done.
     if (top.undo) await settle(run, agenda, top);
@@ -116,11 +129,50 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
       else await learn(run, agenda, await next.value());
     }
   }
+  if (query && session.verdict === "unknown") await answered(run, query);
   if (session.verdict === "unknown") {
     const open = (await session.status()).goals.filter((g) => g.status === "open");
     await session.giveUp(`no move closed ${open.map((g) => g.gid).join(", ")}`);
   }
   return session.verdict;
+}
+
+/** Starts a check of goal `gid` for `ms`, which the search does not wait for. */
+async function asking(session: Session, gid: string, ms: number): Promise<Query> {
+  const { src, tgt } = await session.show(gid);
+  const query: Query = { pair: { src: src.id, tgt: tgt.id }, done: Promise.resolve() };
+  query.done = session.check(gid, ms).then(
+    (result) => {
+      query.proved = result.outcome === "proved" || result.check?.outcome === "correct";
+    },
+    () => {},
+  );
+  return query;
+}
+
+/**
+ * Proves the root by the query once it answers: the root's split undone and its
+ * sides back at the pair asked about, which the record of alive2's answers proves.
+ */
+async function answered(run: Run, query: Query) {
+  const { session, root } = run;
+  await query.done;
+  if (!query.proved || session.verdict !== "unknown") return;
+  await unsplit(session, root);
+  const view = await session.show(root);
+  for (const side of ["src", "tgt"] as const)
+    if (view[side].id !== query.pair[side]) await session.revert(root, side, query.pair[side]);
+  await session.check(root, run.capMs);
+}
+
+/** Undoes the split of goal `gid`, whether a cut, an interpose or cases. */
+async function unsplit(session: Session, gid: string) {
+  const { status, children } = await session.show(gid);
+  const role = children[0] && (await session.show(children[0])).role;
+  if (status !== "split" || !role) return;
+  if (role === "lhs" || role === "rhs") await session.uninterpose(gid);
+  else if (role === "holds" || role === "fails") await session.uncase(gid);
+  else await session.uncut(gid);
 }
 
 /** Drops from the tgt the attributes `llops respected` shows its instructions keep. */

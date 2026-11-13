@@ -6,6 +6,8 @@ export interface Limits {
   ms: number;
   /** The budget of root checks before and after preparation. */
   rootMs: number;
+  /** The budget of a goal's last check, after its cuts: the largest the search asks for. */
+  capMs: number;
   /** Time to look for a counterexample to a root that loops, which turns up quickly. */
   counterexampleMs: number;
   /** How many times a refused window may grow. */
@@ -33,6 +35,7 @@ export interface Limits {
 export const DEFAULT_LIMITS: Limits = {
   ms: 3_600_000,
   rootMs: 10_000,
+  capMs: 60_000,
   counterexampleMs: 500,
   growth: 1,
   cuts: 16,

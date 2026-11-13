@@ -3,8 +3,9 @@
 // when the run earns one. Each switch turns one of the search's moves off.
 import { join } from "node:path";
 import { readArgs, readCount, readPair, tryOrExit } from "../core/args.ts";
-import { repoRoot } from "../core/config.ts";
-import { boundRun, closeRun, stamp, startRun } from "../core/run.ts";
+import { loadConfig, repoRoot } from "../core/config.ts";
+import { boundRun, closeRun, stamp, startRun, stopChecks } from "../core/run.ts";
+import { timeoutsFrom } from "../core/state/steps.ts";
 import { DEFAULT_LIMITS, type Limits } from "./limits.ts";
 import { search } from "./search.ts";
 
@@ -31,7 +32,9 @@ if (flags.help) {
 }
 const { src, tgt, where } = readPair(flags.rest);
 const dir = where ?? join(repoRoot(), "sessions", `simple-${stamp()}`);
-const { session, llops } = await startRun({ src, tgt, dir });
+// A check may last the whole run, so that alive2 can ask about the root beside the search.
+const timeouts = { ...timeoutsFrom(loadConfig().timeouts), checkCapMs: flags.limits.ms };
+const { session, llops } = await startRun({ src, tgt, dir, timeouts });
 console.log(`  ${dir}`);
 boundRun(flags.limits.ms, started, close);
 try {
@@ -40,7 +43,10 @@ try {
   // A search that stops on an error still leaves its session and verdict.
   console.log(`  stopped: ${(error as Error).message}`);
 }
+// A check the search left running would outlive the process and log after the verdict.
+stopChecks();
 close();
+process.exit(0);
 
 /** Close the run and say how it went. */
 function close() {
