@@ -9,7 +9,13 @@
 // then a split by cases) until one proves it or splits it, and the goals a split
 // leaves are searched before the next. Every move is a session move, so whatever it
 // proves, the kernel replays.
-import type { Comparison, Instruction, Llops } from "../core/drivers/llops.ts";
+import {
+  type Comparison,
+  type EditOp,
+  type Instruction,
+  type Llops,
+  undropped,
+} from "../core/drivers/llops.ts";
 import type { Session } from "../core/session.ts";
 import { INVERSE } from "../core/state/cases.ts";
 import type { CheckGoalResult } from "../core/state/steps.ts";
@@ -175,16 +181,41 @@ async function unsplit(session: Session, gid: string) {
   else await session.uncut(gid);
 }
 
-/** Drops from the tgt the attributes `llops respected` shows its instructions keep. */
+/**
+ * Drops from the tgt the attributes `llops respected` shows its instructions keep,
+ * and from either side, in a step alive2 checks, the others that keep it from a cut.
+ */
 async function dropAttrs(session: Session, llops: Llops, gid: string) {
-  const view = await session.show(gid);
-  if (view.status !== "open") return;
-  await session.begin(gid, "tgt");
-  const edited = await session.edit({ op: "drop_attrs" });
+  if ((await session.show(gid)).status !== "open") return;
+  await dropping(session, llops, gid, "tgt", { op: "drop_attrs" });
+  for (const side of ["tgt", "src"] as const)
+    if (await refusing(llops, (await session.show(gid))[side].text, side))
+      await dropping(session, llops, gid, side, { op: "drop_attrs", all: true });
+}
+
+/** Whether attributes refuse a cut on `side`: on the tgt, after `drop_attrs`. */
+async function refusing(llops: Llops, module: string, side: "src" | "tgt") {
+  const shape = await llops.validate(module);
+  const held = shape.ok ? shape.body_attrs : [];
+  if (side === "src" || held.length === 0) return held.length > 0;
+  return (await undropped(llops, module, held)).length > 0;
+}
+
+/** Commits `op` on one side of goal `gid`, unless it leaves that side as it was. */
+async function dropping(
+  session: Session,
+  llops: Llops,
+  gid: string,
+  side: "src" | "tgt",
+  op: EditOp,
+) {
+  const before = (await session.show(gid))[side].text;
+  await session.begin(gid, side);
+  const edited = await session.edit(op);
   // Edits may print predecessor lists in a different order than the store.
   // Compare canonical modules so printing alone cannot trigger a commit.
   const canon = edited.kind === "applied" ? await llops.canon(edited.text) : undefined;
-  if (!canon?.ok || canon.module === view.tgt.text) {
+  if (!canon?.ok || canon.module === before) {
     await session.abort();
     return;
   }

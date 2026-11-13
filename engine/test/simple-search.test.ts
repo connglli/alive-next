@@ -1463,6 +1463,54 @@ exit:
     replay(session);
   }, 120_000);
 
+  test("drops the attributes that keep either side from a cut, in steps alive2 checks", async () => {
+    // The pair gets no answer, as a large one would, but a step that drops attributes,
+    // which compares one side with itself, does.
+    const unanswered = answering(() => "unknown");
+    const checker: Checker = {
+      check: (src, tgt, options) =>
+        src.includes("alloca") && !tgt.includes("alloca")
+          ? unanswered.check(src, tgt, options)
+          : aliveTv.check(src, tgt, options),
+    };
+    const src = `define void @f(ptr noundef %p, i32 %x) noreturn {
+entry:
+  %s = alloca i32, align 4
+  store i32 %x, ptr %s, align 4
+  %v = load i32, ptr %s, align 4
+  %w = mul nsw i32 %v, %v
+  store i32 %w, ptr %p, align 4
+  call void @g(i32 %w)
+  unreachable
+}
+
+declare void @g(i32) noreturn
+`;
+    const tgt = `define void @f(ptr noundef writeonly initializes((0, 4)) %p, i32 %x) noreturn {
+entry:
+  %w = mul i32 %x, %x
+  store i32 %w, ptr %p, align 4
+  call void @g(i32 %w)
+  unreachable
+}
+
+declare void @g(i32) noreturn
+`;
+    const session = await start(src, tgt, checker);
+    await search(session, llops, limits);
+    // The sides on which a step dropping all those attributes was certified.
+    const log = readFileSync(join(session.dir, "trajectory.jsonl"), "utf8").split("\n");
+    const dropped: string[] = [];
+    let [side, all] = ["", false];
+    for (const e of log.filter(Boolean).map((line) => JSON.parse(line))) {
+      if (e.kind === "tool_call" && e.tool === "tx_begin") [side, all] = [e.args.side, false];
+      if (e.kind === "tool_call" && e.tool === "tx_edit" && e.args.all) all = true;
+      if (e.tool === "tx_commit" && all && e.result?.kind === "certified") dropped.push(side);
+    }
+    expect(dropped.sort()).toEqual(["src", "tgt"]);
+    expect(moves(session)).toContain("cut");
+  }, 120_000);
+
   test("verifies a sqrt of a value kept in a stack slot by a cut before the sqrt", async () => {
     // Both calls of the cut's callee are the same.
     const session = await start(SQRT.src, SQRT.tgt, aliveTv);
