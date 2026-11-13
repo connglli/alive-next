@@ -773,6 +773,46 @@ no:
     expect(await search(session, llops, limits)).toBe("verified");
   });
 
+  test("commits no window once the check beside the search proves the root", async () => {
+    // The check beside the search proves the root while its first window is asked,
+    // and that window then lands, which reopens the root.
+    const pair = pairs.e2;
+    if (!pair) throw new Error("no pair e2");
+    const [correct, silent] = [answering(() => "correct"), answering(() => "unknown")];
+    let asked = () => {};
+    const window = new Promise<void>((resolve) => {
+      asked = resolve;
+    });
+    const proved = async () => {
+      while (session.tree.goals.get("g1")?.status !== "proved") await Bun.sleep(10);
+    };
+    let windows = 0;
+    const checker: Checker = {
+      check: async (src, tgt, options) => {
+        if ((options?.timeoutMs ?? 0) > 60_000) await window;
+        else if (!src.includes("@outlined_window")) return silent.check(src, tgt, options);
+        else if (windows++ === 0) {
+          asked();
+          await proved();
+        }
+        return correct.check(src, tgt, options);
+      },
+    };
+    const session: Session = await Session.start({
+      dir: join(dir, "run"),
+      src: pair.src,
+      tgt: pair.tgt,
+      llops,
+      checker,
+      interp: llubi,
+      rewriter: {} as Llrwt,
+      timeouts: timeoutsFrom({ checkDefaultMs: 5_000, checkCapMs: 600_000 }),
+    });
+    expect(await search(session, llops, limits)).toBe("verified");
+    expect(moves(session).filter((tool) => tool === "tx_commit")).toHaveLength(1);
+    expect(moves(session)).toContain("revert");
+  });
+
   test("peels a region once, and leaves its goal open when nothing closes it", async () => {
     const pair = pairs.varA;
     if (!pair) throw new Error("no pair varA");

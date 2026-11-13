@@ -54,6 +54,8 @@ interface Run {
   capMs: number;
   /** The predicates each goal assumes at its entry. */
   assumed: Assumed;
+  /** The check of the prepared root beside the search, when one runs. */
+  query?: Query;
 }
 
 /** A check of the prepared root that runs beside the search. */
@@ -114,8 +116,7 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   await dropAttrs(session, llops, root);
   await dropLoopIds(session, root);
   // Where a check may outlast the search's own, alive2 asks about the root beside it.
-  const query =
-    budgets.checkCapMs > capMs ? await asking(session, root, budgets.checkCapMs) : undefined;
+  if (budgets.checkCapMs > capMs) run.query = await asking(session, root, budgets.checkCapMs);
   // A loop the tgt no longer has is peeled and cut away first, and what is left
   // is searched.
   const start = limits.steps && limits.cuts > 0 ? await peelBounded(session, llops, root) : root;
@@ -127,7 +128,7 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
   const cuts = quotaOf(limits, await bodies(session, llops, start));
   const agenda = [goal(run, start, { stages, cuts })];
   // A check of the root's original pair may decide the run on the way.
-  while (agenda.length > 0 && session.verdict === "unknown" && !query?.proved) {
+  while (agenda.length > 0 && !decided(run)) {
     const top = agenda[agenda.length - 1] as Goal;
     // A goal a split landed on comes back once the goals it left, above it, are done.
     if (top.undo) await settle(run, agenda, top);
@@ -137,12 +138,17 @@ export async function search(session: Session, llops: Llops, limits: Limits) {
       else await learn(run, agenda, await next.value());
     }
   }
-  if (query && session.verdict === "unknown") await answered(run, query);
+  if (run.query && session.verdict === "unknown") await answered(run, run.query);
   if (session.verdict === "unknown") {
     const open = (await session.status()).goals.filter((g) => g.status === "open");
     await session.giveUp(`no move closed ${open.map((g) => g.gid).join(", ")}`);
   }
   return session.verdict;
+}
+
+/** Whether the run has its verdict, or the query a proof that gives it one. */
+function decided(run: Run): boolean {
+  return run.session.verdict !== "unknown" || run.query?.proved === true;
 }
 
 /** Starts a check of goal `gid` for `ms`, which the search does not wait for. */
@@ -362,7 +368,7 @@ async function* moves(
   const walked = last !== undefined && sameBody(last, view.tgt.text);
   // Strengthening a cut checks its goals again, which may have proved this one.
   yield async () => ((await session.show(gid)).status === "proved" ? PROVED : NONE);
-  const toward = () => stepWindows(session, llops, gid, limits);
+  const toward = () => stepWindows(session, llops, gid, limits, () => decided(run));
   if (limits.steps && steps && !walked) yield stepping(toward);
   if (limits.steps && steps && limits.rules) yield stepping(() => stepByRules(run, gid));
   // A goal gets a short check before it is cut, and the largest one when nothing cuts it.
@@ -515,7 +521,8 @@ function peeled(run: Run, gid: string, cuts: Cuts): Move {
 async function stepByRules(run: Run, gid: string) {
   const { session, llops, limits } = run;
   if (regions(...(await bodies(session, llops, gid))).length === 0) return;
-  if (await stepRules(session, llops, gid)) await stepWindows(session, llops, gid, limits);
+  if (await stepRules(session, llops, gid))
+    await stepWindows(session, llops, gid, limits, () => decided(run));
 }
 
 /** Try stage windows, then prove each complete stage through an interposed goal. */
@@ -530,7 +537,7 @@ async function* walk(
   for (const [k, stage] of stages.entries()) {
     let left = 0;
     yield stepping(async () => {
-      left = (await stepWindows(session, llops, gid, limits, stage)).length;
+      left = (await stepWindows(session, llops, gid, limits, () => decided(run), stage)).length;
     });
     if (left === 0) continue;
     let advanced = false;

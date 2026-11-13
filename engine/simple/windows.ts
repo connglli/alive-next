@@ -22,6 +22,8 @@ interface Run {
   toward?: string;
   /** For each src value, the tgt value the diff pairs it with. */
   pairs: Map<string, string>;
+  /** Whether the run has its verdict, after which no window is committed. */
+  decided: () => boolean;
 }
 
 /**
@@ -33,13 +35,14 @@ export async function stepWindows(
   llops: Llops,
   gid: string,
   limits: Limits,
+  decided: () => boolean = () => false,
   toward?: string,
 ): Promise<Region[]> {
   let [src, tgt] = await bodies(session, llops, gid, toward);
   if (limits.windows && (await stepCalls(session, gid, src, tgt)))
     [src, tgt] = await bodies(session, llops, gid, toward);
   const { regions: found, pairs } = diff(src, tgt);
-  const run = { session, llops, gid, limits, toward, pairs };
+  const run = { session, llops, gid, limits, toward, pairs, decided };
   const across = partners(src, tgt, found);
   for (const region of [...found].reverse()) {
     const at = region.src.length && region.tgt.length ? region : widened(src, tgt, region, across);
@@ -139,6 +142,7 @@ async function step(run: Run, region: Region, floor: number) {
 /** One commit of a region's window, with facts about what it reads when asked. */
 async function attempt(run: Run, at: Region, withFacts: boolean, refutation?: string) {
   const { session, llops, gid } = run;
+  if (run.decided()) return { certified: false, reads: [] };
   const view = await session.show(gid);
   const tgtText = run.toward ?? view.tgt.text;
   const [src, tgt] = await bodies(session, llops, gid, run.toward);
