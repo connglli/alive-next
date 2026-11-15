@@ -58,6 +58,7 @@ const rewriting =
     .catch(() => false));
 
 const limits = { ...DEFAULT_LIMITS, rootMs: 2_000, stages: false };
+const onlyChecks = { ...limits, steps: false, cuts: 0, cases: false, counterexampleMs: 0 };
 
 /** An answer alive2 can give. */
 type Outcome = CheckResult["outcome"];
@@ -855,6 +856,30 @@ no:
     expect(moves(session)).toContain("revert");
   });
 
+  test("waits for the check beside the search once the search runs out of moves", async () => {
+    // The check beside the search answers well after the search has made its few moves.
+    const [correct, silent] = [answering(() => "correct"), answering(() => "unknown")];
+    const checker: Checker = {
+      check: async (src, tgt, options) => {
+        if ((options?.timeoutMs ?? 0) <= 60_000) return silent.check(src, tgt, options);
+        await Bun.sleep(2_000);
+        return correct.check(src, tgt, options);
+      },
+    };
+    const session: Session = await Session.start({
+      dir: join(dir, "run"),
+      src: DIVIDES,
+      tgt: DIVIDES.replace("add nuw", "add"),
+      llops,
+      checker,
+      interp: llubi,
+      rewriter: {} as Llrwt,
+      timeouts: timeoutsFrom({ checkDefaultMs: 5_000, checkCapMs: 600_000 }),
+    });
+    expect(await search(session, llops, onlyChecks)).toBe("verified");
+    expect(moves(session)).not.toContain("give_up");
+  }, 30_000);
+
   test("peels a region once, and leaves its goal open when nothing closes it", async () => {
     const pair = pairs.varA;
     if (!pair) throw new Error("no pair varA");
@@ -1089,7 +1114,6 @@ declare void @llvm.lifetime.start.p0(ptr captures(none))
 declare void @llvm.lifetime.end.p0(ptr captures(none))
 `;
   const tgt = "define i32 @f(i32 %x) { ret i32 %x }";
-  const onlyChecks = { ...limits, steps: false, cuts: 0, cases: false, counterexampleMs: 0 };
 
   test("proves the cleaned root on its initial budget before further preparation", async () => {
     const session = await start(
