@@ -77,7 +77,9 @@ class Maybe implements Checker {
 class Holding implements Checker {
   held = "";
   private waiting: (() => void)[] = [];
-  release() {
+  /** Answers the questions held back, once one has come. */
+  async release() {
+    while (this.waiting.length === 0) await Bun.sleep(1);
     for (const go of this.waiting.splice(0)) go();
   }
   async check(src: string): Promise<CheckResult> {
@@ -201,8 +203,8 @@ describe.skipIf(!built || !running)("executing a goal", () => {
 });
 
 describe.skipIf(!built)("checking a goal", () => {
-  test("a check whose goal another move cut while alive2 worked lands nothing", async () => {
-    const checker = new Holding();
+  /** A session on the cut example, whose checker holds back its answers about `g1`. */
+  async function holdingRun(checker: Holding): Promise<Session> {
     const run = await Session.start({
       dir: join(dir, "session"),
       src: cut.src,
@@ -213,13 +215,37 @@ describe.skipIf(!built)("checking a goal", () => {
       rewriter: unrewriting,
     });
     checker.held = (await run.show("g1")).src.text;
+    return run;
+  }
+
+  test("a check whose goal another move cut while alive2 worked lands nothing", async () => {
+    const checker = new Holding();
+    const run = await holdingRun(checker);
     const asked = run.check("g1");
     expect((await run.cut("g1", "%2", "%2", { "%0": "%0", "%1": "%1" })).kind).toBe("cut");
-    checker.release();
+    await checker.release();
     const result = await asked;
     expect(result).toMatchObject({ outcome: "unknown", changed: true, effects: [] });
     expect(result.check?.outcome).toBe("correct");
     expect(run.tree.goals.get("g1")?.status).toBe("split");
+  });
+
+  test("a check whose goal another move stepped or reverted while alive2 worked lands nothing", async () => {
+    const checker = new Holding();
+    const run = await holdingRun(checker);
+    const before = await run.show("g1");
+    // A step and a revert each move the tgt's head and leave the goal open.
+    const asked = run.check("g1");
+    await run.begin("g1", "tgt");
+    await run.edit({ op: "replace", v: "%1", insts: ["%s = sub i32 %0, -1"] });
+    expect((await run.commit({ eager: false })).kind).toBe("certified");
+    await checker.release();
+    expect(await asked).toMatchObject({ outcome: "unknown", changed: true, effects: [] });
+    const again = run.check("g1");
+    expect((await run.revert("g1", "tgt", before.tgt.id)).kind).toBe("reverted");
+    await checker.release();
+    expect(await again).toMatchObject({ outcome: "unknown", changed: true, effects: [] });
+    expect(run.tree.goals.get("g1")?.status).toBe("open");
   });
 
   test("a check whose goal stayed as it was lands its answer", async () => {
